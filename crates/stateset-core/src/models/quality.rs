@@ -33,6 +33,7 @@ pub struct Inspection {
 /// Type of inspection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum InspectionType {
     /// Incoming goods inspection (alias for Receiving)
     Incoming,
@@ -86,6 +87,7 @@ impl std::str::FromStr for InspectionType {
 /// Status of an inspection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum InspectionStatus {
     Pending,
     Scheduled,
@@ -157,6 +159,7 @@ pub struct InspectionItem {
 /// Result of inspecting an item
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum InspectionResult {
     Pending,
     Pass,
@@ -227,6 +230,7 @@ pub struct NonConformance {
 /// Source of the non-conformance
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum NonConformanceSource {
     Inspection,
     CustomerComplaint,
@@ -274,6 +278,7 @@ impl std::str::FromStr for NonConformanceSource {
 /// Severity level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Severity {
     Critical,
     Major,
@@ -315,6 +320,7 @@ impl std::str::FromStr for Severity {
 /// Status of an NCR
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum NcrStatus {
     Open,
     UnderReview,
@@ -368,6 +374,7 @@ impl std::str::FromStr for NcrStatus {
 /// Disposition decision for non-conforming material
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Disposition {
     UseAsIs,
     Rework,
@@ -437,6 +444,7 @@ pub struct QualityHold {
 /// Type of quality hold
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum HoldType {
     QualityInspection,
     CustomerReturn,
@@ -730,10 +738,7 @@ impl Default for CompleteInspection {
 impl Inspection {
     /// Check if inspection can be started
     pub fn can_start(&self) -> bool {
-        matches!(
-            self.status,
-            InspectionStatus::Pending | InspectionStatus::Scheduled
-        )
+        matches!(self.status, InspectionStatus::Pending | InspectionStatus::Scheduled)
     }
 
     /// Check if inspection can be completed
@@ -743,9 +748,7 @@ impl Inspection {
 
     /// Check if all items have been inspected
     pub fn all_items_inspected(&self) -> bool {
-        self.items
-            .iter()
-            .all(|item| item.result != InspectionResult::Pending)
+        self.items.iter().all(|item| item.result != InspectionResult::Pending)
     }
 
     /// Get overall pass rate
@@ -761,19 +764,12 @@ impl Inspection {
 
     /// Calculate overall result based on items
     pub fn calculate_overall_result(&self) -> InspectionStatus {
-        if self.items.is_empty()
-            || self
-                .items
-                .iter()
-                .any(|i| i.result == InspectionResult::Pending)
+        if self.items.is_empty() || self.items.iter().any(|i| i.result == InspectionResult::Pending)
         {
             return InspectionStatus::InProgress;
         }
 
-        let all_passed = self
-            .items
-            .iter()
-            .all(|i| i.result == InspectionResult::Pass);
+        let all_passed = self.items.iter().all(|i| i.result == InspectionResult::Pass);
         let any_passed = self.items.iter().any(|i| {
             i.result == InspectionResult::Pass || i.result == InspectionResult::ConditionalPass
         });

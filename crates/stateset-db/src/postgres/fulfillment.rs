@@ -6,11 +6,11 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    generate_carton_number, generate_wave_number, validate_batch_size, AddCarton, AddCartonItem,
-    BatchResult, Carton, CartonItem, CommerceError, CompletePick, CompleteShip, CreatePackTask,
-    CreatePickTask, CreateShipTask, CreateWave, FulfillmentRepository, PackStatus, PackTask,
-    PackTaskFilter, PackageType, PickStatus, PickTask, PickTaskFilter, Result, ShipStatus,
-    ShipTask, ShipTaskFilter, Wave, WaveFilter, WaveStatus,
+    AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CommerceError, CompletePick,
+    CompleteShip, CreatePackTask, CreatePickTask, CreateShipTask, CreateWave,
+    FulfillmentRepository, PackStatus, PackTask, PackTaskFilter, PackageType, PickStatus, PickTask,
+    PickTaskFilter, Result, ShipStatus, ShipTask, ShipTaskFilter, Wave, WaveFilter, WaveStatus,
+    generate_carton_number, generate_wave_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -367,9 +367,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_wave)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_wave).collect::<Result<Vec<_>>>()
     }
 
     pub async fn release_wave_async(&self, id: Uuid) -> Result<Wave> {
@@ -440,11 +438,8 @@ impl PgFulfillmentRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
@@ -529,9 +524,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_pick)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_pick).collect::<Result<Vec<_>>>()
     }
 
     pub async fn assign_pick_async(&self, id: Uuid, assigned_to: &str) -> Result<PickTask> {
@@ -567,11 +560,8 @@ impl PgFulfillmentRepository {
     pub async fn complete_pick_async(&self, input: CompletePick) -> Result<PickTask> {
         let now = Utc::now();
         let short_qty = input.quantity_short.unwrap_or(Decimal::ZERO);
-        let status = if short_qty > Decimal::ZERO {
-            PickStatus::Short
-        } else {
-            PickStatus::Completed
-        };
+        let status =
+            if short_qty > Decimal::ZERO { PickStatus::Short } else { PickStatus::Completed };
 
         sqlx::query(
             r#"
@@ -596,10 +586,7 @@ impl PgFulfillmentRepository {
         .await
         .map_err(map_db_error)?;
 
-        let pick = self
-            .get_pick_async(input.pick_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let pick = self.get_pick_async(input.pick_id).await?.ok_or(CommerceError::NotFound)?;
         if let Some(wave_id) = pick.wave_id {
             sqlx::query(
                 "UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = $1",
@@ -651,19 +638,12 @@ impl PgFulfillmentRepository {
     }
 
     pub async fn get_picks_for_order_async(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
-        self.list_picks_async(PickTaskFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
-        .await
+        self.list_picks_async(PickTaskFilter { order_id: Some(order_id), ..Default::default() })
+            .await
     }
 
     pub async fn get_picks_for_wave_async(&self, wave_id: Uuid) -> Result<Vec<PickTask>> {
-        self.list_picks_async(PickTaskFilter {
-            wave_id: Some(wave_id),
-            ..Default::default()
-        })
-        .await
+        self.list_picks_async(PickTaskFilter { wave_id: Some(wave_id), ..Default::default() }).await
     }
 
     pub async fn count_picks_async(&self, filter: PickTaskFilter) -> Result<u64> {
@@ -680,11 +660,8 @@ impl PgFulfillmentRepository {
             builder.push(" AND order_id = ").push_bind(order_id);
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
@@ -748,9 +725,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_pack)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_pack).collect::<Result<Vec<_>>>()
     }
 
     pub async fn assign_pack_async(&self, id: Uuid, assigned_to: &str) -> Result<PackTask> {
@@ -882,9 +857,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_carton)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_carton).collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_carton_items_async(&self, carton_id: Uuid) -> Result<Vec<CartonItem>> {
@@ -937,11 +910,8 @@ impl PgFulfillmentRepository {
             builder.push(" AND assigned_to = ").push_bind(assigned_to);
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
@@ -1010,9 +980,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_ship)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_ship).collect::<Result<Vec<_>>>()
     }
 
     pub async fn assign_ship_async(&self, id: Uuid, assigned_to: &str) -> Result<ShipTask> {
@@ -1089,11 +1057,8 @@ impl PgFulfillmentRepository {
             builder.push(" AND carrier = ").push_bind(carrier);
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
@@ -1214,9 +1179,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_pick)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_pick).collect::<Result<Vec<_>>>()
     }
 }
 

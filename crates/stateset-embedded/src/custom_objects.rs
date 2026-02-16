@@ -160,9 +160,7 @@ impl CustomObjects {
         type_handle: &str,
         object_handle: &str,
     ) -> Result<Option<CustomObject>> {
-        self.db
-            .custom_objects()
-            .get_object_by_handle(type_handle, object_handle)
+        self.db.custom_objects().get_object_by_handle(type_handle, object_handle)
     }
 
     pub fn update_object(&self, id: Uuid, input: UpdateCustomObject) -> Result<CustomObject> {

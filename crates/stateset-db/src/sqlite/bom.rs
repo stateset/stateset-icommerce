@@ -9,8 +9,8 @@ use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
-    validate_batch_size, BatchResult, BillOfMaterials, BomComponent, BomFilter, BomRepository,
-    BomStatus, CommerceError, CreateBom, CreateBomComponent, Result, UpdateBom,
+    BatchResult, BillOfMaterials, BomComponent, BomFilter, BomRepository, BomStatus, CommerceError,
+    CreateBom, CreateBomComponent, ProductId, Result, UpdateBom, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -25,9 +25,7 @@ impl SqliteBomRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn parse_bom_status(s: &str) -> Result<BomStatus> {
@@ -36,10 +34,7 @@ impl SqliteBomRepository {
     }
 
     fn load_components(&self, bom_id: Uuid) -> Result<Vec<BomComponent>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -58,7 +53,7 @@ impl SqliteBomRepository {
                         row.get::<_, Option<String>>(2)?,
                         "bom_component",
                         "component_product_id",
-                    )?,
+                    )?.map(ProductId::from),
                     component_sku: row.get(3)?,
                     name: row.get(4)?,
                     quantity: parse_decimal_row(
@@ -101,10 +96,7 @@ impl BomRepository for SqliteBomRepository {
 
         // Insert BOM in a scoped block to release the connection before adding components
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO manufacturing_boms (id, bom_number, product_id, name, description, revision, status, created_by, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",
@@ -151,10 +143,7 @@ impl BomRepository for SqliteBomRepository {
     fn get(&self, id: Uuid) -> Result<Option<BillOfMaterials>> {
         // Query BOM in a scoped block to release connection before loading components
         let bom_data = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let result = conn.query_row(
                 "SELECT id, bom_number, product_id, name, description, revision, status,
@@ -205,7 +194,7 @@ impl BomRepository for SqliteBomRepository {
                 Ok(Some(BillOfMaterials {
                     id: bom_id,
                     bom_number,
-                    product_id: parse_uuid(&product_id, "bom", "product_id")?,
+                    product_id: ProductId::from(parse_uuid(&product_id, "bom", "product_id")?),
                     name,
                     description,
                     revision,
@@ -230,10 +219,7 @@ impl BomRepository for SqliteBomRepository {
     fn get_by_number(&self, bom_number: &str) -> Result<Option<BillOfMaterials>> {
         // Query ID in a scoped block to release connection before calling self.get()
         let id_result = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let result = conn.query_row(
                 "SELECT id FROM manufacturing_boms WHERE bom_number = ?",
@@ -266,10 +252,7 @@ impl BomRepository for SqliteBomRepository {
 
         // Do the update in a scoped block
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE manufacturing_boms SET name = ?, description = ?, revision = ?, status = ?, updated_by = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![
@@ -292,10 +275,7 @@ impl BomRepository for SqliteBomRepository {
     fn list(&self, filter: BomFilter) -> Result<Vec<BillOfMaterials>> {
         // Collect all IDs in a scoped block to release connection before calling self.get()
         let ids = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let limit = filter.limit.unwrap_or(100) as i64;
             let offset = filter.offset.unwrap_or(0) as i64;
@@ -324,9 +304,8 @@ impl BomRepository for SqliteBomRepository {
             params.push(Box::new(limit));
             params.push(Box::new(offset));
 
-            let mut stmt = conn
-                .prepare(&sql)
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut stmt =
+                conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
@@ -354,10 +333,7 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Mark as obsolete instead of hard delete
         conn.execute(
@@ -370,16 +346,11 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn add_component(&self, bom_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let uom = component
-            .unit_of_measure
-            .unwrap_or_else(|| "each".to_string());
+        let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
 
         conn.execute(
             "INSERT INTO manufacturing_bom_components (id, bom_id, component_product_id, component_sku, name, quantity, unit_of_measure, position, notes, created_at, updated_at)
@@ -420,15 +391,10 @@ impl BomRepository for SqliteBomRepository {
         component_id: Uuid,
         component: CreateBomComponent,
     ) -> Result<BomComponent> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let now = Utc::now();
-        let uom = component
-            .unit_of_measure
-            .unwrap_or_else(|| "each".to_string());
+        let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
 
         conn.execute(
             "UPDATE manufacturing_bom_components SET component_product_id = ?, component_sku = ?, name = ?, quantity = ?, unit_of_measure = ?, position = ?, notes = ?, updated_at = ? WHERE id = ?",
@@ -471,10 +437,7 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn remove_component(&self, component_id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "DELETE FROM manufacturing_bom_components WHERE id = ?",
@@ -490,20 +453,11 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn activate(&self, id: Uuid) -> Result<BillOfMaterials> {
-        self.update(
-            id,
-            UpdateBom {
-                status: Some(BomStatus::Active),
-                ..Default::default()
-            },
-        )
+        self.update(id, UpdateBom { status: Some(BomStatus::Active), ..Default::default() })
     }
 
     fn count(&self, filter: BomFilter) -> Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT COUNT(*) FROM manufacturing_boms WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -550,9 +504,7 @@ impl BomRepository for SqliteBomRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -583,10 +535,8 @@ impl BomRepository for SqliteBomRepository {
             if let Some(comp_inputs) = input.components {
                 for comp_input in comp_inputs {
                     let comp_id = Uuid::new_v4();
-                    let uom = comp_input
-                        .unit_of_measure
-                        .clone()
-                        .unwrap_or_else(|| "each".to_string());
+                    let uom =
+                        comp_input.unit_of_measure.clone().unwrap_or_else(|| "each".to_string());
 
                     tx.execute(
                         "INSERT INTO manufacturing_bom_components (id, bom_id, component_product_id, component_sku, name, quantity, unit_of_measure, position, notes, created_at, updated_at)
@@ -639,8 +589,7 @@ impl BomRepository for SqliteBomRepository {
             });
         }
 
-        tx.commit()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         Ok(results)
     }
 
@@ -668,9 +617,7 @@ impl BomRepository for SqliteBomRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
@@ -716,14 +663,7 @@ impl BomRepository for SqliteBomRepository {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             // Fetch updated BOM with full data for the result
-            let bom_data: (
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                String,
-                String,
-            ) = tx
+            let bom_data: (String, String, Option<String>, Option<String>, String, String) = tx
                 .query_row(
                     "SELECT bom_number, product_id, created_by, updated_by, created_at, updated_at
                      FROM manufacturing_boms WHERE id = ?",
@@ -744,7 +684,7 @@ impl BomRepository for SqliteBomRepository {
             results.push(BillOfMaterials {
                 id,
                 bom_number: bom_data.0,
-                product_id: parse_uuid(&bom_data.1, "bom", "product_id")?,
+                product_id: ProductId::from(parse_uuid(&bom_data.1, "bom", "product_id")?),
                 name: new_name,
                 description: new_description,
                 revision: new_revision,
@@ -763,8 +703,7 @@ impl BomRepository for SqliteBomRepository {
             });
         }
 
-        tx.commit()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Load components for each BOM after commit
         for bom in &mut results {
@@ -795,9 +734,7 @@ impl BomRepository for SqliteBomRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let placeholders = build_in_clause(ids.len());
 
@@ -817,8 +754,7 @@ impl BomRepository for SqliteBomRepository {
         tx.execute(&sql, all_params_refs.as_slice())
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        tx.commit()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -840,9 +776,8 @@ impl BomRepository for SqliteBomRepository {
         let params = uuid_params(&ids);
         let params_refs = params_refs(&params);
 
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt =
+            conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let rows = stmt
             .query_map(params_refs.as_slice(), |row| {
@@ -893,7 +828,7 @@ impl BomRepository for SqliteBomRepository {
             boms.push(BillOfMaterials {
                 id: bom_id,
                 bom_number,
-                product_id: parse_uuid(&product_id, "bom", "product_id")?,
+                product_id: ProductId::from(parse_uuid(&product_id, "bom", "product_id")?),
                 name,
                 description,
                 revision,

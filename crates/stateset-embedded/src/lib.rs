@@ -1,4 +1,11 @@
 #![deny(unsafe_code)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/stateset/stateset-icommerce/main/assets/stateset.png",
+    html_favicon_url = "https://raw.githubusercontent.com/stateset/stateset-icommerce/main/assets/favicon.ico",
+    issue_tracker_base_url = "https://github.com/stateset/stateset-icommerce/issues/"
+)]
 
 //! # StateSet iCommerce
 //!
@@ -170,9 +177,8 @@ pub mod events;
 // Event system types (feature-gated)
 #[cfg(feature = "events")]
 pub use events::{
-    filters, EventBus, EventConfig, EventReceiver, EventSubscription, EventSystem,
-    FilteredSubscription, InMemoryEventStore, Webhook, WebhookConfig, WebhookDelivery,
-    WebhookManager,
+    EventBus, EventConfig, EventReceiver, EventSubscription, EventSystem, FilteredSubscription,
+    InMemoryEventStore, Webhook, WebhookConfig, WebhookDelivery, WebhookManager, filters,
 };
 
 #[cfg(all(feature = "events", feature = "sqlite-events"))]
@@ -231,41 +237,6 @@ pub use stateset_observability::{Metrics, MetricsConfig, MetricsSnapshot};
 
 // Re-export core types for convenience
 pub use stateset_core::{
-    from_smallest_unit,
-    generate_ap_payment_number,
-    generate_backorder_number,
-    generate_bill_number,
-    generate_claim_number,
-    generate_cost_adjustment_number,
-    generate_coupon_code,
-    generate_credit_application_number,
-    generate_credit_memo_number,
-    generate_invoice_number,
-    generate_journal_entry_number,
-    generate_payment_number,
-    generate_payment_run_number,
-    generate_plan_code,
-    generate_po_number,
-    generate_promotion_code,
-    generate_refund_number,
-    generate_subscription_number,
-    generate_warranty_number,
-    generate_write_off_number,
-    generate_x402_intent_id,
-    get_canadian_tax_info,
-    get_eu_vat_info,
-    get_us_state_tax_info,
-    is_eu_member,
-    to_smallest_unit,
-    validate_currency_code,
-    validate_custom_object_type_input,
-    // Validation utilities
-    validate_email,
-    validate_phone,
-    validate_postal_code,
-    validate_price,
-    validate_quantity,
-    validate_sku,
     A2APurchase,
     A2APurchaseFilter,
     A2AQuote,
@@ -544,7 +515,12 @@ pub use stateset_core::{
     CustomObjectTypeFilter,
     Customer,
     CustomerAddress,
+    CustomerId,
     CustomerArAging,
+    // Typed IDs
+    FulfillmentId,
+    OrderId,
+    OrderItemId,
     CustomerArSummary,
     CustomerCreditSummary,
     CustomerFilter,
@@ -559,6 +535,7 @@ pub use stateset_core::{
     DiscoverSellersOutput,
     Disposition,
     DunningLetterType,
+    ERC8004_REGISTRATION_V1,
     EuVatInfo,
     ExchangeRate,
     ExchangeRateFilter,
@@ -656,6 +633,7 @@ pub use stateset_core::{
     PaymentFilter,
     PaymentMethod,
     PaymentMethodAP,
+    PaymentId,
     PaymentMethodType,
     PaymentRun,
     PaymentRunFilter,
@@ -673,6 +651,7 @@ pub use stateset_core::{
     Product,
     ProductAttribute,
     ProductFilter,
+    ProductId,
     ProductPerformance,
     ProductStatus,
     ProductTaxCategory,
@@ -727,6 +706,7 @@ pub use stateset_core::{
     ReserveSerialNumber,
     Result,
     Return,
+    ReturnId,
     ReturnFilter,
     ReturnItem,
     ReturnMetrics,
@@ -761,6 +741,7 @@ pub use stateset_core::{
     Shipment,
     ShipmentEvent,
     ShipmentFilter,
+    ShipmentId,
     ShipmentItem,
     ShipmentStatus,
     ShippingCarrier,
@@ -883,6 +864,10 @@ pub use stateset_core::{
     WriteOff,
     WriteOffFilter,
     WriteOffReason,
+    X402_DEFAULT_VALIDITY_SECONDS,
+    X402_DOMAIN_SEPARATOR,
+    X402_MAX_VALIDITY_SECONDS,
+    X402_VERSION,
     X402Asset,
     X402BatchStatus,
     X402CreditAccount,
@@ -899,11 +884,41 @@ pub use stateset_core::{
     X402PaymentReceipt,
     X402PaymentRequired,
     Zone,
-    ERC8004_REGISTRATION_V1,
-    X402_DEFAULT_VALIDITY_SECONDS,
-    X402_DOMAIN_SEPARATOR,
-    X402_MAX_VALIDITY_SECONDS,
-    X402_VERSION,
+    from_smallest_unit,
+    generate_ap_payment_number,
+    generate_backorder_number,
+    generate_bill_number,
+    generate_claim_number,
+    generate_cost_adjustment_number,
+    generate_coupon_code,
+    generate_credit_application_number,
+    generate_credit_memo_number,
+    generate_invoice_number,
+    generate_journal_entry_number,
+    generate_payment_number,
+    generate_payment_run_number,
+    generate_plan_code,
+    generate_po_number,
+    generate_promotion_code,
+    generate_refund_number,
+    generate_subscription_number,
+    generate_warranty_number,
+    generate_write_off_number,
+    generate_x402_intent_id,
+    get_canadian_tax_info,
+    get_eu_vat_info,
+    get_us_state_tax_info,
+    is_eu_member,
+    to_smallest_unit,
+    validate_currency_code,
+    validate_custom_object_type_input,
+    // Validation utilities
+    validate_email,
+    validate_phone,
+    validate_postal_code,
+    validate_price,
+    validate_quantity,
+    validate_sku,
 };
 
 // Vector search types (feature-gated)

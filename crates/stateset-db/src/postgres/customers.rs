@@ -5,10 +5,10 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    validate_batch_size, validate_email, validate_phone, validate_postal_code,
-    validate_required_text, validate_required_uuid, AddressType, BatchResult, CommerceError,
-    CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
-    CustomerRepository, CustomerStatus, Result, UpdateCustomer,
+    AddressType, BatchResult, CommerceError, CreateCustomer, CreateCustomerAddress, Customer,
+    CustomerAddress, CustomerFilter, CustomerId, CustomerRepository, CustomerStatus, Result,
+    UpdateCustomer, validate_batch_size, validate_email, validate_phone, validate_postal_code,
+    validate_required_text, validate_required_uuid,
 };
 use uuid::Uuid;
 
@@ -74,7 +74,7 @@ impl PgCustomerRepository {
     }
 
     fn validate_address_input(input: &CreateCustomerAddress) -> Result<()> {
-        validate_required_uuid("customer_address.customer_id", input.customer_id)?;
+        validate_required_uuid("customer_address.customer_id", input.customer_id.into_uuid())?;
         validate_required_text("customer_address.first_name", &input.first_name, 100)?;
         validate_required_text("customer_address.last_name", &input.last_name, 100)?;
         validate_required_text("customer_address.line1", &input.line1, 255)?;
@@ -105,7 +105,7 @@ impl PgCustomerRepository {
         })?;
 
         Ok(Customer {
-            id: row.id,
+            id: CustomerId::from(row.id),
             email: row.email,
             first_name: row.first_name,
             last_name: row.last_name,
@@ -132,7 +132,7 @@ impl PgCustomerRepository {
 
         Ok(CustomerAddress {
             id: row.id,
-            customer_id: row.customer_id,
+            customer_id: CustomerId::from(row.customer_id),
             address_type,
             first_name: row.first_name,
             last_name: row.last_name,
@@ -156,7 +156,7 @@ impl PgCustomerRepository {
     pub async fn get_or_create_by_email_async(&self, input: CreateCustomer) -> Result<Customer> {
         Self::validate_customer_input(&input)?;
 
-        let id = Uuid::new_v4();
+        let id = CustomerId::new();
         let now = Utc::now();
         let tags = input.tags.clone().unwrap_or_default();
         let accepts_marketing = input.accepts_marketing.unwrap_or(false);
@@ -174,7 +174,7 @@ impl PgCustomerRepository {
             RETURNING *
             "#,
         )
-        .bind(id)
+        .bind(id.into_uuid())
         .bind(&input.email)
         .bind(&input.first_name)
         .bind(&input.last_name)
@@ -208,7 +208,7 @@ impl PgCustomerRepository {
     pub async fn create_async(&self, input: CreateCustomer) -> Result<Customer> {
         Self::validate_customer_input(&input)?;
 
-        let id = Uuid::new_v4();
+        let id = CustomerId::new();
         let now = Utc::now();
         let tags = input.tags.clone().unwrap_or_default();
         let accepts_marketing = input.accepts_marketing.unwrap_or(false);
@@ -235,7 +235,7 @@ impl PgCustomerRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
         )
-        .bind(id)
+        .bind(id.into_uuid())
         .bind(&input.email)
         .bind(&input.first_name)
         .bind(&input.last_name)
@@ -270,9 +270,9 @@ impl PgCustomerRepository {
     }
 
     /// Get a customer by ID (async)
-    pub async fn get_async(&self, id: Uuid) -> Result<Option<Customer>> {
+    pub async fn get_async(&self, id: CustomerId) -> Result<Option<Customer>> {
         let result = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-            .bind(id)
+            .bind(id.into_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -298,16 +298,16 @@ impl PgCustomerRepository {
     }
 
     /// Update a customer (async)
-    pub async fn update_async(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
+    pub async fn update_async(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {
         let now = Utc::now();
 
         let existing_row =
             sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-                .bind(id)
+                .bind(id.into_uuid())
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(map_db_error)?
-                .ok_or(CommerceError::CustomerNotFound(id))?;
+                .ok_or(CommerceError::CustomerNotFound(id.into_uuid()))?;
         let current_version = existing_row.version;
         let existing = Self::row_to_customer(existing_row)?;
 
@@ -320,7 +320,7 @@ impl PgCustomerRepository {
                     .await
                     .map_err(map_db_error)?;
             if let Some(existing_id) = existing_id {
-                if existing_id != id {
+                if existing_id != id.into_uuid() {
                     return Err(CommerceError::EmailAlreadyExists(email.clone()));
                 }
             }
@@ -340,9 +340,7 @@ impl PgCustomerRepository {
         let new_last_name = input.last_name.unwrap_or(existing.last_name);
         let new_phone = input.phone.or(existing.phone);
         let new_status = input.status.unwrap_or(existing.status);
-        let new_accepts_marketing = input
-            .accepts_marketing
-            .unwrap_or(existing.accepts_marketing);
+        let new_accepts_marketing = input.accepts_marketing.unwrap_or(existing.accepts_marketing);
         let new_tags = input.tags.unwrap_or(existing.tags);
         let new_metadata = input.metadata.or(existing.metadata);
 
@@ -365,7 +363,7 @@ impl PgCustomerRepository {
         .bind(&tags_json)
         .bind(&new_metadata)
         .bind(now)
-        .bind(id)
+        .bind(id.into_uuid())
         .bind(current_version)
         .execute(&self.pool)
         .await
@@ -378,21 +376,12 @@ impl PgCustomerRepository {
             });
         }
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::CustomerNotFound(id))
+        self.get_async(id).await?.ok_or(CommerceError::CustomerNotFound(id.into_uuid()))
     }
 
     /// List customers (async)
     pub async fn list_async(&self, filter: CustomerFilter) -> Result<Vec<Customer>> {
-        let CustomerFilter {
-            email,
-            status,
-            tag,
-            accepts_marketing,
-            limit,
-            offset,
-        } = filter;
+        let CustomerFilter { email, status, tag, accepts_marketing, limit, offset } = filter;
 
         let mut builder = QueryBuilder::new("SELECT * FROM customers WHERE 1=1");
 
@@ -409,9 +398,7 @@ impl PgCustomerRepository {
             builder.push(" AND tags ? ").push_bind(tag);
         }
         if let Some(accepts_marketing) = accepts_marketing {
-            builder
-                .push(" AND accepts_marketing = ")
-                .push_bind(accepts_marketing);
+            builder.push(" AND accepts_marketing = ").push_bind(accepts_marketing);
         }
 
         builder.push(" ORDER BY created_at DESC");
@@ -429,16 +416,14 @@ impl PgCustomerRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_customer)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_customer).collect::<Result<Vec<_>>>()
     }
 
     /// Delete a customer (soft delete, async)
-    pub async fn delete_async(&self, id: Uuid) -> Result<()> {
+    pub async fn delete_async(&self, id: CustomerId) -> Result<()> {
         sqlx::query("UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = $2")
             .bind(Utc::now())
-            .bind(id)
+            .bind(id.into_uuid())
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -465,7 +450,7 @@ impl PgCustomerRepository {
             "#,
         )
         .bind(id)
-        .bind(input.customer_id)
+        .bind(input.customer_id.into_uuid())
         .bind(address_type.to_string())
         .bind(&input.first_name)
         .bind(&input.last_name)
@@ -497,7 +482,7 @@ impl PgCustomerRepository {
                 }
             };
             sqlx::query(clear_sql)
-                .bind(input.customer_id)
+                .bind(input.customer_id.into_uuid())
                 .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
@@ -515,7 +500,7 @@ impl PgCustomerRepository {
                     )
                     .bind(id)
                     .bind(now)
-                    .bind(input.customer_id)
+                    .bind(input.customer_id.into_uuid())
                     .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
@@ -526,7 +511,7 @@ impl PgCustomerRepository {
                     )
                     .bind(id)
                     .bind(now)
-                    .bind(input.customer_id)
+                    .bind(input.customer_id.into_uuid())
                     .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
@@ -537,7 +522,7 @@ impl PgCustomerRepository {
                     )
                     .bind(id)
                     .bind(now)
-                    .bind(input.customer_id)
+                    .bind(input.customer_id.into_uuid())
                     .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
@@ -568,18 +553,16 @@ impl PgCustomerRepository {
     }
 
     /// Get customer addresses (async)
-    pub async fn get_addresses_async(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>> {
+    pub async fn get_addresses_async(&self, customer_id: CustomerId) -> Result<Vec<CustomerAddress>> {
         let rows = sqlx::query_as::<_, AddressRow>(
             "SELECT * FROM customer_addresses WHERE customer_id = $1",
         )
-        .bind(customer_id)
+        .bind(customer_id.into_uuid())
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_address)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_address).collect::<Result<Vec<_>>>()
     }
 
     /// Update a customer address (async)
@@ -599,7 +582,7 @@ impl PgCustomerRepository {
                 .await
                 .map_err(map_db_error)?;
         match owner {
-            Some(customer_id) if customer_id != input.customer_id => {
+            Some(customer_id) if customer_id != input.customer_id.into_uuid() => {
                 return Err(CommerceError::ValidationError(
                     "Address does not belong to customer".into(),
                 ));
@@ -717,7 +700,7 @@ impl PgCustomerRepository {
     /// Set default address (async)
     pub async fn set_default_address_async(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         address_id: Uuid,
         address_type: AddressType,
     ) -> Result<()> {
@@ -731,7 +714,7 @@ impl PgCustomerRepository {
                 .await
                 .map_err(map_db_error)?;
         match owner {
-            Some(id) if id != customer_id => {
+            Some(id) if id != customer_id.into_uuid() => {
                 return Err(CommerceError::ValidationError(
                     "Address does not belong to customer".into(),
                 ));
@@ -754,7 +737,7 @@ impl PgCustomerRepository {
             }
         };
         sqlx::query(clear_sql)
-            .bind(customer_id)
+            .bind(customer_id.into_uuid())
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -772,7 +755,7 @@ impl PgCustomerRepository {
                 )
                 .bind(address_id)
                 .bind(now)
-                .bind(customer_id)
+                .bind(customer_id.into_uuid())
                 .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
@@ -783,7 +766,7 @@ impl PgCustomerRepository {
                 )
                 .bind(address_id)
                 .bind(now)
-                .bind(customer_id)
+                .bind(customer_id.into_uuid())
                 .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
@@ -794,7 +777,7 @@ impl PgCustomerRepository {
                 )
                 .bind(address_id)
                 .bind(now)
-                .bind(customer_id)
+                .bind(customer_id.into_uuid())
                 .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
@@ -807,14 +790,7 @@ impl PgCustomerRepository {
 
     /// Count customers (async)
     pub async fn count_async(&self, filter: CustomerFilter) -> Result<u64> {
-        let CustomerFilter {
-            email,
-            status,
-            tag,
-            accepts_marketing,
-            limit: _,
-            offset: _,
-        } = filter;
+        let CustomerFilter { email, status, tag, accepts_marketing, limit: _, offset: _ } = filter;
 
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM customers WHERE 1=1");
 
@@ -831,16 +807,11 @@ impl PgCustomerRepository {
             builder.push(" AND tags ? ").push_bind(tag);
         }
         if let Some(accepts_marketing) = accepts_marketing {
-            builder
-                .push(" AND accepts_marketing = ")
-                .push_bind(accepts_marketing);
+            builder.push(" AND accepts_marketing = ").push_bind(accepts_marketing);
         }
 
-        let count: (i64,) = builder
-            .build_query_as()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }
@@ -881,7 +852,7 @@ impl PgCustomerRepository {
         for input in inputs {
             Self::validate_customer_input(&input)?;
 
-            let id = Uuid::new_v4();
+            let id = CustomerId::new();
             let now = Utc::now();
             let tags = input.tags.clone().unwrap_or_default();
             let accepts_marketing = input.accepts_marketing.unwrap_or(false);
@@ -908,7 +879,7 @@ impl PgCustomerRepository {
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 "#,
             )
-            .bind(id)
+            .bind(id.into_uuid())
             .bind(&input.email)
             .bind(&input.first_name)
             .bind(&input.last_name)
@@ -949,7 +920,7 @@ impl PgCustomerRepository {
     /// Update multiple customers - partial success allowed (async)
     pub async fn update_batch_async(
         &self,
-        updates: Vec<(Uuid, UpdateCustomer)>,
+        updates: Vec<(CustomerId, UpdateCustomer)>,
     ) -> Result<BatchResult<Customer>> {
         validate_batch_size(&updates)?;
 
@@ -968,7 +939,7 @@ impl PgCustomerRepository {
     /// Update multiple customers - atomic (all-or-nothing) (async)
     pub async fn update_batch_atomic_async(
         &self,
-        updates: Vec<(Uuid, UpdateCustomer)>,
+        updates: Vec<(CustomerId, UpdateCustomer)>,
     ) -> Result<Vec<Customer>> {
         validate_batch_size(&updates)?;
 
@@ -980,11 +951,11 @@ impl PgCustomerRepository {
 
             let existing_row =
                 sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-                    .bind(id)
+                    .bind(id.into_uuid())
                     .fetch_optional(tx.as_mut())
                     .await
                     .map_err(map_db_error)?
-                    .ok_or(CommerceError::CustomerNotFound(id))?;
+                    .ok_or(CommerceError::CustomerNotFound(id.into_uuid()))?;
             let current_version = existing_row.version;
             let existing = Self::row_to_customer(existing_row)?;
 
@@ -997,7 +968,7 @@ impl PgCustomerRepository {
                         .await
                         .map_err(map_db_error)?;
                 if let Some(existing_id) = existing_id {
-                    if existing_id != id {
+                    if existing_id != id.into_uuid() {
                         return Err(CommerceError::EmailAlreadyExists(email.clone()));
                     }
                 }
@@ -1017,9 +988,8 @@ impl PgCustomerRepository {
             let new_last_name = input.last_name.unwrap_or(existing.last_name);
             let new_phone = input.phone.or(existing.phone);
             let new_status = input.status.unwrap_or(existing.status);
-            let new_accepts_marketing = input
-                .accepts_marketing
-                .unwrap_or(existing.accepts_marketing);
+            let new_accepts_marketing =
+                input.accepts_marketing.unwrap_or(existing.accepts_marketing);
             let new_tags = input.tags.unwrap_or(existing.tags);
             let new_metadata = input.metadata.or(existing.metadata);
 
@@ -1042,7 +1012,7 @@ impl PgCustomerRepository {
             .bind(&tags_json)
             .bind(&new_metadata)
             .bind(now)
-            .bind(id)
+            .bind(id.into_uuid())
             .bind(current_version)
             .execute(tx.as_mut())
             .await
@@ -1059,7 +1029,7 @@ impl PgCustomerRepository {
             // Fetch the updated customer
             let updated_row =
                 sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-                    .bind(id)
+                    .bind(id.into_uuid())
                     .fetch_one(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
@@ -1072,7 +1042,7 @@ impl PgCustomerRepository {
     }
 
     /// Delete multiple customers - partial success allowed (async)
-    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    pub async fn delete_batch_async(&self, ids: Vec<CustomerId>) -> Result<BatchResult<CustomerId>> {
         validate_batch_size(&ids)?;
 
         let mut result = BatchResult::with_capacity(ids.len());
@@ -1088,7 +1058,7 @@ impl PgCustomerRepository {
     }
 
     /// Delete multiple customers - atomic (all-or-nothing) (async)
-    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<CustomerId>) -> Result<()> {
         validate_batch_size(&ids)?;
 
         if ids.is_empty() {
@@ -1097,9 +1067,10 @@ impl PgCustomerRepository {
 
         let now = Utc::now();
 
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         sqlx::query("UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = ANY($2)")
             .bind(now)
-            .bind(&ids)
+            .bind(&raw_ids)
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -1108,22 +1079,21 @@ impl PgCustomerRepository {
     }
 
     /// Get multiple customers by ID (async)
-    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>> {
+    pub async fn get_batch_async(&self, ids: Vec<CustomerId>) -> Result<Vec<Customer>> {
         validate_batch_size(&ids)?;
 
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let rows = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = ANY($1)")
-            .bind(&ids)
+            .bind(&raw_ids)
             .fetch_all(&self.pool)
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_customer)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_customer).collect::<Result<Vec<_>>>()
     }
 }
 
@@ -1132,7 +1102,7 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Customer>> {
+    fn get(&self, id: CustomerId) -> Result<Option<Customer>> {
         super::block_on(self.get_async(id))
     }
 
@@ -1140,7 +1110,7 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.get_by_email_async(email))
     }
 
-    fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
+    fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {
         super::block_on(self.update_async(id, input))
     }
 
@@ -1148,7 +1118,7 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.list_async(filter))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: CustomerId) -> Result<()> {
         super::block_on(self.delete_async(id))
     }
 
@@ -1156,7 +1126,7 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.add_address_async(input))
     }
 
-    fn get_addresses(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>> {
+    fn get_addresses(&self, customer_id: CustomerId) -> Result<Vec<CustomerAddress>> {
         super::block_on(self.get_addresses_async(customer_id))
     }
 
@@ -1174,7 +1144,7 @@ impl CustomerRepository for PgCustomerRepository {
 
     fn set_default_address(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         address_id: Uuid,
         address_type: AddressType,
     ) -> Result<()> {
@@ -1197,23 +1167,29 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<BatchResult<Customer>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(CustomerId, UpdateCustomer)>,
+    ) -> Result<BatchResult<Customer>> {
         super::block_on(self.update_batch_async(updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<Vec<Customer>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(CustomerId, UpdateCustomer)>,
+    ) -> Result<Vec<Customer>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<CustomerId>) -> Result<BatchResult<CustomerId>> {
         super::block_on(self.delete_batch_async(ids))
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<CustomerId>) -> Result<()> {
         super::block_on(self.delete_batch_atomic_async(ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>> {
+    fn get_batch(&self, ids: Vec<CustomerId>) -> Result<Vec<Customer>> {
         super::block_on(self.get_batch_async(ids))
     }
 }

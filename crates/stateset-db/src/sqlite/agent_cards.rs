@@ -9,8 +9,9 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
-    validate_batch_size, A2ASkill, AgentCard, AgentCardFilter, AgentCardRepository, BatchResult,
-    CommerceError, CreateAgentCard, Result, TrustLevel, UpdateAgentCard, X402Asset, X402Network,
+    A2ASkill, AgentCard, AgentCardFilter, AgentCardRepository, BatchResult, CommerceError,
+    CreateAgentCard, Result, TrustLevel, UpdateAgentCard, X402Asset, X402Network,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -32,23 +33,20 @@ impl SqliteAgentCardRepository {
                 TrustLevel::Verified,
                 TrustLevel::Enterprise,
             ],
-            TrustLevel::Standard => vec![
-                TrustLevel::Standard,
-                TrustLevel::Verified,
-                TrustLevel::Enterprise,
-            ],
+            TrustLevel::Standard => {
+                vec![TrustLevel::Standard, TrustLevel::Verified, TrustLevel::Enterprise]
+            }
             TrustLevel::Verified => vec![TrustLevel::Verified, TrustLevel::Enterprise],
             TrustLevel::Enterprise => vec![TrustLevel::Enterprise],
+            _ => vec![min],
         }
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_agent_card(row: &rusqlite::Row) -> rusqlite::Result<AgentCard> {
+    fn row_to_agent_card(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentCard> {
         let supported_networks_json: String = row.get("supported_networks")?;
         let supported_assets_json: String = row.get("supported_assets")?;
         let a2a_skills_json: Option<String> = row.get("a2a_skills")?;
@@ -90,9 +88,7 @@ impl SqliteAgentCardRepository {
             max_transaction_amount: row
                 .get::<_, Option<i64>>("max_transaction_amount")?
                 .map(|n| n as u64),
-            daily_volume_limit: row
-                .get::<_, Option<i64>>("daily_volume_limit")?
-                .map(|n| n as u64),
+            daily_volume_limit: row.get::<_, Option<i64>>("daily_volume_limit")?.map(|n| n as u64),
             requires_kyc: row.get::<_, i32>("requires_kyc")? == 1,
             active: row.get::<_, i32>("active")? == 1,
             suspended_at: parse_datetime_opt_row(
@@ -122,12 +118,9 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         let now = Utc::now();
         let id = Uuid::new_v4();
 
-        let supported_networks = input
-            .supported_networks
-            .unwrap_or_else(|| vec![X402Network::SetChain]);
-        let supported_assets = input
-            .supported_assets
-            .unwrap_or_else(|| vec![X402Asset::Usdc]);
+        let supported_networks =
+            input.supported_networks.unwrap_or_else(|| vec![X402Network::SetChain]);
+        let supported_assets = input.supported_assets.unwrap_or_else(|| vec![X402Asset::Usdc]);
         let a2a_skills = input.a2a_skills.unwrap_or_default();
         let trust_level = input.trust_level.unwrap_or_default();
 
@@ -183,13 +176,10 @@ impl AgentCardRepository for SqliteAgentCardRepository {
 
     fn get(&self, id: Uuid) -> Result<Option<AgentCard>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM agent_cards WHERE id = ?")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM agent_cards WHERE id = ?").map_err(map_db_error)?;
 
-        stmt.query_row([id.to_string()], Self::row_to_agent_card)
-            .optional()
-            .map_err(map_db_error)
+        stmt.query_row([id.to_string()], Self::row_to_agent_card).optional().map_err(map_db_error)
     }
 
     fn get_by_wallet(&self, wallet_address: &str) -> Result<Option<AgentCard>> {
@@ -198,9 +188,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
             .prepare("SELECT * FROM agent_cards WHERE wallet_address = ?")
             .map_err(map_db_error)?;
 
-        stmt.query_row([wallet_address], Self::row_to_agent_card)
-            .optional()
-            .map_err(map_db_error)
+        stmt.query_row([wallet_address], Self::row_to_agent_card).optional().map_err(map_db_error)
     }
 
     fn update(&self, id: Uuid, input: UpdateAgentCard) -> Result<AgentCard> {
@@ -210,9 +198,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
 
         let name = input.name.unwrap_or(existing.name);
         let description = input.description.or(existing.description);
-        let supported_networks = input
-            .supported_networks
-            .unwrap_or(existing.supported_networks);
+        let supported_networks = input.supported_networks.unwrap_or(existing.supported_networks);
         let supported_assets = input.supported_assets.unwrap_or(existing.supported_assets);
         let a2a_skills = input.a2a_skills.unwrap_or(existing.a2a_skills);
         let trust_level = input.trust_level.unwrap_or(existing.trust_level);
@@ -221,9 +207,8 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         let merchant_id = input.merchant_id.or(existing.merchant_id);
         let merchant_name = input.merchant_name.or(existing.merchant_name);
         let business_category = input.business_category.or(existing.business_category);
-        let max_transaction_amount = input
-            .max_transaction_amount
-            .or(existing.max_transaction_amount);
+        let max_transaction_amount =
+            input.max_transaction_amount.or(existing.max_transaction_amount);
         let daily_volume_limit = input.daily_volume_limit.or(existing.daily_volume_limit);
         let requires_kyc = input.requires_kyc.unwrap_or(existing.requires_kyc);
         let active = input.active.unwrap_or(existing.active);
@@ -353,10 +338,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map(
-                rusqlite::params_from_iter(param_refs),
-                Self::row_to_agent_card,
-            )
+            .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_agent_card)
             .map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
@@ -415,16 +397,11 @@ impl AgentCardRepository for SqliteAgentCardRepository {
             params.push(Box::new(merchant.clone()));
         }
 
-        let sql = format!(
-            "SELECT COUNT(*) FROM agent_cards WHERE {}",
-            conditions.join(" AND ")
-        );
+        let sql = format!("SELECT COUNT(*) FROM agent_cards WHERE {}", conditions.join(" AND "));
 
         let param_refs = params_refs(&params);
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| {
-                row.get(0)
-            })
+            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| row.get(0))
             .map_err(map_db_error)?;
 
         Ok(count as u64)
@@ -518,12 +495,9 @@ impl AgentCardRepository for SqliteAgentCardRepository {
             let now = Utc::now();
             let id = Uuid::new_v4();
 
-            let supported_networks = input
-                .supported_networks
-                .unwrap_or_else(|| vec![X402Network::SetChain]);
-            let supported_assets = input
-                .supported_assets
-                .unwrap_or_else(|| vec![X402Asset::Usdc]);
+            let supported_networks =
+                input.supported_networks.unwrap_or_else(|| vec![X402Network::SetChain]);
+            let supported_assets = input.supported_assets.unwrap_or_else(|| vec![X402Asset::Usdc]);
             let a2a_skills = input.a2a_skills.unwrap_or_default();
             let trust_level = input.trust_level.unwrap_or_default();
 
@@ -579,9 +553,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
 
         tx.commit().map_err(map_db_error)?;
 
-        ids.into_iter()
-            .map(|id| self.get(id)?.ok_or(CommerceError::NotFound))
-            .collect()
+        ids.into_iter().map(|id| self.get(id)?.ok_or(CommerceError::NotFound)).collect()
     }
 
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<AgentCard>> {
@@ -599,10 +571,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map(
-                rusqlite::params_from_iter(param_refs),
-                Self::row_to_agent_card,
-            )
+            .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_agent_card)
             .map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {

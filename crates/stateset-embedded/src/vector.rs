@@ -40,10 +40,7 @@ pub struct Vector {
 impl Vector {
     /// Create a new Vector instance
     pub(crate) fn new(repo: SqliteVectorRepository, api_key: String) -> Self {
-        Self {
-            repo,
-            embedding_service: Arc::new(EmbeddingService::new(api_key)),
-        }
+        Self { repo, embedding_service: Arc::new(EmbeddingService::new(api_key)) }
     }
 
     /// Create with custom embedding model
@@ -83,8 +80,7 @@ impl Vector {
         limit: usize,
     ) -> Result<Vec<VectorSearchResult<Product>>> {
         let result = self.embedding_service.embed(query)?;
-        self.repo
-            .search_products_hybrid(&result.embedding, query, limit)
+        self.repo.search_products_hybrid(&result.embedding, query, limit)
     }
 
     /// Search products using a pre-computed embedding
@@ -150,14 +146,12 @@ impl Vector {
         limit: usize,
     ) -> Result<Vec<VectorSearchResult<Customer>>> {
         let result = self.embedding_service.embed(query)?;
-        self.repo
-            .search_customers_hybrid(&result.embedding, query, limit)
+        self.repo.search_customers_hybrid(&result.embedding, query, limit)
     }
 
     /// Remove a customer from the vector index
     pub fn unindex_customer(&self, customer_id: &str) -> Result<()> {
-        self.repo
-            .delete_embedding(EntityType::Customer, customer_id)
+        self.repo.delete_embedding(EntityType::Customer, customer_id)
     }
 
     /// Index multiple customers in batch
@@ -208,8 +202,7 @@ impl Vector {
         limit: usize,
     ) -> Result<Vec<VectorSearchResult<Order>>> {
         let result = self.embedding_service.embed(query)?;
-        self.repo
-            .search_orders_hybrid(&result.embedding, query, limit)
+        self.repo.search_orders_hybrid(&result.embedding, query, limit)
     }
 
     /// Remove an order from the vector index
@@ -265,14 +258,12 @@ impl Vector {
         limit: usize,
     ) -> Result<Vec<VectorSearchResult<InventoryItem>>> {
         let result = self.embedding_service.embed(query)?;
-        self.repo
-            .search_inventory_hybrid(&result.embedding, query, limit)
+        self.repo.search_inventory_hybrid(&result.embedding, query, limit)
     }
 
     /// Remove an inventory item from the vector index
     pub fn unindex_inventory_item(&self, item_id: &str) -> Result<()> {
-        self.repo
-            .delete_embedding(EntityType::InventoryItem, item_id)
+        self.repo.delete_embedding(EntityType::InventoryItem, item_id)
     }
 
     /// Index multiple inventory items in batch
@@ -280,10 +271,8 @@ impl Vector {
         let mut indexed = 0;
 
         for chunk in items.chunks(100) {
-            let texts: Vec<String> = chunk
-                .iter()
-                .map(EmbeddingService::inventory_item_text)
-                .collect();
+            let texts: Vec<String> =
+                chunk.iter().map(EmbeddingService::inventory_item_text).collect();
 
             let results = self.embedding_service.embed_batch(&texts)?;
 

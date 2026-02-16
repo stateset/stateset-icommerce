@@ -253,9 +253,7 @@ impl WarehouseOps {
 
     /// Get all active locations for a warehouse.
     pub fn get_locations_for_warehouse(&self, warehouse_id: i32) -> Result<Vec<Location>> {
-        self.db
-            .warehouse()
-            .get_locations_for_warehouse(warehouse_id)
+        self.db.warehouse().get_locations_for_warehouse(warehouse_id)
     }
 
     /// Get pickable locations with available inventory for a SKU.
@@ -263,9 +261,7 @@ impl WarehouseOps {
     /// Returns locations that are marked as pickable and have available
     /// (non-reserved) inventory for the specified SKU.
     pub fn get_pickable_locations(&self, warehouse_id: i32, sku: &str) -> Result<Vec<Location>> {
-        self.db
-            .warehouse()
-            .get_pickable_locations(warehouse_id, sku)
+        self.db.warehouse().get_pickable_locations(warehouse_id, sku)
     }
 
     /// Get receivable locations for a warehouse.
@@ -381,19 +377,13 @@ impl WarehouseOps {
     ///
     /// Sums available quantity (on_hand - reserved) across all locations.
     pub fn get_total_available(&self, warehouse_id: i32, sku: &str) -> Result<Decimal> {
-        let inventory = self
-            .db
-            .warehouse()
-            .get_inventory_for_sku(warehouse_id, sku)?;
+        let inventory = self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)?;
         Ok(inventory.iter().map(|i| i.quantity_available).sum())
     }
 
     /// Get total on-hand quantity for a SKU across a warehouse.
     pub fn get_total_on_hand(&self, warehouse_id: i32, sku: &str) -> Result<Decimal> {
-        let inventory = self
-            .db
-            .warehouse()
-            .get_inventory_for_sku(warehouse_id, sku)?;
+        let inventory = self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)?;
         Ok(inventory.iter().map(|i| i.quantity_on_hand).sum())
     }
 

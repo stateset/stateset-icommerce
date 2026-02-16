@@ -36,11 +36,7 @@ impl Commerce {
     pub fn orders(&self) -> Orders {
         #[cfg(feature = "events")]
         {
-            Orders::new(
-                self.db.clone(),
-                self.event_system.clone(),
-                self.metrics.clone(),
-            )
+            Orders::new(self.db.clone(), self.event_system.clone(), self.metrics.clone())
         }
         #[cfg(not(feature = "events"))]
         {
@@ -76,11 +72,7 @@ impl Commerce {
     pub fn inventory(&self) -> Inventory {
         #[cfg(feature = "events")]
         {
-            Inventory::new(
-                self.db.clone(),
-                self.event_system.clone(),
-                self.metrics.clone(),
-            )
+            Inventory::new(self.db.clone(), self.event_system.clone(), self.metrics.clone())
         }
         #[cfg(not(feature = "events"))]
         {
@@ -108,11 +100,7 @@ impl Commerce {
     pub fn customers(&self) -> Customers {
         #[cfg(feature = "events")]
         {
-            Customers::new(
-                self.db.clone(),
-                self.event_system.clone(),
-                self.metrics.clone(),
-            )
+            Customers::new(self.db.clone(), self.event_system.clone(), self.metrics.clone())
         }
         #[cfg(not(feature = "events"))]
         {
@@ -145,11 +133,7 @@ impl Commerce {
     pub fn products(&self) -> Products {
         #[cfg(feature = "events")]
         {
-            Products::new(
-                self.db.clone(),
-                self.event_system.clone(),
-                self.metrics.clone(),
-            )
+            Products::new(self.db.clone(), self.event_system.clone(), self.metrics.clone())
         }
         #[cfg(not(feature = "events"))]
         {
@@ -199,11 +183,7 @@ impl Commerce {
     pub fn returns(&self) -> Returns {
         #[cfg(feature = "events")]
         {
-            Returns::new(
-                self.db.clone(),
-                self.event_system.clone(),
-                self.metrics.clone(),
-            )
+            Returns::new(self.db.clone(), self.event_system.clone(), self.metrics.clone())
         }
         #[cfg(not(feature = "events"))]
         {
@@ -1158,10 +1138,7 @@ impl Commerce {
         use stateset_core::{ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem};
 
         // Get the cart
-        let cart = self
-            .carts()
-            .get(cart_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let cart = self.carts().get(cart_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Need a shipping address to calculate tax
         let shipping_address = cart.shipping_address.ok_or_else(|| {
@@ -1271,10 +1248,7 @@ impl Commerce {
         };
 
         // Get the cart
-        let cart = self
-            .carts()
-            .get(cart_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let cart = self.carts().get(cart_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Convert cart items to PromotionLineItems
         let line_items: Vec<PromotionLineItem> = cart
@@ -1320,11 +1294,8 @@ impl Commerce {
             .collect::<Vec<_>>()
             .join(", ");
 
-        let discount_description = if discount_description.is_empty() {
-            None
-        } else {
-            Some(discount_description)
-        };
+        let discount_description =
+            if discount_description.is_empty() { None } else { Some(discount_description) };
 
         self.carts().update(
             cart_id,

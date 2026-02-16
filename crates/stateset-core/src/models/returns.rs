@@ -3,14 +3,16 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CustomerId, OrderId, OrderItemId, ReturnId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Return entity
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Return {
-    pub id: Uuid,
-    pub order_id: Uuid,
-    pub customer_id: Uuid,
+    pub id: ReturnId,
+    pub order_id: OrderId,
+    pub customer_id: CustomerId,
     pub status: ReturnStatus,
     pub reason: ReturnReason,
     pub reason_details: Option<String>,
@@ -30,8 +32,8 @@ pub struct Return {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReturnItem {
     pub id: Uuid,
-    pub return_id: Uuid,
-    pub order_item_id: Uuid,
+    pub return_id: ReturnId,
+    pub order_item_id: OrderItemId,
     pub sku: String,
     pub name: String,
     pub quantity: i32,
@@ -40,16 +42,20 @@ pub struct ReturnItem {
 }
 
 /// Return status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ReturnStatus {
     Requested,
     Approved,
     Rejected,
+    #[strum(serialize = "in_transit", serialize = "intransit")]
     InTransit,
     Received,
     Inspecting,
     Completed,
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
 }
 
@@ -59,48 +65,22 @@ impl Default for ReturnStatus {
     }
 }
 
-impl std::fmt::Display for ReturnStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Requested => write!(f, "requested"),
-            Self::Approved => write!(f, "approved"),
-            Self::Rejected => write!(f, "rejected"),
-            Self::InTransit => write!(f, "in_transit"),
-            Self::Received => write!(f, "received"),
-            Self::Inspecting => write!(f, "inspecting"),
-            Self::Completed => write!(f, "completed"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
-impl std::str::FromStr for ReturnStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "requested" => Ok(Self::Requested),
-            "approved" => Ok(Self::Approved),
-            "rejected" => Ok(Self::Rejected),
-            "in_transit" | "intransit" => Ok(Self::InTransit),
-            "received" => Ok(Self::Received),
-            "inspecting" => Ok(Self::Inspecting),
-            "completed" => Ok(Self::Completed),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown return status: {}", s)),
-        }
-    }
-}
-
 /// Return reason enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ReturnReason {
     Defective,
+    #[strum(serialize = "wrong_item", serialize = "wrongitem")]
     WrongItem,
+    #[strum(serialize = "not_as_described", serialize = "notasdescribed")]
     NotAsDescribed,
+    #[strum(serialize = "changed_mind", serialize = "changedmind")]
     ChangedMind,
+    #[strum(serialize = "better_price_found", serialize = "betterpricefound")]
     BetterPriceFound,
+    #[strum(serialize = "no_longer_needed", serialize = "nolongerneeded")]
     NoLongerNeeded,
     Damaged,
     Other,
@@ -112,42 +92,11 @@ impl Default for ReturnReason {
     }
 }
 
-impl std::fmt::Display for ReturnReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Defective => write!(f, "defective"),
-            Self::WrongItem => write!(f, "wrong_item"),
-            Self::NotAsDescribed => write!(f, "not_as_described"),
-            Self::ChangedMind => write!(f, "changed_mind"),
-            Self::BetterPriceFound => write!(f, "better_price_found"),
-            Self::NoLongerNeeded => write!(f, "no_longer_needed"),
-            Self::Damaged => write!(f, "damaged"),
-            Self::Other => write!(f, "other"),
-        }
-    }
-}
-
-impl std::str::FromStr for ReturnReason {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "defective" => Ok(Self::Defective),
-            "wrong_item" | "wrongitem" => Ok(Self::WrongItem),
-            "not_as_described" | "notasdescribed" => Ok(Self::NotAsDescribed),
-            "changed_mind" | "changedmind" => Ok(Self::ChangedMind),
-            "better_price_found" | "betterpricefound" => Ok(Self::BetterPriceFound),
-            "no_longer_needed" | "nolongerneeded" => Ok(Self::NoLongerNeeded),
-            "damaged" => Ok(Self::Damaged),
-            "other" => Ok(Self::Other),
-            _ => Err(format!("Unknown return reason: {}", s)),
-        }
-    }
-}
-
 /// Item condition on return
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ItemCondition {
     New,
     Opened,
@@ -161,37 +110,10 @@ impl Default for ItemCondition {
         Self::New
     }
 }
-
-impl std::fmt::Display for ItemCondition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::New => write!(f, "new"),
-            Self::Opened => write!(f, "opened"),
-            Self::Used => write!(f, "used"),
-            Self::Damaged => write!(f, "damaged"),
-            Self::Defective => write!(f, "defective"),
-        }
-    }
-}
-
-impl std::str::FromStr for ItemCondition {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "new" => Ok(Self::New),
-            "opened" => Ok(Self::Opened),
-            "used" => Ok(Self::Used),
-            "damaged" => Ok(Self::Damaged),
-            "defective" => Ok(Self::Defective),
-            _ => Err(format!("Unknown item condition: {}", s)),
-        }
-    }
-}
 /// Input for creating a return
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateReturn {
-    pub order_id: Uuid,
+    pub order_id: OrderId,
     pub reason: ReturnReason,
     pub reason_details: Option<String>,
     pub idempotency_key: Option<String>,
@@ -202,7 +124,7 @@ pub struct CreateReturn {
 impl Default for CreateReturn {
     fn default() -> Self {
         Self {
-            order_id: Uuid::nil(),
+            order_id: OrderId::from_uuid(Uuid::nil()),
             reason: ReturnReason::Other,
             reason_details: None,
             idempotency_key: None,
@@ -215,18 +137,14 @@ impl Default for CreateReturn {
 /// Input for creating a return item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateReturnItem {
-    pub order_item_id: Uuid,
+    pub order_item_id: OrderItemId,
     pub quantity: i32,
     pub condition: Option<ItemCondition>,
 }
 
 impl Default for CreateReturnItem {
     fn default() -> Self {
-        Self {
-            order_item_id: Uuid::nil(),
-            quantity: 0,
-            condition: None,
-        }
+        Self { order_item_id: OrderItemId::from_uuid(Uuid::nil()), quantity: 0, condition: None }
     }
 }
 
@@ -243,8 +161,8 @@ pub struct UpdateReturn {
 /// Return filter for querying
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReturnFilter {
-    pub order_id: Option<Uuid>,
-    pub customer_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
+    pub customer_id: Option<CustomerId>,
     pub status: Option<ReturnStatus>,
     pub reason: Option<ReturnReason>,
     pub from_date: Option<DateTime<Utc>>,
@@ -266,10 +184,7 @@ impl Return {
 
     /// Check if return can be completed
     pub fn can_complete(&self) -> bool {
-        matches!(
-            self.status,
-            ReturnStatus::Received | ReturnStatus::Inspecting
-        )
+        matches!(self.status, ReturnStatus::Received | ReturnStatus::Inspecting)
     }
 
     /// Check if refund is eligible based on reason
@@ -291,34 +206,16 @@ mod tests {
 
     #[test]
     fn test_return_status_from_str() {
-        assert_eq!(
-            ReturnStatus::from_str("in_transit").unwrap(),
-            ReturnStatus::InTransit
-        );
-        assert_eq!(
-            ReturnStatus::from_str("intransit").unwrap(),
-            ReturnStatus::InTransit
-        );
-        assert_eq!(
-            ReturnStatus::from_str("canceled").unwrap(),
-            ReturnStatus::Cancelled
-        );
+        assert_eq!(ReturnStatus::from_str("in_transit").unwrap(), ReturnStatus::InTransit);
+        assert_eq!(ReturnStatus::from_str("intransit").unwrap(), ReturnStatus::InTransit);
+        assert_eq!(ReturnStatus::from_str("canceled").unwrap(), ReturnStatus::Cancelled);
     }
 
     #[test]
     fn test_return_reason_from_str() {
-        assert_eq!(
-            ReturnReason::from_str("wrong_item").unwrap(),
-            ReturnReason::WrongItem
-        );
-        assert_eq!(
-            ReturnReason::from_str("wrongitem").unwrap(),
-            ReturnReason::WrongItem
-        );
-        assert_eq!(
-            ReturnReason::from_str("notasdescribed").unwrap(),
-            ReturnReason::NotAsDescribed
-        );
+        assert_eq!(ReturnReason::from_str("wrong_item").unwrap(), ReturnReason::WrongItem);
+        assert_eq!(ReturnReason::from_str("wrongitem").unwrap(), ReturnReason::WrongItem);
+        assert_eq!(ReturnReason::from_str("notasdescribed").unwrap(), ReturnReason::NotAsDescribed);
         assert_eq!(
             ReturnReason::from_str("no_longer_needed").unwrap(),
             ReturnReason::NoLongerNeeded
@@ -327,13 +224,7 @@ mod tests {
 
     #[test]
     fn test_item_condition_from_str() {
-        assert_eq!(
-            ItemCondition::from_str("opened").unwrap(),
-            ItemCondition::Opened
-        );
-        assert_eq!(
-            ItemCondition::from_str("damaged").unwrap(),
-            ItemCondition::Damaged
-        );
+        assert_eq!(ItemCondition::from_str("opened").unwrap(), ItemCondition::Opened);
+        assert_eq!(ItemCondition::from_str("damaged").unwrap(), ItemCondition::Damaged);
     }
 }

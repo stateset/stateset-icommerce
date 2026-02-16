@@ -163,9 +163,7 @@ pub struct Saga {
 impl Saga {
     /// Create a new saga
     pub fn new() -> Self {
-        Self {
-            handle: TransactionHandle::new(),
-        }
+        Self { handle: TransactionHandle::new() }
     }
 
     /// Add a step to the saga
@@ -194,9 +192,7 @@ pub struct TransactionBuilder {
 impl TransactionBuilder {
     /// Create a new transaction builder
     pub fn new() -> Self {
-        Self {
-            operations: Vec::new(),
-        }
+        Self { operations: Vec::new() }
     }
 
     /// Add an operation to the batch.
@@ -239,9 +235,7 @@ mod tests {
             *self.executed.lock().unwrap() = true;
             // Simulate failure for testing
             if self.name.contains("fail") {
-                Err(TransactionError::TransactionFailed(
-                    "Simulated failure".into(),
-                ))
+                Err(TransactionError::TransactionFailed("Simulated failure".into()))
             } else {
                 Ok(())
             }

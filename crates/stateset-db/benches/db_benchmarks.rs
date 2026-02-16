@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo bench --package stateset-db
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rust_decimal_macros::dec;
 use std::sync::Arc;
 use std::thread;
@@ -32,10 +32,7 @@ fn setup_database_with_max_connections(max_connections: u32) -> BenchDb {
     let mut config = DatabaseConfig::sqlite(path.to_str().expect("Temp path is not valid UTF-8"));
     config.max_connections = max_connections;
     let db = SqliteDatabase::new(&config).expect("Failed to create benchmark database");
-    BenchDb {
-        _dir: dir,
-        db: Arc::new(db),
-    }
+    BenchDb { _dir: dir, db: Arc::new(db) }
 }
 
 fn create_test_customer(idx: usize) -> CreateCustomer {
@@ -122,9 +119,7 @@ fn benchmark_customer_create(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             idx += 1;
-            customers
-                .create(black_box(create_test_customer(idx)))
-                .unwrap()
+            customers.create(black_box(create_test_customer(idx))).unwrap()
         });
     });
 
@@ -152,11 +147,7 @@ fn benchmark_customer_read(c: &mut Criterion) {
     });
 
     group.bench_function("list_all", |b| {
-        b.iter(|| {
-            customers
-                .list(black_box(CustomerFilter::default()))
-                .unwrap()
-        });
+        b.iter(|| customers.list(black_box(CustomerFilter::default())).unwrap());
     });
 
     group.finish();
@@ -194,9 +185,7 @@ fn benchmark_product_create(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             idx += 1;
-            products
-                .create(black_box(create_test_product(idx)))
-                .unwrap()
+            products.create(black_box(create_test_product(idx))).unwrap()
         });
     });
 
@@ -249,9 +238,7 @@ fn benchmark_inventory_create(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             idx += 1;
-            inventory
-                .create_item(black_box(create_test_inventory_item(idx)))
-                .unwrap()
+            inventory.create_item(black_box(create_test_inventory_item(idx))).unwrap()
         });
     });
 
@@ -265,9 +252,7 @@ fn benchmark_inventory_operations(c: &mut Criterion) {
     let db = setup_database();
     let inventory = db.inventory();
     for i in 0..50 {
-        inventory
-            .create_item(create_test_inventory_item(i))
-            .unwrap();
+        inventory.create_item(create_test_inventory_item(i)).unwrap();
     }
 
     group.bench_function("get_stock", |b| {
@@ -306,9 +291,7 @@ fn benchmark_inventory_reservation(c: &mut Criterion) {
     let db = setup_database();
     let inventory = db.inventory();
     for i in 0..10 {
-        inventory
-            .create_item(create_test_inventory_item(i))
-            .unwrap();
+        inventory.create_item(create_test_inventory_item(i)).unwrap();
     }
 
     group.bench_function("reserve_and_release", |b| {
@@ -410,11 +393,7 @@ fn benchmark_order_create(c: &mut Criterion) {
             item_count,
             |b, &count| {
                 let orders = db.orders();
-                b.iter(|| {
-                    orders
-                        .create(black_box(create_test_order(customer.id, count)))
-                        .unwrap()
-                });
+                b.iter(|| orders.create(black_box(create_test_order(customer.id, count))).unwrap());
             },
         );
     }
@@ -476,20 +455,14 @@ fn benchmark_order_lifecycle(c: &mut Criterion) {
             orders
                 .update(
                     order.id,
-                    UpdateOrder {
-                        status: Some(OrderStatus::Confirmed),
-                        ..Default::default()
-                    },
+                    UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
                 )
                 .unwrap();
 
             orders
                 .update(
                     order.id,
-                    UpdateOrder {
-                        payment_status: Some(PaymentStatus::Paid),
-                        ..Default::default()
-                    },
+                    UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
                 )
                 .unwrap();
 
@@ -561,9 +534,8 @@ fn benchmark_batch_operations(c: &mut Criterion) {
                     let db = setup_database();
                     let customer = db.customers().create(create_test_customer(0)).unwrap();
                     let orders = db.orders();
-                    let inputs: Vec<CreateOrder> = (0..size)
-                        .map(|_| create_test_order(customer.id, 3))
-                        .collect();
+                    let inputs: Vec<CreateOrder> =
+                        (0..size).map(|_| create_test_order(customer.id, 3)).collect();
                     orders.create_batch_atomic(inputs).unwrap()
                 });
             },
@@ -591,16 +563,11 @@ fn benchmark_mixed_workload(c: &mut Criterion) {
 
             // Create inventory
             for i in 0..5 {
-                db.inventory()
-                    .create_item(create_test_inventory_item(i))
-                    .unwrap();
+                db.inventory().create_item(create_test_inventory_item(i)).unwrap();
             }
 
             // Create order
-            let order = db
-                .orders()
-                .create(create_test_order(customer.id, 3))
-                .unwrap();
+            let order = db.orders().create(create_test_order(customer.id, 3)).unwrap();
 
             // Read operations
             db.customers().get(customer.id).unwrap();

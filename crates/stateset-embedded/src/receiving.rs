@@ -318,9 +318,7 @@ impl Receiving {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_receipt_from_po(&self, po_id: Uuid, warehouse_id: i32) -> Result<Receipt> {
-        self.db
-            .receiving()
-            .create_receipt_from_po(po_id, warehouse_id)
+        self.db.receiving().create_receipt_from_po(po_id, warehouse_id)
     }
 
     // ========================================================================

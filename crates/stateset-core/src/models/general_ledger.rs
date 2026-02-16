@@ -21,6 +21,7 @@ use uuid::Uuid;
 /// GL Account type (follows standard accounting)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AccountType {
     Asset,
     Liability,
@@ -68,10 +69,7 @@ impl AccountType {
 
     /// Returns true if this account type appears on the Balance Sheet
     pub fn is_balance_sheet(&self) -> bool {
-        matches!(
-            self,
-            AccountType::Asset | AccountType::Liability | AccountType::Equity
-        )
+        matches!(self, AccountType::Asset | AccountType::Liability | AccountType::Equity)
     }
 
     /// Returns true if this account type appears on the Income Statement
@@ -83,6 +81,7 @@ impl AccountType {
 /// Balance side (debit or credit)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum BalanceSide {
     #[default]
     Debit,
@@ -112,6 +111,7 @@ impl FromStr for BalanceSide {
 /// Account sub-types for more granular classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AccountSubType {
     // Assets
     Cash,
@@ -229,6 +229,7 @@ impl FromStr for AccountSubType {
 /// Account status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AccountStatus {
     #[default]
     Active,
@@ -265,6 +266,7 @@ impl FromStr for AccountStatus {
 /// GL Period status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PeriodStatus {
     #[default]
     Future,
@@ -300,6 +302,7 @@ impl FromStr for PeriodStatus {
 /// Journal entry type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JournalEntryType {
     #[default]
     Standard,
@@ -338,6 +341,7 @@ impl FromStr for JournalEntryType {
 /// Journal entry source
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JournalEntrySource {
     #[default]
     Manual,
@@ -388,6 +392,7 @@ impl FromStr for JournalEntrySource {
 /// Journal entry status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JournalEntryStatus {
     #[default]
     Draft,

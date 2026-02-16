@@ -123,6 +123,7 @@ pub struct CostRollup {
 /// Inventory costing method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CostMethod {
     #[default]
     Average,
@@ -161,6 +162,7 @@ impl FromStr for CostMethod {
 /// Source of a cost layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CostLayerSource {
     #[default]
     Purchase,
@@ -199,6 +201,7 @@ impl FromStr for CostLayerSource {
 /// Cost transaction type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CostTransactionType {
     #[default]
     Receipt,
@@ -237,6 +240,7 @@ impl FromStr for CostTransactionType {
 /// Variance type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum VarianceType {
     #[default]
     Purchase,
@@ -278,6 +282,7 @@ impl FromStr for VarianceType {
 /// Cost adjustment type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CostAdjustmentType {
     #[default]
     StandardCostUpdate,
@@ -315,6 +320,7 @@ impl FromStr for CostAdjustmentType {
 /// Cost adjustment status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CostAdjustmentStatus {
     #[default]
     Pending,
@@ -510,32 +516,20 @@ mod tests {
     #[test]
     fn test_cost_method_from_str() {
         assert_eq!(CostMethod::from_str("avg").unwrap(), CostMethod::Average);
-        assert_eq!(
-            CostMethod::from_str("standard").unwrap(),
-            CostMethod::Standard
-        );
+        assert_eq!(CostMethod::from_str("standard").unwrap(), CostMethod::Standard);
         assert!(CostMethod::from_str("nope").is_err());
     }
 
     #[test]
     fn test_cost_layer_source_from_str() {
-        assert_eq!(
-            CostLayerSource::from_str("opening_balance").unwrap(),
-            CostLayerSource::Opening
-        );
-        assert_eq!(
-            CostLayerSource::from_str("transfer").unwrap(),
-            CostLayerSource::Transfer
-        );
+        assert_eq!(CostLayerSource::from_str("opening_balance").unwrap(), CostLayerSource::Opening);
+        assert_eq!(CostLayerSource::from_str("transfer").unwrap(), CostLayerSource::Transfer);
         assert!(CostLayerSource::from_str("nope").is_err());
     }
 
     #[test]
     fn test_cost_transaction_type_from_str() {
-        assert_eq!(
-            CostTransactionType::from_str("receipt").unwrap(),
-            CostTransactionType::Receipt
-        );
+        assert_eq!(CostTransactionType::from_str("receipt").unwrap(), CostTransactionType::Receipt);
         assert_eq!(
             CostTransactionType::from_str("revaluation").unwrap(),
             CostTransactionType::Revaluation
@@ -545,14 +539,8 @@ mod tests {
 
     #[test]
     fn test_variance_type_from_str() {
-        assert_eq!(
-            VarianceType::from_str("material").unwrap(),
-            VarianceType::Material
-        );
-        assert_eq!(
-            VarianceType::from_str("volume").unwrap(),
-            VarianceType::Volume
-        );
+        assert_eq!(VarianceType::from_str("material").unwrap(), VarianceType::Material);
+        assert_eq!(VarianceType::from_str("volume").unwrap(), VarianceType::Volume);
         assert!(VarianceType::from_str("nope").is_err());
     }
 
@@ -562,10 +550,7 @@ mod tests {
             CostAdjustmentType::from_str("standardcostupdate").unwrap(),
             CostAdjustmentType::StandardCostUpdate
         );
-        assert_eq!(
-            CostAdjustmentType::from_str("writeoff").unwrap(),
-            CostAdjustmentType::WriteOff
-        );
+        assert_eq!(CostAdjustmentType::from_str("writeoff").unwrap(), CostAdjustmentType::WriteOff);
         assert!(CostAdjustmentType::from_str("nope").is_err());
     }
 

@@ -1,6 +1,7 @@
 //! Integration tests for Order management
 
 use rust_decimal_macros::dec;
+use stateset_core::{CustomerId, OrderId};
 use stateset_embedded::{
     Address, BackorderStatus, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder,
     CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderStatus, PaymentStatus,
@@ -13,8 +14,8 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Helper to create a test customer
-fn create_test_customer(commerce: &Commerce) -> Uuid {
-    commerce
+fn create_test_customer(commerce: &Commerce) -> CustomerId {
+    let customer = commerce
         .customers()
         .create(CreateCustomer {
             email: format!("test-{}@example.com", Uuid::new_v4()),
@@ -22,18 +23,18 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
             last_name: "User".into(),
             ..Default::default()
         })
-        .expect("Failed to create test customer")
-        .id
+        .expect("Failed to create test customer");
+    customer.id.into()
 }
 
 /// Helper to create a test order with default items
-fn create_test_order(commerce: &Commerce, customer_id: Uuid) -> Order {
+fn create_test_order(commerce: &Commerce, customer_id: CustomerId) -> Order {
     commerce
         .orders()
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 2,
@@ -71,7 +72,7 @@ fn test_create_order_basic() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 2,
@@ -103,7 +104,7 @@ fn test_create_order_with_multiple_items() {
             customer_id,
             items: vec![
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-001".into(),
                     name: "Widget".into(),
                     quantity: 2,
@@ -111,7 +112,7 @@ fn test_create_order_with_multiple_items() {
                     ..Default::default()
                 },
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-002".into(),
                     name: "Gadget".into(),
                     quantity: 1,
@@ -119,7 +120,7 @@ fn test_create_order_with_multiple_items() {
                     ..Default::default()
                 },
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-003".into(),
                     name: "Accessory".into(),
                     quantity: 3,
@@ -151,7 +152,7 @@ fn test_order_total_calculation() {
             customer_id,
             items: vec![
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-001".into(),
                     name: "Widget".into(),
                     quantity: 2,
@@ -159,7 +160,7 @@ fn test_order_total_calculation() {
                     ..Default::default()
                 },
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-002".into(),
                     name: "Gadget".into(),
                     quantity: 1,
@@ -198,7 +199,7 @@ fn test_create_order_with_addresses() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -233,7 +234,7 @@ fn test_create_order_with_currency() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -258,7 +259,7 @@ fn test_create_order_with_notes() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -283,7 +284,7 @@ fn test_create_order_with_payment_method() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -308,7 +309,7 @@ fn test_create_order_with_shipping_method() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -333,11 +334,8 @@ fn test_get_order_by_id() {
     let customer_id = create_test_customer(&commerce);
     let created = create_test_order(&commerce, customer_id);
 
-    let retrieved = commerce
-        .orders()
-        .get(created.id)
-        .expect("Failed to get order")
-        .expect("Order not found");
+    let retrieved =
+        commerce.orders().get(created.id).expect("Failed to get order").expect("Order not found");
 
     assert_eq!(retrieved.id, created.id);
     assert_eq!(retrieved.order_number, created.order_number);
@@ -348,10 +346,7 @@ fn test_get_order_by_id() {
 fn test_get_order_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce
-        .orders()
-        .get(Uuid::new_v4())
-        .expect("Should not error for missing order");
+    let result = commerce.orders().get(OrderId::from(Uuid::new_v4())).expect("Should not error for missing order");
 
     assert!(result.is_none());
 }
@@ -398,10 +393,7 @@ fn test_list_orders() {
         create_test_order(&commerce, customer_id);
     }
 
-    let orders = commerce
-        .orders()
-        .list(OrderFilter::default())
-        .expect("Failed to list orders");
+    let orders = commerce.orders().list(OrderFilter::default()).expect("Failed to list orders");
 
     assert!(orders.len() >= 5);
 }
@@ -426,10 +418,7 @@ fn test_list_orders_by_customer() {
     // List only customer1's orders
     let customer1_orders = commerce
         .orders()
-        .list(OrderFilter {
-            customer_id: Some(customer1),
-            ..Default::default()
-        })
+        .list(OrderFilter { customer_id: Some(customer1), ..Default::default() })
         .expect("Failed to list orders");
 
     assert_eq!(customer1_orders.len(), 3);
@@ -438,10 +427,7 @@ fn test_list_orders_by_customer() {
     // List only customer2's orders
     let customer2_orders = commerce
         .orders()
-        .list(OrderFilter {
-            customer_id: Some(customer2),
-            ..Default::default()
-        })
+        .list(OrderFilter { customer_id: Some(customer2), ..Default::default() })
         .expect("Failed to list orders");
 
     assert_eq!(customer2_orders.len(), 2);
@@ -464,10 +450,8 @@ fn test_list_orders_for_customer() {
     create_test_order(&commerce, customer2);
 
     // Use the convenience method
-    let orders = commerce
-        .orders()
-        .list_for_customer(customer1)
-        .expect("Failed to list orders for customer");
+    let orders =
+        commerce.orders().list_for_customer(customer1).expect("Failed to list orders for customer");
 
     assert_eq!(orders.len(), 4);
     assert!(orders.iter().all(|o| o.customer_id == customer1));
@@ -496,29 +480,19 @@ fn test_list_orders_by_status() {
     // List pending orders
     let pending_orders = commerce
         .orders()
-        .list(OrderFilter {
-            status: Some(OrderStatus::Pending),
-            ..Default::default()
-        })
+        .list(OrderFilter { status: Some(OrderStatus::Pending), ..Default::default() })
         .expect("Failed to list orders");
 
-    assert!(pending_orders
-        .iter()
-        .all(|o| o.status == OrderStatus::Pending));
+    assert!(pending_orders.iter().all(|o| o.status == OrderStatus::Pending));
 
     // List confirmed orders
     let confirmed_orders = commerce
         .orders()
-        .list(OrderFilter {
-            status: Some(OrderStatus::Confirmed),
-            ..Default::default()
-        })
+        .list(OrderFilter { status: Some(OrderStatus::Confirmed), ..Default::default() })
         .expect("Failed to list orders");
 
     assert_eq!(confirmed_orders.len(), 2);
-    assert!(confirmed_orders
-        .iter()
-        .all(|o| o.status == OrderStatus::Confirmed));
+    assert!(confirmed_orders.iter().all(|o| o.status == OrderStatus::Confirmed));
 }
 
 #[test]
@@ -533,10 +507,7 @@ fn test_list_orders_with_limit() {
 
     let orders = commerce
         .orders()
-        .list(OrderFilter {
-            limit: Some(5),
-            ..Default::default()
-        })
+        .list(OrderFilter { limit: Some(5), ..Default::default() })
         .expect("Failed to list orders");
 
     assert_eq!(orders.len(), 5);
@@ -554,11 +525,7 @@ fn test_list_orders_with_offset() {
 
     let orders = commerce
         .orders()
-        .list(OrderFilter {
-            limit: Some(5),
-            offset: Some(3),
-            ..Default::default()
-        })
+        .list(OrderFilter { limit: Some(5), offset: Some(3), ..Default::default() })
         .expect("Failed to list orders");
 
     assert!(orders.len() <= 5);
@@ -574,10 +541,7 @@ fn test_count_orders() {
         create_test_order(&commerce, customer_id);
     }
 
-    let count = commerce
-        .orders()
-        .count(OrderFilter::default())
-        .expect("Failed to count orders");
+    let count = commerce.orders().count(OrderFilter::default()).expect("Failed to count orders");
 
     assert!(count >= 7);
 }
@@ -599,10 +563,7 @@ fn test_count_orders_by_customer() {
 
     let count = commerce
         .orders()
-        .count(OrderFilter {
-            customer_id: Some(customer1),
-            ..Default::default()
-        })
+        .count(OrderFilter { customer_id: Some(customer1), ..Default::default() })
         .expect("Failed to count orders");
 
     assert_eq!(count, 5);
@@ -634,10 +595,7 @@ fn test_order_cancel() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
-    let cancelled = commerce
-        .orders()
-        .cancel(order.id)
-        .expect("Failed to cancel order");
+    let cancelled = commerce.orders().cancel(order.id).expect("Failed to cancel order");
 
     assert_eq!(cancelled.status, OrderStatus::Cancelled);
 }
@@ -657,10 +615,8 @@ fn test_order_ship() {
         .update_status(order.id, OrderStatus::Processing)
         .expect("Failed to process order");
 
-    let shipped = commerce
-        .orders()
-        .ship(order.id, Some("1Z999AA10123456784"))
-        .expect("Failed to ship order");
+    let shipped =
+        commerce.orders().ship(order.id, Some("1Z999AA10123456784")).expect("Failed to ship order");
 
     assert_eq!(shipped.status, OrderStatus::Shipped);
     assert_eq!(shipped.tracking_number, Some("1Z999AA10123456784".into()));
@@ -681,10 +637,7 @@ fn test_order_ship_without_tracking() {
         .update_status(order.id, OrderStatus::Processing)
         .expect("Failed to process order");
 
-    let shipped = commerce
-        .orders()
-        .ship(order.id, None)
-        .expect("Failed to ship order");
+    let shipped = commerce.orders().ship(order.id, None).expect("Failed to ship order");
 
     assert_eq!(shipped.status, OrderStatus::Shipped);
     assert!(shipped.tracking_number.is_none());
@@ -706,16 +659,10 @@ fn test_order_deliver() {
         .expect("Failed to process order");
 
     // Ship first
-    commerce
-        .orders()
-        .ship(order.id, Some("TRACK123"))
-        .expect("Failed to ship order");
+    commerce.orders().ship(order.id, Some("TRACK123")).expect("Failed to ship order");
 
     // Then deliver
-    let delivered = commerce
-        .orders()
-        .deliver(order.id)
-        .expect("Failed to deliver order");
+    let delivered = commerce.orders().deliver(order.id).expect("Failed to deliver order");
 
     assert_eq!(delivered.status, OrderStatus::Delivered);
 }
@@ -741,10 +688,8 @@ fn test_order_status_transitions() {
     assert_eq!(order.status, OrderStatus::Processing);
 
     // Processing -> Shipped
-    let order = commerce
-        .orders()
-        .update_status(order.id, OrderStatus::Shipped)
-        .expect("Failed to ship");
+    let order =
+        commerce.orders().update_status(order.id, OrderStatus::Shipped).expect("Failed to ship");
     assert_eq!(order.status, OrderStatus::Shipped);
 
     // Shipped -> Delivered
@@ -769,10 +714,7 @@ fn test_update_order_tracking_number() {
         .orders()
         .update(
             order.id,
-            UpdateOrder {
-                tracking_number: Some("FEDEX123456".into()),
-                ..Default::default()
-            },
+            UpdateOrder { tracking_number: Some("FEDEX123456".into()), ..Default::default() },
         )
         .expect("Failed to update order");
 
@@ -796,10 +738,7 @@ fn test_update_order_notes() {
         )
         .expect("Failed to update order");
 
-    assert_eq!(
-        updated.notes,
-        Some("Updated: Customer requested expedited handling".into())
-    );
+    assert_eq!(updated.notes, Some("Updated: Customer requested expedited handling".into()));
 }
 
 #[test]
@@ -812,10 +751,7 @@ fn test_update_order_payment_status() {
         .orders()
         .update(
             order.id,
-            UpdateOrder {
-                payment_status: Some(PaymentStatus::Paid),
-                ..Default::default()
-            },
+            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
         )
         .expect("Failed to update order");
 
@@ -861,16 +797,11 @@ fn test_update_order_shipping_address() {
         .orders()
         .update(
             order.id,
-            UpdateOrder {
-                shipping_address: Some(new_address.clone()),
-                ..Default::default()
-            },
+            UpdateOrder { shipping_address: Some(new_address.clone()), ..Default::default() },
         )
         .expect("Failed to update order");
 
-    let addr = updated
-        .shipping_address
-        .expect("Should have shipping address");
+    let addr = updated.shipping_address.expect("Should have shipping address");
     assert_eq!(addr.line1, "999 New Street");
     assert_eq!(addr.city, "New York");
 }
@@ -921,7 +852,7 @@ fn test_order_items_included() {
             customer_id,
             items: vec![
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-001".into(),
                     name: "Widget A".into(),
                     quantity: 2,
@@ -929,7 +860,7 @@ fn test_order_items_included() {
                     ..Default::default()
                 },
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-002".into(),
                     name: "Widget B".into(),
                     quantity: 1,
@@ -968,7 +899,7 @@ fn test_add_item_to_order() {
         .add_item(
             order.id,
             CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "NEW-SKU-001".into(),
                 name: "New Product".into(),
                 quantity: 3,
@@ -986,11 +917,8 @@ fn test_add_item_to_order() {
     assert_eq!(new_item.order_id, order.id);
 
     // Verify the order now has 2 items
-    let updated_order = commerce
-        .orders()
-        .get(order.id)
-        .expect("Failed to get order")
-        .expect("Order not found");
+    let updated_order =
+        commerce.orders().get(order.id).expect("Failed to get order").expect("Order not found");
     assert_eq!(updated_order.items.len(), 2);
 }
 
@@ -1005,7 +933,7 @@ fn test_remove_item_from_order() {
             customer_id,
             items: vec![
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-001".into(),
                     name: "Widget A".into(),
                     quantity: 2,
@@ -1013,7 +941,7 @@ fn test_remove_item_from_order() {
                     ..Default::default()
                 },
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "SKU-002".into(),
                     name: "Widget B".into(),
                     quantity: 1,
@@ -1029,17 +957,11 @@ fn test_remove_item_from_order() {
 
     // Remove the first item
     let item_to_remove = &order.items[0];
-    commerce
-        .orders()
-        .remove_item(order.id, item_to_remove.id)
-        .expect("Failed to remove item");
+    commerce.orders().remove_item(order.id, item_to_remove.id).expect("Failed to remove item");
 
     // Verify the order now has 1 item
-    let updated_order = commerce
-        .orders()
-        .get(order.id)
-        .expect("Failed to get order")
-        .expect("Order not found");
+    let updated_order =
+        commerce.orders().get(order.id).expect("Failed to get order").expect("Order not found");
     assert_eq!(updated_order.items.len(), 1);
 }
 
@@ -1053,7 +975,7 @@ fn test_order_item_with_discount() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 2,
@@ -1079,7 +1001,7 @@ fn test_order_item_with_tax() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 2,
@@ -1105,16 +1027,10 @@ fn test_delete_order() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
-    commerce
-        .orders()
-        .delete(order.id)
-        .expect("Failed to delete order");
+    commerce.orders().delete(order.id).expect("Failed to delete order");
 
     // Verify order is deleted
-    let result = commerce
-        .orders()
-        .get(order.id)
-        .expect("Should not error for deleted order");
+    let result = commerce.orders().get(order.id).expect("Should not error for deleted order");
     assert!(result.is_none());
 }
 
@@ -1132,7 +1048,7 @@ fn test_create_order_default_currency() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -1160,13 +1076,7 @@ fn test_order_version_tracking() {
     // Update the order
     let updated = commerce
         .orders()
-        .update(
-            order.id,
-            UpdateOrder {
-                notes: Some("Updated notes".into()),
-                ..Default::default()
-            },
-        )
+        .update(order.id, UpdateOrder { notes: Some("Updated notes".into()), ..Default::default() })
         .expect("Failed to update order");
 
     // Version should be incremented
@@ -1212,7 +1122,7 @@ fn test_order_with_large_quantities() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "BULK-SKU".into(),
                 name: "Bulk Product".into(),
                 quantity: 10000,
@@ -1237,7 +1147,7 @@ fn test_order_with_high_value_items() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "LUXURY-SKU".into(),
                 name: "Luxury Item".into(),
                 quantity: 1,
@@ -1267,10 +1177,7 @@ fn test_order_payment_status_transitions() {
         .orders()
         .update(
             order.id,
-            UpdateOrder {
-                payment_status: Some(PaymentStatus::Authorized),
-                ..Default::default()
-            },
+            UpdateOrder { payment_status: Some(PaymentStatus::Authorized), ..Default::default() },
         )
         .expect("Failed to update");
     assert_eq!(order.payment_status, PaymentStatus::Authorized);
@@ -1280,10 +1187,7 @@ fn test_order_payment_status_transitions() {
         .orders()
         .update(
             order.id,
-            UpdateOrder {
-                payment_status: Some(PaymentStatus::Paid),
-                ..Default::default()
-            },
+            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
         )
         .expect("Failed to update");
     assert_eq!(order.payment_status, PaymentStatus::Paid);
@@ -1319,10 +1223,7 @@ fn test_order_payment_failed() {
         .orders()
         .update(
             order.id,
-            UpdateOrder {
-                payment_status: Some(PaymentStatus::Failed),
-                ..Default::default()
-            },
+            UpdateOrder { payment_status: Some(PaymentStatus::Failed), ..Default::default() },
         )
         .expect("Failed to update");
 
@@ -1350,10 +1251,7 @@ fn test_order_fulfillment_status_transitions() {
             },
         )
         .expect("Failed to update");
-    assert_eq!(
-        order.fulfillment_status,
-        FulfillmentStatus::PartiallyFulfilled
-    );
+    assert_eq!(order.fulfillment_status, FulfillmentStatus::PartiallyFulfilled);
 
     // PartiallyFulfilled -> Fulfilled
     let order = commerce
@@ -1413,10 +1311,7 @@ fn test_list_orders_by_payment_status() {
         .orders()
         .update(
             order1.id,
-            UpdateOrder {
-                payment_status: Some(PaymentStatus::Paid),
-                ..Default::default()
-            },
+            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
         )
         .expect("Failed to update");
 
@@ -1424,10 +1319,7 @@ fn test_list_orders_by_payment_status() {
         .orders()
         .update(
             order2.id,
-            UpdateOrder {
-                payment_status: Some(PaymentStatus::Paid),
-                ..Default::default()
-            },
+            UpdateOrder { payment_status: Some(PaymentStatus::Paid), ..Default::default() },
         )
         .expect("Failed to update");
 
@@ -1437,17 +1329,12 @@ fn test_list_orders_by_payment_status() {
     // (payment_status filter may not be implemented at the DB level)
     let all_orders = commerce
         .orders()
-        .list(OrderFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
+        .list(OrderFilter { customer_id: Some(customer_id), ..Default::default() })
         .expect("Failed to list orders");
 
     // Manually filter by payment status
-    let paid_orders: Vec<_> = all_orders
-        .iter()
-        .filter(|o| o.payment_status == PaymentStatus::Paid)
-        .collect();
+    let paid_orders: Vec<_> =
+        all_orders.iter().filter(|o| o.payment_status == PaymentStatus::Paid).collect();
 
     // Should have exactly 2 paid orders for this customer
     assert_eq!(paid_orders.len(), 2);
@@ -1484,10 +1371,7 @@ fn test_list_orders_by_fulfillment_status() {
     // (fulfillment_status filter may not be implemented at the DB level)
     let all_orders = commerce
         .orders()
-        .list(OrderFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
+        .list(OrderFilter { customer_id: Some(customer_id), ..Default::default() })
         .expect("Failed to list orders");
 
     // Manually filter by fulfillment status
@@ -1530,10 +1414,7 @@ fn test_list_orders_with_combined_filters() {
         .orders()
         .update(
             order2.id,
-            UpdateOrder {
-                status: Some(OrderStatus::Confirmed),
-                ..Default::default()
-            },
+            UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
         )
         .expect("Failed to update");
 
@@ -1556,10 +1437,8 @@ fn test_list_orders_with_combined_filters() {
     assert!(!confirmed_orders.iter().any(|o| o.id == order3.id));
 
     // Further filter in code by payment status (not supported at DB level)
-    let confirmed_and_paid: Vec<_> = confirmed_orders
-        .iter()
-        .filter(|o| o.payment_status == PaymentStatus::Paid)
-        .collect();
+    let confirmed_and_paid: Vec<_> =
+        confirmed_orders.iter().filter(|o| o.payment_status == PaymentStatus::Paid).collect();
 
     assert_eq!(confirmed_and_paid.len(), 1);
     assert_eq!(confirmed_and_paid[0].id, order1.id);
@@ -1589,7 +1468,7 @@ fn test_order_creates_backorder_when_insufficient_stock() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "BO-SKU-001".into(),
                 name: "Backorder Item".into(),
                 quantity: 5,
@@ -1600,10 +1479,8 @@ fn test_order_creates_backorder_when_insufficient_stock() {
         })
         .expect("Failed to create order");
 
-    let backorders = commerce
-        .backorder()
-        .get_backorders_for_order(order.id)
-        .expect("Failed to load backorders");
+    let backorders =
+        commerce.backorder().get_backorders_for_order(order.id.into()).expect("Failed to load backorders");
     assert_eq!(backorders.len(), 1);
     assert_eq!(backorders[0].status, BackorderStatus::Pending);
     assert_eq!(backorders[0].quantity_remaining, dec!(3));
@@ -1637,7 +1514,7 @@ fn test_cancel_releases_reservations_and_cancels_backorders() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "BO-SKU-002".into(),
                 name: "Backorder Item".into(),
                 quantity: 3,
@@ -1648,27 +1525,18 @@ fn test_cancel_releases_reservations_and_cancels_backorders() {
         })
         .expect("Failed to create order");
 
-    let cancelled = commerce
-        .orders()
-        .cancel(order.id)
-        .expect("Failed to cancel order");
+    let cancelled = commerce.orders().cancel(order.id).expect("Failed to cancel order");
     assert_eq!(cancelled.status, OrderStatus::Cancelled);
 
     let reservations = commerce
         .inventory()
         .list_reservations_by_reference("order", &order.id.to_string())
         .expect("Failed to load reservations");
-    assert!(reservations
-        .iter()
-        .all(|r| r.status == ReservationStatus::Released));
+    assert!(reservations.iter().all(|r| r.status == ReservationStatus::Released));
 
-    let backorders = commerce
-        .backorder()
-        .get_backorders_for_order(order.id)
-        .expect("Failed to load backorders");
-    assert!(backorders
-        .iter()
-        .all(|bo| bo.status == BackorderStatus::Cancelled));
+    let backorders =
+        commerce.backorder().get_backorders_for_order(order.id.into()).expect("Failed to load backorders");
+    assert!(backorders.iter().all(|bo| bo.status == BackorderStatus::Cancelled));
 }
 
 #[test]
@@ -1691,7 +1559,7 @@ fn test_ship_confirms_reservations() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SHIP-SKU-001".into(),
                 name: "Shippable Item".into(),
                 quantity: 2,
@@ -1702,17 +1570,12 @@ fn test_ship_confirms_reservations() {
         })
         .expect("Failed to create order");
 
-    commerce
-        .orders()
-        .ship(order.id, None)
-        .expect("Failed to ship order");
+    commerce.orders().ship(order.id, None).expect("Failed to ship order");
 
     let reservations = commerce
         .inventory()
         .list_reservations_by_reference("order", &order.id.to_string())
         .expect("Failed to load reservations");
     assert!(!reservations.is_empty());
-    assert!(reservations
-        .iter()
-        .all(|r| r.status == ReservationStatus::Confirmed));
+    assert!(reservations.iter().all(|r| r.status == ReservationStatus::Confirmed));
 }

@@ -1,10 +1,12 @@
 //! Return operations
 
-use stateset_core::{CreateReturn, Result, Return, ReturnFilter, ReturnStatus, UpdateReturn};
+use stateset_core::{
+    CreateReturn, CustomerId, OrderId, Result, Return, ReturnFilter, ReturnId, ReturnStatus,
+    UpdateReturn,
+};
 use stateset_db::Database;
 use stateset_observability::Metrics;
 use std::sync::Arc;
-use uuid::Uuid;
 
 #[cfg(feature = "events")]
 use crate::events::EventSystem;
@@ -28,11 +30,7 @@ impl Returns {
         event_system: Arc<EventSystem>,
         metrics: Metrics,
     ) -> Self {
-        Self {
-            db,
-            metrics,
-            event_system,
-        }
+        Self { db, metrics, event_system }
     }
 
     #[cfg(not(feature = "events"))]
@@ -65,10 +63,10 @@ impl Returns {
     /// # use stateset_embedded::*;
     /// # let commerce = Commerce::new(":memory:")?;
     /// let ret = commerce.returns().create(CreateReturn {
-    ///     order_id: uuid::Uuid::new_v4(),
+    ///     order_id: uuid::Uuid::new_v4().into(),
     ///     reason: ReturnReason::Defective,
     ///     items: vec![CreateReturnItem {
-    ///         order_item_id: uuid::Uuid::new_v4(),
+    ///         order_item_id: uuid::Uuid::new_v4().into(),
     ///         quantity: 1,
     ///         ..Default::default()
     ///     }],
@@ -94,12 +92,12 @@ impl Returns {
     }
 
     /// Get a return by ID.
-    pub fn get(&self, id: Uuid) -> Result<Option<Return>> {
+    pub fn get(&self, id: ReturnId) -> Result<Option<Return>> {
         self.db.returns().get(id)
     }
 
     /// Update a return.
-    pub fn update(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
+    pub fn update(&self, id: ReturnId, input: UpdateReturn) -> Result<Return> {
         #[cfg(feature = "events")]
         let previous = self.db.returns().get(id)?;
 
@@ -159,23 +157,19 @@ impl Returns {
     }
 
     /// List returns for a specific order.
-    pub fn list_for_order(&self, order_id: Uuid) -> Result<Vec<Return>> {
-        self.db.returns().list(ReturnFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
+    pub fn list_for_order(&self, order_id: OrderId) -> Result<Vec<Return>> {
+        self.db.returns().list(ReturnFilter { order_id: Some(order_id), ..Default::default() })
     }
 
     /// List returns for a specific customer.
-    pub fn list_for_customer(&self, customer_id: Uuid) -> Result<Vec<Return>> {
-        self.db.returns().list(ReturnFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
+    pub fn list_for_customer(&self, customer_id: CustomerId) -> Result<Vec<Return>> {
+        self.db
+            .returns()
+            .list(ReturnFilter { customer_id: Some(customer_id), ..Default::default() })
     }
 
     /// Approve a return request.
-    pub fn approve(&self, id: Uuid) -> Result<Return> {
+    pub fn approve(&self, id: ReturnId) -> Result<Return> {
         #[cfg(feature = "events")]
         let previous = self.db.returns().get(id)?;
 
@@ -197,7 +191,7 @@ impl Returns {
     }
 
     /// Reject a return request.
-    pub fn reject(&self, id: Uuid, reason: &str) -> Result<Return> {
+    pub fn reject(&self, id: ReturnId, reason: &str) -> Result<Return> {
         #[cfg(feature = "events")]
         let previous = self.db.returns().get(id)?;
 
@@ -220,18 +214,12 @@ impl Returns {
     }
 
     /// Mark a return as received.
-    pub fn mark_received(&self, id: Uuid) -> Result<Return> {
-        self.update(
-            id,
-            UpdateReturn {
-                status: Some(ReturnStatus::Received),
-                ..Default::default()
-            },
-        )
+    pub fn mark_received(&self, id: ReturnId) -> Result<Return> {
+        self.update(id, UpdateReturn { status: Some(ReturnStatus::Received), ..Default::default() })
     }
 
     /// Complete a return (process refund).
-    pub fn complete(&self, id: Uuid) -> Result<Return> {
+    pub fn complete(&self, id: ReturnId) -> Result<Return> {
         #[cfg(feature = "events")]
         let previous = self.db.returns().get(id)?;
 
@@ -264,7 +252,7 @@ impl Returns {
     }
 
     /// Cancel a return.
-    pub fn cancel(&self, id: Uuid) -> Result<Return> {
+    pub fn cancel(&self, id: ReturnId) -> Result<Return> {
         #[cfg(feature = "events")]
         let previous = self.db.returns().get(id)?;
 
@@ -284,7 +272,7 @@ impl Returns {
     }
 
     /// Add tracking number to a return.
-    pub fn add_tracking(&self, id: Uuid, tracking_number: &str) -> Result<Return> {
+    pub fn add_tracking(&self, id: ReturnId, tracking_number: &str) -> Result<Return> {
         self.update(
             id,
             UpdateReturn {
@@ -297,9 +285,8 @@ impl Returns {
 
     /// List pending returns (awaiting approval).
     pub fn list_pending(&self) -> Result<Vec<Return>> {
-        self.db.returns().list(ReturnFilter {
-            status: Some(ReturnStatus::Requested),
-            ..Default::default()
-        })
+        self.db
+            .returns()
+            .list(ReturnFilter { status: Some(ReturnStatus::Requested), ..Default::default() })
     }
 }

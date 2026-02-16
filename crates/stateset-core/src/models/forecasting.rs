@@ -41,6 +41,7 @@ pub struct SeasonalityPattern {
 /// Type of seasonality pattern
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SeasonalityType {
     /// Daily pattern (hour of day)
     Hourly,
@@ -142,6 +143,7 @@ pub struct Anomaly {
 /// Type of anomaly detected
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AnomalyType {
     /// Sudden spike upward
     Spike,
@@ -162,6 +164,7 @@ pub enum AnomalyType {
 /// Severity of anomaly
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AnomalySeverity {
     /// Minor deviation, likely noise
     Low,
@@ -204,6 +207,7 @@ pub struct AnomalyDetectionRequest {
 /// Method for anomaly detection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AnomalyDetectionMethod {
     /// Statistical z-score based
     ZScore,
@@ -311,6 +315,7 @@ pub struct ForecastPoint {
 /// Forecasting model type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ForecastModel {
     /// Simple moving average
     MovingAverage,
@@ -371,6 +376,7 @@ pub struct EnhancedForecastRequest {
 // ============================================================================
 
 /// Simple forecasting utilities
+#[derive(Debug)]
 pub struct ForecastingEngine;
 
 impl ForecastingEngine {
@@ -432,15 +438,8 @@ impl ForecastingEngine {
         }
 
         // Calculate seasonal indices
-        let day_names = [
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-            "Sunday",
-        ];
+        let day_names =
+            ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
         let mut indices = Vec::new();
         let mut variance_sum = dec!(0);
 
@@ -472,11 +471,7 @@ impl ForecastingEngine {
             seasonality_type: SeasonalityType::Weekly,
             indices,
             strength: strength.min(dec!(1)),
-            significance: if strength > dec!(0.1) {
-                dec!(0.05)
-            } else {
-                dec!(0.5)
-            },
+            significance: if strength > dec!(0.1) { dec!(0.05) } else { dec!(0.5) },
         })
     }
 
@@ -502,11 +497,8 @@ impl ForecastingEngine {
             if abs_z > threshold {
                 let deviation_percent = ((point.value - mean) / mean * dec!(100)).round_dp(2);
 
-                let anomaly_type = if z_score > dec!(0) {
-                    AnomalyType::Spike
-                } else {
-                    AnomalyType::Drop
-                };
+                let anomaly_type =
+                    if z_score > dec!(0) { AnomalyType::Spike } else { AnomalyType::Drop };
 
                 let severity = if abs_z > threshold * dec!(2) {
                     AnomalySeverity::Critical
@@ -593,11 +585,8 @@ impl ForecastingEngine {
         let n_dec = Decimal::from(n as u32);
         let sum_x: Decimal = (0..n).map(|i| Decimal::from(i as u32)).sum();
         let sum_y: Decimal = values.iter().copied().sum();
-        let sum_xy: Decimal = values
-            .iter()
-            .enumerate()
-            .map(|(i, v)| Decimal::from(i as u32) * *v)
-            .sum();
+        let sum_xy: Decimal =
+            values.iter().enumerate().map(|(i, v)| Decimal::from(i as u32) * *v).sum();
         let sum_xx: Decimal = (0..n)
             .map(|i| {
                 let x = Decimal::from(i as u32);
@@ -629,11 +618,7 @@ impl ForecastingEngine {
 
         // Initialize
         let mut level = values[0];
-        let mut trend = if values.len() > 1 {
-            values[1] - values[0]
-        } else {
-            dec!(0)
-        };
+        let mut trend = if values.len() > 1 { values[1] - values[0] } else { dec!(0) };
 
         // Update level and trend for historical data
         for value in values.iter().skip(1) {
@@ -643,9 +628,7 @@ impl ForecastingEngine {
         }
 
         // Generate forecasts
-        (1..=periods)
-            .map(|h| level + Decimal::from(h) * trend)
-            .collect()
+        (1..=periods).map(|h| level + Decimal::from(h) * trend).collect()
     }
 }
 
@@ -711,10 +694,7 @@ mod tests {
 
         // z-score for 500 is about 1.79 given the data spread, so use threshold 1.5
         let anomalies = ForecastingEngine::detect_anomalies_zscore(&data, dec!(1.5));
-        assert!(
-            !anomalies.is_empty(),
-            "Expected to detect 500 as an anomaly"
-        );
+        assert!(!anomalies.is_empty(), "Expected to detect 500 as an anomaly");
         assert_eq!(anomalies[0].anomaly_type, AnomalyType::Spike);
     }
 }

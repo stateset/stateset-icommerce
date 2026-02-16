@@ -12,7 +12,7 @@ fn test_bom_lifecycle() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // Create a product for the BOM
-    let product_id = Uuid::new_v4();
+    let product_id = Uuid::new_v4().into();
 
     // Create a BOM with components
     let bom = commerce
@@ -50,10 +50,7 @@ fn test_bom_lifecycle() {
     assert!(retrieved.is_some());
 
     // Get components
-    let components = commerce
-        .bom()
-        .get_components(bom.id)
-        .expect("Failed to get components");
+    let components = commerce.bom().get_components(bom.id).expect("Failed to get components");
     assert_eq!(components.len(), 2);
 
     // Add another component
@@ -73,24 +70,15 @@ fn test_bom_lifecycle() {
     assert_eq!(new_component.name, "LED Light");
 
     // Verify component count increased
-    let components = commerce
-        .bom()
-        .get_components(bom.id)
-        .expect("Failed to get components");
+    let components = commerce.bom().get_components(bom.id).expect("Failed to get components");
     assert_eq!(components.len(), 3);
 
     // Activate the BOM
-    let activated = commerce
-        .bom()
-        .activate(bom.id)
-        .expect("Failed to activate BOM");
+    let activated = commerce.bom().activate(bom.id).expect("Failed to activate BOM");
     assert_eq!(activated.status, BomStatus::Active);
 
     // List BOMs for product
-    let boms = commerce
-        .bom()
-        .for_product(product_id)
-        .expect("Failed to list BOMs");
+    let boms = commerce.bom().for_product(product_id).expect("Failed to list BOMs");
     assert_eq!(boms.len(), 1);
 
     println!("BOM lifecycle test passed!");
@@ -101,7 +89,7 @@ fn test_work_order_lifecycle() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // Create a product
-    let product_id = Uuid::new_v4();
+    let product_id = Uuid::new_v4().into();
 
     // Create a work order
     let wo = commerce
@@ -141,10 +129,7 @@ fn test_work_order_lifecycle() {
     assert_eq!(wo.quantity_to_build, dec!(100));
 
     // Get tasks
-    let tasks = commerce
-        .work_orders()
-        .get_tasks(wo.id)
-        .expect("Failed to get tasks");
+    let tasks = commerce.work_orders().get_tasks(wo.id).expect("Failed to get tasks");
     assert_eq!(tasks.len(), 3);
 
     // Add materials
@@ -164,19 +149,13 @@ fn test_work_order_lifecycle() {
     assert_eq!(material.component_name, "Raw Steel Plate");
 
     // Start the work order
-    let wo = commerce
-        .work_orders()
-        .start(wo.id)
-        .expect("Failed to start work order");
+    let wo = commerce.work_orders().start(wo.id).expect("Failed to start work order");
     assert_eq!(wo.status, WorkOrderStatus::InProgress);
     assert!(wo.actual_start.is_some());
 
     // Start and complete tasks
     let task = &tasks[0];
-    let started_task = commerce
-        .work_orders()
-        .start_task(task.id)
-        .expect("Failed to start task");
+    let started_task = commerce.work_orders().start_task(task.id).expect("Failed to start task");
     assert_eq!(started_task.status, TaskStatus::InProgress);
 
     let completed_task = commerce
@@ -194,18 +173,13 @@ fn test_work_order_lifecycle() {
     assert_eq!(consumed.consumed_quantity, dec!(25));
 
     // Complete the work order
-    let wo = commerce
-        .work_orders()
-        .complete(wo.id, dec!(98))
-        .expect("Failed to complete work order");
+    let wo =
+        commerce.work_orders().complete(wo.id, dec!(98)).expect("Failed to complete work order");
     assert_eq!(wo.status, WorkOrderStatus::PartiallyCompleted); // 98 < 100
     assert_eq!(wo.quantity_completed, dec!(98));
 
     // Count work orders
-    let count = commerce
-        .work_orders()
-        .count(Default::default())
-        .expect("Failed to count");
+    let count = commerce.work_orders().count(Default::default()).expect("Failed to count");
     assert_eq!(count, 1);
 
     println!("Work order lifecycle test passed!");
@@ -218,17 +192,14 @@ fn test_work_order_hold_and_cancel() {
     let wo = commerce
         .work_orders()
         .create(CreateWorkOrder {
-            product_id: Uuid::new_v4(),
+            product_id: Uuid::new_v4().into(),
             quantity_to_build: dec!(50),
             ..Default::default()
         })
         .expect("Failed to create work order");
 
     // Start it
-    let wo = commerce
-        .work_orders()
-        .start(wo.id)
-        .expect("Failed to start");
+    let wo = commerce.work_orders().start(wo.id).expect("Failed to start");
     assert_eq!(wo.status, WorkOrderStatus::InProgress);
 
     // Put on hold
@@ -236,17 +207,11 @@ fn test_work_order_hold_and_cancel() {
     assert_eq!(wo.status, WorkOrderStatus::OnHold);
 
     // Resume
-    let wo = commerce
-        .work_orders()
-        .resume(wo.id)
-        .expect("Failed to resume");
+    let wo = commerce.work_orders().resume(wo.id).expect("Failed to resume");
     assert_eq!(wo.status, WorkOrderStatus::InProgress);
 
     // Cancel
-    let wo = commerce
-        .work_orders()
-        .cancel(wo.id)
-        .expect("Failed to cancel");
+    let wo = commerce.work_orders().cancel(wo.id).expect("Failed to cancel");
     assert_eq!(wo.status, WorkOrderStatus::Cancelled);
 
     println!("Work order hold/cancel test passed!");
@@ -256,7 +221,7 @@ fn test_work_order_hold_and_cancel() {
 fn test_bom_and_work_order_integration() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let product_id = Uuid::new_v4();
+    let product_id = Uuid::new_v4().into();
 
     // Create a BOM
     let bom = commerce
@@ -275,10 +240,7 @@ fn test_bom_and_work_order_integration() {
         .expect("Failed to create BOM");
 
     // Activate BOM
-    commerce
-        .bom()
-        .activate(bom.id)
-        .expect("Failed to activate BOM");
+    commerce.bom().activate(bom.id).expect("Failed to activate BOM");
 
     // Create work order referencing the BOM
     let wo = commerce
@@ -294,10 +256,7 @@ fn test_bom_and_work_order_integration() {
     assert_eq!(wo.bom_id, Some(bom.id));
 
     // Find work orders for this BOM
-    let work_orders = commerce
-        .work_orders()
-        .for_bom(bom.id)
-        .expect("Failed to find work orders");
+    let work_orders = commerce.work_orders().for_bom(bom.id).expect("Failed to find work orders");
     assert_eq!(work_orders.len(), 1);
     assert_eq!(work_orders[0].id, wo.id);
 

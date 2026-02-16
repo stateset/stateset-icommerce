@@ -25,20 +25,14 @@ impl SqliteX402CreditRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_account(row: &rusqlite::Row) -> rusqlite::Result<X402CreditAccount> {
+    fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<X402CreditAccount> {
         Ok(X402CreditAccount {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "x402_credit_account", "id")?,
             payer_address: row.get("payer_address")?,
-            asset: parse_enum_row(
-                &row.get::<_, String>("asset")?,
-                "x402_credit_account",
-                "asset",
-            )?,
+            asset: parse_enum_row(&row.get::<_, String>("asset")?, "x402_credit_account", "asset")?,
             network: parse_enum_row(
                 &row.get::<_, String>("network")?,
                 "x402_credit_account",
@@ -58,7 +52,7 @@ impl SqliteX402CreditRepository {
         })
     }
 
-    fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<X402CreditTransaction> {
+    fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<X402CreditTransaction> {
         Ok(X402CreditTransaction {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "x402_credit_tx", "id")?,
             account_id: parse_uuid_row(
@@ -189,8 +183,7 @@ impl X402CreditRepository for SqliteX402CreditRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_account(payer_address, asset, network)?
-            .ok_or(CommerceError::NotFound)
+        self.get_account(payer_address, asset, network)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_balance(
@@ -243,6 +236,7 @@ impl X402CreditRepository for SqliteX402CreditRepository {
                     }
                     current_balance - amount_i64
                 }
+                _ => current_balance,
             };
 
             let now = Utc::now();

@@ -6,17 +6,19 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CartId, CustomerId, OrderId, PaymentId, ProductId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
-use super::x402::{X402Asset, X402IntentStatus, X402Network};
 use super::Address;
+use super::x402::{X402Asset, X402IntentStatus, X402Network};
 
 /// Cart/Checkout Session aggregate
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cart {
-    pub id: Uuid,
+    pub id: CartId,
     pub cart_number: String,
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub status: CartStatus,
     pub currency: String,
 
@@ -56,7 +58,7 @@ pub struct Cart {
     pub discount_description: Option<String>,
 
     // Order reference (after checkout completes)
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     pub order_number: Option<String>,
 
     // Metadata
@@ -81,8 +83,8 @@ pub struct Cart {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CartItem {
     pub id: Uuid,
-    pub cart_id: Uuid,
-    pub product_id: Option<Uuid>,
+    pub cart_id: CartId,
+    pub product_id: Option<ProductId>,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
@@ -190,7 +192,7 @@ pub enum X402CheckoutResult {
 /// Data for HTTP 402 Payment Required response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct X402PaymentRequiredData {
-    pub cart_id: Uuid,
+    pub cart_id: CartId,
     pub payee_address: String,
     pub amount: u64,
     pub amount_display: String,
@@ -203,7 +205,7 @@ pub struct X402PaymentRequiredData {
 /// Data when intent is created and awaiting signature
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct X402IntentCreatedData {
-    pub cart_id: Uuid,
+    pub cart_id: CartId,
     pub intent_id: Uuid,
     pub signing_hash: String,
     pub amount: u64,
@@ -218,7 +220,7 @@ pub struct X402IntentCreatedData {
 /// Data when awaiting on-chain settlement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct X402AwaitingSettlementData {
-    pub cart_id: Uuid,
+    pub cart_id: CartId,
     pub intent_id: Uuid,
     pub status: X402IntentStatus,
     pub sequence_number: Option<u64>,
@@ -226,20 +228,25 @@ pub struct X402AwaitingSettlementData {
 }
 
 /// Cart status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum CartStatus {
     /// Cart is active and being modified
     Active,
     /// Ready for payment (all required info collected)
+    #[strum(serialize = "ready_for_payment", serialize = "readyforpayment")]
     ReadyForPayment,
     /// Payment processing
+    #[strum(serialize = "payment_pending", serialize = "paymentpending")]
     PaymentPending,
     /// Checkout completed, order created
     Completed,
     /// Cart abandoned by customer
     Abandoned,
     /// Cart cancelled
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     /// Cart expired
     Expired,
@@ -251,44 +258,16 @@ impl Default for CartStatus {
     }
 }
 
-impl std::fmt::Display for CartStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Active => write!(f, "active"),
-            Self::ReadyForPayment => write!(f, "ready_for_payment"),
-            Self::PaymentPending => write!(f, "payment_pending"),
-            Self::Completed => write!(f, "completed"),
-            Self::Abandoned => write!(f, "abandoned"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::Expired => write!(f, "expired"),
-        }
-    }
-}
-
-impl std::str::FromStr for CartStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "active" => Ok(Self::Active),
-            "ready_for_payment" | "readyforpayment" => Ok(Self::ReadyForPayment),
-            "payment_pending" | "paymentpending" => Ok(Self::PaymentPending),
-            "completed" => Ok(Self::Completed),
-            "abandoned" => Ok(Self::Abandoned),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            "expired" => Ok(Self::Expired),
-            _ => Err(format!("Unknown cart status: {}", s)),
-        }
-    }
-}
-
 /// Cart payment status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum CartPaymentStatus {
     /// No payment attempted
     None,
     /// Payment method selected
+    #[strum(serialize = "method_selected", serialize = "methodselected")]
     MethodSelected,
     /// Payment authorized but not captured
     Authorized,
@@ -306,42 +285,16 @@ impl Default for CartPaymentStatus {
     }
 }
 
-impl std::fmt::Display for CartPaymentStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::None => write!(f, "none"),
-            Self::MethodSelected => write!(f, "method_selected"),
-            Self::Authorized => write!(f, "authorized"),
-            Self::Captured => write!(f, "captured"),
-            Self::Failed => write!(f, "failed"),
-            Self::Refunded => write!(f, "refunded"),
-        }
-    }
-}
-
-impl std::str::FromStr for CartPaymentStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "none" => Ok(Self::None),
-            "method_selected" | "methodselected" => Ok(Self::MethodSelected),
-            "authorized" => Ok(Self::Authorized),
-            "captured" => Ok(Self::Captured),
-            "failed" => Ok(Self::Failed),
-            "refunded" => Ok(Self::Refunded),
-            _ => Err(format!("Unknown cart payment status: {}", s)),
-        }
-    }
-}
-
 /// Fulfillment type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum FulfillmentType {
     /// Ship to address
     Shipping,
     /// Store/local pickup
+    #[strum(serialize = "pickup", serialize = "pick_up", serialize = "pick-up")]
     Pickup,
     /// Digital delivery
     Digital,
@@ -350,29 +303,6 @@ pub enum FulfillmentType {
 impl Default for FulfillmentType {
     fn default() -> Self {
         Self::Shipping
-    }
-}
-
-impl std::fmt::Display for FulfillmentType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Shipping => write!(f, "shipping"),
-            Self::Pickup => write!(f, "pickup"),
-            Self::Digital => write!(f, "digital"),
-        }
-    }
-}
-
-impl std::str::FromStr for FulfillmentType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "shipping" => Ok(Self::Shipping),
-            "pickup" | "pick_up" | "pick-up" => Ok(Self::Pickup),
-            "digital" => Ok(Self::Digital),
-            _ => Err(format!("Unknown fulfillment type: {}", s)),
-        }
     }
 }
 
@@ -392,7 +322,7 @@ pub struct ShippingRate {
 /// Input for creating a new cart
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateCart {
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub customer_email: Option<String>,
     pub customer_name: Option<String>,
     pub currency: Option<String>,
@@ -407,7 +337,7 @@ pub struct CreateCart {
 /// Input for adding an item to cart
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddCartItem {
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
@@ -452,7 +382,7 @@ pub struct UpdateCartItem {
 /// Input for updating a cart
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateCart {
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub customer_email: Option<String>,
     pub customer_phone: Option<String>,
     pub customer_name: Option<String>,
@@ -495,7 +425,7 @@ pub struct ApplyCartDiscount {
 /// Cart filter for querying
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CartFilter {
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub customer_email: Option<String>,
     pub status: Option<CartStatus>,
     pub has_items: Option<bool>,
@@ -509,10 +439,10 @@ pub struct CartFilter {
 /// Checkout result after completing a cart
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckoutResult {
-    pub cart_id: Uuid,
-    pub order_id: Uuid,
+    pub cart_id: CartId,
+    pub order_id: OrderId,
     pub order_number: String,
-    pub payment_id: Option<Uuid>,
+    pub payment_id: Option<PaymentId>,
     pub total_charged: Decimal,
     pub currency: String,
 }
@@ -559,10 +489,7 @@ impl Cart {
 
     /// Check if cart can be completed
     pub fn can_complete(&self) -> bool {
-        matches!(
-            self.status,
-            CartStatus::ReadyForPayment | CartStatus::PaymentPending
-        )
+        matches!(self.status, CartStatus::ReadyForPayment | CartStatus::PaymentPending)
     }
 
     /// Check if cart can be cancelled
@@ -580,11 +507,7 @@ impl Cart {
 
     /// Check if cart is expired
     pub fn is_expired(&self) -> bool {
-        if let Some(expires_at) = self.expires_at {
-            Utc::now() > expires_at
-        } else {
-            false
-        }
+        if let Some(expires_at) = self.expires_at { Utc::now() > expires_at } else { false }
     }
 
     /// Recalculate totals from items
@@ -632,14 +555,14 @@ mod tests {
     #[test]
     fn test_cart_is_ready_for_checkout() {
         let mut cart = Cart {
-            id: Uuid::new_v4(),
+            id: CartId::new(),
             cart_number: "CART-001".to_string(),
-            customer_id: Some(Uuid::new_v4()),
+            customer_id: Some(CustomerId::new()),
             status: CartStatus::Active,
             currency: "USD".to_string(),
             items: vec![CartItem {
                 id: Uuid::new_v4(),
-                cart_id: Uuid::new_v4(),
+                cart_id: CartId::new(),
                 product_id: None,
                 variant_id: None,
                 sku: "SKU-001".to_string(),
@@ -718,18 +641,9 @@ mod tests {
         use std::str::FromStr;
 
         assert_eq!(CartStatus::from_str("active").unwrap(), CartStatus::Active);
-        assert_eq!(
-            CartStatus::from_str("ready_for_payment").unwrap(),
-            CartStatus::ReadyForPayment
-        );
-        assert_eq!(
-            CartStatus::from_str("paymentpending").unwrap(),
-            CartStatus::PaymentPending
-        );
-        assert_eq!(
-            CartStatus::from_str("canceled").unwrap(),
-            CartStatus::Cancelled
-        );
+        assert_eq!(CartStatus::from_str("ready_for_payment").unwrap(), CartStatus::ReadyForPayment);
+        assert_eq!(CartStatus::from_str("paymentpending").unwrap(), CartStatus::PaymentPending);
+        assert_eq!(CartStatus::from_str("canceled").unwrap(), CartStatus::Cancelled);
     }
 
     #[test]
@@ -748,27 +662,15 @@ mod tests {
             CartPaymentStatus::from_str("authorized").unwrap(),
             CartPaymentStatus::Authorized
         );
-        assert_eq!(
-            CartPaymentStatus::from_str("captured").unwrap(),
-            CartPaymentStatus::Captured
-        );
+        assert_eq!(CartPaymentStatus::from_str("captured").unwrap(), CartPaymentStatus::Captured);
     }
 
     #[test]
     fn test_fulfillment_type_from_str() {
         use std::str::FromStr;
 
-        assert_eq!(
-            FulfillmentType::from_str("shipping").unwrap(),
-            FulfillmentType::Shipping
-        );
-        assert_eq!(
-            FulfillmentType::from_str("pick_up").unwrap(),
-            FulfillmentType::Pickup
-        );
-        assert_eq!(
-            FulfillmentType::from_str("digital").unwrap(),
-            FulfillmentType::Digital
-        );
+        assert_eq!(FulfillmentType::from_str("shipping").unwrap(), FulfillmentType::Shipping);
+        assert_eq!(FulfillmentType::from_str("pick_up").unwrap(), FulfillmentType::Pickup);
+        assert_eq!(FulfillmentType::from_str("digital").unwrap(), FulfillmentType::Digital);
     }
 }

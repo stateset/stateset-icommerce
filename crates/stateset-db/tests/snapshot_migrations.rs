@@ -18,9 +18,8 @@ fn get_all_tables(conn: &Connection) -> Result<Vec<(String, String)>, rusqlite::
          ORDER BY name",
     )?;
 
-    let table_iter = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
+    let table_iter =
+        stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
 
     table_iter.collect()
 }
@@ -53,9 +52,8 @@ fn snapshot_customer_table_schema() {
 
     run_migrations(&mut conn).expect("Failed to run migrations");
 
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(customers)")
-        .expect("Failed to prepare statement");
+    let mut stmt =
+        conn.prepare("PRAGMA table_info(customers)").expect("Failed to prepare statement");
 
     let columns = stmt
         .query_map([], |row| {
@@ -79,9 +77,7 @@ fn snapshot_orders_table_schema() {
 
     run_migrations(&mut conn).expect("Failed to run migrations");
 
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(orders)")
-        .expect("Failed to prepare statement");
+    let mut stmt = conn.prepare("PRAGMA table_info(orders)").expect("Failed to prepare statement");
 
     let columns = stmt
         .query_map([], |row| {
@@ -105,9 +101,8 @@ fn snapshot_inventory_items_table_schema() {
 
     run_migrations(&mut conn).expect("Failed to run migrations");
 
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(inventory_items)")
-        .expect("Failed to prepare statement");
+    let mut stmt =
+        conn.prepare("PRAGMA table_info(inventory_items)").expect("Failed to prepare statement");
 
     let columns = stmt
         .query_map([], |row| {
@@ -131,9 +126,8 @@ fn snapshot_subscriptions_table_schema() {
 
     run_migrations(&mut conn).expect("Failed to run migrations");
 
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(subscriptions)")
-        .expect("Failed to prepare statement");
+    let mut stmt =
+        conn.prepare("PRAGMA table_info(subscriptions)").expect("Failed to prepare statement");
 
     let columns = stmt
         .query_map([], |row| {
@@ -157,9 +151,8 @@ fn snapshot_payments_table_schema() {
 
     run_migrations(&mut conn).expect("Failed to run migrations");
 
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(payments)")
-        .expect("Failed to prepare statement");
+    let mut stmt =
+        conn.prepare("PRAGMA table_info(payments)").expect("Failed to prepare statement");
 
     let columns = stmt
         .query_map([], |row| {
@@ -204,9 +197,8 @@ fn snapshot_migration_versions() {
         .prepare("SELECT name FROM _migrations ORDER BY id")
         .expect("Failed to prepare statement");
 
-    let migrations = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .expect("Failed to query migrations");
+    let migrations =
+        stmt.query_map([], |row| row.get::<_, String>(0)).expect("Failed to query migrations");
 
     assert_debug_snapshot!(migrations.collect::<Result<Vec<_>, _>>());
 }
@@ -216,8 +208,7 @@ fn snapshot_foreign_key_constraints() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
     // Enable foreign keys
-    conn.execute("PRAGMA foreign_keys = ON", [])
-        .expect("Failed to enable FKs");
+    conn.execute("PRAGMA foreign_keys = ON", []).expect("Failed to enable FKs");
 
     run_migrations(&mut conn).expect("Failed to run migrations");
 

@@ -68,6 +68,7 @@ pub struct BackorderAllocation {
 /// Backorder status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum BackorderStatus {
     #[default]
     Pending,
@@ -109,6 +110,7 @@ impl FromStr for BackorderStatus {
 /// Backorder priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum BackorderPriority {
     Low,
     #[default]
@@ -144,6 +146,7 @@ impl FromStr for BackorderPriority {
 /// Source type for fulfillment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum FulfillmentSourceType {
     #[default]
     Inventory,
@@ -179,6 +182,7 @@ impl FromStr for FulfillmentSourceType {
 /// Allocation status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AllocationStatus {
     #[default]
     Reserved,
@@ -320,10 +324,7 @@ mod tests {
 
     #[test]
     fn test_backorder_status_from_str() {
-        assert_eq!(
-            BackorderStatus::from_str("pending").unwrap(),
-            BackorderStatus::Pending
-        );
+        assert_eq!(BackorderStatus::from_str("pending").unwrap(), BackorderStatus::Pending);
         assert_eq!(
             BackorderStatus::from_str("partiallyfulfilled").unwrap(),
             BackorderStatus::PartiallyFulfilled
@@ -333,14 +334,8 @@ mod tests {
 
     #[test]
     fn test_backorder_priority_from_str() {
-        assert_eq!(
-            BackorderPriority::from_str("low").unwrap(),
-            BackorderPriority::Low
-        );
-        assert_eq!(
-            BackorderPriority::from_str("critical").unwrap(),
-            BackorderPriority::Critical
-        );
+        assert_eq!(BackorderPriority::from_str("low").unwrap(), BackorderPriority::Low);
+        assert_eq!(BackorderPriority::from_str("critical").unwrap(), BackorderPriority::Critical);
         assert!(BackorderPriority::from_str("nope").is_err());
     }
 
@@ -359,10 +354,7 @@ mod tests {
 
     #[test]
     fn test_allocation_status_from_str() {
-        assert_eq!(
-            AllocationStatus::from_str("confirmed").unwrap(),
-            AllocationStatus::Confirmed
-        );
+        assert_eq!(AllocationStatus::from_str("confirmed").unwrap(), AllocationStatus::Confirmed);
         assert!(AllocationStatus::from_str("nope").is_err());
     }
 }

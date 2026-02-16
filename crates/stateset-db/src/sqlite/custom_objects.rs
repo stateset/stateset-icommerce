@@ -6,10 +6,10 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
-    validate_custom_object_type_input, validate_required_text, validate_sku, CommerceError,
-    CreateCustomObject, CreateCustomObjectType, CustomFieldDefinition, CustomObject,
+    CommerceError, CreateCustomObject, CreateCustomObjectType, CustomFieldDefinition, CustomObject,
     CustomObjectFilter, CustomObjectRepository, CustomObjectType, CustomObjectTypeFilter, Result,
-    UpdateCustomObject, UpdateCustomObjectType,
+    UpdateCustomObject, UpdateCustomObjectType, validate_custom_object_type_input,
+    validate_required_text, validate_sku,
 };
 use uuid::Uuid;
 
@@ -24,12 +24,10 @@ impl SqliteCustomObjectRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_type(row: &rusqlite::Row) -> rusqlite::Result<CustomObjectType> {
+    fn row_to_type(row: &rusqlite::Row<'_>) -> rusqlite::Result<CustomObjectType> {
         let fields_json: String = row.get("fields_json")?;
         let fields: Vec<CustomFieldDefinition> =
             parse_json_row(&fields_json, "custom_object_type", "fields_json")?;
@@ -54,18 +52,14 @@ impl SqliteCustomObjectRepository {
         })
     }
 
-    fn row_to_object(row: &rusqlite::Row) -> rusqlite::Result<CustomObject> {
+    fn row_to_object(row: &rusqlite::Row<'_>) -> rusqlite::Result<CustomObject> {
         let values_json: String = row.get("values_json")?;
         let values: serde_json::Value =
             parse_json_row(&values_json, "custom_object", "values_json")?;
 
         Ok(CustomObject {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "custom_object", "id")?,
-            type_id: parse_uuid_row(
-                &row.get::<_, String>("type_id")?,
-                "custom_object",
-                "type_id",
-            )?,
+            type_id: parse_uuid_row(&row.get::<_, String>("type_id")?, "custom_object", "type_id")?,
             type_handle: row.get("type_handle")?,
             handle: row.get::<_, Option<String>>("handle")?,
             owner_type: row.get::<_, Option<String>>("owner_type")?,
@@ -96,10 +90,7 @@ impl SqliteCustomObjectRepository {
                  WHERE handle = ?",
             )
             .map_err(map_db_error)?;
-        let ty = stmt
-            .query_row([handle], Self::row_to_type)
-            .optional()
-            .map_err(map_db_error)?;
+        let ty = stmt.query_row([handle], Self::row_to_type).optional().map_err(map_db_error)?;
         Ok(ty)
     }
 
@@ -188,10 +179,8 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
                  WHERE id = ?",
             )
             .map_err(map_db_error)?;
-        let ty = stmt
-            .query_row([id.to_string()], Self::row_to_type)
-            .optional()
-            .map_err(map_db_error)?;
+        let ty =
+            stmt.query_row([id.to_string()], Self::row_to_type).optional().map_err(map_db_error)?;
         Ok(ty)
     }
 
@@ -210,15 +199,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
                  FROM custom_object_types
                  WHERE id = ?",
                 [id.to_string()],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
-                },
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .optional()
             .map_err(map_db_error)?;
@@ -229,16 +210,12 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
                 None => return Err(CommerceError::NotFound),
             };
 
-        let next_display_name = input
-            .display_name
-            .clone()
-            .unwrap_or_else(|| current_display_name.clone());
+        let next_display_name =
+            input.display_name.clone().unwrap_or_else(|| current_display_name.clone());
         validate_required_text("custom_object_type.display_name", &next_display_name, 128)?;
 
-        let next_description = input
-            .description
-            .clone()
-            .unwrap_or_else(|| current_description.clone());
+        let next_description =
+            input.description.clone().unwrap_or_else(|| current_description.clone());
 
         let next_fields_json = if let Some(fields) = input.fields.clone() {
             // Validate keys uniqueness and format.
@@ -300,12 +277,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
                 .to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let Some(search) = filter
-            .search
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(search) = filter.search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             sql.push_str(" WHERE handle LIKE ? OR display_name LIKE ?");
             let pat = format!("%{}%", search);
             params.push(Box::new(pat.clone()));
@@ -326,17 +298,13 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
             .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_type)
             .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
     fn delete_type(&self, id: Uuid) -> Result<()> {
         let conn = self.conn()?;
         let deleted = conn
-            .execute(
-                "DELETE FROM custom_object_types WHERE id = ?",
-                [id.to_string()],
-            )
+            .execute("DELETE FROM custom_object_types WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
         if deleted == 0 {
             return Err(CommerceError::NotFound);
@@ -460,10 +428,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
             )
             .map_err(map_db_error)?;
         let obj = stmt
-            .query_row(
-                rusqlite::params![type_handle, object_handle],
-                Self::row_to_object,
-            )
+            .query_row(rusqlite::params![type_handle, object_handle], Self::row_to_object)
             .optional()
             .map_err(map_db_error)?;
         Ok(obj)
@@ -483,15 +448,8 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
-        type ExistingObjectRow = (
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            String,
-            i32,
-        );
+        type ExistingObjectRow =
+            (String, String, Option<String>, Option<String>, Option<String>, String, i32);
         let existing: Option<ExistingObjectRow> = tx
             .query_row(
                 "SELECT r.type_id, t.handle AS type_handle, r.handle, r.owner_type, r.owner_id, r.values_json, r.version
@@ -623,22 +581,14 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         let mut where_parts: Vec<String> = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let Some(type_handle) = filter
-            .type_handle
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
+        if let Some(type_handle) =
+            filter.type_handle.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty())
         {
             where_parts.push("t.handle = ?".into());
             params.push(Box::new(type_handle.to_string()));
         }
 
-        if let Some(handle) = filter
-            .handle
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(handle) = filter.handle.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             where_parts.push("r.handle = ?".into());
             params.push(Box::new(handle.to_string()));
         }
@@ -668,17 +618,13 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
             .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_object)
             .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
     fn delete_object(&self, id: Uuid) -> Result<()> {
         let conn = self.conn()?;
         let deleted = conn
-            .execute(
-                "DELETE FROM custom_object_records WHERE id = ?",
-                [id.to_string()],
-            )
+            .execute("DELETE FROM custom_object_records WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
         if deleted == 0 {
             return Err(CommerceError::NotFound);

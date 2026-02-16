@@ -6,12 +6,12 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    generate_cost_adjustment_number, CommerceError, CostAccountingRepository, CostAdjustment,
-    CostAdjustmentFilter, CostAdjustmentStatus, CostAdjustmentType, CostLayer, CostLayerFilter,
-    CostLayerSource, CostMethod, CostRollup, CostTransaction, CostTransactionFilter,
-    CostTransactionType, CostVariance, CostVarianceFilter, CreateCostAdjustment, CreateCostLayer,
-    InventoryValuation, IssueCostLayers, ItemCost, ItemCostFilter, RecordCostVariance, Result,
-    SetItemCost, SkuCostSummary, VarianceType,
+    CommerceError, CostAccountingRepository, CostAdjustment, CostAdjustmentFilter,
+    CostAdjustmentStatus, CostAdjustmentType, CostLayer, CostLayerFilter, CostLayerSource,
+    CostMethod, CostRollup, CostTransaction, CostTransactionFilter, CostTransactionType,
+    CostVariance, CostVarianceFilter, CreateCostAdjustment, CreateCostLayer, InventoryValuation,
+    IssueCostLayers, ItemCost, ItemCostFilter, RecordCostVariance, Result, SetItemCost,
+    SkuCostSummary, VarianceType, generate_cost_adjustment_number,
 };
 use uuid::Uuid;
 
@@ -473,9 +473,7 @@ impl PgCostAccountingRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get_item_cost_async(&input.sku)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_item_cost_async(&input.sku).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_item_costs_async(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>> {
@@ -487,14 +485,10 @@ impl PgCostAccountingRepository {
         );
 
         if let Some(sku) = filter.sku {
-            builder
-                .push(" AND sku ILIKE ")
-                .push_bind(format!("%{}%", sku));
+            builder.push(" AND sku ILIKE ").push_bind(format!("%{}%", sku));
         }
         if let Some(method) = filter.cost_method {
-            builder
-                .push(" AND cost_method = ")
-                .push_bind(method.to_string());
+            builder.push(" AND cost_method = ").push_bind(method.to_string());
         }
 
         builder.push(" ORDER BY sku");
@@ -512,9 +506,7 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_item_cost)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_item_cost).collect::<Result<Vec<_>>>()
     }
 
     pub async fn update_average_cost_async(
@@ -564,9 +556,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_item_cost_async(sku)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_item_cost_async(sku).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn update_last_cost_async(&self, sku: &str, unit_cost: Decimal) -> Result<ItemCost> {
@@ -579,9 +569,7 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_item_cost_async(sku)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_item_cost_async(sku).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn create_cost_layer_async(&self, input: CreateCostLayer) -> Result<CostLayer> {
@@ -610,9 +598,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_cost_layer_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cost_layer_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_cost_layer_async(&self, id: Uuid) -> Result<Option<CostLayer>> {
@@ -640,9 +626,7 @@ impl PgCostAccountingRepository {
             builder.push(" AND sku = ").push_bind(sku);
         }
         if let Some(source_type) = filter.source_type {
-            builder
-                .push(" AND source_type = ")
-                .push_bind(source_type.to_string());
+            builder.push(" AND source_type = ").push_bind(source_type.to_string());
         }
         if let Some(has_remaining) = filter.has_remaining {
             if has_remaining {
@@ -652,14 +636,10 @@ impl PgCostAccountingRepository {
             }
         }
         if let Some(from_date) = filter.from_date {
-            builder
-                .push(" AND layer_date >= ")
-                .push_bind(to_date(from_date));
+            builder.push(" AND layer_date >= ").push_bind(to_date(from_date));
         }
         if let Some(to_date_val) = filter.to_date {
-            builder
-                .push(" AND layer_date <= ")
-                .push_bind(to_date(to_date_val));
+            builder.push(" AND layer_date <= ").push_bind(to_date(to_date_val));
         }
 
         builder.push(" ORDER BY layer_date ASC");
@@ -677,9 +657,7 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_cost_layer)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_cost_layer).collect::<Result<Vec<_>>>()
     }
 
     pub async fn issue_fifo_async(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
@@ -863,9 +841,7 @@ impl PgCostAccountingRepository {
             builder.push(" AND sku = ").push_bind(sku);
         }
         if let Some(tx_type) = filter.transaction_type {
-            builder
-                .push(" AND transaction_type = ")
-                .push_bind(tx_type.to_string());
+            builder.push(" AND transaction_type = ").push_bind(tx_type.to_string());
         }
         if let Some(from_date) = filter.from_date {
             builder.push(" AND created_at >= ").push_bind(from_date);
@@ -889,9 +865,7 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_cost_transaction)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_cost_transaction).collect::<Result<Vec<_>>>()
     }
 
     pub async fn record_variance_async(&self, input: RecordCostVariance) -> Result<CostVariance> {
@@ -963,19 +937,13 @@ impl PgCostAccountingRepository {
             builder.push(" AND sku = ").push_bind(sku);
         }
         if let Some(var_type) = filter.variance_type {
-            builder
-                .push(" AND variance_type = ")
-                .push_bind(var_type.to_string());
+            builder.push(" AND variance_type = ").push_bind(var_type.to_string());
         }
         if let Some(from_date) = filter.from_date {
-            builder
-                .push(" AND variance_date >= ")
-                .push_bind(to_date(from_date));
+            builder.push(" AND variance_date >= ").push_bind(to_date(from_date));
         }
         if let Some(to_date_val) = filter.to_date {
-            builder
-                .push(" AND variance_date <= ")
-                .push_bind(to_date(to_date_val));
+            builder.push(" AND variance_date <= ").push_bind(to_date(to_date_val));
         }
 
         builder.push(" ORDER BY variance_date DESC");
@@ -993,9 +961,7 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_cost_variance)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_cost_variance).collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_variance_summary_async(
@@ -1054,9 +1020,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_adjustment_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_adjustment_async(&self, id: Uuid) -> Result<Option<CostAdjustment>> {
@@ -1090,9 +1054,7 @@ impl PgCostAccountingRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(adjustment_type) = filter.adjustment_type {
-            builder
-                .push(" AND adjustment_type = ")
-                .push_bind(adjustment_type.to_string());
+            builder.push(" AND adjustment_type = ").push_bind(adjustment_type.to_string());
         }
         if let Some(from_date) = filter.from_date {
             builder.push(" AND created_at >= ").push_bind(from_date);
@@ -1116,9 +1078,7 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_cost_adjustment)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_cost_adjustment).collect::<Result<Vec<_>>>()
     }
 
     pub async fn approve_adjustment_async(
@@ -1139,16 +1099,11 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_adjustment_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn apply_adjustment_async(&self, id: Uuid) -> Result<CostAdjustment> {
-        let adjustment = self
-            .get_adjustment_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let adjustment = self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if adjustment.status != CostAdjustmentStatus::Approved {
             return Err(CommerceError::ValidationError(
@@ -1170,9 +1125,7 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_adjustment_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn reject_adjustment_async(&self, id: Uuid) -> Result<CostAdjustment> {
@@ -1183,9 +1136,7 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_adjustment_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_adjustment_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn calculate_rollup_async(
@@ -1196,11 +1147,8 @@ impl PgCostAccountingRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        let previous_cost = self
-            .get_rollup_async(sku)
-            .await?
-            .map(|r| r.total_cost)
-            .unwrap_or_default();
+        let previous_cost =
+            self.get_rollup_async(sku).await?.map(|r| r.total_cost).unwrap_or_default();
 
         let (material_cost, labor_cost, overhead_cost) = if let Some(bom_id) = bom_id {
             let material: Decimal = sqlx::query_scalar(
@@ -1294,16 +1242,11 @@ impl PgCostAccountingRepository {
             cost_field
         );
 
-        let (total_qty, total_val): (Decimal, Decimal) = sqlx::query_as(&sql)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let (total_qty, total_val): (Decimal, Decimal) =
+            sqlx::query_as(&sql).fetch_one(&self.pool).await.map_err(map_db_error)?;
 
-        let average_unit_cost = if total_qty > Decimal::ZERO {
-            total_val / total_qty
-        } else {
-            Decimal::ZERO
-        };
+        let average_unit_cost =
+            if total_qty > Decimal::ZERO { total_val / total_qty } else { Decimal::ZERO };
 
         Ok(InventoryValuation {
             total_quantity: total_qty,
@@ -1333,22 +1276,18 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(
-            |r: (String, Decimal, Decimal, Decimal, Decimal, Decimal)| SkuCostSummary {
-                sku: r.0,
-                quantity_on_hand: r.1,
-                standard_cost: r.2,
-                average_cost: r.3,
-                total_value: r.4,
-                variance_ytd: r.5,
-            },
-        ))
+        Ok(row.map(|r: (String, Decimal, Decimal, Decimal, Decimal, Decimal)| SkuCostSummary {
+            sku: r.0,
+            quantity_on_hand: r.1,
+            standard_cost: r.2,
+            average_cost: r.3,
+            total_value: r.4,
+            variance_ytd: r.5,
+        }))
     }
 
     pub async fn get_total_inventory_value_async(&self) -> Result<Decimal> {
-        let valuation = self
-            .get_inventory_valuation_async(CostMethod::Average)
-            .await?;
+        let valuation = self.get_inventory_valuation_async(CostMethod::Average).await?;
         Ok(valuation.total_value)
     }
 }

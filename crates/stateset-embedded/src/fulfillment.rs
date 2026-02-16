@@ -9,15 +9,14 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use stateset_embedded::{Commerce, CreateWave, PickTaskFilter, PickStatus};
-//! use uuid::Uuid;
+//! use stateset_embedded::{Commerce, CreateWave, OrderId, PickTaskFilter, PickStatus};
 //!
 //! let commerce = Commerce::new("./store.db")?;
 //!
 //! // Create a wave from orders
 //! let wave = commerce.fulfillment().create_wave(CreateWave {
 //!     warehouse_id: 1,
-//!     order_ids: vec![Uuid::new_v4(), Uuid::new_v4()],
+//!     order_ids: vec![OrderId::new(), OrderId::new()],
 //!     priority: Some(1),
 //!     ..Default::default()
 //! })?;
@@ -37,8 +36,8 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CompletePick, CompleteShip,
-    CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, PackTask, PackTaskFilter, PickTask,
-    PickTaskFilter, Result, ShipTask, ShipTaskFilter, Wave, WaveFilter,
+    CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, FulfillmentId, OrderId, PackTask,
+    PackTaskFilter, PickTask, PickTaskFilter, Result, ShipTask, ShipTaskFilter, Wave, WaveFilter,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -63,14 +62,13 @@ impl Fulfillment {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, CreateWave};
-    /// use uuid::Uuid;
+    /// use stateset_embedded::{Commerce, CreateWave, OrderId};
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let wave = commerce.fulfillment().create_wave(CreateWave {
     ///     warehouse_id: 1,
-    ///     order_ids: vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()],
+    ///     order_ids: vec![OrderId::new(), OrderId::new(), OrderId::new()],
     ///     priority: Some(1),
     ///     notes: Some("Priority batch for same-day shipping".into()),
     ///     created_by: Some("warehouse_manager".into()),
@@ -84,7 +82,7 @@ impl Fulfillment {
     }
 
     /// Get a wave by ID.
-    pub fn get_wave(&self, id: Uuid) -> Result<Option<Wave>> {
+    pub fn get_wave(&self, id: FulfillmentId) -> Result<Option<Wave>> {
         self.db.fulfillment().get_wave(id)
     }
 
@@ -101,22 +99,22 @@ impl Fulfillment {
     /// Release a wave for picking (draft -> released).
     ///
     /// Once released, pick tasks become available for warehouse workers.
-    pub fn release_wave(&self, id: Uuid) -> Result<Wave> {
+    pub fn release_wave(&self, id: FulfillmentId) -> Result<Wave> {
         self.db.fulfillment().release_wave(id)
     }
 
     /// Complete a wave (all picks finished).
-    pub fn complete_wave(&self, id: Uuid) -> Result<Wave> {
+    pub fn complete_wave(&self, id: FulfillmentId) -> Result<Wave> {
         self.db.fulfillment().complete_wave(id)
     }
 
     /// Cancel a wave.
-    pub fn cancel_wave(&self, id: Uuid) -> Result<Wave> {
+    pub fn cancel_wave(&self, id: FulfillmentId) -> Result<Wave> {
         self.db.fulfillment().cancel_wave(id)
     }
 
     /// Get order IDs in a wave.
-    pub fn get_wave_orders(&self, wave_id: Uuid) -> Result<Vec<Uuid>> {
+    pub fn get_wave_orders(&self, wave_id: FulfillmentId) -> Result<Vec<OrderId>> {
         self.db.fulfillment().get_wave_orders(wave_id)
     }
 
@@ -214,12 +212,12 @@ impl Fulfillment {
     }
 
     /// Get all picks for an order.
-    pub fn get_picks_for_order(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
+    pub fn get_picks_for_order(&self, order_id: OrderId) -> Result<Vec<PickTask>> {
         self.db.fulfillment().get_picks_for_order(order_id)
     }
 
     /// Get all picks in a wave.
-    pub fn get_picks_for_wave(&self, wave_id: Uuid) -> Result<Vec<PickTask>> {
+    pub fn get_picks_for_wave(&self, wave_id: FulfillmentId) -> Result<Vec<PickTask>> {
         self.db.fulfillment().get_picks_for_wave(wave_id)
     }
 
@@ -392,21 +390,19 @@ impl Fulfillment {
     /// Automatically finds pickable locations for each item.
     pub fn create_picks_for_order(
         &self,
-        order_id: Uuid,
+        order_id: OrderId,
         warehouse_id: i32,
     ) -> Result<Vec<PickTask>> {
-        self.db
-            .fulfillment()
-            .create_picks_for_order(order_id, warehouse_id)
+        self.db.fulfillment().create_picks_for_order(order_id, warehouse_id)
     }
 
     /// Check if all picks for an order are complete (ready to pack).
-    pub fn is_order_ready_to_pack(&self, order_id: Uuid) -> Result<bool> {
+    pub fn is_order_ready_to_pack(&self, order_id: OrderId) -> Result<bool> {
         self.db.fulfillment().is_order_ready_to_pack(order_id)
     }
 
     /// Check if packing is complete for an order (ready to ship).
-    pub fn is_order_ready_to_ship(&self, order_id: Uuid) -> Result<bool> {
+    pub fn is_order_ready_to_ship(&self, order_id: OrderId) -> Result<bool> {
         self.db.fulfillment().is_order_ready_to_ship(order_id)
     }
 

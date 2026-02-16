@@ -3,7 +3,7 @@
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, Row};
+use rusqlite::{Row, params};
 use stateset_core::CommerceError;
 use stateset_core::{
     BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, LotRepository,
@@ -15,9 +15,9 @@ use stateset_core::{
 use uuid::Uuid;
 
 use super::{
-    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
-    parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row, string_params,
-    uuid_params, SqliteLotRepository, SqliteWarrantyRepository,
+    SqliteLotRepository, SqliteWarrantyRepository, build_in_clause, map_db_error, params_refs,
+    parse_datetime_opt_row, parse_datetime_row, parse_enum_row, parse_json_opt_row,
+    parse_uuid_opt_row, parse_uuid_row, string_params, uuid_params,
 };
 
 /// SQLite implementation of SerialRepository
@@ -30,7 +30,7 @@ impl SqliteSerialRepository {
         Self { pool }
     }
 
-    fn map_serial_row(row: &Row) -> Result<SerialNumber, rusqlite::Error> {
+    fn map_serial_row(row: &Row<'_>) -> Result<SerialNumber, rusqlite::Error> {
         let status_str: String = row.get("status")?;
         let attributes_str: Option<String> = row.get("attributes")?;
 
@@ -98,7 +98,7 @@ impl SqliteSerialRepository {
         })
     }
 
-    fn map_history_row(row: &Row) -> Result<SerialHistory, rusqlite::Error> {
+    fn map_history_row(row: &Row<'_>) -> Result<SerialHistory, rusqlite::Error> {
         let event_type_str: String = row.get("event_type")?;
         let from_status_str: String = row.get("from_status")?;
         let to_status_str: String = row.get("to_status")?;
@@ -141,7 +141,7 @@ impl SqliteSerialRepository {
         })
     }
 
-    fn map_reservation_row(row: &Row) -> Result<SerialReservation, rusqlite::Error> {
+    fn map_reservation_row(row: &Row<'_>) -> Result<SerialReservation, rusqlite::Error> {
         Ok(SerialReservation {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "serial_reservation", "id")?,
             serial_id: parse_uuid_row(
@@ -244,10 +244,7 @@ impl SerialRepository for SqliteSerialRepository {
         let attributes = input.attributes.unwrap_or(serde_json::Value::Null);
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO serial_numbers (
                     id, serial, sku, status, lot_id, lot_number, current_location_id,
@@ -278,10 +275,7 @@ impl SerialRepository for SqliteSerialRepository {
         &self,
         input: CreateSerialNumbersBulk,
     ) -> stateset_core::Result<Vec<SerialNumber>> {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let mut serials = Vec::with_capacity(input.quantity as usize);
@@ -359,10 +353,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn get(&self, id: Uuid) -> stateset_core::Result<Option<SerialNumber>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT * FROM serial_numbers WHERE id = ?",
@@ -378,10 +369,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn get_by_serial(&self, serial: &str) -> stateset_core::Result<Option<SerialNumber>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT * FROM serial_numbers WHERE serial = ?",
@@ -429,31 +417,19 @@ impl SerialRepository for SqliteSerialRepository {
 
         params.push(Box::new(id.to_string()));
 
-        let sql = format!(
-            "UPDATE serial_numbers SET {} WHERE id = ?",
-            updates.join(", ")
-        );
+        let sql = format!("UPDATE serial_numbers SET {} WHERE id = ?", updates.join(", "));
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
-                &sql,
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-            )
-            .map_err(map_db_error)?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))
+                .map_err(map_db_error)?;
         }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn list(&self, filter: SerialFilter) -> stateset_core::Result<Vec<SerialNumber>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut conditions = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -563,10 +539,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn delete(&self, id: Uuid) -> stateset_core::Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Check if serial can be deleted (only if Available and never used)
         let serial = self.get(id)?.ok_or(CommerceError::NotFound)?;
@@ -592,11 +565,8 @@ impl SerialRepository for SqliteSerialRepository {
         }
 
         // Delete history first
-        conn.execute(
-            "DELETE FROM serial_history WHERE serial_id = ?",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        conn.execute("DELETE FROM serial_history WHERE serial_id = ?", params![id.to_string()])
+            .map_err(map_db_error)?;
 
         // Delete reservations
         conn.execute(
@@ -606,21 +576,16 @@ impl SerialRepository for SqliteSerialRepository {
         .map_err(map_db_error)?;
 
         // Delete serial
-        conn.execute(
-            "DELETE FROM serial_numbers WHERE id = ?",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        conn.execute("DELETE FROM serial_numbers WHERE id = ?", params![id.to_string()])
+            .map_err(map_db_error)?;
 
         Ok(())
     }
 
     fn change_status(&self, input: ChangeSerialStatus) -> stateset_core::Result<SerialNumber> {
         {
-            let mut conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             let tx = conn.transaction().map_err(map_db_error)?;
             let now = Utc::now().to_rfc3339();
 
@@ -688,10 +653,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn reserve(&self, input: ReserveSerialNumber) -> stateset_core::Result<SerialReservation> {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
         let now_str = now.to_rfc3339();
@@ -730,9 +692,7 @@ impl SerialRepository for SqliteSerialRepository {
         }
 
         let id = Uuid::new_v4();
-        let expires_at = input
-            .expires_in_seconds
-            .map(|secs| now + chrono::Duration::seconds(secs));
+        let expires_at = input.expires_in_seconds.map(|secs| now + chrono::Duration::seconds(secs));
 
         // Create reservation
         tx.execute(
@@ -755,11 +715,7 @@ impl SerialRepository for SqliteSerialRepository {
         // Update serial status
         tx.execute(
             "UPDATE serial_numbers SET status = ?, updated_at = ? WHERE id = ?",
-            params![
-                SerialStatus::Reserved.to_string(),
-                now_str,
-                input.serial_id.to_string(),
-            ],
+            params![SerialStatus::Reserved.to_string(), now_str, input.serial_id.to_string(),],
         )
         .map_err(map_db_error)?;
 
@@ -800,10 +756,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn release_reservation(&self, reservation_id: Uuid) -> stateset_core::Result<()> {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
@@ -832,11 +785,7 @@ impl SerialRepository for SqliteSerialRepository {
         // Update serial status back to available
         tx.execute(
             "UPDATE serial_numbers SET status = ?, updated_at = ? WHERE id = ?",
-            params![
-                SerialStatus::Available.to_string(),
-                now,
-                reservation.serial_id.to_string(),
-            ],
+            params![SerialStatus::Available.to_string(), now, reservation.serial_id.to_string(),],
         )
         .map_err(map_db_error)?;
 
@@ -865,10 +814,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn confirm_reservation(&self, reservation_id: Uuid) -> stateset_core::Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now().to_rfc3339();
 
         // Get reservation
@@ -901,10 +847,8 @@ impl SerialRepository for SqliteSerialRepository {
 
     fn move_serial(&self, input: MoveSerial) -> stateset_core::Result<SerialNumber> {
         {
-            let mut conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             let tx = conn.transaction().map_err(map_db_error)?;
             let now = Utc::now().to_rfc3339();
 
@@ -958,10 +902,8 @@ impl SerialRepository for SqliteSerialRepository {
         input: TransferSerialOwnership,
     ) -> stateset_core::Result<SerialNumber> {
         {
-            let mut conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             let tx = conn.transaction().map_err(map_db_error)?;
             let now = Utc::now().to_rfc3339();
 
@@ -1027,10 +969,8 @@ impl SerialRepository for SqliteSerialRepository {
         order_id: Option<Uuid>,
     ) -> stateset_core::Result<SerialNumber> {
         {
-            let mut conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             let tx = conn.transaction().map_err(map_db_error)?;
             let now = Utc::now();
             let now_str = now.to_rfc3339();
@@ -1090,10 +1030,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn mark_shipped(&self, id: Uuid, shipment_id: Uuid) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
@@ -1138,10 +1075,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn mark_returned(&self, id: Uuid, return_id: Uuid) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
@@ -1192,10 +1126,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn activate(&self, id: Uuid) -> stateset_core::Result<SerialNumber> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now().to_rfc3339();
 
         conn.execute(
@@ -1226,10 +1157,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn quarantine(&self, id: Uuid, reason: &str) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
@@ -1272,10 +1200,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn release_quarantine(&self, id: Uuid) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
@@ -1289,9 +1214,7 @@ impl SerialRepository for SqliteSerialRepository {
             .map_err(map_db_error)?;
 
         if serial.status != SerialStatus::Quarantined {
-            return Err(CommerceError::ValidationError(
-                "Serial is not quarantined".to_string(),
-            ));
+            return Err(CommerceError::ValidationError("Serial is not quarantined".to_string()));
         }
 
         // Update serial
@@ -1323,10 +1246,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn scrap(&self, id: Uuid, reason: &str) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now().to_rfc3339();
 
@@ -1379,10 +1299,7 @@ impl SerialRepository for SqliteSerialRepository {
         serial_id: Uuid,
         filter: SerialHistoryFilter,
     ) -> stateset_core::Result<Vec<SerialHistory>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut conditions = vec!["serial_id = ?".to_string()];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(serial_id.to_string())];
@@ -1440,17 +1357,11 @@ impl SerialRepository for SqliteSerialRepository {
         // Get recent history
         let recent_history = self.get_history(
             serial_number.id,
-            SerialHistoryFilter {
-                limit: Some(10),
-                ..Default::default()
-            },
+            SerialHistoryFilter { limit: Some(10), ..Default::default() },
         )?;
 
         let product_name = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             let result: rusqlite::Result<String> = conn.query_row(
                 "SELECT COALESCE(p.name, v.name)
                  FROM product_variants v
@@ -1538,10 +1449,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn get_for_lot(&self, lot_id: Uuid) -> stateset_core::Result<Vec<SerialNumber>> {
-        self.list(SerialFilter {
-            lot_id: Some(lot_id),
-            ..Default::default()
-        })
+        self.list(SerialFilter { lot_id: Some(lot_id), ..Default::default() })
     }
 
     fn get_for_customer(&self, customer_id: Uuid) -> stateset_core::Result<Vec<SerialNumber>> {
@@ -1553,10 +1461,7 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn count(&self, filter: SerialFilter) -> stateset_core::Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut conditions = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1583,11 +1488,9 @@ impl SerialRepository for SqliteSerialRepository {
         let sql = format!("SELECT COUNT(*) FROM serial_numbers {}", where_clause);
 
         let count: i64 = conn
-            .query_row(
-                &sql,
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-                |row| row.get(0),
-            )
+            .query_row(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |row| {
+                row.get(0)
+            })
             .map_err(map_db_error)?;
 
         Ok(count as u64)
@@ -1614,18 +1517,12 @@ impl SerialRepository for SqliteSerialRepository {
             return Ok(Vec::new());
         }
 
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let placeholders = build_in_clause(ids.len());
         let params = uuid_params(&ids);
         let params_ref = params_refs(&params);
 
-        let sql = format!(
-            "SELECT * FROM serial_numbers WHERE id IN ({})",
-            placeholders
-        );
+        let sql = format!("SELECT * FROM serial_numbers WHERE id IN ({})", placeholders);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
@@ -1648,18 +1545,12 @@ impl SerialRepository for SqliteSerialRepository {
             return Ok(Vec::new());
         }
 
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let placeholders = build_in_clause(serials.len());
         let params = string_params(&serials);
         let params_ref = params_refs(&params);
 
-        let sql = format!(
-            "SELECT * FROM serial_numbers WHERE serial IN ({})",
-            placeholders
-        );
+        let sql = format!("SELECT * FROM serial_numbers WHERE serial IN ({})", placeholders);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt

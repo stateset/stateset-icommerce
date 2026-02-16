@@ -4,11 +4,8 @@ use super::*;
 fn commerce_with_temp_db() -> (Commerce, tempfile::NamedTempFile) {
     let db_file = tempfile::NamedTempFile::new().expect("create temp sqlite db");
     let db_path = db_file.path().to_str().expect("temp db path utf-8");
-    let commerce = Commerce::builder()
-        .sqlite(db_path)
-        .max_connections(1)
-        .build()
-        .expect("create commerce");
+    let commerce =
+        Commerce::builder().sqlite(db_path).max_connections(1).build().expect("create commerce");
 
     (commerce, db_file)
 }
@@ -17,37 +14,21 @@ fn commerce_with_temp_db() -> (Commerce, tempfile::NamedTempFile) {
 #[cfg(feature = "sqlite")]
 fn test_create_commerce() {
     let commerce = Commerce::new(":memory:").unwrap();
-    assert!(commerce
-        .orders()
-        .list(Default::default())
-        .unwrap()
-        .is_empty());
+    assert!(commerce.orders().list(Default::default()).unwrap().is_empty());
 }
 
 #[test]
 #[cfg(feature = "sqlite")]
 fn test_builder() {
-    let commerce = Commerce::builder()
-        .database(":memory:")
-        .max_connections(1)
-        .build()
-        .unwrap();
+    let commerce = Commerce::builder().database(":memory:").max_connections(1).build().unwrap();
 
-    assert!(commerce
-        .customers()
-        .list(Default::default())
-        .unwrap()
-        .is_empty());
+    assert!(commerce.customers().list(Default::default()).unwrap().is_empty());
 }
 
 #[test]
 #[cfg(feature = "sqlite")]
 fn test_builder_can_disable_metrics() {
-    let commerce = Commerce::builder()
-        .database(":memory:")
-        .disable_metrics()
-        .build()
-        .unwrap();
+    let commerce = Commerce::builder().database(":memory:").disable_metrics().build().unwrap();
 
     assert!(!commerce.metrics().is_enabled());
 }
@@ -62,7 +43,6 @@ fn test_metrics_record_key_engine_operations() {
         CreateReturnItem, CreateShipment, CreateShipmentItem, CreateSubscription,
         CreateSubscriptionPlan, PaymentMethodType, ReturnReason, ShippingCarrier,
     };
-    use uuid::Uuid;
 
     let commerce = Commerce::new(":memory:").unwrap();
 
@@ -79,9 +59,9 @@ fn test_metrics_record_key_engine_operations() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: stateset_core::ProductId::new(),
                 sku: "SKU-METRIC".into(),
                 name: "Metric Widget".into(),
                 quantity: 2,
@@ -115,10 +95,7 @@ fn test_metrics_record_key_engine_operations() {
         })
         .unwrap();
 
-    commerce
-        .inventory()
-        .adjust("SKU-METRIC", dec!(-2), "order allocation")
-        .unwrap();
+    commerce.inventory().adjust("SKU-METRIC", dec!(-2), "order allocation").unwrap();
 
     let payment = commerce
         .payments()
@@ -148,7 +125,7 @@ fn test_metrics_record_key_engine_operations() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id),
+            customer_id: Some(customer.id.into_uuid()),
             customer_email: Some(customer.email.clone()),
             items: Some(vec![AddCartItem {
                 sku: "SKU-METRIC-CART".into(),
@@ -194,7 +171,7 @@ fn test_metrics_record_key_engine_operations() {
     commerce
         .subscriptions()
         .subscribe(CreateSubscription {
-            customer_id: customer.id,
+            customer_id: customer.id.into_uuid(),
             plan_id: plan.id,
             ..Default::default()
         })
@@ -238,7 +215,7 @@ fn test_bom_operations() {
     use stateset_core::{BomStatus, CreateBom, CreateBomComponent};
 
     let commerce = Commerce::new(":memory:").unwrap();
-    let product_id = uuid::Uuid::new_v4();
+    let product_id = stateset_core::ProductId::new();
 
     // Create a BOM
     let bom = commerce
@@ -278,7 +255,7 @@ fn test_work_order_operations() {
     use stateset_core::{CreateWorkOrder, WorkOrderStatus};
 
     let commerce = Commerce::new(":memory:").unwrap();
-    let product_id = uuid::Uuid::new_v4();
+    let product_id = stateset_core::ProductId::new();
 
     // Create work order
     let wo = commerce
@@ -311,7 +288,7 @@ fn test_shipment_operations() {
     use stateset_core::{CreateShipment, CreateShipmentItem, ShipmentStatus, ShippingCarrier};
 
     let commerce = Commerce::new(":memory:").unwrap();
-    let order_id = uuid::Uuid::new_v4();
+    let order_id: crate::OrderId = uuid::Uuid::new_v4().into();
 
     // Create shipment
     let shipment = commerce
@@ -345,15 +322,10 @@ fn test_shipment_operations() {
     assert_eq!(shipment.status, ShipmentStatus::Processing);
 
     // Ship with tracking number
-    let shipment = commerce
-        .shipments()
-        .ship(shipment.id, Some("1Z999AA10123456784".into()))
-        .unwrap();
+    let shipment =
+        commerce.shipments().ship(shipment.id, Some("1Z999AA10123456784".into())).unwrap();
     assert_eq!(shipment.status, ShipmentStatus::Shipped);
-    assert_eq!(
-        shipment.tracking_number,
-        Some("1Z999AA10123456784".to_string())
-    );
+    assert_eq!(shipment.tracking_number, Some("1Z999AA10123456784".to_string()));
     assert!(shipment.tracking_url.is_some());
 
     // Mark in transit
@@ -412,7 +384,7 @@ async fn test_event_subscription() {
 
     // Emit a test event
     let event = CommerceEvent::CustomerCreated {
-        customer_id: Uuid::new_v4(),
+        customer_id: stateset_core::CustomerId::new(),
         email: "test@example.com".to_string(),
         timestamp: Utc::now(),
     };
@@ -780,10 +752,7 @@ fn test_cart_promotions_integration() {
     // 25% off of $100 = $25 discount
     assert_eq!(result.total_discount, dec!(25.00));
     assert_eq!(result.applied_promotions.len(), 1);
-    assert_eq!(
-        result.applied_promotions[0].promotion_name,
-        "25% Off Everything"
-    );
+    assert_eq!(result.applied_promotions[0].promotion_name, "25% Off Everything");
 
     // Verify cart was updated
     let updated_cart = commerce.carts().get(cart.id).unwrap().unwrap();

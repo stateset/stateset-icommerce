@@ -2,12 +2,14 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use stateset_primitives::CustomerId;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Customer entity
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Customer {
-    pub id: Uuid,
+    pub id: CustomerId,
     pub email: String,
     pub first_name: String,
     pub last_name: String,
@@ -27,7 +29,7 @@ pub struct Customer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomerAddress {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub address_type: AddressType,
     pub first_name: String,
     pub last_name: String,
@@ -45,8 +47,10 @@ pub struct CustomerAddress {
 }
 
 /// Customer status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum CustomerStatus {
     Active,
     Inactive,
@@ -60,34 +64,11 @@ impl Default for CustomerStatus {
     }
 }
 
-impl std::fmt::Display for CustomerStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Active => write!(f, "active"),
-            Self::Inactive => write!(f, "inactive"),
-            Self::Suspended => write!(f, "suspended"),
-            Self::Deleted => write!(f, "deleted"),
-        }
-    }
-}
-
-impl std::str::FromStr for CustomerStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "active" => Ok(Self::Active),
-            "inactive" => Ok(Self::Inactive),
-            "suspended" => Ok(Self::Suspended),
-            "deleted" => Ok(Self::Deleted),
-            _ => Err(format!("Unknown customer status: {}", s)),
-        }
-    }
-}
-
 /// Address type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum AddressType {
     Shipping,
     Billing,
@@ -97,29 +78,6 @@ pub enum AddressType {
 impl Default for AddressType {
     fn default() -> Self {
         Self::Both
-    }
-}
-
-impl std::fmt::Display for AddressType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Shipping => write!(f, "shipping"),
-            Self::Billing => write!(f, "billing"),
-            Self::Both => write!(f, "both"),
-        }
-    }
-}
-
-impl std::str::FromStr for AddressType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "shipping" => Ok(Self::Shipping),
-            "billing" => Ok(Self::Billing),
-            "both" => Ok(Self::Both),
-            _ => Err(format!("Unknown address type: {}", s)),
-        }
     }
 }
 
@@ -151,7 +109,7 @@ pub struct UpdateCustomer {
 /// Input for creating a customer address
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCustomerAddress {
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub address_type: Option<AddressType>,
     pub first_name: String,
     pub last_name: String,
@@ -204,7 +162,7 @@ mod tests {
     ) -> Customer {
         let now = Utc::now();
         Customer {
-            id: Uuid::new_v4(),
+            id: CustomerId::new(),
             email: "test@example.com".to_string(),
             first_name: "John".to_string(),
             last_name: "Doe".to_string(),
@@ -225,7 +183,7 @@ mod tests {
         let now = Utc::now();
         CustomerAddress {
             id: Uuid::new_v4(),
-            customer_id: Uuid::new_v4(),
+            customer_id: CustomerId::new(),
             address_type: AddressType::Both,
             first_name: "John".to_string(),
             last_name: "Doe".to_string(),
@@ -318,14 +276,8 @@ mod tests {
     fn test_customer_status_from_str() {
         use std::str::FromStr;
 
-        assert_eq!(
-            CustomerStatus::from_str("active").unwrap(),
-            CustomerStatus::Active
-        );
-        assert_eq!(
-            CustomerStatus::from_str("suspended").unwrap(),
-            CustomerStatus::Suspended
-        );
+        assert_eq!(CustomerStatus::from_str("active").unwrap(), CustomerStatus::Active);
+        assert_eq!(CustomerStatus::from_str("suspended").unwrap(), CustomerStatus::Suspended);
     }
 
     #[test]
@@ -358,10 +310,7 @@ mod tests {
     fn test_address_type_from_str() {
         use std::str::FromStr;
 
-        assert_eq!(
-            AddressType::from_str("shipping").unwrap(),
-            AddressType::Shipping
-        );
+        assert_eq!(AddressType::from_str("shipping").unwrap(), AddressType::Shipping);
         assert_eq!(AddressType::from_str("both").unwrap(), AddressType::Both);
     }
 

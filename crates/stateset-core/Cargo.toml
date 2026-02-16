@@ -8,12 +8,16 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+stateset-primitives = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 rust_decimal = { workspace = true }
 thiserror = { workspace = true }
+auto_impl = { workspace = true }
+async-trait = { workspace = true }
+strum = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
 serde_jcs = { workspace = true }
@@ -30,12 +34,20 @@ reqwest = { workspace = true, optional = true }
 rust_decimal_macros = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4"
+tokio = { workspace = true }
+insta = { workspace = true }
+stateset-test-utils = { workspace = true }
 
 [[bench]]
 name = "core_benchmarks"
 harness = false
 
+[lints]
+workspace = true
+
 [features]
 default = []
 embeddings = ["dep:reqwest"]
 metrics = ["dep:once_cell", "dep:prometheus"]
+## Expose test helpers (for use in downstream integration tests)
+test-utils = []

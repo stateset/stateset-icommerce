@@ -134,110 +134,41 @@ impl PostgresDatabase {
 
         // Get list of migrations
         let mut migrations = vec![
-            (
-                "001_initial_schema",
-                include_str!("migrations/001_initial_schema.sql"),
-            ),
-            (
-                "001a_pgcrypto",
-                include_str!("migrations/001a_pgcrypto.sql"),
-            ),
-            (
-                "002_inventory",
-                include_str!("migrations/002_inventory.sql"),
-            ),
+            ("001_initial_schema", include_str!("migrations/001_initial_schema.sql")),
+            ("001a_pgcrypto", include_str!("migrations/001a_pgcrypto.sql")),
+            ("002_inventory", include_str!("migrations/002_inventory.sql")),
             ("003_returns", include_str!("migrations/003_returns.sql")),
-            (
-                "004_manufacturing",
-                include_str!("migrations/004_manufacturing.sql"),
-            ),
+            ("004_manufacturing", include_str!("migrations/004_manufacturing.sql")),
             ("005_currency", include_str!("migrations/005_currency.sql")),
-            (
-                "006_shipments",
-                include_str!("migrations/006_shipments.sql"),
-            ),
+            ("006_shipments", include_str!("migrations/006_shipments.sql")),
             ("007_payments", include_str!("migrations/007_payments.sql")),
-            (
-                "008_warranties",
-                include_str!("migrations/008_warranties.sql"),
-            ),
-            (
-                "009_purchase_orders",
-                include_str!("migrations/009_purchase_orders.sql"),
-            ),
+            ("008_warranties", include_str!("migrations/008_warranties.sql")),
+            ("009_purchase_orders", include_str!("migrations/009_purchase_orders.sql")),
             ("010_invoices", include_str!("migrations/010_invoices.sql")),
             ("011_carts", include_str!("migrations/011_carts.sql")),
-            (
-                "012_versioning",
-                include_str!("migrations/012_versioning.sql"),
-            ),
-            (
-                "013_versioning_catalog",
-                include_str!("migrations/013_versioning_catalog.sql"),
-            ),
+            ("012_versioning", include_str!("migrations/012_versioning.sql")),
+            ("013_versioning_catalog", include_str!("migrations/013_versioning_catalog.sql")),
             ("014_tax", include_str!("migrations/014_tax.sql")),
-            (
-                "015_promotions",
-                include_str!("migrations/015_promotions.sql"),
-            ),
-            (
-                "016_subscriptions",
-                include_str!("migrations/016_subscriptions.sql"),
-            ),
+            ("015_promotions", include_str!("migrations/015_promotions.sql")),
+            ("016_subscriptions", include_str!("migrations/016_subscriptions.sql")),
             ("017_quality", include_str!("migrations/017_quality.sql")),
             ("018_lots", include_str!("migrations/018_lots.sql")),
             ("019_serials", include_str!("migrations/019_serials.sql")),
-            (
-                "020_warehouse",
-                include_str!("migrations/020_warehouse.sql"),
-            ),
-            (
-                "021_receiving",
-                include_str!("migrations/021_receiving.sql"),
-            ),
-            (
-                "022_fulfillment",
-                include_str!("migrations/022_fulfillment.sql"),
-            ),
-            (
-                "023_accounts_payable",
-                include_str!("migrations/023_accounts_payable.sql"),
-            ),
-            (
-                "024_cost_accounting",
-                include_str!("migrations/024_cost_accounting.sql"),
-            ),
+            ("020_warehouse", include_str!("migrations/020_warehouse.sql")),
+            ("021_receiving", include_str!("migrations/021_receiving.sql")),
+            ("022_fulfillment", include_str!("migrations/022_fulfillment.sql")),
+            ("023_accounts_payable", include_str!("migrations/023_accounts_payable.sql")),
+            ("024_cost_accounting", include_str!("migrations/024_cost_accounting.sql")),
             ("025_credit", include_str!("migrations/025_credit.sql")),
-            (
-                "026_backorder",
-                include_str!("migrations/026_backorder.sql"),
-            ),
-            (
-                "027_accounts_receivable",
-                include_str!("migrations/027_accounts_receivable.sql"),
-            ),
-            (
-                "028_general_ledger",
-                include_str!("migrations/028_general_ledger.sql"),
-            ),
-            (
-                "029_performance_indexes",
-                include_str!("migrations/029_performance_indexes.sql"),
-            ),
-            (
-                "030_idempotency_keys",
-                include_str!("migrations/030_idempotency_keys.sql"),
-            ),
-            (
-                "031_x402_credits",
-                include_str!("migrations/031_x402_credits.sql"),
-            ),
+            ("026_backorder", include_str!("migrations/026_backorder.sql")),
+            ("027_accounts_receivable", include_str!("migrations/027_accounts_receivable.sql")),
+            ("028_general_ledger", include_str!("migrations/028_general_ledger.sql")),
+            ("029_performance_indexes", include_str!("migrations/029_performance_indexes.sql")),
+            ("030_idempotency_keys", include_str!("migrations/030_idempotency_keys.sql")),
+            ("031_x402_credits", include_str!("migrations/031_x402_credits.sql")),
             ("032_erc8004", include_str!("migrations/032_erc8004.sql")),
             ("033_x402_a2a", include_str!("migrations/033_x402_a2a.sql")),
-            (
-                "034_custom_objects",
-                include_str!("migrations/034_custom_objects.sql"),
-            ),
+            ("034_custom_objects", include_str!("migrations/034_custom_objects.sql")),
         ];
 
         // Optional, experimental migrations.
@@ -246,10 +177,7 @@ impl PostgresDatabase {
             migrations.push(("035_sagas", include_str!("migrations/035_sagas.sql")));
         }
 
-        migrations.push((
-            "036_orders_cart_id",
-            include_str!("migrations/036_orders_cart_id.sql"),
-        ));
+        migrations.push(("036_orders_cart_id", include_str!("migrations/036_orders_cart_id.sql")));
         migrations.push((
             "037_x402_nonce_integrity",
             include_str!("migrations/037_x402_nonce_integrity.sql"),
@@ -480,6 +408,126 @@ pub(crate) fn map_db_error(e: sqlx::Error) -> CommerceError {
     }
 }
 
+#[cfg(feature = "postgres")]
+const PG_INITIAL_BACKOFF_MS: u64 = 1;
+#[cfg(feature = "postgres")]
+const PG_MAX_BACKOFF_MS: u64 = 200;
+
+#[cfg(feature = "postgres")]
+fn pg_transaction_isolation_sql(isolation: crate::TransactionIsolation) -> &'static str {
+    match isolation {
+        crate::TransactionIsolation::ReadUncommitted => "READ UNCOMMITTED",
+        crate::TransactionIsolation::ReadCommitted => "READ COMMITTED",
+        crate::TransactionIsolation::RepeatableRead => "REPEATABLE READ",
+        crate::TransactionIsolation::Serializable => "SERIALIZABLE",
+    }
+}
+
+#[cfg(feature = "postgres")]
+fn is_retryable_postgres_error(error: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_error) = error {
+        let code = db_error.code().unwrap_or_default();
+        matches!(code.as_ref(), "40001" | "40P01" | "55P03")
+    } else {
+        false
+    }
+}
+
+#[cfg(feature = "postgres")]
+fn normalize_statement_timeout_ms(timeout_ms: Option<u64>) -> i32 {
+    timeout_ms
+        .unwrap_or(crate::DEFAULT_TRANSACTION_TIMEOUT_MS)
+        .min(i32::MAX as u64) as i32
+}
+
+#[cfg(feature = "postgres")]
+async fn maybe_retry_with_backoff(
+    retries: &mut u32,
+    backoff_ms: &mut u64,
+    error: &sqlx::Error,
+) -> bool {
+    if !is_retryable_postgres_error(error) || *retries == 0 {
+        return false;
+    }
+
+    *retries -= 1;
+    let delay_ms = (*backoff_ms).min(PG_MAX_BACKOFF_MS);
+    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+    *backoff_ms = (*backoff_ms * 2).min(PG_MAX_BACKOFF_MS);
+    true
+}
+
+#[cfg(feature = "postgres")]
+impl crate::AsyncDatabaseExt for PostgresDatabase {
+    async fn with_transaction_async_opts<'a, F, T, Fut>(
+        &'a self,
+        opts: crate::TransactionOptions,
+        mut f: F,
+    ) -> stateset_core::Result<T>
+    where
+        F: FnMut(&mut sqlx::Transaction<'a, sqlx::Postgres>) -> Fut + Send,
+        Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>> + Send,
+        T: Send,
+    {
+        let mut retries = if opts.retry_on_conflict { opts.max_retries } else { 0 };
+        let mut backoff_ms = PG_INITIAL_BACKOFF_MS;
+        let statement_timeout = normalize_statement_timeout_ms(opts.timeout_ms);
+        let isolation_sql = pg_transaction_isolation_sql(opts.isolation);
+
+        loop {
+            let mut tx = match self.pool.begin().await {
+                Ok(tx) => tx,
+                Err(error) => {
+                    if maybe_retry_with_backoff(&mut retries, &mut backoff_ms, &error).await {
+                        continue;
+                    }
+                    return Err(map_db_error(error));
+                }
+            };
+
+            if let Err(error) =
+                sqlx::query(&format!("SET TRANSACTION ISOLATION LEVEL {}", isolation_sql))
+                    .execute(&mut tx)
+                    .await
+            {
+                if maybe_retry_with_backoff(&mut retries, &mut backoff_ms, &error).await {
+                    continue;
+                }
+                return Err(map_db_error(error));
+            }
+
+            if let Err(error) = sqlx::query("SET LOCAL statement_timeout = $1")
+                .bind(statement_timeout)
+                .execute(&mut tx)
+                .await
+            {
+                if maybe_retry_with_backoff(&mut retries, &mut backoff_ms, &error).await {
+                    continue;
+                }
+                return Err(map_db_error(error));
+            }
+
+            match f(&mut tx).await {
+                Ok(output) => {
+                    if let Err(error) = tx.commit().await {
+                        if maybe_retry_with_backoff(&mut retries, &mut backoff_ms, &error).await {
+                            continue;
+                        }
+                        return Err(map_db_error(error));
+                    }
+                    return Ok(output);
+                }
+                Err(error) => {
+                    if maybe_retry_with_backoff(&mut retries, &mut backoff_ms, &error).await {
+                        continue;
+                    }
+                    return Err(map_db_error(error));
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn block_on<F, T>(fut: F) -> stateset_core::Result<T>
 where
     F: Future<Output = stateset_core::Result<T>>,
@@ -493,4 +541,121 @@ where
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {}", e)))?;
     rt.block_on(fut)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::error::{DatabaseError, ErrorKind};
+    use std::borrow::Cow;
+    use std::fmt::{self, Display, Formatter};
+
+    #[derive(Debug)]
+    struct MockDbError {
+        code: Option<String>,
+        message: String,
+    }
+
+    impl Display for MockDbError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.message)
+        }
+    }
+
+    impl std::error::Error for MockDbError {}
+
+    impl DatabaseError for MockDbError {
+        fn message(&self) -> &str {
+            &self.message
+        }
+
+        fn code(&self) -> Option<Cow<'_, str>> {
+            self.code.as_ref().map(|code| Cow::Owned(code.clone()))
+        }
+
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
+    }
+
+    fn mock_db_error(code: Option<&str>, message: &str) -> sqlx::Error {
+        sqlx::Error::Database(Box::new(MockDbError {
+            code: code.map(str::to_string),
+            message: message.to_string(),
+        }))
+    }
+
+    #[test]
+    fn pg_transaction_isolation_sql_is_stable() {
+        assert_eq!(
+            pg_transaction_isolation_sql(crate::TransactionIsolation::ReadUncommitted),
+            "READ UNCOMMITTED"
+        );
+        assert_eq!(
+            pg_transaction_isolation_sql(crate::TransactionIsolation::ReadCommitted),
+            "READ COMMITTED"
+        );
+        assert_eq!(
+            pg_transaction_isolation_sql(crate::TransactionIsolation::RepeatableRead),
+            "REPEATABLE READ"
+        );
+        assert_eq!(
+            pg_transaction_isolation_sql(crate::TransactionIsolation::Serializable),
+            "SERIALIZABLE"
+        );
+    }
+
+    #[test]
+    fn is_retryable_postgres_error_matches_transient_codes() {
+        assert!(is_retryable_postgres_error(&mock_db_error(Some("40001"), "serialization_failure")));
+        assert!(is_retryable_postgres_error(&mock_db_error(Some("40P01"), "deadlock_detected")));
+        assert!(is_retryable_postgres_error(&mock_db_error(Some("55P03"), "lock_not_available")));
+        assert!(!is_retryable_postgres_error(&mock_db_error(Some("23505"), "unique_violation")));
+        assert!(!is_retryable_postgres_error(&mock_db_error(None, "no_code")));
+        assert!(!is_retryable_postgres_error(&sqlx::Error::RowNotFound));
+    }
+
+    #[test]
+    fn normalize_statement_timeout_ms_uses_default_and_caps_max_i32() {
+        assert_eq!(normalize_statement_timeout_ms(None), crate::DEFAULT_TRANSACTION_TIMEOUT_MS as i32);
+        assert_eq!(normalize_statement_timeout_ms(Some(1500)), 1500);
+        assert_eq!(
+            normalize_statement_timeout_ms(Some(i32::MAX as u64 + 1)),
+            i32::MAX,
+        );
+    }
+
+    #[tokio::test]
+    async fn maybe_retry_with_backoff_respects_retry_budget_and_backoff_growth() {
+        let mut retries = 1;
+        let mut backoff = 4;
+        let err = mock_db_error(Some("40001"), "serialization_failure");
+
+        assert!(maybe_retry_with_backoff(&mut retries, &mut backoff, &err).await);
+        assert_eq!(retries, 0);
+        assert_eq!(backoff, 8);
+    }
+
+    #[tokio::test]
+    async fn maybe_retry_with_backoff_skips_non_retryable_errors() {
+        let mut retries = 3;
+        let mut backoff = 4;
+        let err = mock_db_error(Some("23505"), "unique_violation");
+
+        assert!(!maybe_retry_with_backoff(&mut retries, &mut backoff, &err).await);
+        assert_eq!(retries, 3);
+        assert_eq!(backoff, 4);
+    }
 }

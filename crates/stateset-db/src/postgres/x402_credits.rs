@@ -173,9 +173,7 @@ impl PgX402CreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_account_async(payer_address, asset, network)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_account_async(payer_address, asset, network).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_balance_async(
@@ -184,9 +182,7 @@ impl PgX402CreditRepository {
         asset: X402Asset,
         network: X402Network,
     ) -> Result<u64> {
-        let account = self
-            .get_or_create_account_async(payer_address, asset, network)
-            .await?;
+        let account = self.get_or_create_account_async(payer_address, asset, network).await?;
         Ok(account.balance)
     }
 
@@ -322,24 +318,16 @@ impl PgX402CreditRepository {
         );
 
         if let Some(payer_address) = filter.payer_address {
-            builder
-                .push(" AND payer_address = ")
-                .push_bind(payer_address);
+            builder.push(" AND payer_address = ").push_bind(payer_address);
         }
         if let Some(asset) = filter.asset {
-            builder
-                .push(" AND asset = ")
-                .push_bind(asset.to_string().to_lowercase());
+            builder.push(" AND asset = ").push_bind(asset.to_string().to_lowercase());
         }
         if let Some(network) = filter.network {
-            builder
-                .push(" AND network = ")
-                .push_bind(network.to_string());
+            builder.push(" AND network = ").push_bind(network.to_string());
         }
         if let Some(direction) = filter.direction {
-            builder
-                .push(" AND direction = ")
-                .push_bind(direction.to_string());
+            builder.push(" AND direction = ").push_bind(direction.to_string());
         }
 
         builder.push(" ORDER BY created_at DESC");
@@ -351,11 +339,8 @@ impl PgX402CreditRepository {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let rows: Vec<CreditTransactionRow> = builder
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows: Vec<CreditTransactionRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         rows.into_iter().map(Self::row_to_transaction).collect()
     }

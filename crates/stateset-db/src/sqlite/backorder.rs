@@ -5,9 +5,10 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    generate_backorder_number, AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation,
-    BackorderFilter, BackorderFulfillment, BackorderRepository, BackorderStatus, BackorderSummary,
-    CommerceError, CreateBackorder, FulfillBackorder, Result, SkuBackorderSummary, UpdateBackorder,
+    AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderFilter,
+    BackorderFulfillment, BackorderRepository, BackorderStatus, BackorderSummary, CommerceError,
+    CreateBackorder, FulfillBackorder, Result, SkuBackorderSummary, UpdateBackorder,
+    generate_backorder_number,
 };
 use uuid::Uuid;
 
@@ -16,7 +17,7 @@ use super::{
     parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
 };
 
-fn row_to_backorder_row(row: &rusqlite::Row) -> rusqlite::Result<Backorder> {
+fn row_to_backorder_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Backorder> {
     Ok(Backorder {
         id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder", "id")?,
         backorder_number: row.get(1)?,
@@ -71,11 +72,14 @@ impl SqliteBackorderRepository {
         Self { pool }
     }
 
-    fn row_to_backorder(&self, row: &rusqlite::Row) -> rusqlite::Result<Backorder> {
+    fn row_to_backorder(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<Backorder> {
         row_to_backorder_row(row)
     }
 
-    fn row_to_fulfillment(&self, row: &rusqlite::Row) -> rusqlite::Result<BackorderFulfillment> {
+    fn row_to_fulfillment(
+        &self,
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<BackorderFulfillment> {
         Ok(BackorderFulfillment {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder_fulfillment", "id")?,
             backorder_id: parse_uuid_row(
@@ -108,7 +112,7 @@ impl SqliteBackorderRepository {
         })
     }
 
-    fn row_to_allocation(&self, row: &rusqlite::Row) -> rusqlite::Result<BackorderAllocation> {
+    fn row_to_allocation(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<BackorderAllocation> {
         Ok(BackorderAllocation {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder_allocation", "id")?,
             backorder_id: parse_uuid_row(
@@ -187,9 +191,9 @@ pub(crate) fn create_backorder_in_tx(
 
     match row {
         Ok(bo) => Ok(bo),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Err(rusqlite::Error::ToSqlConversionFailure(
-            Box::new(CommerceError::NotFound),
-        )),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            Err(rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound)))
+        }
         Err(e) => Err(e),
     }
 }
@@ -223,10 +227,7 @@ impl BackorderRepository for SqliteBackorderRepository {
         let priority = input.priority.unwrap_or_default();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO backorders (id, backorder_number, order_id, order_line_id, customer_id,
                     sku, quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
@@ -256,10 +257,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn get_backorder(&self, id: Uuid) -> Result<Option<Backorder>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, backorder_number, order_id, order_line_id, customer_id, sku,
                     quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
@@ -277,10 +275,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn get_backorder_by_number(&self, number: &str) -> Result<Option<Backorder>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, backorder_number, order_id, order_line_id, customer_id, sku,
                     quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
@@ -298,10 +293,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
@@ -329,10 +321,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn list_backorders(&self, filter: BackorderFilter) -> Result<Vec<Backorder>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, backorder_number, order_id, order_line_id, customer_id, sku,
                     quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
@@ -383,10 +372,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn cancel_backorder(&self, id: Uuid) -> Result<Backorder> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
@@ -405,10 +391,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
-        self.list_backorders(BackorderFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
+        self.list_backorders(BackorderFilter { order_id: Some(order_id), ..Default::default() })
     }
 
     fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>> {
@@ -419,19 +402,14 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn get_backorders_for_sku(&self, sku: &str) -> Result<Vec<Backorder>> {
-        self.list_backorders(BackorderFilter {
-            sku: Some(sku.to_string()),
-            ..Default::default()
-        })
+        self.list_backorders(BackorderFilter { sku: Some(sku.to_string()), ..Default::default() })
     }
 
     fn fulfill_backorder(&self, input: FulfillBackorder) -> Result<Backorder> {
         let now = Utc::now();
         let id = Uuid::new_v4();
 
-        let backorder = self
-            .get_backorder(input.backorder_id)?
-            .ok_or(CommerceError::NotFound)?;
+        let backorder = self.get_backorder(input.backorder_id)?.ok_or(CommerceError::NotFound)?;
 
         if input.quantity > backorder.quantity_remaining {
             return Err(CommerceError::ValidationError(format!(
@@ -441,10 +419,7 @@ impl BackorderRepository for SqliteBackorderRepository {
         }
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             // Record fulfillment
             conn.execute(
@@ -486,24 +461,18 @@ impl BackorderRepository for SqliteBackorderRepository {
             ).map_err(map_db_error)?;
         }
 
-        self.get_backorder(input.backorder_id)?
-            .ok_or(CommerceError::NotFound)
+        self.get_backorder(input.backorder_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_fulfillment_history(&self, backorder_id: Uuid) -> Result<Vec<BackorderFulfillment>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, backorder_id, quantity, source_type, source_id, notes, fulfilled_at, fulfilled_by
              FROM backorder_fulfillments WHERE backorder_id = ? ORDER BY fulfilled_at"
         ).map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map([backorder_id.to_string()], |row| {
-                self.row_to_fulfillment(row)
-            })
+            .query_map([backorder_id.to_string()], |row| self.row_to_fulfillment(row))
             .map_err(map_db_error)?;
 
         let mut fulfillments = Vec::new();
@@ -514,16 +483,11 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn allocate_backorder(&self, input: AllocateBackorder) -> Result<BackorderAllocation> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        let backorder = self
-            .get_backorder(input.backorder_id)?
-            .ok_or(CommerceError::NotFound)?;
+        let backorder = self.get_backorder(input.backorder_id)?.ok_or(CommerceError::NotFound)?;
 
         conn.execute(
             "INSERT INTO backorder_allocations (id, backorder_id, sku, quantity, location_id,
@@ -564,19 +528,14 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at
              FROM backorder_allocations WHERE backorder_id = ? AND status = 'reserved'"
         ).map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map([backorder_id.to_string()], |row| {
-                self.row_to_allocation(row)
-            })
+            .query_map([backorder_id.to_string()], |row| self.row_to_allocation(row))
             .map_err(map_db_error)?;
 
         let mut allocations = Vec::new();
@@ -587,10 +546,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "UPDATE backorder_allocations SET status = 'released' WHERE id = ?",
@@ -609,10 +565,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "UPDATE backorder_allocations SET status = 'confirmed' WHERE id = ?",
@@ -631,10 +584,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn expire_allocations(&self) -> Result<u32> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         let count = conn
@@ -663,10 +613,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn get_summary(&self) -> Result<BackorderSummary> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         let (total, pending, allocated, critical): (i32, i32, i32, i32) = conn
@@ -711,10 +658,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn get_sku_summary(&self, sku: &str) -> Result<Option<SkuBackorderSummary>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let (count, oldest_date_raw, earliest_expected_raw): (i32, Option<String>, Option<String>) =
             conn.query_row(
@@ -757,10 +701,7 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn get_overdue_backorders(&self) -> Result<Vec<Backorder>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         let mut stmt = conn
@@ -787,16 +728,11 @@ impl BackorderRepository for SqliteBackorderRepository {
     }
 
     fn count_pending(&self) -> Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM backorders WHERE status = 'pending'",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM backorders WHERE status = 'pending'", [], |row| {
+                row.get(0)
+            })
             .map_err(map_db_error)?;
         Ok(count as u64)
     }

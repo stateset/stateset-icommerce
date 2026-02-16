@@ -3,13 +3,13 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
-    generate_payment_number, generate_refund_number, validate_batch_size, BatchResult,
-    CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, Payment, PaymentFilter,
-    PaymentMethod, PaymentMethodType, PaymentRepository, PaymentTransactionStatus, Refund,
-    RefundStatus, Result, UpdatePayment,
+    BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
+    OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentMethodType,
+    PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
+    generate_payment_number, generate_refund_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -145,11 +145,11 @@ impl PgPaymentRepository {
         };
 
         Ok(Payment {
-            id,
+            id: PaymentId::from(id),
             payment_number,
-            order_id,
+            order_id: order_id.map(OrderId::from),
             invoice_id,
-            customer_id,
+            customer_id: customer_id.map(CustomerId::from),
             status,
             payment_method,
             amount,
@@ -210,7 +210,7 @@ impl PgPaymentRepository {
         Ok(Refund {
             id,
             refund_number,
-            payment_id,
+            payment_id: PaymentId::from(payment_id),
             status,
             amount,
             currency,
@@ -262,7 +262,7 @@ impl PgPaymentRepository {
 
         Ok(PaymentMethod {
             id,
-            customer_id,
+            customer_id: CustomerId::from(customer_id),
             method_type,
             is_default,
             card_brand,
@@ -303,9 +303,9 @@ impl PgPaymentRepository {
         )
         .bind(id)
         .bind(&payment_number)
-        .bind(input.order_id)
+        .bind(input.order_id.map(|oid| oid.into_uuid()))
         .bind(input.invoice_id)
-        .bind(input.customer_id)
+        .bind(input.customer_id.map(|cid| cid.into_uuid()))
         .bind(PaymentTransactionStatus::Pending.to_string())
         .bind(input.payment_method.to_string())
         .bind(input.amount)
@@ -458,10 +458,10 @@ impl PgPaymentRepository {
         let mut q = sqlx::query_as::<_, PaymentRow>(&query);
 
         if let Some(order_id) = filter.order_id {
-            q = q.bind(order_id);
+            q = q.bind(order_id.into_uuid());
         }
         if let Some(customer_id) = filter.customer_id {
-            q = q.bind(customer_id);
+            q = q.bind(customer_id.into_uuid());
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());
@@ -479,20 +479,12 @@ impl PgPaymentRepository {
 
     /// Get payments for order (async)
     pub async fn for_order_async(&self, order_id: Uuid) -> Result<Vec<Payment>> {
-        self.list_async(PaymentFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
-        .await
+        self.list_async(PaymentFilter { order_id: Some(OrderId::from(order_id)), ..Default::default() }).await
     }
 
     /// Get payments for invoice (async)
     pub async fn for_invoice_async(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
-        self.list_async(PaymentFilter {
-            invoice_id: Some(invoice_id),
-            ..Default::default()
-        })
-        .await
+        self.list_async(PaymentFilter { invoice_id: Some(invoice_id), ..Default::default() }).await
     }
 
     /// Mark payment as processing (async)
@@ -565,13 +557,9 @@ impl PgPaymentRepository {
             }
         }
 
-        let payment = self
-            .get_async(input.payment_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
-        let refund_amount = input
-            .amount
-            .unwrap_or(payment.amount - payment.amount_refunded);
+        let raw_payment_id = input.payment_id.into_uuid();
+        let payment = self.get_async(raw_payment_id).await?.ok_or(CommerceError::NotFound)?;
+        let refund_amount = input.amount.unwrap_or(payment.amount - payment.amount_refunded);
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -583,7 +571,7 @@ impl PgPaymentRepository {
         )
         .bind(id)
         .bind(&refund_number)
-        .bind(input.payment_id)
+        .bind(raw_payment_id)
         .bind(RefundStatus::Pending.to_string())
         .bind(refund_amount)
         .bind(&payment.currency)
@@ -597,9 +585,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_refund_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Get refund by ID (async)
@@ -652,10 +638,7 @@ impl PgPaymentRepository {
 
     /// Complete refund (async)
     pub async fn complete_refund_async(&self, id: Uuid) -> Result<Refund> {
-        let refund = self
-            .get_refund_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let refund = self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
         sqlx::query(
@@ -678,14 +661,12 @@ impl PgPaymentRepository {
         .bind(refund.amount)
         .bind(refund.amount)
         .bind(now)
-        .bind(refund.payment_id)
+        .bind(refund.payment_id.into_uuid())
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        self.get_refund_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Fail refund (async)
@@ -703,9 +684,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_refund_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Create payment method (async)
@@ -719,7 +698,7 @@ impl PgPaymentRepository {
         // If setting as default, clear existing default
         if input.is_default.unwrap_or(false) {
             sqlx::query("UPDATE payment_methods SET is_default = false WHERE customer_id = $1")
-                .bind(input.customer_id)
+                .bind(input.customer_id.into_uuid())
                 .execute(&self.pool)
                 .await
                 .map_err(map_db_error)?;
@@ -732,7 +711,7 @@ impl PgPaymentRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         )
         .bind(id)
-        .bind(input.customer_id)
+        .bind(input.customer_id.into_uuid())
         .bind(input.method_type.to_string())
         .bind(input.is_default.unwrap_or(false))
         .bind(input.card_brand.map(|b| b.to_string()))
@@ -838,10 +817,10 @@ impl PgPaymentRepository {
         let mut q = sqlx::query_as::<_, (i64,)>(&query);
 
         if let Some(order_id) = filter.order_id {
-            q = q.bind(order_id);
+            q = q.bind(order_id.into_uuid());
         }
         if let Some(customer_id) = filter.customer_id {
-            q = q.bind(customer_id);
+            q = q.bind(customer_id.into_uuid());
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());
@@ -916,9 +895,9 @@ impl PgPaymentRepository {
             )
             .bind(id)
             .bind(&payment_number)
-            .bind(input.order_id)
+            .bind(input.order_id.map(|oid| oid.into_uuid()))
             .bind(input.invoice_id)
-            .bind(input.customer_id)
+            .bind(input.customer_id.map(|cid| cid.into_uuid()))
             .bind(PaymentTransactionStatus::Pending.to_string())
             .bind(input.payment_method.to_string())
             .bind(input.amount)
@@ -943,7 +922,7 @@ impl PgPaymentRepository {
             .map_err(map_db_error)?;
 
             payments.push(Payment {
-                id,
+                id: PaymentId::from(id),
                 payment_number,
                 order_id: input.order_id,
                 invoice_id: input.invoice_id,
@@ -990,16 +969,17 @@ impl PgPaymentRepository {
     /// Update multiple payments - partial success allowed (async)
     pub async fn update_batch_async(
         &self,
-        updates: Vec<(Uuid, UpdatePayment)>,
+        updates: Vec<(PaymentId, UpdatePayment)>,
     ) -> Result<BatchResult<Payment>> {
         validate_batch_size(&updates)?;
 
         let mut result = BatchResult::with_capacity(updates.len());
 
         for (index, (id, input)) in updates.into_iter().enumerate() {
-            match self.update_async(id, input).await {
+            let raw_id = id.into_uuid();
+            match self.update_async(raw_id, input).await {
                 Ok(payment) => result.record_success(payment),
-                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+                Err(e) => result.record_failure(index, Some(raw_id.to_string()), &e),
             }
         }
 
@@ -1009,7 +989,7 @@ impl PgPaymentRepository {
     /// Update multiple payments - atomic (all-or-nothing) (async)
     pub async fn update_batch_atomic_async(
         &self,
-        updates: Vec<(Uuid, UpdatePayment)>,
+        updates: Vec<(PaymentId, UpdatePayment)>,
     ) -> Result<Vec<Payment>> {
         validate_batch_size(&updates)?;
 
@@ -1017,6 +997,7 @@ impl PgPaymentRepository {
         let mut payments = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
+            let raw_id = id.into_uuid();
             let payment = sqlx::query_as::<_, PaymentRow>(
                 "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
                  amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
@@ -1024,7 +1005,7 @@ impl PgPaymentRepository {
                  description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
                  FROM payments WHERE id = $1"
             )
-            .bind(id)
+            .bind(raw_id)
             .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
@@ -1044,7 +1025,7 @@ impl PgPaymentRepository {
             .bind(input.failure_code.or(payment.failure_code))
             .bind(input.metadata.or(payment.metadata))
             .bind(now)
-            .bind(id)
+            .bind(raw_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -1057,7 +1038,7 @@ impl PgPaymentRepository {
                  description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
                  FROM payments WHERE id = $1"
             )
-            .bind(id)
+            .bind(raw_id)
             .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -1070,15 +1051,16 @@ impl PgPaymentRepository {
     }
 
     /// Delete multiple payments - partial success allowed (async)
-    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    pub async fn delete_batch_async(&self, ids: Vec<PaymentId>) -> Result<BatchResult<Uuid>> {
         validate_batch_size(&ids)?;
 
         let mut result = BatchResult::with_capacity(ids.len());
 
         for (index, id) in ids.into_iter().enumerate() {
-            match self.delete_async(id).await {
-                Ok(()) => result.record_success(id),
-                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            let raw_id = id.into_uuid();
+            match self.delete_async(raw_id).await {
+                Ok(()) => result.record_success(raw_id),
+                Err(e) => result.record_failure(index, Some(raw_id.to_string()), &e),
             }
         }
 
@@ -1086,25 +1068,27 @@ impl PgPaymentRepository {
     }
 
     /// Delete multiple payments - atomic (all-or-nothing) (async)
-    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<PaymentId>) -> Result<()> {
         validate_batch_size(&ids)?;
 
         if ids.is_empty() {
             return Ok(());
         }
 
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         // Delete associated refunds first (foreign key constraint)
         sqlx::query("DELETE FROM refunds WHERE payment_id = ANY($1)")
-            .bind(&ids)
+            .bind(&raw_ids)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete payments
         sqlx::query("DELETE FROM payments WHERE id = ANY($1)")
-            .bind(&ids)
+            .bind(&raw_ids)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -1114,12 +1098,14 @@ impl PgPaymentRepository {
     }
 
     /// Get multiple payments by ID (async)
-    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Payment>> {
+    pub async fn get_batch_async(&self, ids: Vec<PaymentId>) -> Result<Vec<Payment>> {
         validate_batch_size(&ids)?;
 
         if ids.is_empty() {
             return Ok(Vec::new());
         }
+
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
 
         let rows = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
@@ -1128,7 +1114,7 @@ impl PgPaymentRepository {
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE id = ANY($1)"
         )
-        .bind(&ids)
+        .bind(&raw_ids)
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -1146,8 +1132,8 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Payment>> {
-        super::block_on(self.get_async(id))
+    fn get(&self, id: PaymentId) -> Result<Option<Payment>> {
+        super::block_on(self.get_async(id.into_uuid()))
     }
 
     fn get_by_number(&self, payment_number: &str) -> Result<Option<Payment>> {
@@ -1158,36 +1144,36 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.get_by_external_id_async(external_id))
     }
 
-    fn update(&self, id: Uuid, input: UpdatePayment) -> Result<Payment> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: PaymentId, input: UpdatePayment) -> Result<Payment> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: PaymentFilter) -> Result<Vec<Payment>> {
         super::block_on(self.list_async(filter))
     }
 
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Payment>> {
-        super::block_on(self.for_order_async(order_id))
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Payment>> {
+        super::block_on(self.for_order_async(order_id.into_uuid()))
     }
 
     fn for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
         super::block_on(self.for_invoice_async(invoice_id))
     }
 
-    fn mark_processing(&self, id: Uuid) -> Result<Payment> {
-        super::block_on(self.mark_processing_async(id))
+    fn mark_processing(&self, id: PaymentId) -> Result<Payment> {
+        super::block_on(self.mark_processing_async(id.into_uuid()))
     }
 
-    fn mark_completed(&self, id: Uuid) -> Result<Payment> {
-        super::block_on(self.mark_completed_async(id))
+    fn mark_completed(&self, id: PaymentId) -> Result<Payment> {
+        super::block_on(self.mark_completed_async(id.into_uuid()))
     }
 
-    fn mark_failed(&self, id: Uuid, reason: &str, code: Option<&str>) -> Result<Payment> {
-        super::block_on(self.mark_failed_async(id, reason, code))
+    fn mark_failed(&self, id: PaymentId, reason: &str, code: Option<&str>) -> Result<Payment> {
+        super::block_on(self.mark_failed_async(id.into_uuid(), reason, code))
     }
 
-    fn cancel(&self, id: Uuid) -> Result<Payment> {
-        super::block_on(self.cancel_async(id))
+    fn cancel(&self, id: PaymentId) -> Result<Payment> {
+        super::block_on(self.cancel_async(id.into_uuid()))
     }
 
     fn create_refund(&self, input: CreateRefund) -> Result<Refund> {
@@ -1198,8 +1184,8 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.get_refund_async(id))
     }
 
-    fn get_refunds(&self, payment_id: Uuid) -> Result<Vec<Refund>> {
-        super::block_on(self.get_refunds_async(payment_id))
+    fn get_refunds(&self, payment_id: PaymentId) -> Result<Vec<Refund>> {
+        super::block_on(self.get_refunds_async(payment_id.into_uuid()))
     }
 
     fn complete_refund(&self, id: Uuid) -> Result<Refund> {
@@ -1214,16 +1200,16 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.create_payment_method_async(input))
     }
 
-    fn get_payment_methods(&self, customer_id: Uuid) -> Result<Vec<PaymentMethod>> {
-        super::block_on(self.get_payment_methods_async(customer_id))
+    fn get_payment_methods(&self, customer_id: CustomerId) -> Result<Vec<PaymentMethod>> {
+        super::block_on(self.get_payment_methods_async(customer_id.into_uuid()))
     }
 
     fn delete_payment_method(&self, id: Uuid) -> Result<()> {
         super::block_on(self.delete_payment_method_async(id))
     }
 
-    fn set_default_payment_method(&self, customer_id: Uuid, method_id: Uuid) -> Result<()> {
-        super::block_on(self.set_default_payment_method_async(customer_id, method_id))
+    fn set_default_payment_method(&self, customer_id: CustomerId, method_id: Uuid) -> Result<()> {
+        super::block_on(self.set_default_payment_method_async(customer_id.into_uuid(), method_id))
     }
 
     fn count(&self, filter: PaymentFilter) -> Result<u64> {
@@ -1242,23 +1228,23 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+    fn update_batch(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<BatchResult<Payment>> {
         super::block_on(self.update_batch_async(updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>> {
+    fn update_batch_atomic(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<Vec<Payment>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<PaymentId>) -> Result<BatchResult<Uuid>> {
         super::block_on(self.delete_batch_async(ids))
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<PaymentId>) -> Result<()> {
         super::block_on(self.delete_batch_atomic_async(ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Payment>> {
+    fn get_batch(&self, ids: Vec<PaymentId>) -> Result<Vec<Payment>> {
         super::block_on(self.get_batch_async(ids))
     }
 }

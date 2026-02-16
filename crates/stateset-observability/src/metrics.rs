@@ -1,8 +1,30 @@
 //! Metrics helpers for StateSet iCommerce.
 //!
-//! This module provides a minimal, dependency-light metrics surface.
-//! Downstream applications can wrap these hooks with their preferred
-//! metrics exporter.
+//! This module provides a minimal, dependency-light metrics surface using
+//! lock-free atomic counters. Downstream applications can wrap these hooks
+//! with their preferred metrics exporter (Prometheus, StatsD, etc.).
+//!
+//! # Example
+//!
+//! ```rust
+//! use stateset_observability::{init_metrics, MetricsConfig};
+//!
+//! let metrics = init_metrics(MetricsConfig::default());
+//! assert!(metrics.is_enabled());
+//!
+//! // Record events
+//! metrics.record_order_created("cust-1", 49.99);
+//! metrics.record_order_created("cust-2", 150.00);
+//!
+//! // Snapshot for export
+//! let snap = metrics.snapshot();
+//! assert_eq!(snap.orders_created, 2);
+//!
+//! // Runtime toggle
+//! metrics.set_enabled(false);
+//! metrics.record_order_created("cust-3", 25.00);
+//! assert_eq!(metrics.snapshot().orders_created, 2); // unchanged
+//! ```
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -116,10 +138,7 @@ impl Metrics {
             products_created: self.inner.products_created.load(Ordering::Relaxed),
             returns_requested: self.inner.returns_requested.load(Ordering::Relaxed),
             carts_created: self.inner.carts_created.load(Ordering::Relaxed),
-            cart_checkouts_completed: self
-                .inner
-                .cart_checkouts_completed
-                .load(Ordering::Relaxed),
+            cart_checkouts_completed: self.inner.cart_checkouts_completed.load(Ordering::Relaxed),
             shipments_created: self.inner.shipments_created.load(Ordering::Relaxed),
             shipments_delivered: self.inner.shipments_delivered.load(Ordering::Relaxed),
             subscriptions_created: self.inner.subscriptions_created.load(Ordering::Relaxed),
@@ -181,9 +200,7 @@ impl Metrics {
         if !self.is_enabled() {
             return;
         }
-        self.inner
-            .cart_checkouts_completed
-            .fetch_add(1, Ordering::Relaxed);
+        self.inner.cart_checkouts_completed.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a new shipment creation event.
@@ -207,9 +224,7 @@ impl Metrics {
         if !self.is_enabled() {
             return;
         }
-        self.inner
-            .subscriptions_created
-            .fetch_add(1, Ordering::Relaxed);
+        self.inner.subscriptions_created.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a completed payment.
@@ -217,9 +232,7 @@ impl Metrics {
         if !self.is_enabled() {
             return;
         }
-        self.inner
-            .payments_completed
-            .fetch_add(1, Ordering::Relaxed);
+        self.inner.payments_completed.fetch_add(1, Ordering::Relaxed);
         let mut totals = match self.inner.totals.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -232,9 +245,7 @@ impl Metrics {
         if !self.is_enabled() {
             return;
         }
-        self.inner
-            .inventory_adjustments
-            .fetch_add(1, Ordering::Relaxed);
+        self.inner.inventory_adjustments.fetch_add(1, Ordering::Relaxed);
         let mut totals = match self.inner.totals.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),

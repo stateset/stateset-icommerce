@@ -7,8 +7,8 @@
 
 use once_cell::sync::Lazy;
 use prometheus::{
-    register_histogram_vec, register_int_counter_vec, register_int_gauge, Encoder, HistogramOpts,
-    HistogramVec, IntCounterVec, IntGauge, Opts, TextEncoder,
+    Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, TextEncoder,
+    register_histogram_vec, register_int_counter_vec, register_int_gauge,
 };
 use std::time::Instant;
 
@@ -146,11 +146,7 @@ pub struct OperationTimer {
 impl OperationTimer {
     /// Start a new operation timer
     pub fn start(operation: &'static str, labels: Vec<String>) -> Self {
-        Self {
-            operation,
-            labels,
-            start: Instant::now(),
-        }
+        Self { operation, labels, start: Instant::now() }
     }
 }
 
@@ -160,9 +156,7 @@ impl Drop for OperationTimer {
         let duration = self.start.elapsed().as_secs_f64() * 1000.0;
         let domain = domain_from_labels(&self.labels);
         if let Some(metric) = OPERATION_LATENCY.as_ref() {
-            metric
-                .with_label_values(&[self.operation, domain])
-                .observe(duration);
+            metric.with_label_values(&[self.operation, domain]).observe(duration);
         }
     }
 }
@@ -239,9 +233,7 @@ pub mod orders {
     /// Track an order status transition
     pub fn track_order_status_transition(_order_id: &str, _from: &str, _to: &str) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric
-                .with_label_values(&["orders.status_transition", "orders"])
-                .inc();
+            metric.with_label_values(&["orders.status_transition", "orders"]).inc();
         }
     }
 }
@@ -256,18 +248,14 @@ pub mod inventory {
             metric.inc();
         }
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric
-                .with_label_values(&["inventory.reserve", "inventory"])
-                .inc();
+            metric.with_label_values(&["inventory.reserve", "inventory"]).inc();
         }
     }
 
     /// Track an inventory stock adjustment
     pub fn track_stock_adjustment(_sku: &str, _delta: f64) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric
-                .with_label_values(&["inventory.adjust", "inventory"])
-                .inc();
+            metric.with_label_values(&["inventory.adjust", "inventory"]).inc();
         }
     }
 }
@@ -279,18 +267,14 @@ pub mod payments {
     /// Track a payment processing operation
     pub fn track_payment_processing(_order_id: &str, _amount: f64) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric
-                .with_label_values(&["payments.process", "payments"])
-                .inc();
+            metric.with_label_values(&["payments.process", "payments"]).inc();
         }
     }
 
     /// Track a payment refund operation
     pub fn track_refund(_payment_id: &str, _amount: f64) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric
-                .with_label_values(&["payments.refund", "payments"])
-                .inc();
+            metric.with_label_values(&["payments.refund", "payments"]).inc();
         }
     }
 }
@@ -366,10 +350,8 @@ mod tests {
 
     #[test]
     fn test_labels_builder() {
-        let labels = LabelsBuilder::new()
-            .add("domain", "orders")
-            .add("operation", "create")
-            .build();
+        let labels =
+            LabelsBuilder::new().add("domain", "orders").add("operation", "create").build();
         assert_eq!(labels.len(), 2);
     }
 }

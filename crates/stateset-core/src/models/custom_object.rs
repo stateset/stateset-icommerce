@@ -12,7 +12,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{validate_required_text, validate_sku, CommerceError, Result};
+use crate::{CommerceError, Result, validate_required_text, validate_sku};
 
 /// Custom object field type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,12 +94,10 @@ impl CustomFieldDefinition {
         }
 
         if self.list {
-            let arr = value
-                .as_array()
-                .ok_or_else(|| CommerceError::InvalidInput {
-                    field: format!("custom_object.values.{}", self.key),
-                    message: "must be an array".into(),
-                })?;
+            let arr = value.as_array().ok_or_else(|| CommerceError::InvalidInput {
+                field: format!("custom_object.values.{}", self.key),
+                message: "must be an array".into(),
+            })?;
             for (idx, item) in arr.iter().enumerate() {
                 if item.is_null() {
                     return Err(CommerceError::InvalidInput {
@@ -177,19 +175,17 @@ fn validate_scalar(field_type: CustomFieldType, value: &serde_json::Value) -> Re
         CustomFieldType::Decimal => match value {
             serde_json::Value::Number(n) => {
                 let s = n.to_string();
-                s.parse::<Decimal>()
-                    .map_err(|_| CommerceError::InvalidInput {
-                        field: "custom_object.value".into(),
-                        message: "must be a decimal".into(),
-                    })?;
+                s.parse::<Decimal>().map_err(|_| CommerceError::InvalidInput {
+                    field: "custom_object.value".into(),
+                    message: "must be a decimal".into(),
+                })?;
                 Ok(())
             }
             serde_json::Value::String(s) => {
-                s.parse::<Decimal>()
-                    .map_err(|_| CommerceError::InvalidInput {
-                        field: "custom_object.value".into(),
-                        message: "must be a decimal".into(),
-                    })?;
+                s.parse::<Decimal>().map_err(|_| CommerceError::InvalidInput {
+                    field: "custom_object.value".into(),
+                    message: "must be a decimal".into(),
+                })?;
                 Ok(())
             }
             _ => Err(CommerceError::InvalidInput {
@@ -255,12 +251,10 @@ pub struct CustomObjectType {
 impl CustomObjectType {
     /// Validate a record values JSON object against this type schema.
     pub fn validate_values(&self, values: &serde_json::Value) -> Result<()> {
-        let obj = values
-            .as_object()
-            .ok_or_else(|| CommerceError::InvalidInput {
-                field: "custom_object.values".into(),
-                message: "must be a JSON object".into(),
-            })?;
+        let obj = values.as_object().ok_or_else(|| CommerceError::InvalidInput {
+            field: "custom_object.values".into(),
+            message: "must be a JSON object".into(),
+        })?;
 
         // Enforce "no unknown fields" for determinism.
         for key in obj.keys() {

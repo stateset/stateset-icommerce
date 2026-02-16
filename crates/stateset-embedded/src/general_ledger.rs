@@ -85,9 +85,7 @@ impl GeneralLedger {
 
     /// Get a GL account by account number.
     pub fn get_account_by_number(&self, account_number: &str) -> Result<Option<GlAccount>> {
-        self.db
-            .general_ledger()
-            .get_account_by_number(account_number)
+        self.db.general_ledger().get_account_by_number(account_number)
     }
 
     /// Update a GL account.
@@ -261,16 +259,12 @@ impl GeneralLedger {
         id: Uuid,
         reversal_date: NaiveDate,
     ) -> Result<JournalEntry> {
-        self.db
-            .general_ledger()
-            .reverse_journal_entry(id, reversal_date)
+        self.db.general_ledger().reverse_journal_entry(id, reversal_date)
     }
 
     /// Get journal entry lines for an entry.
     pub fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>> {
-        self.db
-            .general_ledger()
-            .get_journal_entry_lines(journal_entry_id)
+        self.db.general_ledger().get_journal_entry_lines(journal_entry_id)
     }
 
     // ========================================================================
@@ -323,9 +317,7 @@ impl GeneralLedger {
 
     /// Auto-post a payment received (debit Cash, credit AR).
     pub fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        self.db
-            .general_ledger()
-            .auto_post_payment_received(payment_id)
+        self.db.general_ledger().auto_post_payment_received(payment_id)
     }
 
     /// Auto-post a supplier bill (debit Inventory/Expense, credit AP).
@@ -340,9 +332,7 @@ impl GeneralLedger {
 
     /// Auto-post inventory cost (COGS on sale).
     pub fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry> {
-        self.db
-            .general_ledger()
-            .auto_post_inventory_cost(cost_transaction_id)
+        self.db.general_ledger().auto_post_inventory_cost(cost_transaction_id)
     }
 
     /// Auto-post a write-off (debit Bad Debt Expense, credit AR).
@@ -428,9 +418,7 @@ impl GeneralLedger {
         start_date: NaiveDate,
         end_date: NaiveDate,
     ) -> Result<IncomeStatement> {
-        self.db
-            .general_ledger()
-            .get_income_statement(start_date, end_date)
+        self.db.general_ledger().get_income_statement(start_date, end_date)
     }
 
     /// Get the current balance of an account.
@@ -439,9 +427,7 @@ impl GeneralLedger {
         account_id: Uuid,
         as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
-        self.db
-            .general_ledger()
-            .get_account_balance(account_id, as_of_date)
+        self.db.general_ledger().get_account_balance(account_id, as_of_date)
     }
 
     /// Get all transactions for an account.
@@ -450,9 +436,7 @@ impl GeneralLedger {
         account_id: Uuid,
         filter: JournalEntryFilter,
     ) -> Result<Vec<JournalEntryLine>> {
-        self.db
-            .general_ledger()
-            .get_account_transactions(account_id, filter)
+        self.db.general_ledger().get_account_transactions(account_id, filter)
     }
 
     // ========================================================================
@@ -467,9 +451,7 @@ impl GeneralLedger {
     /// 3. Transfer net income to retained earnings
     /// 4. Close the period
     pub fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
-        self.db
-            .general_ledger()
-            .run_period_close(period_id, closed_by)
+        self.db.general_ledger().run_period_close(period_id, closed_by)
     }
 
     // ========================================================================

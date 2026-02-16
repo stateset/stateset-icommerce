@@ -100,9 +100,7 @@ impl CostAccounting {
         quantity: Decimal,
         unit_cost: Decimal,
     ) -> Result<ItemCost> {
-        self.db
-            .cost_accounting()
-            .update_average_cost(sku, quantity, unit_cost)
+        self.db.cost_accounting().update_average_cost(sku, quantity, unit_cost)
     }
 
     /// Update the last purchase cost.
@@ -319,9 +317,7 @@ impl CostAccounting {
 
     /// Approve a cost adjustment.
     pub fn approve_adjustment(&self, id: Uuid, approved_by: &str) -> Result<CostAdjustment> {
-        self.db
-            .cost_accounting()
-            .approve_adjustment(id, approved_by)
+        self.db.cost_accounting().approve_adjustment(id, approved_by)
     }
 
     /// Apply an approved cost adjustment.
@@ -372,9 +368,7 @@ impl CostAccounting {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_inventory_valuation(&self, cost_method: CostMethod) -> Result<InventoryValuation> {
-        self.db
-            .cost_accounting()
-            .get_inventory_valuation(cost_method)
+        self.db.cost_accounting().get_inventory_valuation(cost_method)
     }
 
     /// Get cost summary for a specific SKU.

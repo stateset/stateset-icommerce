@@ -3,10 +3,9 @@
 use rust_decimal_macros::dec;
 use stateset_core::{
     AddressType, CommerceError, CreateCustomer, CreateCustomerAddress, CreateOrder,
-    CreateOrderItem, CustomerRepository, OrderRepository, UpdateCustomer,
+    CreateOrderItem, CustomerRepository, OrderRepository, ProductId, UpdateCustomer,
 };
 use stateset_db::SqliteDatabase;
-use uuid::Uuid;
 
 fn create_customer(db: &SqliteDatabase, email: &str) -> stateset_core::Customer {
     db.customers()
@@ -25,9 +24,9 @@ fn sqlite_order_rejects_invalid_sku() {
     let customer = create_customer(&db, "valid@example.com");
 
     let result = db.orders().create(CreateOrder {
-        customer_id: customer.id,
+        customer_id: customer.id.into(),
         items: vec![CreateOrderItem {
-            product_id: Uuid::new_v4(),
+            product_id: ProductId::new(),
             sku: "BAD SKU".to_string(),
             name: "Widget".to_string(),
             quantity: 1,
@@ -49,9 +48,9 @@ fn sqlite_order_rejects_discount_exceeding_subtotal() {
     let customer = create_customer(&db, "discount@example.com");
 
     let result = db.orders().create(CreateOrder {
-        customer_id: customer.id,
+        customer_id: customer.id.into(),
         items: vec![CreateOrderItem {
-            product_id: Uuid::new_v4(),
+            product_id: ProductId::new(),
             sku: "SKU-100".to_string(),
             name: "Widget".to_string(),
             quantity: 1,
@@ -71,7 +70,7 @@ fn sqlite_customer_address_rejects_invalid_postal_code() {
     let customer = create_customer(&db, "address@example.com");
 
     let result = db.customers().add_address(CreateCustomerAddress {
-        customer_id: customer.id,
+        customer_id: customer.id.into(),
         address_type: None,
         first_name: "Test".to_string(),
         last_name: "User".to_string(),
@@ -95,13 +94,9 @@ fn sqlite_customer_update_rejects_duplicate_email() {
     let first = create_customer(&db, "first@example.com");
     let second = create_customer(&db, "second@example.com");
 
-    let result = db.customers().update(
-        second.id,
-        UpdateCustomer {
-            email: Some(first.email),
-            ..Default::default()
-        },
-    );
+    let result = db
+        .customers()
+        .update(second.id, UpdateCustomer { email: Some(first.email), ..Default::default() });
 
     assert!(matches!(result, Err(CommerceError::EmailAlreadyExists(_))));
 }
@@ -131,9 +126,7 @@ fn sqlite_customer_set_default_address_rejects_wrong_owner() {
         })
         .expect("create address");
 
-    let result = db
-        .customers()
-        .set_default_address(other.id, address.id, AddressType::Shipping);
+    let result = db.customers().set_default_address(other.id, address.id, AddressType::Shipping);
 
     assert!(matches!(result, Err(CommerceError::ValidationError(_))));
 }
@@ -146,7 +139,7 @@ fn sqlite_add_address_sets_default_ids() {
     let billing = db
         .customers()
         .add_address(CreateCustomerAddress {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             address_type: Some(AddressType::Billing),
             first_name: "Test".to_string(),
             last_name: "User".to_string(),
@@ -165,7 +158,7 @@ fn sqlite_add_address_sets_default_ids() {
     let shipping = db
         .customers()
         .add_address(CreateCustomerAddress {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             address_type: Some(AddressType::Shipping),
             first_name: "Test".to_string(),
             last_name: "User".to_string(),
@@ -181,11 +174,7 @@ fn sqlite_add_address_sets_default_ids() {
         })
         .expect("create address");
 
-    let updated = db
-        .customers()
-        .get(customer.id)
-        .expect("get customer")
-        .expect("customer exists");
+    let updated = db.customers().get(customer.id).expect("get customer").expect("customer exists");
 
     assert_eq!(updated.default_billing_address_id, Some(billing.id));
     assert_eq!(updated.default_shipping_address_id, Some(shipping.id));
@@ -199,7 +188,7 @@ fn sqlite_delete_default_address_clears_customer_default() {
     let shipping = db
         .customers()
         .add_address(CreateCustomerAddress {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             address_type: Some(AddressType::Shipping),
             first_name: "Test".to_string(),
             last_name: "User".to_string(),
@@ -215,15 +204,9 @@ fn sqlite_delete_default_address_clears_customer_default() {
         })
         .expect("create address");
 
-    db.customers()
-        .delete_address(shipping.id)
-        .expect("delete address");
+    db.customers().delete_address(shipping.id).expect("delete address");
 
-    let updated = db
-        .customers()
-        .get(customer.id)
-        .expect("get customer")
-        .expect("customer exists");
+    let updated = db.customers().get(customer.id).expect("get customer").expect("customer exists");
 
     assert_eq!(updated.default_shipping_address_id, None);
 }

@@ -34,6 +34,7 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
         })
         .expect("Failed to create test customer")
         .id
+        .into_uuid()
 }
 
 fn setup_test_inventory(
@@ -120,10 +121,7 @@ fn test_complete_order_lifecycle_from_cart_to_return() {
         .set_shipping_address(cart.id, test_address())
         .expect("Failed to set shipping address");
 
-    let checkout = commerce
-        .carts()
-        .complete(cart.id)
-        .expect("Failed to complete checkout");
+    let checkout = commerce.carts().complete(cart.id).expect("Failed to complete checkout");
 
     // Fetch the order using the order_id from checkout
     let order = commerce
@@ -134,10 +132,8 @@ fn test_complete_order_lifecycle_from_cart_to_return() {
     assert_eq!(order.items.len(), 2);
     assert_eq!(order.status, OrderStatus::Confirmed);
 
-    let order = commerce
-        .orders()
-        .ship(order.id, Some("FEDEX123456"))
-        .expect("Failed to ship order");
+    let order =
+        commerce.orders().ship(order.id, Some("FEDEX123456")).expect("Failed to ship order");
 
     assert_eq!(order.status, OrderStatus::Shipped);
     assert_eq!(order.tracking_number, Some("FEDEX123456".into()));
@@ -153,11 +149,11 @@ fn test_complete_order_lifecycle_from_cart_to_return() {
     let return_order = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id,
+            order_id: order.id.into(),
             reason: ReturnReason::Damaged,
             reason_details: Some("Product damaged".into()),
             items: vec![CreateReturnItem {
-                order_item_id,
+                order_item_id: order_item_id.into(),
                 quantity: 1,
                 condition: Some(ItemCondition::Damaged),
             }],
@@ -165,10 +161,8 @@ fn test_complete_order_lifecycle_from_cart_to_return() {
         })
         .expect("Failed to create return");
 
-    let return_order = commerce
-        .returns()
-        .approve(return_order.id)
-        .expect("Failed to approve return");
+    let return_order =
+        commerce.returns().approve(return_order.id).expect("Failed to approve return");
 
     assert_eq!(return_order.status, ReturnStatus::Approved);
 }
@@ -191,10 +185,7 @@ fn test_cart_with_promotions_and_tax() {
         .expect("Failed to create promotion");
 
     // Activate the promotion
-    commerce
-        .promotions()
-        .activate(promotion.id)
-        .expect("Failed to activate promotion");
+    commerce.promotions().activate(promotion.id).expect("Failed to activate promotion");
 
     let coupon = commerce
         .promotions()
@@ -232,10 +223,8 @@ fn test_cart_with_promotions_and_tax() {
         )
         .expect("Failed to add item to cart");
 
-    let cart = commerce
-        .carts()
-        .apply_discount(cart.id, &coupon.code)
-        .expect("Failed to apply discount");
+    let cart =
+        commerce.carts().apply_discount(cart.id, &coupon.code).expect("Failed to apply discount");
 
     assert!(cart.discount_amount > dec!(0));
 }
@@ -263,11 +252,7 @@ fn test_subscription_billing_cycle() {
 
     let subscription = commerce
         .subscriptions()
-        .subscribe(CreateSubscription {
-            customer_id,
-            plan_id: plan.id,
-            ..Default::default()
-        })
+        .subscribe(CreateSubscription { customer_id, plan_id: plan.id, ..Default::default() })
         .expect("Failed to create subscription");
 
     assert_eq!(subscription.status, SubscriptionStatus::Active);
@@ -287,14 +272,10 @@ fn test_subscription_billing_cycle() {
 fn test_manufacturing_workflow() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let product_id = Uuid::new_v4();
+    let product_id = Uuid::new_v4().into();
     let bom = commerce
         .bom()
-        .create(CreateBom {
-            product_id,
-            name: "Widget Assembly".into(),
-            ..Default::default()
-        })
+        .create(CreateBom { product_id, name: "Widget Assembly".into(), ..Default::default() })
         .expect("Failed to create BOM");
 
     commerce
@@ -335,10 +316,8 @@ fn test_manufacturing_workflow() {
 
     assert_eq!(work_order.status, WorkOrderStatus::Planned);
 
-    let work_order = commerce
-        .work_orders()
-        .start(work_order.id)
-        .expect("Failed to start work order");
+    let work_order =
+        commerce.work_orders().start(work_order.id).expect("Failed to start work order");
 
     assert_eq!(work_order.status, WorkOrderStatus::InProgress);
 
@@ -365,10 +344,7 @@ fn test_supply_chain_workflow() {
 
     let purchase_order = commerce
         .purchase_orders()
-        .create(CreatePurchaseOrder {
-            supplier_id: supplier.id,
-            ..Default::default()
-        })
+        .create(CreatePurchaseOrder { supplier_id: supplier.id, ..Default::default() })
         .expect("Failed to create purchase order");
 
     let po_id = purchase_order.id;
@@ -387,10 +363,8 @@ fn test_supply_chain_workflow() {
         .expect("Failed to add item to purchase order");
 
     // Submit first, then approve
-    let purchase_order = commerce
-        .purchase_orders()
-        .submit(po_id)
-        .expect("Failed to submit purchase order");
+    let purchase_order =
+        commerce.purchase_orders().submit(po_id).expect("Failed to submit purchase order");
 
     let purchase_order = commerce
         .purchase_orders()
@@ -442,11 +416,8 @@ fn test_serial_number_tracking_lifecycle() {
         .confirm_reservation(reservation.id)
         .expect("Failed to confirm serial reservation");
 
-    let serial = commerce
-        .serials()
-        .get(serial.id)
-        .expect("Failed to get serial")
-        .expect("Serial not found");
+    let serial =
+        commerce.serials().get(serial.id).expect("Failed to get serial").expect("Serial not found");
 
     assert_eq!(serial.status, SerialStatus::Reserved);
 
@@ -468,9 +439,9 @@ fn test_backorder_workflow() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id,
+            customer_id: customer_id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 2,
@@ -487,7 +458,7 @@ fn test_backorder_workflow() {
     let backorder = commerce
         .backorder()
         .create_backorder(CreateBackorder {
-            order_id: order.id,
+            order_id: order.id.into(),
             order_line_id: None,
             sku: "SKU-001".into(),
             quantity: dec!(2),

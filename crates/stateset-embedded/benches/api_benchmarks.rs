@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo bench -p stateset-embedded --bench api_benchmarks`
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AnalyticsQuery, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
@@ -54,12 +54,7 @@ fn bench_inventory_get_stock(c: &mut Criterion) {
 
     c.bench_function("api/inventory_get_stock", |b| {
         b.iter(|| {
-            black_box(
-                commerce
-                    .inventory()
-                    .get_stock("SKU-001")
-                    .expect("Failed to get stock"),
-            );
+            black_box(commerce.inventory().get_stock("SKU-001").expect("Failed to get stock"));
         })
     });
 }

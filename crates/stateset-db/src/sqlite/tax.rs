@@ -48,10 +48,7 @@ impl SqliteTaxRepository {
 impl SqliteTaxRepository {
     /// Get a jurisdiction by ID
     pub fn get_jurisdiction(&self, id: Uuid) -> Result<Option<TaxJurisdiction>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at
@@ -101,10 +98,7 @@ impl SqliteTaxRepository {
 
     /// Get a jurisdiction by code (e.g., "US-CA")
     pub fn get_jurisdiction_by_code(&self, code: &str) -> Result<Option<TaxJurisdiction>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at
@@ -157,10 +151,7 @@ impl SqliteTaxRepository {
         &self,
         filter: TaxJurisdictionFilter,
     ) -> Result<Vec<TaxJurisdiction>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut query = String::from(
             "SELECT id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at
@@ -190,10 +181,8 @@ impl SqliteTaxRepository {
         query.push_str(" ORDER BY country_code, state_code, level, name");
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
-        let params: Vec<&dyn rusqlite::ToSql> = params_vec
-            .iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
 
         let rows = stmt
             .query_map(params.as_slice(), |row| {
@@ -231,8 +220,7 @@ impl SqliteTaxRepository {
             })
             .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
     /// Create a new jurisdiction
@@ -242,10 +230,7 @@ impl SqliteTaxRepository {
         let postal_codes_json = serde_json::to_string(&input.postal_codes)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "INSERT INTO tax_jurisdictions (id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at)
@@ -279,10 +264,7 @@ impl SqliteTaxRepository {
 impl SqliteTaxRepository {
     /// Get a tax rate by ID
     pub fn get_rate(&self, id: Uuid) -> Result<Option<TaxRate>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, jurisdiction_id, tax_type, product_category, rate, name, description, is_compound, priority, threshold_min, threshold_max, fixed_amount, effective_from, effective_to, active, created_at, updated_at
@@ -348,10 +330,7 @@ impl SqliteTaxRepository {
 
     /// List tax rates with optional filter
     pub fn list_rates(&self, filter: TaxRateFilter) -> Result<Vec<TaxRate>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut query = String::from(
             "SELECT id, jurisdiction_id, tax_type, product_category, rate, name, description, is_compound, priority, threshold_min, threshold_max, fixed_amount, effective_from, effective_to, active, created_at, updated_at
@@ -389,10 +368,8 @@ impl SqliteTaxRepository {
         query.push_str(" ORDER BY priority, name");
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
-        let params: Vec<&dyn rusqlite::ToSql> = params_vec
-            .iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
 
         let rows = stmt
             .query_map(params.as_slice(), |row| {
@@ -454,8 +431,7 @@ impl SqliteTaxRepository {
             })
             .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
     /// Get rates for a jurisdiction and product category
@@ -509,10 +485,7 @@ impl SqliteTaxRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "INSERT INTO tax_rates (id, jurisdiction_id, tax_type, product_category, rate, name, description, is_compound, priority, threshold_min, threshold_max, fixed_amount, effective_from, effective_to, active, created_at, updated_at)
@@ -550,10 +523,7 @@ impl SqliteTaxRepository {
 impl SqliteTaxRepository {
     /// Get an exemption by ID
     pub fn get_exemption(&self, id: Uuid) -> Result<Option<TaxExemption>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, customer_id, exemption_type, certificate_number, issuing_authority, jurisdiction_ids, exempt_categories, effective_from, expires_at, verified, verified_at, notes, active, created_at, updated_at
@@ -636,10 +606,7 @@ impl SqliteTaxRepository {
 
     /// Get active exemptions for a customer
     pub fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let today = Utc::now().date_naive().to_string();
 
         let mut stmt = conn.prepare(
@@ -714,8 +681,7 @@ impl SqliteTaxRepository {
             })
             .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
     /// Create a new exemption
@@ -724,27 +690,16 @@ impl SqliteTaxRepository {
         let now = Utc::now();
 
         let jurisdiction_ids_json = serde_json::to_string(
-            &input
-                .jurisdiction_ids
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>(),
+            &input.jurisdiction_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
         )
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let categories_json = serde_json::to_string(
-            &input
-                .exempt_categories
-                .iter()
-                .map(|c| c.to_string())
-                .collect::<Vec<_>>(),
+            &input.exempt_categories.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
         )
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "INSERT INTO tax_exemptions (id, customer_id, exemption_type, certificate_number, issuing_authority, jurisdiction_ids, exempt_categories, effective_from, expires_at, verified, notes, active, created_at, updated_at)
@@ -778,10 +733,7 @@ impl SqliteTaxRepository {
 impl SqliteTaxRepository {
     /// Get tax settings
     pub fn get_settings(&self) -> Result<TaxSettings> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, enabled, calculation_method, compound_method, tax_shipping, tax_handling, tax_gift_wrap, origin_address, default_product_category, rounding_mode, decimal_places, validate_addresses, tax_provider, provider_credentials, created_at, updated_at
@@ -849,10 +801,7 @@ impl SqliteTaxRepository {
 
     /// Update tax settings
     pub fn update_settings(&self, settings: TaxSettings) -> Result<TaxSettings> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let origin_address_json = settings
             .origin_address
@@ -1046,11 +995,8 @@ impl SqliteTaxRepository {
                 }
             }
 
-            let effective_rate = if line_amount.is_zero() {
-                Decimal::ZERO
-            } else {
-                line_tax / line_amount
-            };
+            let effective_rate =
+                if line_amount.is_zero() { Decimal::ZERO } else { line_tax / line_amount };
 
             total_tax += line_tax;
             line_item_taxes.push(LineItemTax {
@@ -1187,10 +1133,7 @@ impl SqliteTaxRepository {
         address: &TaxAddress,
         currency: &str,
     ) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let address_json = serde_json::to_string(address)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;

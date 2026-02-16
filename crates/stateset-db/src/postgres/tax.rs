@@ -3,8 +3,8 @@
 use super::map_db_error;
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
     CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ExemptionType,
     JurisdictionLevel, JurisdictionSummary, LineItemTax, ProductTaxCategory, Result, TaxAddress,
@@ -328,10 +328,8 @@ impl PgTaxRepository {
                     default_product_category, e
                 ))
             })?;
-        let origin_address = origin_address
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
+        let origin_address =
+            origin_address.map(serde_json::from_value).transpose().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for tax_settings.origin_address: {}",
                     e
@@ -391,9 +389,7 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_jurisdiction_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_jurisdiction_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_jurisdiction_async(&self, id: Uuid) -> Result<Option<TaxJurisdiction>> {
@@ -507,9 +503,7 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_rate_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_rate_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_rate_async(&self, id: Uuid) -> Result<Option<TaxRate>> {
@@ -590,10 +584,7 @@ impl PgTaxRepository {
     ) -> Result<Vec<TaxRate>> {
         let mut jurisdiction_ids = Vec::new();
 
-        if let Some(country) = self
-            .get_jurisdiction_by_code_async(&address.country)
-            .await?
-        {
+        if let Some(country) = self.get_jurisdiction_by_code_async(&address.country).await? {
             jurisdiction_ids.push(country.id);
         }
 
@@ -630,16 +621,10 @@ impl PgTaxRepository {
     pub async fn create_exemption_async(&self, input: CreateTaxExemption) -> Result<TaxExemption> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let jurisdiction_ids: Vec<String> = input
-            .jurisdiction_ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect();
-        let exempt_categories: Vec<String> = input
-            .exempt_categories
-            .iter()
-            .map(|cat| cat.to_string())
-            .collect();
+        let jurisdiction_ids: Vec<String> =
+            input.jurisdiction_ids.iter().map(|id| id.to_string()).collect();
+        let exempt_categories: Vec<String> =
+            input.exempt_categories.iter().map(|cat| cat.to_string()).collect();
 
         sqlx::query(
             r#"
@@ -666,9 +651,7 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_exemption_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_exemption_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_exemption_async(&self, id: Uuid) -> Result<Option<TaxExemption>> {
@@ -922,11 +905,8 @@ impl PgTaxRepository {
                 }
             }
 
-            let effective_rate = if line_amount.is_zero() {
-                Decimal::ZERO
-            } else {
-                line_tax / line_amount
-            };
+            let effective_rate =
+                if line_amount.is_zero() { Decimal::ZERO } else { line_tax / line_amount };
 
             total_tax += line_tax;
             line_item_taxes.push(LineItemTax {

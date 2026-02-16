@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Inventory item (SKU master record)
@@ -64,8 +65,10 @@ pub struct InventoryReservation {
 }
 
 /// Transaction type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum TransactionType {
     Receipt,
     Shipment,
@@ -77,46 +80,16 @@ pub enum TransactionType {
     CycleCount,
 }
 
-impl std::fmt::Display for TransactionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Receipt => write!(f, "receipt"),
-            Self::Shipment => write!(f, "shipment"),
-            Self::Adjustment => write!(f, "adjustment"),
-            Self::Transfer => write!(f, "transfer"),
-            Self::Return => write!(f, "return"),
-            Self::Allocation => write!(f, "allocation"),
-            Self::Deallocation => write!(f, "deallocation"),
-            Self::CycleCount => write!(f, "cycle_count"),
-        }
-    }
-}
-
-impl std::str::FromStr for TransactionType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "receipt" => Ok(Self::Receipt),
-            "shipment" => Ok(Self::Shipment),
-            "adjustment" => Ok(Self::Adjustment),
-            "transfer" => Ok(Self::Transfer),
-            "return" => Ok(Self::Return),
-            "allocation" => Ok(Self::Allocation),
-            "deallocation" => Ok(Self::Deallocation),
-            "cycle_count" => Ok(Self::CycleCount),
-            _ => Err(format!("Unknown inventory transaction type: {}", s)),
-        }
-    }
-}
-
 /// Reservation status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ReservationStatus {
     Pending,
     Confirmed,
     Allocated,
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     Released,
     Expired,
@@ -125,35 +98,6 @@ pub enum ReservationStatus {
 impl Default for ReservationStatus {
     fn default() -> Self {
         Self::Pending
-    }
-}
-
-impl std::fmt::Display for ReservationStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Confirmed => write!(f, "confirmed"),
-            Self::Allocated => write!(f, "allocated"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::Released => write!(f, "released"),
-            Self::Expired => write!(f, "expired"),
-        }
-    }
-}
-
-impl std::str::FromStr for ReservationStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "confirmed" => Ok(Self::Confirmed),
-            "allocated" => Ok(Self::Allocated),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            "released" => Ok(Self::Released),
-            "expired" => Ok(Self::Expired),
-            _ => Err(format!("Unknown reservation status: {}", s)),
-        }
     }
 }
 
@@ -252,19 +196,13 @@ mod tests {
 
     #[test]
     fn transaction_type_from_str() {
-        assert_eq!(
-            TransactionType::from_str("receipt").unwrap(),
-            TransactionType::Receipt
-        );
+        assert_eq!(TransactionType::from_str("receipt").unwrap(), TransactionType::Receipt);
         assert!(TransactionType::from_str("unknown").is_err());
     }
 
     #[test]
     fn reservation_status_from_str() {
-        assert_eq!(
-            ReservationStatus::from_str("allocated").unwrap(),
-            ReservationStatus::Allocated
-        );
+        assert_eq!(ReservationStatus::from_str("allocated").unwrap(), ReservationStatus::Allocated);
         assert!(ReservationStatus::from_str("unknown").is_err());
     }
 }

@@ -6,9 +6,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateX402PaymentIntent, Result,
-    SignX402PaymentIntent, X402Asset, X402IntentStatus, X402Network, X402PaymentIntent,
-    X402PaymentIntentFilter, X402PaymentIntentRepository, X402_DEFAULT_VALIDITY_SECONDS,
+    BatchResult, CommerceError, CreateX402PaymentIntent, Result, SignX402PaymentIntent,
+    X402_DEFAULT_VALIDITY_SECONDS, X402Asset, X402IntentStatus, X402Network, X402PaymentIntent,
+    X402PaymentIntentFilter, X402PaymentIntentRepository, validate_batch_size,
 };
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -176,10 +176,7 @@ impl PgX402PaymentIntentRepository {
             value = serde_json::json!({});
         }
         if let Some(obj) = value.as_object_mut() {
-            obj.insert(
-                "failure_reason".to_string(),
-                serde_json::Value::String(reason.to_string()),
-            );
+            obj.insert("failure_reason".to_string(), serde_json::Value::String(reason.to_string()));
         }
 
         Some(value.to_string())
@@ -224,19 +221,13 @@ impl PgX402PaymentIntentRepository {
 
     pub async fn create_async(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
         let auto_nonce = input.nonce.is_none();
-        let attempts = if auto_nonce {
-            Self::NONCE_RETRY_ATTEMPTS
-        } else {
-            1
-        };
+        let attempts = if auto_nonce { Self::NONCE_RETRY_ATTEMPTS } else { 1 };
 
         for attempt in 0..attempts {
             let now = Utc::now();
             let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
-            let validity_seconds = input
-                .validity_seconds
-                .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+            let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
             let valid_until = now_unix + validity_seconds;
 
             let asset = input.asset;
@@ -369,10 +360,7 @@ impl PgX402PaymentIntentRepository {
         .await
         .map_err(map_db_error)?;
 
-        let intent = row
-            .map(Self::row_to_intent)
-            .transpose()?
-            .ok_or(CommerceError::NotFound)?;
+        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
 
         if intent.status != X402IntentStatus::Created {
             return Err(CommerceError::ValidationError(format!(
@@ -383,19 +371,12 @@ impl PgX402PaymentIntentRepository {
 
         let now_unix = Utc::now().timestamp() as u64;
         if now_unix > intent.valid_until {
-            return Err(CommerceError::ValidationError(
-                "Payment intent has expired".to_string(),
-            ));
+            return Err(CommerceError::ValidationError("Payment intent has expired".to_string()));
         }
 
         let hash_bytes = intent.sequencer_signing_hash();
-        let signing_hash = format!(
-            "0x{}",
-            hash_bytes
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<String>()
-        );
+        let signing_hash =
+            format!("0x{}", hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>());
 
         // Validate signature/public key pair against the intent hash before persisting.
         let mut signed_intent = intent.clone();
@@ -443,10 +424,7 @@ impl PgX402PaymentIntentRepository {
         .await
         .map_err(map_db_error)?;
 
-        let intent = row
-            .map(Self::row_to_intent)
-            .transpose()?
-            .ok_or(CommerceError::NotFound)?;
+        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
 
         if intent.status != X402IntentStatus::Signed {
             return Err(CommerceError::ValidationError(format!(
@@ -527,10 +505,7 @@ impl PgX402PaymentIntentRepository {
 
     pub async fn cancel_async(&self, id: Uuid) -> Result<X402PaymentIntent> {
         let intent = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if !matches!(
-            intent.status,
-            X402IntentStatus::Created | X402IntentStatus::Signed
-        ) {
+        if !matches!(intent.status, X402IntentStatus::Created | X402IntentStatus::Signed) {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot cancel intent in {} status",
                 intent.status
@@ -646,11 +621,8 @@ impl PgX402PaymentIntentRepository {
         qb.push(" OFFSET ");
         qb.push_bind(offset as i64);
 
-        let rows = qb
-            .build_query_as::<IntentRow>()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows =
+            qb.build_query_as::<IntentRow>().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         rows.into_iter().map(Self::row_to_intent).collect()
     }
@@ -706,11 +678,8 @@ impl PgX402PaymentIntentRepository {
             qb.push_bind(to);
         }
 
-        let count: (i64,) = qb
-            .build_query_as()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            qb.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }
@@ -768,9 +737,7 @@ impl PgX402PaymentIntentRepository {
             let now = Utc::now();
             let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
-            let validity_seconds = input
-                .validity_seconds
-                .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+            let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
             let valid_until = now_unix + validity_seconds;
 
             let payer_address = input.payer_address;

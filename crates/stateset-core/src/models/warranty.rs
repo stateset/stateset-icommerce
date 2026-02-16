@@ -5,11 +5,15 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CustomerId, OrderId, OrderItemId, ProductId, WarrantyId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Warranty status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum WarrantyStatus {
     /// Warranty is active and valid
     #[default]
@@ -22,34 +26,11 @@ pub enum WarrantyStatus {
     Transferred,
 }
 
-impl std::fmt::Display for WarrantyStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Active => write!(f, "active"),
-            Self::Expired => write!(f, "expired"),
-            Self::Voided => write!(f, "voided"),
-            Self::Transferred => write!(f, "transferred"),
-        }
-    }
-}
-
-impl std::str::FromStr for WarrantyStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "active" => Ok(Self::Active),
-            "expired" => Ok(Self::Expired),
-            "voided" => Ok(Self::Voided),
-            "transferred" => Ok(Self::Transferred),
-            _ => Err(format!("Unknown warranty status: {}", s)),
-        }
-    }
-}
-
 /// Warranty type/tier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum WarrantyType {
     /// Standard manufacturer warranty
     #[default]
@@ -66,38 +47,11 @@ pub enum WarrantyType {
     Comprehensive,
 }
 
-impl std::fmt::Display for WarrantyType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Standard => write!(f, "standard"),
-            Self::Extended => write!(f, "extended"),
-            Self::Limited => write!(f, "limited"),
-            Self::Lifetime => write!(f, "lifetime"),
-            Self::AccidentalDamage => write!(f, "accidental_damage"),
-            Self::Comprehensive => write!(f, "comprehensive"),
-        }
-    }
-}
-
-impl std::str::FromStr for WarrantyType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "standard" => Ok(Self::Standard),
-            "extended" => Ok(Self::Extended),
-            "limited" => Ok(Self::Limited),
-            "lifetime" => Ok(Self::Lifetime),
-            "accidental_damage" => Ok(Self::AccidentalDamage),
-            "comprehensive" => Ok(Self::Comprehensive),
-            _ => Err(format!("Unknown warranty type: {}", s)),
-        }
-    }
-}
-
 /// Warranty claim status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ClaimStatus {
     /// Claim submitted, awaiting review
     #[default]
@@ -115,45 +69,15 @@ pub enum ClaimStatus {
     /// Claim completed/resolved
     Completed,
     /// Claim was cancelled
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
 }
 
-impl std::fmt::Display for ClaimStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Submitted => write!(f, "submitted"),
-            Self::UnderReview => write!(f, "under_review"),
-            Self::InfoRequested => write!(f, "info_requested"),
-            Self::Approved => write!(f, "approved"),
-            Self::Denied => write!(f, "denied"),
-            Self::InProgress => write!(f, "in_progress"),
-            Self::Completed => write!(f, "completed"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
-impl std::str::FromStr for ClaimStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "submitted" => Ok(Self::Submitted),
-            "under_review" => Ok(Self::UnderReview),
-            "info_requested" => Ok(Self::InfoRequested),
-            "approved" => Ok(Self::Approved),
-            "denied" => Ok(Self::Denied),
-            "in_progress" => Ok(Self::InProgress),
-            "completed" => Ok(Self::Completed),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown claim status: {}", s)),
-        }
-    }
-}
-
 /// Claim resolution type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ClaimResolution {
     /// No resolution yet
     #[default]
@@ -170,50 +94,21 @@ pub enum ClaimResolution {
     Denied,
 }
 
-impl std::fmt::Display for ClaimResolution {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::None => write!(f, "none"),
-            Self::Repair => write!(f, "repair"),
-            Self::Replacement => write!(f, "replacement"),
-            Self::Refund => write!(f, "refund"),
-            Self::StoreCredit => write!(f, "store_credit"),
-            Self::Denied => write!(f, "denied"),
-        }
-    }
-}
-
-impl std::str::FromStr for ClaimResolution {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "none" => Ok(Self::None),
-            "repair" => Ok(Self::Repair),
-            "replacement" => Ok(Self::Replacement),
-            "refund" => Ok(Self::Refund),
-            "store_credit" => Ok(Self::StoreCredit),
-            "denied" => Ok(Self::Denied),
-            _ => Err(format!("Unknown claim resolution: {}", s)),
-        }
-    }
-}
-
 /// A warranty registration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Warranty {
     /// Unique warranty ID
-    pub id: Uuid,
+    pub id: WarrantyId,
     /// Human-readable warranty number
     pub warranty_number: String,
     /// Customer who owns the warranty
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     /// Associated order ID
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Associated order item ID
-    pub order_item_id: Option<Uuid>,
+    pub order_item_id: Option<OrderItemId>,
     /// Product ID
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// Product SKU
     pub sku: Option<String>,
     /// Product serial number
@@ -293,13 +188,13 @@ impl Warranty {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateWarranty {
     /// Customer ID
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     /// Order ID
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Order item ID
-    pub order_item_id: Option<Uuid>,
+    pub order_item_id: Option<OrderItemId>,
     /// Product ID
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// Product SKU
     pub sku: Option<String>,
     /// Serial number
@@ -351,11 +246,11 @@ pub struct UpdateWarranty {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WarrantyFilter {
     /// Filter by customer ID
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     /// Filter by order ID
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Filter by product ID
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// Filter by SKU
     pub sku: Option<String>,
     /// Filter by serial number
@@ -382,9 +277,9 @@ pub struct WarrantyClaim {
     /// Human-readable claim number
     pub claim_number: String,
     /// Associated warranty ID
-    pub warranty_id: Uuid,
+    pub warranty_id: WarrantyId,
     /// Customer ID
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     /// Claim status
     pub status: ClaimStatus,
     /// Resolution type
@@ -404,7 +299,7 @@ pub struct WarrantyClaim {
     /// Repair cost (if repair)
     pub repair_cost: Option<Decimal>,
     /// Replacement product ID (if replacement)
-    pub replacement_product_id: Option<Uuid>,
+    pub replacement_product_id: Option<ProductId>,
     /// Refund amount (if refund)
     pub refund_amount: Option<Decimal>,
     /// Denial reason (if denied)
@@ -429,7 +324,7 @@ pub struct WarrantyClaim {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateWarrantyClaim {
     /// Warranty ID
-    pub warranty_id: Uuid,
+    pub warranty_id: WarrantyId,
     /// Issue description
     pub issue_description: String,
     /// Issue category
@@ -456,7 +351,7 @@ pub struct UpdateWarrantyClaim {
     /// Update repair cost
     pub repair_cost: Option<Decimal>,
     /// Update replacement product ID
-    pub replacement_product_id: Option<Uuid>,
+    pub replacement_product_id: Option<ProductId>,
     /// Update refund amount
     pub refund_amount: Option<Decimal>,
     /// Update denial reason
@@ -471,9 +366,9 @@ pub struct UpdateWarrantyClaim {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WarrantyClaimFilter {
     /// Filter by warranty ID
-    pub warranty_id: Option<Uuid>,
+    pub warranty_id: Option<WarrantyId>,
     /// Filter by customer ID
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     /// Filter by status
     pub status: Option<ClaimStatus>,
     /// Filter by resolution

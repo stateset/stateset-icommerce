@@ -10,9 +10,9 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
-    validate_batch_size, validate_sku, BatchResult, CommerceError, CreateProduct,
-    CreateProductVariant, Product, ProductFilter, ProductRepository, ProductStatus, ProductVariant,
-    Result, UpdateProduct,
+    BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product, ProductFilter,
+    ProductId, ProductRepository, ProductStatus, ProductVariant, Result, UpdateProduct,
+    validate_batch_size, validate_sku,
 };
 use uuid::Uuid;
 
@@ -27,17 +27,15 @@ impl SqliteProductRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
+    fn row_to_product(row: &rusqlite::Row<'_>) -> rusqlite::Result<Product> {
         let attributes_json: String = row.get("attributes")?;
         let seo_json: Option<String> = row.get("seo")?;
 
         Ok(Product {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "product", "id")?,
+            id: ProductId::from(parse_uuid_row(&row.get::<_, String>("id")?, "product", "id")?),
             name: row.get("name")?,
             slug: row.get("slug")?,
             description: row.get("description")?,
@@ -62,16 +60,16 @@ impl SqliteProductRepository {
         })
     }
 
-    fn row_to_variant(row: &rusqlite::Row) -> rusqlite::Result<ProductVariant> {
+    fn row_to_variant(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProductVariant> {
         let options_json: String = row.get("options")?;
 
         Ok(ProductVariant {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "product_variant", "id")?,
-            product_id: parse_uuid_row(
+            product_id: ProductId::from(parse_uuid_row(
                 &row.get::<_, String>("product_id")?,
                 "product_variant",
                 "product_id",
-            )?,
+            )?),
             sku: row.get("sku")?,
             name: row.get("name")?,
             price: parse_decimal_row(&row.get::<_, String>("price")?, "product_variant", "price")?,
@@ -113,12 +111,9 @@ impl ProductRepository for SqliteProductRepository {
     fn create(&self, input: CreateProduct) -> Result<Product> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
-        let id = Uuid::new_v4();
+        let id = ProductId::new();
         let now = Utc::now();
-        let slug = input
-            .slug
-            .clone()
-            .unwrap_or_else(|| Product::generate_slug(&input.name));
+        let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
         let name = input.name.clone();
         let description = input.description.clone().unwrap_or_default();
         let product_type = input.product_type.unwrap_or_default();
@@ -127,11 +122,7 @@ impl ProductRepository for SqliteProductRepository {
 
         // Check slug uniqueness
         let exists: i32 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM products WHERE slug = ?",
-                [&slug],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM products WHERE slug = ?", [&slug], |row| row.get(0))
             .map_err(map_db_error)?;
 
         if exists > 0 {
@@ -139,9 +130,7 @@ impl ProductRepository for SqliteProductRepository {
         }
 
         let attributes_json = serde_json::to_string(&attributes).unwrap_or_default();
-        let seo_json = seo
-            .as_ref()
-            .map(|s| serde_json::to_string(s).unwrap_or_default());
+        let seo_json = seo.as_ref().map(|s| serde_json::to_string(s).unwrap_or_default());
 
         tx.execute(
             "INSERT INTO products (id, name, slug, description, status, product_type, attributes, seo, created_at, updated_at)
@@ -225,7 +214,7 @@ impl ProductRepository for SqliteProductRepository {
         })
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Product>> {
+    fn get(&self, id: ProductId) -> Result<Option<Product>> {
         let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT * FROM products WHERE id = ?",
@@ -242,11 +231,8 @@ impl ProductRepository for SqliteProductRepository {
 
     fn get_by_slug(&self, slug: &str) -> Result<Option<Product>> {
         let conn = self.conn()?;
-        let result = conn.query_row(
-            "SELECT * FROM products WHERE slug = ?",
-            [slug],
-            Self::row_to_product,
-        );
+        let result =
+            conn.query_row("SELECT * FROM products WHERE slug = ?", [slug], Self::row_to_product);
 
         match result {
             Ok(product) => Ok(Some(product)),
@@ -255,17 +241,15 @@ impl ProductRepository for SqliteProductRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
+    fn update(&self, id: ProductId, input: UpdateProduct) -> Result<Product> {
         let conn = self.conn()?;
         let now = Utc::now();
         let current_version: i32 = conn
-            .query_row(
-                "SELECT version FROM products WHERE id = ?",
-                [id.to_string()],
-                |row| row.get(0),
-            )
+            .query_row("SELECT version FROM products WHERE id = ?", [id.to_string()], |row| {
+                row.get(0)
+            })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductNotFound(id),
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductNotFound(id.into_uuid()),
                 e => map_db_error(e),
             })?;
 
@@ -278,9 +262,7 @@ impl ProductRepository for SqliteProductRepository {
         }
         if let Some(slug) = &input.slug {
             let existing_id: Option<String> = conn
-                .query_row("SELECT id FROM products WHERE slug = ?", [slug], |row| {
-                    row.get(0)
-                })
+                .query_row("SELECT id FROM products WHERE slug = ?", [slug], |row| row.get(0))
                 .optional()
                 .map_err(map_db_error)?;
             if let Some(existing_id) = existing_id {
@@ -301,9 +283,7 @@ impl ProductRepository for SqliteProductRepository {
         }
         if let Some(attributes) = &input.attributes {
             updates.push("attributes = ?");
-            params.push(Box::new(
-                serde_json::to_string(attributes).unwrap_or_default(),
-            ));
+            params.push(Box::new(serde_json::to_string(attributes).unwrap_or_default()));
         }
         if let Some(seo) = &input.seo {
             updates.push("seo = ?");
@@ -314,15 +294,11 @@ impl ProductRepository for SqliteProductRepository {
         params.push(Box::new(id.to_string()));
         params.push(Box::new(current_version));
 
-        let sql = format!(
-            "UPDATE products SET {} WHERE id = ? AND version = ?",
-            updates.join(", ")
-        );
+        let sql =
+            format!("UPDATE products SET {} WHERE id = ? AND version = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        let rows_affected = conn
-            .execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
         if rows_affected == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "product".to_string(),
@@ -340,7 +316,7 @@ impl ProductRepository for SqliteProductRepository {
 
         match result {
             Ok(product) => Ok(product),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Err(CommerceError::ProductNotFound(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Err(CommerceError::ProductNotFound(id.into_uuid())),
             Err(e) => Err(map_db_error(e)),
         }
     }
@@ -388,14 +364,10 @@ impl ProductRepository for SqliteProductRepository {
                 params.push(Box::new(category));
             } else {
                 sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
-                params.push(Box::new(format!(
-                    "%\"name\":\"category\",\"value\":\"{}\"%",
-                    category
-                )));
-                params.push(Box::new(format!(
-                    "%\"value\":\"{}\",\"group\":\"category\"%",
-                    category
-                )));
+                params
+                    .push(Box::new(format!("%\"name\":\"category\",\"value\":\"{}\"%", category)));
+                params
+                    .push(Box::new(format!("%\"value\":\"{}\",\"group\":\"category\"%", category)));
             }
         }
         if let Some(in_stock) = in_stock {
@@ -472,7 +444,7 @@ impl ProductRepository for SqliteProductRepository {
         Ok(products)
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: ProductId) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
             "UPDATE products SET status = 'archived', updated_at = ? WHERE id = ?",
@@ -484,7 +456,7 @@ impl ProductRepository for SqliteProductRepository {
 
     fn add_variant(
         &self,
-        product_id: Uuid,
+        product_id: ProductId,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
         // Validate SKU format
@@ -499,11 +471,9 @@ impl ProductRepository for SqliteProductRepository {
 
         // Check SKU uniqueness
         let exists: i32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM product_variants WHERE sku = ?",
-                [&sku],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM product_variants WHERE sku = ?", [&sku], |row| {
+                row.get(0)
+            })
             .map_err(map_db_error)?;
 
         if exists > 0 {
@@ -655,7 +625,7 @@ impl ProductRepository for SqliteProductRepository {
         Ok(())
     }
 
-    fn get_variants(&self, product_id: Uuid) -> Result<Vec<ProductVariant>> {
+    fn get_variants(&self, product_id: ProductId) -> Result<Vec<ProductVariant>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare("SELECT * FROM product_variants WHERE product_id = ? AND is_active = 1 ORDER BY is_default DESC, sku")
@@ -714,14 +684,10 @@ impl ProductRepository for SqliteProductRepository {
                 params.push(Box::new(category));
             } else {
                 sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
-                params.push(Box::new(format!(
-                    "%\"name\":\"category\",\"value\":\"{}\"%",
-                    category
-                )));
-                params.push(Box::new(format!(
-                    "%\"value\":\"{}\",\"group\":\"category\"%",
-                    category
-                )));
+                params
+                    .push(Box::new(format!("%\"name\":\"category\",\"value\":\"{}\"%", category)));
+                params
+                    .push(Box::new(format!("%\"value\":\"{}\",\"group\":\"category\"%", category)));
             }
         }
         if let Some(in_stock) = in_stock {
@@ -745,7 +711,7 @@ impl ProductRepository for SqliteProductRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?
             .into_iter()
-            .map(|id_str| parse_uuid(&id_str, "product", "id"))
+            .map(|id_str| parse_uuid(&id_str, "product", "id").map(ProductId::from))
             .collect::<Result<Vec<_>>>()?;
 
         if min_price.is_some() || max_price.is_some() {
@@ -809,12 +775,9 @@ impl ProductRepository for SqliteProductRepository {
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
-            let id = Uuid::new_v4();
+            let id = ProductId::new();
             let now = Utc::now();
-            let slug = input
-                .slug
-                .clone()
-                .unwrap_or_else(|| Product::generate_slug(&input.name));
+            let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
             let name = input.name.clone();
             let description = input.description.clone().unwrap_or_default();
             let product_type = input.product_type.unwrap_or_default();
@@ -823,11 +786,9 @@ impl ProductRepository for SqliteProductRepository {
 
             // Check slug uniqueness
             let exists: i32 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM products WHERE slug = ?",
-                    [&slug],
-                    |row| row.get(0),
-                )
+                .query_row("SELECT COUNT(*) FROM products WHERE slug = ?", [&slug], |row| {
+                    row.get(0)
+                })
                 .map_err(map_db_error)?;
 
             if exists > 0 {
@@ -835,9 +796,7 @@ impl ProductRepository for SqliteProductRepository {
             }
 
             let attributes_json = serde_json::to_string(&attributes).unwrap_or_default();
-            let seo_json = seo
-                .as_ref()
-                .map(|s| serde_json::to_string(s).unwrap_or_default());
+            let seo_json = seo.as_ref().map(|s| serde_json::to_string(s).unwrap_or_default());
 
             tx.execute(
                 "INSERT INTO products (id, name, slug, description, status, product_type, attributes, seo, created_at, updated_at)
@@ -923,7 +882,7 @@ impl ProductRepository for SqliteProductRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<BatchResult<Product>> {
+    fn update_batch(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<BatchResult<Product>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -937,7 +896,7 @@ impl ProductRepository for SqliteProductRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<Vec<Product>> {
+    fn update_batch_atomic(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<Vec<Product>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -950,13 +909,11 @@ impl ProductRepository for SqliteProductRepository {
         for (id, input) in updates {
             let now = Utc::now();
             let current_version: i32 = tx
-                .query_row(
-                    "SELECT version FROM products WHERE id = ?",
-                    [id.to_string()],
-                    |row| row.get(0),
-                )
+                .query_row("SELECT version FROM products WHERE id = ?", [id.to_string()], |row| {
+                    row.get(0)
+                })
                 .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductNotFound(id),
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductNotFound(id.into_uuid()),
                     e => map_db_error(e),
                 })?;
 
@@ -969,9 +926,7 @@ impl ProductRepository for SqliteProductRepository {
             }
             if let Some(slug) = &input.slug {
                 let existing_id: Option<String> = tx
-                    .query_row("SELECT id FROM products WHERE slug = ?", [slug], |row| {
-                        row.get(0)
-                    })
+                    .query_row("SELECT id FROM products WHERE slug = ?", [slug], |row| row.get(0))
                     .optional()
                     .map_err(map_db_error)?;
                 if let Some(existing_id) = existing_id {
@@ -992,9 +947,7 @@ impl ProductRepository for SqliteProductRepository {
             }
             if let Some(attributes) = &input.attributes {
                 update_parts.push("attributes = ?");
-                params.push(Box::new(
-                    serde_json::to_string(attributes).unwrap_or_default(),
-                ));
+                params.push(Box::new(serde_json::to_string(attributes).unwrap_or_default()));
             }
             if let Some(seo) = &input.seo {
                 update_parts.push("seo = ?");
@@ -1012,9 +965,7 @@ impl ProductRepository for SqliteProductRepository {
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
                 params.iter().map(|p| p.as_ref()).collect();
-            let rows_affected = tx
-                .execute(&sql, params_refs.as_slice())
-                .map_err(map_db_error)?;
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
             if rows_affected == 0 {
                 return Err(CommerceError::VersionConflict {
                     entity: "product".to_string(),
@@ -1038,7 +989,7 @@ impl ProductRepository for SqliteProductRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<ProductId>) -> Result<BatchResult<ProductId>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
@@ -1052,7 +1003,7 @@ impl ProductRepository for SqliteProductRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<ProductId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -1078,14 +1029,13 @@ impl ProductRepository for SqliteProductRepository {
         let all_params_refs: Vec<&dyn rusqlite::ToSql> =
             all_params.iter().map(|p| p.as_ref()).collect();
 
-        tx.execute(&sql, all_params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, all_params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Product>> {
+    fn get_batch(&self, ids: Vec<ProductId>) -> Result<Vec<Product>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
@@ -1095,7 +1045,8 @@ impl ProductRepository for SqliteProductRepository {
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM products WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let uuid_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
+        let params = uuid_params(&uuid_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;

@@ -7,6 +7,9 @@ repository.workspace = true
 authors.workspace = true
 description = "Observability utilities for StateSet iCommerce (metrics + tracing)"
 
+[lints]
+workspace = true
+
 [dependencies]
 thiserror = { workspace = true }
 tracing = "0.1"

@@ -11,7 +11,7 @@
 //!
 //! Run with: cargo bench -p stateset-embedded
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AnalyticsQuery, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
@@ -63,11 +63,7 @@ fn setup_test_data(commerce: &Commerce) {
     for i in 1..=100 {
         let customer_id = commerce
             .customers()
-            .list(CustomerFilter {
-                limit: Some(1),
-                offset: Some(0),
-                ..Default::default()
-            })
+            .list(CustomerFilter { limit: Some(1), offset: Some(0), ..Default::default() })
             .expect("Failed to list customers")
             .into_iter()
             .next()
@@ -130,12 +126,7 @@ fn bench_inventory_operations(c: &mut Criterion) {
 
     group.bench_function("get_stock", |b| {
         b.iter(|| {
-            black_box(
-                commerce
-                    .inventory()
-                    .get_stock("SKU-001")
-                    .expect("Failed to get stock"),
-            );
+            black_box(commerce.inventory().get_stock("SKU-001").expect("Failed to get stock"));
         });
     });
 
@@ -155,13 +146,7 @@ fn bench_inventory_operations(c: &mut Criterion) {
             black_box(
                 commerce
                     .inventory()
-                    .reserve(
-                        "SKU-001",
-                        dec!(5),
-                        "order",
-                        &Uuid::new_v4().to_string(),
-                        None,
-                    )
+                    .reserve("SKU-001", dec!(5), "order", &Uuid::new_v4().to_string(), None)
                     .ok(),
             );
         });
@@ -331,11 +316,7 @@ fn bench_query_performance(c: &mut Criterion) {
             black_box(
                 commerce
                     .customers()
-                    .list(CustomerFilter {
-                        limit: Some(20),
-                        offset: Some(0),
-                        ..Default::default()
-                    })
+                    .list(CustomerFilter { limit: Some(20), offset: Some(0), ..Default::default() })
                     .expect("Failed to list customers"),
             );
         });
@@ -346,11 +327,7 @@ fn bench_query_performance(c: &mut Criterion) {
             black_box(
                 commerce
                     .orders()
-                    .list(OrderFilter {
-                        limit: Some(20),
-                        offset: Some(0),
-                        ..Default::default()
-                    })
+                    .list(OrderFilter { limit: Some(20), offset: Some(0), ..Default::default() })
                     .expect("Failed to list orders"),
             );
         });
@@ -372,12 +349,7 @@ fn bench_query_performance(c: &mut Criterion) {
 
     group.bench_function("get_stock", |b| {
         b.iter(|| {
-            black_box(
-                commerce
-                    .inventory()
-                    .get_stock("SKU-001")
-                    .expect("Failed to get stock"),
-            );
+            black_box(commerce.inventory().get_stock("SKU-001").expect("Failed to get stock"));
         });
     });
     group.finish();
@@ -387,31 +359,27 @@ fn bench_scalability(c: &mut Criterion) {
     let mut group = c.benchmark_group("scalability");
 
     for size in [10usize, 100, 1000].iter() {
-        group.bench_with_input(
-            BenchmarkId::new("list_customers", size),
-            size,
-            |b, &size| {
-                let (commerce, _temp) = create_test_commerce();
+        group.bench_with_input(BenchmarkId::new("list_customers", size), size, |b, &size| {
+            let (commerce, _temp) = create_test_commerce();
 
-                // Create customers
-                for i in 0..size {
-                    create_test_customer(&commerce, i);
-                }
+            // Create customers
+            for i in 0..size {
+                create_test_customer(&commerce, i);
+            }
 
-                b.iter(|| {
-                    black_box(
-                        commerce
-                            .customers()
-                            .list(CustomerFilter {
-                                limit: Some(size as u32),
-                                offset: Some(0),
-                                ..Default::default()
-                            })
-                            .expect("Failed to list customers"),
-                    );
-                });
-            },
-        );
+            b.iter(|| {
+                black_box(
+                    commerce
+                        .customers()
+                        .list(CustomerFilter {
+                            limit: Some(size as u32),
+                            offset: Some(0),
+                            ..Default::default()
+                        })
+                        .expect("Failed to list customers"),
+                );
+            });
+        });
     }
     group.finish();
 }

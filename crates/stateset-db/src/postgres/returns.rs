@@ -6,9 +6,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateReturn, CreateReturnItem, ItemCondition,
-    Result, Return, ReturnFilter, ReturnItem, ReturnReason, ReturnRepository, ReturnStatus,
-    UpdateReturn,
+    BatchResult, CommerceError, CreateReturn, CreateReturnItem, CustomerId, ItemCondition, OrderId,
+    OrderItemId, Result, Return, ReturnFilter, ReturnId, ReturnItem, ReturnReason,
+    ReturnRepository, ReturnStatus, UpdateReturn, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -79,9 +79,9 @@ impl PgReturnRepository {
         })?;
 
         Ok(Return {
-            id,
-            order_id,
-            customer_id,
+            id: ReturnId::from(id),
+            order_id: OrderId::from(order_id),
+            customer_id: CustomerId::from(customer_id),
             status,
             reason,
             reason_details,
@@ -118,8 +118,8 @@ impl PgReturnRepository {
 
         Ok(ReturnItem {
             id,
-            return_id,
-            order_item_id,
+            return_id: ReturnId::from(return_id),
+            order_item_id: OrderItemId::from(order_item_id),
             sku,
             name,
             quantity,
@@ -141,10 +141,10 @@ impl PgReturnRepository {
 
         // Get customer_id from order
         let order_info: (Uuid,) = sqlx::query_as("SELECT customer_id FROM orders WHERE id = $1")
-            .bind(input.order_id)
+            .bind(input.order_id.into_uuid())
             .fetch_one(&self.pool)
             .await
-            .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
+            .map_err(|_| CommerceError::OrderNotFound(input.order_id.into_uuid()))?;
 
         let customer_id = order_info.0;
 
@@ -155,7 +155,7 @@ impl PgReturnRepository {
             "#,
         )
         .bind(id)
-        .bind(input.order_id)
+        .bind(input.order_id.into_uuid())
         .bind(customer_id)
         .bind(input.reason.to_string())
         .bind(&input.reason_details)
@@ -175,9 +175,9 @@ impl PgReturnRepository {
         }
 
         Ok(Return {
-            id,
+            id: ReturnId::from(id),
             order_id: input.order_id,
-            customer_id,
+            customer_id: CustomerId::from(customer_id),
             status: ReturnStatus::Requested,
             reason: input.reason,
             reason_details: input.reason_details,
@@ -203,7 +203,7 @@ impl PgReturnRepository {
         // Get order item details
         let item_info: (String, String, Decimal) =
             sqlx::query_as("SELECT sku, name, unit_price FROM order_items WHERE id = $1")
-                .bind(input.order_item_id)
+                .bind(input.order_item_id.into_uuid())
                 .fetch_one(&self.pool)
                 .await
                 .map_err(map_db_error)?;
@@ -219,7 +219,7 @@ impl PgReturnRepository {
         )
         .bind(id)
         .bind(return_id)
-        .bind(input.order_item_id)
+        .bind(input.order_item_id.into_uuid())
         .bind(&item_info.0)
         .bind(&item_info.1)
         .bind(input.quantity)
@@ -231,7 +231,7 @@ impl PgReturnRepository {
 
         Ok(ReturnItem {
             id,
-            return_id,
+            return_id: ReturnId::from(return_id),
             order_item_id: input.order_item_id,
             sku: item_info.0,
             name: item_info.1,
@@ -294,10 +294,7 @@ impl PgReturnRepository {
     pub async fn update_async(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
         let now = Utc::now();
 
-        let existing = self
-            .get_async(id)
-            .await?
-            .ok_or(CommerceError::ReturnNotFound(id))?;
+        let existing = self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))?;
 
         let new_status = input.status.unwrap_or(existing.status);
         let new_tracking = input.tracking_number.or(existing.tracking_number);
@@ -325,9 +322,7 @@ impl PgReturnRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// List returns (async)
@@ -346,10 +341,10 @@ impl PgReturnRepository {
         let mut builder = QueryBuilder::new("SELECT * FROM returns WHERE 1=1");
 
         if let Some(order_id) = order_id {
-            builder.push(" AND order_id = ").push_bind(order_id);
+            builder.push(" AND order_id = ").push_bind(order_id.into_uuid());
         }
         if let Some(customer_id) = customer_id {
-            builder.push(" AND customer_id = ").push_bind(customer_id);
+            builder.push(" AND customer_id = ").push_bind(customer_id.into_uuid());
         }
         if let Some(status) = status {
             builder.push(" AND status = ").push_bind(status.to_string());
@@ -399,9 +394,7 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Reject a return (async)
@@ -409,16 +402,14 @@ impl PgReturnRepository {
         sqlx::query(
             "UPDATE returns SET status = 'rejected', notes = $1, updated_at = $2, version = version + 1 WHERE id = $3",
         )
-            .bind(reason)
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        .bind(reason)
+        .bind(Utc::now())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Complete a return (async)
@@ -432,9 +423,7 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Cancel a return (async)
@@ -448,9 +437,7 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Count returns (async)
@@ -469,10 +456,10 @@ impl PgReturnRepository {
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM returns WHERE 1=1");
 
         if let Some(order_id) = order_id {
-            builder.push(" AND order_id = ").push_bind(order_id);
+            builder.push(" AND order_id = ").push_bind(order_id.into_uuid());
         }
         if let Some(customer_id) = customer_id {
-            builder.push(" AND customer_id = ").push_bind(customer_id);
+            builder.push(" AND customer_id = ").push_bind(customer_id.into_uuid());
         }
         if let Some(status) = status {
             builder.push(" AND status = ").push_bind(status.to_string());
@@ -487,11 +474,8 @@ impl PgReturnRepository {
             builder.push(" AND created_at <= ").push_bind(to);
         }
 
-        let count: (i64,) = builder
-            .build_query_as()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }
@@ -555,10 +539,10 @@ impl PgReturnRepository {
             // Get customer_id from order
             let order_info: (Uuid,) =
                 sqlx::query_as("SELECT customer_id FROM orders WHERE id = $1")
-                    .bind(input.order_id)
+                    .bind(input.order_id.into_uuid())
                     .fetch_one(tx.as_mut())
                     .await
-                    .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
+                    .map_err(|_| CommerceError::OrderNotFound(input.order_id.into_uuid()))?;
 
             let customer_id = order_info.0;
 
@@ -569,7 +553,7 @@ impl PgReturnRepository {
                 "#,
             )
             .bind(id)
-            .bind(input.order_id)
+            .bind(input.order_id.into_uuid())
             .bind(customer_id)
             .bind(input.reason.to_string())
             .bind(&input.reason_details)
@@ -589,7 +573,7 @@ impl PgReturnRepository {
                 // Get order item details
                 let item_info: (String, String, Decimal) =
                     sqlx::query_as("SELECT sku, name, unit_price FROM order_items WHERE id = $1")
-                        .bind(item_input.order_item_id)
+                        .bind(item_input.order_item_id.into_uuid())
                         .fetch_one(tx.as_mut())
                         .await
                         .map_err(map_db_error)?;
@@ -605,7 +589,7 @@ impl PgReturnRepository {
                 )
                 .bind(item_id)
                 .bind(id)
-                .bind(item_input.order_item_id)
+                .bind(item_input.order_item_id.into_uuid())
                 .bind(&item_info.0)
                 .bind(&item_info.1)
                 .bind(item_input.quantity)
@@ -617,7 +601,7 @@ impl PgReturnRepository {
 
                 items.push(ReturnItem {
                     id: item_id,
-                    return_id: id,
+                    return_id: ReturnId::from(id),
                     order_item_id: item_input.order_item_id,
                     sku: item_info.0,
                     name: item_info.1,
@@ -628,9 +612,9 @@ impl PgReturnRepository {
             }
 
             returns.push(Return {
-                id,
+                id: ReturnId::from(id),
                 order_id: input.order_id,
-                customer_id,
+                customer_id: CustomerId::from(customer_id),
                 status: ReturnStatus::Requested,
                 reason: input.reason,
                 reason_details: input.reason_details,
@@ -653,16 +637,17 @@ impl PgReturnRepository {
     /// Update multiple returns - partial success allowed (async)
     pub async fn update_batch_async(
         &self,
-        updates: Vec<(Uuid, UpdateReturn)>,
+        updates: Vec<(ReturnId, UpdateReturn)>,
     ) -> Result<BatchResult<Return>> {
         validate_batch_size(&updates)?;
 
         let mut result = BatchResult::with_capacity(updates.len());
 
         for (index, (id, input)) in updates.into_iter().enumerate() {
-            match self.update_async(id, input).await {
+            let raw_id = id.into_uuid();
+            match self.update_async(raw_id, input).await {
                 Ok(ret) => result.record_success(ret),
-                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+                Err(e) => result.record_failure(index, Some(raw_id.to_string()), &e),
             }
         }
 
@@ -672,7 +657,7 @@ impl PgReturnRepository {
     /// Update multiple returns - atomic (all-or-nothing) (async)
     pub async fn update_batch_atomic_async(
         &self,
-        updates: Vec<(Uuid, UpdateReturn)>,
+        updates: Vec<(ReturnId, UpdateReturn)>,
     ) -> Result<Vec<Return>> {
         validate_batch_size(&updates)?;
 
@@ -680,20 +665,21 @@ impl PgReturnRepository {
         let mut returns = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
+            let raw_id = id.into_uuid();
             let now = Utc::now();
 
             let existing_row =
                 sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = $1")
-                    .bind(id)
+                    .bind(raw_id)
                     .fetch_optional(tx.as_mut())
                     .await
                     .map_err(map_db_error)?
-                    .ok_or(CommerceError::ReturnNotFound(id))?;
+                    .ok_or(CommerceError::ReturnNotFound(raw_id))?;
 
             let items = sqlx::query_as::<_, ReturnItemRow>(
                 "SELECT * FROM return_items WHERE return_id = $1",
             )
-            .bind(id)
+            .bind(raw_id)
             .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -725,14 +711,14 @@ impl PgReturnRepository {
             .bind(&new_refund_method)
             .bind(&new_notes)
             .bind(now)
-            .bind(id)
+            .bind(raw_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
             // Fetch the updated return
             let updated_row = sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = $1")
-                .bind(id)
+                .bind(raw_id)
                 .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
@@ -745,15 +731,16 @@ impl PgReturnRepository {
     }
 
     /// Delete multiple returns - partial success allowed (async)
-    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    pub async fn delete_batch_async(&self, ids: Vec<ReturnId>) -> Result<BatchResult<Uuid>> {
         validate_batch_size(&ids)?;
 
         let mut result = BatchResult::with_capacity(ids.len());
 
         for (index, id) in ids.into_iter().enumerate() {
-            match self.delete_async(id).await {
-                Ok(()) => result.record_success(id),
-                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            let raw_id = id.into_uuid();
+            match self.delete_async(raw_id).await {
+                Ok(()) => result.record_success(raw_id),
+                Err(e) => result.record_failure(index, Some(raw_id.to_string()), &e),
             }
         }
 
@@ -761,23 +748,25 @@ impl PgReturnRepository {
     }
 
     /// Delete multiple returns - atomic (all-or-nothing) (async)
-    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<ReturnId>) -> Result<()> {
         validate_batch_size(&ids)?;
 
         if ids.is_empty() {
             return Ok(());
         }
 
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+
         // First delete return items for all returns
         sqlx::query("DELETE FROM return_items WHERE return_id = ANY($1)")
-            .bind(&ids)
+            .bind(&raw_ids)
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
 
         // Then delete the returns
         sqlx::query("DELETE FROM returns WHERE id = ANY($1)")
-            .bind(&ids)
+            .bind(&raw_ids)
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -786,15 +775,17 @@ impl PgReturnRepository {
     }
 
     /// Get multiple returns by ID (async)
-    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Return>> {
+    pub async fn get_batch_async(&self, ids: Vec<ReturnId>) -> Result<Vec<Return>> {
         validate_batch_size(&ids)?;
 
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+
         let rows = sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = ANY($1)")
-            .bind(&ids)
+            .bind(&raw_ids)
             .fetch_all(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -814,32 +805,32 @@ impl ReturnRepository for PgReturnRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Return>> {
-        super::block_on(self.get_async(id))
+    fn get(&self, id: ReturnId) -> Result<Option<Return>> {
+        super::block_on(self.get_async(id.into_uuid()))
     }
 
-    fn update(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: ReturnId, input: UpdateReturn) -> Result<Return> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: ReturnFilter) -> Result<Vec<Return>> {
         super::block_on(self.list_async(filter))
     }
 
-    fn approve(&self, id: Uuid) -> Result<Return> {
-        super::block_on(self.approve_async(id))
+    fn approve(&self, id: ReturnId) -> Result<Return> {
+        super::block_on(self.approve_async(id.into_uuid()))
     }
 
-    fn reject(&self, id: Uuid, reason: &str) -> Result<Return> {
-        super::block_on(self.reject_async(id, reason))
+    fn reject(&self, id: ReturnId, reason: &str) -> Result<Return> {
+        super::block_on(self.reject_async(id.into_uuid(), reason))
     }
 
-    fn complete(&self, id: Uuid) -> Result<Return> {
-        super::block_on(self.complete_async(id))
+    fn complete(&self, id: ReturnId) -> Result<Return> {
+        super::block_on(self.complete_async(id.into_uuid()))
     }
 
-    fn cancel(&self, id: Uuid) -> Result<Return> {
-        super::block_on(self.cancel_async(id))
+    fn cancel(&self, id: ReturnId) -> Result<Return> {
+        super::block_on(self.cancel_async(id.into_uuid()))
     }
 
     fn count(&self, filter: ReturnFilter) -> Result<u64> {
@@ -858,23 +849,23 @@ impl ReturnRepository for PgReturnRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<BatchResult<Return>> {
+    fn update_batch(&self, updates: Vec<(ReturnId, UpdateReturn)>) -> Result<BatchResult<Return>> {
         super::block_on(self.update_batch_async(updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<Vec<Return>> {
+    fn update_batch_atomic(&self, updates: Vec<(ReturnId, UpdateReturn)>) -> Result<Vec<Return>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<ReturnId>) -> Result<BatchResult<Uuid>> {
         super::block_on(self.delete_batch_async(ids))
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<ReturnId>) -> Result<()> {
         super::block_on(self.delete_batch_atomic_async(ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Return>> {
+    fn get_batch(&self, ids: Vec<ReturnId>) -> Result<Vec<Return>> {
         super::block_on(self.get_batch_async(ids))
     }
 }

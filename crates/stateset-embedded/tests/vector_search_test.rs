@@ -62,25 +62,14 @@ fn test_product_embed_store_search_roundtrip() {
         .expect("search products");
 
     assert!(!results.is_empty(), "Should return at least one result");
-    assert_eq!(
-        results[0].entity.id, headphones.id,
-        "Headphones should rank first for audio query"
-    );
-    assert!(
-        results[0].score > 0.5,
-        "Top result should have high similarity score"
-    );
+    assert_eq!(results[0].entity.id, headphones.id, "Headphones should rank first for audio query");
+    assert!(results[0].score > 0.5, "Top result should have high similarity score");
 
     // Search for something similar to tea
-    let results = vector
-        .search_products("green tea leaves organic", 5)
-        .expect("search for tea");
+    let results = vector.search_products("green tea leaves organic", 5).expect("search for tea");
 
     assert!(!results.is_empty(), "Should return at least one result");
-    assert_eq!(
-        results[0].entity.id, tea.id,
-        "Tea should rank first for tea query"
-    );
+    assert_eq!(results[0].entity.id, tea.id, "Tea should rank first for tea query");
 }
 
 // ============================================================================
@@ -120,13 +109,8 @@ fn test_batch_index_products() {
     assert_eq!(indexed, 5, "All 5 products should be indexed");
 
     // Search should find all of them
-    let results = vector
-        .search_products("footwear shoes", 10)
-        .expect("search");
-    assert!(
-        results.len() >= 3,
-        "Should find multiple shoe-related products"
-    );
+    let results = vector.search_products("footwear shoes", 10).expect("search");
+    assert!(results.len() >= 3, "Should find multiple shoe-related products");
 }
 
 // ============================================================================
@@ -164,25 +148,15 @@ fn test_cross_entity_search_isolation() {
     vector.index_customer(&customer).expect("index customer");
 
     // Search products should only return products
-    let product_results = vector
-        .search_products("coffee", 10)
-        .expect("search products");
+    let product_results = vector.search_products("coffee", 10).expect("search products");
     for r in &product_results {
-        assert_eq!(
-            r.entity.id, product.id,
-            "Product search should only return products"
-        );
+        assert_eq!(r.entity.id, product.id, "Product search should only return products");
     }
 
     // Search customers should only return customers
-    let customer_results = vector
-        .search_customers("coffee", 10)
-        .expect("search customers");
+    let customer_results = vector.search_customers("coffee", 10).expect("search customers");
     for r in &customer_results {
-        assert_eq!(
-            r.entity.id, customer.id,
-            "Customer search should only return customers"
-        );
+        assert_eq!(r.entity.id, customer.id, "Customer search should only return customers");
     }
 }
 
@@ -198,10 +172,7 @@ fn test_embedding_stats_and_cleanup() {
 
     let product = commerce
         .products()
-        .create(CreateProduct {
-            name: "Stats Test Product".into(),
-            ..Default::default()
-        })
+        .create(CreateProduct { name: "Stats Test Product".into(), ..Default::default() })
         .expect("create product");
 
     // Initially empty
@@ -214,18 +185,14 @@ fn test_embedding_stats_and_cleanup() {
     assert_eq!(*stats.counts.get(&EntityType::Product).unwrap_or(&0), 1);
 
     // Check is_indexed
-    let indexed = vector
-        .is_indexed(EntityType::Product, &product.id.to_string())
-        .expect("is_indexed");
+    let indexed =
+        vector.is_indexed(EntityType::Product, &product.id.to_string()).expect("is_indexed");
     assert!(indexed, "Product should be indexed");
 
     // Unindex and verify
-    vector
-        .unindex_product(&product.id.to_string())
-        .expect("unindex");
-    let indexed = vector
-        .is_indexed(EntityType::Product, &product.id.to_string())
-        .expect("is_indexed");
+    vector.unindex_product(&product.id.to_string()).expect("unindex");
+    let indexed =
+        vector.is_indexed(EntityType::Product, &product.id.to_string()).expect("is_indexed");
     assert!(!indexed, "Product should no longer be indexed");
 
     let stats = vector.stats().expect("stats");
@@ -245,10 +212,7 @@ fn test_clear_all_embeddings() {
     // Index a product and a customer
     let product = commerce
         .products()
-        .create(CreateProduct {
-            name: "Clear Test".into(),
-            ..Default::default()
-        })
+        .create(CreateProduct { name: "Clear Test".into(), ..Default::default() })
         .expect("create");
     let customer = commerce
         .customers()

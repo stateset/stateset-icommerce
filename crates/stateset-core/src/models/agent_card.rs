@@ -210,16 +210,12 @@ impl AgentCard {
 
     /// Check if agent can sell
     pub fn can_sell(&self) -> bool {
-        self.a2a_skills
-            .iter()
-            .any(|s| matches!(s, A2ASkill::Sell | A2ASkill::Quote))
+        self.a2a_skills.iter().any(|s| matches!(s, A2ASkill::Sell | A2ASkill::Quote))
     }
 
     /// Check if agent can buy
     pub fn can_buy(&self) -> bool {
-        self.a2a_skills
-            .iter()
-            .any(|s| matches!(s, A2ASkill::Buy | A2ASkill::RequestQuote))
+        self.a2a_skills.iter().any(|s| matches!(s, A2ASkill::Buy | A2ASkill::RequestQuote))
     }
 }
 
@@ -232,6 +228,7 @@ impl AgentCard {
 /// Higher trust levels enable higher transaction limits and more capabilities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TrustLevel {
     /// Sandbox - for testing only, no real transactions
     Sandbox,
@@ -308,6 +305,7 @@ impl std::str::FromStr for TrustLevel {
 /// A2A commerce skills that an agent can advertise
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum A2ASkill {
     /// Can sell products/services
     Sell,

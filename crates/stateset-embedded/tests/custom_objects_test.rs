@@ -98,10 +98,7 @@ fn test_custom_objects_type_and_record_crud_and_validation() {
         .custom_objects()
         .update_object(
             obj.id,
-            UpdateCustomObject {
-                values: Some(json!({"serial": 123})),
-                ..Default::default()
-            },
+            UpdateCustomObject { values: Some(json!({"serial": 123})), ..Default::default() },
         )
         .unwrap_err();
     assert!(err.is_validation(), "expected validation error, got: {err}");
@@ -110,22 +107,13 @@ fn test_custom_objects_type_and_record_crud_and_validation() {
         .custom_objects()
         .update_object(
             obj.id,
-            UpdateCustomObject {
-                values: Some(json!({"serial": "SN-0002"})),
-                ..Default::default()
-            },
+            UpdateCustomObject { values: Some(json!({"serial": "SN-0002"})), ..Default::default() },
         )
         .expect("update custom object values");
     assert_eq!(updated.values["serial"].as_str(), Some("SN-0002"));
 
     // Deleting the type should cascade-delete records.
-    commerce
-        .custom_objects()
-        .delete_type(ty.id)
-        .expect("delete custom object type");
-    let gone = commerce
-        .custom_objects()
-        .get_object(obj.id)
-        .expect("get after delete");
+    commerce.custom_objects().delete_type(ty.id).expect("delete custom object type");
+    let gone = commerce.custom_objects().get_object(obj.id).expect("get after delete");
     assert!(gone.is_none());
 }

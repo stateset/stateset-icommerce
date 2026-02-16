@@ -51,9 +51,7 @@ impl Erc8004 {
         agent_id: &str,
         input: UpdateAgentIdentity,
     ) -> Result<AgentIdentity> {
-        self.db
-            .agent_identities()
-            .update(agent_registry, agent_id, input)
+        self.db.agent_identities().update(agent_registry, agent_id, input)
     }
 
     /// Set agent wallet with optional proof data
@@ -85,9 +83,7 @@ impl Erc8004 {
         agent_registry: &str,
         agent_id: &str,
     ) -> Result<AgentIdentity> {
-        self.db
-            .agent_identities()
-            .clear_agent_wallet(agent_registry, agent_id)
+        self.db.agent_identities().clear_agent_wallet(agent_registry, agent_id)
     }
 
     /// List identities with filter
@@ -107,9 +103,7 @@ impl Erc8004 {
         agent_id: &str,
         entry: AgentMetadataEntry,
     ) -> Result<()> {
-        self.db
-            .agent_identities()
-            .set_metadata(agent_registry, agent_id, entry)
+        self.db.agent_identities().set_metadata(agent_registry, agent_id, entry)
     }
 
     /// Get identity metadata entry
@@ -119,9 +113,7 @@ impl Erc8004 {
         agent_id: &str,
         metadata_key: &str,
     ) -> Result<Option<Vec<u8>>> {
-        self.db
-            .agent_identities()
-            .get_metadata(agent_registry, agent_id, metadata_key)
+        self.db.agent_identities().get_metadata(agent_registry, agent_id, metadata_key)
     }
 
     /// Delete identity metadata entry
@@ -131,9 +123,7 @@ impl Erc8004 {
         agent_id: &str,
         metadata_key: &str,
     ) -> Result<()> {
-        self.db
-            .agent_identities()
-            .delete_metadata(agent_registry, agent_id, metadata_key)
+        self.db.agent_identities().delete_metadata(agent_registry, agent_id, metadata_key)
     }
 
     // ========================================================================
@@ -228,9 +218,7 @@ impl Erc8004 {
 
     /// Get feedback client addresses
     pub fn feedback_clients(&self, agent_registry: &str, agent_id: &str) -> Result<Vec<String>> {
-        self.db
-            .agent_reputation()
-            .get_clients(agent_registry, agent_id)
+        self.db.agent_reputation().get_clients(agent_registry, agent_id)
     }
 
     /// Get last feedback index for client/agent pair
@@ -240,9 +228,7 @@ impl Erc8004 {
         agent_id: &str,
         client_address: &str,
     ) -> Result<u64> {
-        self.db
-            .agent_reputation()
-            .get_last_index(agent_registry, agent_id, client_address)
+        self.db.agent_reputation().get_last_index(agent_registry, agent_id, client_address)
     }
 
     // ========================================================================
@@ -263,16 +249,12 @@ impl Erc8004 {
         request_hash: &str,
         input: CreateAgentValidationResponse,
     ) -> Result<AgentValidationResponse> {
-        self.db
-            .agent_validation()
-            .respond_validation(request_hash, input)
+        self.db.agent_validation().respond_validation(request_hash, input)
     }
 
     /// Get latest validation status
     pub fn validation_status(&self, request_hash: &str) -> Result<Option<AgentValidationStatus>> {
-        self.db
-            .agent_validation()
-            .get_validation_status(request_hash)
+        self.db.agent_validation().get_validation_status(request_hash)
     }
 
     /// Get validation summary for an agent
@@ -283,22 +265,16 @@ impl Erc8004 {
         validator_addresses: Option<Vec<String>>,
         tag: Option<String>,
     ) -> Result<ValidationSummary> {
-        self.db
-            .agent_validation()
-            .get_summary(agent_registry, agent_id, validator_addresses, tag)
+        self.db.agent_validation().get_summary(agent_registry, agent_id, validator_addresses, tag)
     }
 
     /// Get validation request hashes for an agent
     pub fn agent_validations(&self, agent_registry: &str, agent_id: &str) -> Result<Vec<String>> {
-        self.db
-            .agent_validation()
-            .get_agent_validations(agent_registry, agent_id)
+        self.db.agent_validation().get_agent_validations(agent_registry, agent_id)
     }
 
     /// Get validation request hashes for a validator
     pub fn validator_requests(&self, validator_address: &str) -> Result<Vec<String>> {
-        self.db
-            .agent_validation()
-            .get_validator_requests(validator_address)
+        self.db.agent_validation().get_validator_requests(validator_address)
     }
 }

@@ -6,13 +6,13 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    generate_credit_application_number, CommerceError, CreateCreditAccount, CreditAccount,
-    CreditAccountFilter, CreditAccountStatus, CreditAgingBucket, CreditApplication,
-    CreditApplicationFilter, CreditApplicationStatus, CreditCheckResult, CreditHold,
-    CreditHoldFilter, CreditHoldStatus, CreditHoldType, CreditRepository, CreditTransaction,
-    CreditTransactionFilter, CreditTransactionType, CustomerCreditSummary, PlaceCreditHold,
-    RecordCreditTransaction, ReleaseCreditHold, Result, ReviewCreditApplication,
-    SubmitCreditApplication, UpdateCreditAccount,
+    CommerceError, CreateCreditAccount, CreditAccount, CreditAccountFilter, CreditAccountStatus,
+    CreditAgingBucket, CreditApplication, CreditApplicationFilter, CreditApplicationStatus,
+    CreditCheckResult, CreditHold, CreditHoldFilter, CreditHoldStatus, CreditHoldType,
+    CreditRepository, CreditTransaction, CreditTransactionFilter, CreditTransactionType,
+    CustomerCreditSummary, PlaceCreditHold, RecordCreditTransaction, ReleaseCreditHold, Result,
+    ReviewCreditApplication, SubmitCreditApplication, UpdateCreditAccount,
+    generate_credit_application_number,
 };
 use uuid::Uuid;
 
@@ -322,9 +322,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_credit_account_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_credit_account_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_credit_account_async(&self, id: Uuid) -> Result<Option<CreditAccount>> {
@@ -366,10 +364,7 @@ impl PgCreditRepository {
         input: UpdateCreditAccount,
     ) -> Result<CreditAccount> {
         let now = Utc::now();
-        let account = self
-            .get_credit_account_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let account = self.get_credit_account_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         sqlx::query(
             "UPDATE credit_accounts SET
@@ -392,11 +387,8 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.recalculate_available_credit_async(account.customer_id)
-            .await?;
-        self.get_credit_account_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.recalculate_available_credit_async(account.customer_id).await?;
+        self.get_credit_account_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_credit_accounts_async(
@@ -417,9 +409,7 @@ impl PgCreditRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(risk_rating) = filter.risk_rating {
-            builder
-                .push(" AND risk_rating = ")
-                .push_bind(risk_rating.to_string());
+            builder.push(" AND risk_rating = ").push_bind(risk_rating.to_string());
         }
         if filter.over_limit == Some(true) {
             builder.push(" AND current_balance > credit_limit");
@@ -440,9 +430,7 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_credit_account)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_credit_account).collect::<Result<Vec<_>>>()
     }
 
     pub async fn adjust_credit_limit_async(
@@ -480,9 +468,7 @@ impl PgCreditRepository {
         .await?;
 
         self.recalculate_available_credit_async(customer_id).await?;
-        self.get_credit_account_by_customer_async(customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn suspend_credit_account_async(
@@ -505,9 +491,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_credit_account_by_customer_async(customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn reactivate_credit_account_async(
@@ -526,9 +510,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_credit_account_by_customer_async(customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn check_credit_async(
@@ -537,9 +519,7 @@ impl PgCreditRepository {
         order_amount: Decimal,
     ) -> Result<CreditCheckResult> {
         let now = Utc::now();
-        let account = self
-            .get_credit_account_by_customer_async(customer_id)
-            .await?;
+        let account = self.get_credit_account_by_customer_async(customer_id).await?;
 
         match account {
             Some(acc) => {
@@ -616,9 +596,7 @@ impl PgCreditRepository {
         .map_err(map_db_error)?;
 
         self.recalculate_available_credit_async(customer_id).await?;
-        self.get_credit_account_by_customer_async(customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn release_credit_reservation_async(
@@ -660,9 +638,7 @@ impl PgCreditRepository {
         .map_err(map_db_error)?;
 
         self.recalculate_available_credit_async(customer_id).await?;
-        self.get_credit_account_by_customer_async(customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn charge_credit_async(
@@ -671,8 +647,7 @@ impl PgCreditRepository {
         order_id: Uuid,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        self.release_credit_reservation_async(customer_id, order_id)
-            .await?;
+        self.release_credit_reservation_async(customer_id, order_id).await?;
 
         sqlx::query(
             "UPDATE credit_accounts SET current_balance = current_balance + $1 WHERE customer_id = $2",
@@ -694,9 +669,7 @@ impl PgCreditRepository {
         .await?;
 
         self.recalculate_available_credit_async(customer_id).await?;
-        self.get_credit_account_by_customer_async(customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn place_hold_async(&self, input: PlaceCreditHold) -> Result<CreditHold> {
@@ -766,9 +739,7 @@ impl PgCreditRepository {
             builder.push(" AND order_id = ").push_bind(order_id);
         }
         if let Some(hold_type) = filter.hold_type {
-            builder
-                .push(" AND hold_type = ")
-                .push_bind(hold_type.to_string());
+            builder.push(" AND hold_type = ").push_bind(hold_type.to_string());
         }
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
@@ -789,9 +760,7 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_credit_hold)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_credit_hold).collect::<Result<Vec<_>>>()
     }
 
     pub async fn release_hold_async(&self, input: ReleaseCreditHold) -> Result<CreditHold> {
@@ -810,9 +779,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_hold_async(input.hold_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_hold_async(input.hold_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_active_holds_async(&self, customer_id: Uuid) -> Result<Vec<CreditHold>> {
@@ -825,11 +792,8 @@ impl PgCreditRepository {
     }
 
     pub async fn get_holds_for_order_async(&self, order_id: Uuid) -> Result<Vec<CreditHold>> {
-        self.list_holds_async(CreditHoldFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
-        .await
+        self.list_holds_async(CreditHoldFilter { order_id: Some(order_id), ..Default::default() })
+            .await
     }
 
     pub async fn submit_application_async(
@@ -865,9 +829,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_application_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_application_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_application_async(&self, id: Uuid) -> Result<Option<CreditApplication>> {
@@ -926,9 +888,7 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_credit_application)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_credit_application).collect::<Result<Vec<_>>>()
     }
 
     pub async fn review_application_async(
@@ -960,9 +920,7 @@ impl PgCreditRepository {
 
         if input.status == CreditApplicationStatus::Approved {
             if let Some(limit) = input.approved_limit {
-                let existing = self
-                    .get_credit_account_by_customer_async(app.customer_id)
-                    .await?;
+                let existing = self.get_credit_account_by_customer_async(app.customer_id).await?;
                 if existing.is_some() {
                     self.adjust_credit_limit_async(
                         app.customer_id,
@@ -981,9 +939,7 @@ impl PgCreditRepository {
             }
         }
 
-        self.get_application_async(input.application_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_application_async(input.application_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn withdraw_application_async(&self, id: Uuid) -> Result<CreditApplication> {
@@ -997,9 +953,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_application_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_application_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn record_transaction_async(
@@ -1070,9 +1024,7 @@ impl PgCreditRepository {
             builder.push(" AND customer_id = ").push_bind(customer_id);
         }
         if let Some(tx_type) = filter.transaction_type {
-            builder
-                .push(" AND transaction_type = ")
-                .push_bind(tx_type.to_string());
+            builder.push(" AND transaction_type = ").push_bind(tx_type.to_string());
         }
         if let Some(from_date) = filter.from_date {
             builder.push(" AND created_at >= ").push_bind(from_date);
@@ -1096,9 +1048,7 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_credit_transaction)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_credit_transaction).collect::<Result<Vec<_>>>()
     }
 
     pub async fn apply_payment_async(
@@ -1128,18 +1078,14 @@ impl PgCreditRepository {
         .await?;
 
         self.recalculate_available_credit_async(customer_id).await?;
-        self.get_credit_account_by_customer_async(customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_customer_summary_async(
         &self,
         customer_id: Uuid,
     ) -> Result<Option<CustomerCreditSummary>> {
-        let account = self
-            .get_credit_account_by_customer_async(customer_id)
-            .await?;
+        let account = self.get_credit_account_by_customer_async(customer_id).await?;
 
         match account {
             Some(acc) => {
@@ -1160,9 +1106,7 @@ impl PgCreditRepository {
     }
 
     pub async fn get_aging_report_async(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>> {
-        let accounts = self
-            .list_credit_accounts_async(CreditAccountFilter::default())
-            .await?;
+        let accounts = self.list_credit_accounts_async(CreditAccountFilter::default()).await?;
         let mut report = Vec::new();
 
         for acc in accounts {

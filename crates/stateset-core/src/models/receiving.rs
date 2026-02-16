@@ -97,6 +97,7 @@ pub struct PutAway {
 /// Type of receipt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ReceiptType {
     #[default]
     PurchaseOrder,
@@ -138,6 +139,7 @@ impl FromStr for ReceiptType {
 /// Status of a receipt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ReceiptStatus {
     /// ASN received, awaiting goods
     #[default]
@@ -189,6 +191,7 @@ impl FromStr for ReceiptStatus {
 /// Status of a receipt line item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ReceiptItemStatus {
     #[default]
     Pending,
@@ -230,6 +233,7 @@ impl FromStr for ReceiptItemStatus {
 /// Status of a put-away task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PutAwayStatus {
     #[default]
     Pending,
@@ -407,19 +411,13 @@ mod tests {
 
     #[test]
     fn receipt_type_from_str() {
-        assert_eq!(
-            ReceiptType::from_str("po").unwrap(),
-            ReceiptType::PurchaseOrder
-        );
+        assert_eq!(ReceiptType::from_str("po").unwrap(), ReceiptType::PurchaseOrder);
         assert!(ReceiptType::from_str("unknown").is_err());
     }
 
     #[test]
     fn receipt_status_from_str() {
-        assert_eq!(
-            ReceiptStatus::from_str("inprogress").unwrap(),
-            ReceiptStatus::InProgress
-        );
+        assert_eq!(ReceiptStatus::from_str("inprogress").unwrap(), ReceiptStatus::InProgress);
         assert!(ReceiptStatus::from_str("unknown").is_err());
     }
 
@@ -434,14 +432,8 @@ mod tests {
 
     #[test]
     fn put_away_status_from_str() {
-        assert_eq!(
-            PutAwayStatus::from_str("inprogress").unwrap(),
-            PutAwayStatus::InProgress
-        );
-        assert_eq!(
-            PutAwayStatus::from_str("canceled").unwrap(),
-            PutAwayStatus::Cancelled
-        );
+        assert_eq!(PutAwayStatus::from_str("inprogress").unwrap(), PutAwayStatus::InProgress);
+        assert_eq!(PutAwayStatus::from_str("canceled").unwrap(), PutAwayStatus::Cancelled);
         assert!(PutAwayStatus::from_str("unknown").is_err());
     }
 }

@@ -14,11 +14,11 @@
 //! ```
 
 use magnus::{
-    class, define_module, exception, function, method, prelude::*, DataTypeFunctions, Error, RHash,
-    Ruby, Symbol, TypedData, Value,
+    DataTypeFunctions, Error, RHash, Ruby, Symbol, TypedData, Value, class, define_module,
+    exception, function, method, prelude::*,
 };
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use stateset_embedded::Commerce as RustCommerce;
 use std::sync::{Arc, Mutex};
 
@@ -69,123 +69,82 @@ pub struct Commerce {
 impl Commerce {
     fn new(db_path: String) -> Result<Self, Error> {
         let commerce = RustCommerce::new(&db_path).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to initialize commerce: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to initialize commerce: {}", e))
         })?;
 
-        Ok(Self {
-            inner: Arc::new(Mutex::new(commerce)),
-        })
+        Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
     }
 
     fn customers(&self) -> Customers {
-        Customers {
-            commerce: self.inner.clone(),
-        }
+        Customers { commerce: self.inner.clone() }
     }
 
     fn orders(&self) -> Orders {
-        Orders {
-            commerce: self.inner.clone(),
-        }
+        Orders { commerce: self.inner.clone() }
     }
 
     fn products(&self) -> Products {
-        Products {
-            commerce: self.inner.clone(),
-        }
+        Products { commerce: self.inner.clone() }
     }
 
     fn inventory(&self) -> Inventory {
-        Inventory {
-            commerce: self.inner.clone(),
-        }
+        Inventory { commerce: self.inner.clone() }
     }
 
     fn returns(&self) -> Returns {
-        Returns {
-            commerce: self.inner.clone(),
-        }
+        Returns { commerce: self.inner.clone() }
     }
 
     fn payments(&self) -> Payments {
-        Payments {
-            commerce: self.inner.clone(),
-        }
+        Payments { commerce: self.inner.clone() }
     }
 
     fn shipments(&self) -> Shipments {
-        Shipments {
-            commerce: self.inner.clone(),
-        }
+        Shipments { commerce: self.inner.clone() }
     }
 
     fn warranties(&self) -> Warranties {
-        Warranties {
-            commerce: self.inner.clone(),
-        }
+        Warranties { commerce: self.inner.clone() }
     }
 
     fn purchase_orders(&self) -> PurchaseOrders {
-        PurchaseOrders {
-            commerce: self.inner.clone(),
-        }
+        PurchaseOrders { commerce: self.inner.clone() }
     }
 
     fn invoices(&self) -> Invoices {
-        Invoices {
-            commerce: self.inner.clone(),
-        }
+        Invoices { commerce: self.inner.clone() }
     }
 
     fn bom(&self) -> BomApi {
-        BomApi {
-            commerce: self.inner.clone(),
-        }
+        BomApi { commerce: self.inner.clone() }
     }
 
     fn work_orders(&self) -> WorkOrders {
-        WorkOrders {
-            commerce: self.inner.clone(),
-        }
+        WorkOrders { commerce: self.inner.clone() }
     }
 
     fn carts(&self) -> Carts {
-        Carts {
-            commerce: self.inner.clone(),
-        }
+        Carts { commerce: self.inner.clone() }
     }
 
     fn analytics(&self) -> Analytics {
-        Analytics {
-            commerce: self.inner.clone(),
-        }
+        Analytics { commerce: self.inner.clone() }
     }
 
     fn currency(&self) -> CurrencyOps {
-        CurrencyOps {
-            commerce: self.inner.clone(),
-        }
+        CurrencyOps { commerce: self.inner.clone() }
     }
 
     fn subscriptions(&self) -> Subscriptions {
-        Subscriptions {
-            commerce: self.inner.clone(),
-        }
+        Subscriptions { commerce: self.inner.clone() }
     }
 
     fn promotions(&self) -> Promotions {
-        Promotions {
-            commerce: self.inner.clone(),
-        }
+        Promotions { commerce: self.inner.clone() }
     }
 
     fn tax(&self) -> Tax {
-        Tax {
-            commerce: self.inner.clone(),
-        }
+        Tax { commerce: self.inner.clone() }
     }
 }
 
@@ -304,10 +263,7 @@ impl Customers {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create customer: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create customer: {}", e))
             })?;
 
         Ok(customer.into())
@@ -318,10 +274,7 @@ impl Customers {
         let uuid = parse_uuid!(id, "customer");
 
         let customer = commerce.customers().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get customer: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get customer: {}", e))
         })?;
 
         Ok(customer.map(|c| c.into()))
@@ -331,10 +284,7 @@ impl Customers {
         let commerce = lock_commerce!(self.commerce);
 
         let customer = commerce.customers().get_by_email(&email).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get customer: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get customer: {}", e))
         })?;
 
         Ok(customer.map(|c| c.into()))
@@ -344,10 +294,7 @@ impl Customers {
         let commerce = lock_commerce!(self.commerce);
 
         let customers = commerce.customers().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list customers: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list customers: {}", e))
         })?;
 
         Ok(customers.into_iter().map(|c| c.into()).collect())
@@ -356,15 +303,9 @@ impl Customers {
     fn count(&self) -> Result<i64, Error> {
         let commerce = lock_commerce!(self.commerce);
 
-        let count = commerce
-            .customers()
-            .count(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to count customers: {}", e),
-                )
-            })?;
+        let count = commerce.customers().count(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to count customers: {}", e))
+        })?;
 
         Ok(count)
     }
@@ -563,10 +504,7 @@ impl Orders {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create order: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create order: {}", e))
             })?;
 
         Ok(order.into())
@@ -577,10 +515,7 @@ impl Orders {
         let uuid = parse_uuid!(id, "order");
 
         let order = commerce.orders().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get order: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get order: {}", e))
         })?;
 
         Ok(order.map(|o| o.into()))
@@ -590,10 +525,7 @@ impl Orders {
         let commerce = lock_commerce!(self.commerce);
 
         let orders = commerce.orders().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list orders: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list orders: {}", e))
         })?;
 
         Ok(orders.into_iter().map(|o| o.into()).collect())
@@ -603,10 +535,7 @@ impl Orders {
         let commerce = lock_commerce!(self.commerce);
 
         let count = commerce.orders().count(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to count orders: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to count orders: {}", e))
         })?;
 
         Ok(count)
@@ -621,15 +550,9 @@ impl Orders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "order");
 
-        let order = commerce
-            .orders()
-            .ship(uuid, tracking_number, carrier)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to ship order: {}", e),
-                )
-            })?;
+        let order = commerce.orders().ship(uuid, tracking_number, carrier).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to ship order: {}", e))
+        })?;
 
         Ok(order.into())
     }
@@ -639,10 +562,7 @@ impl Orders {
         let uuid = parse_uuid!(id, "order");
 
         let order = commerce.orders().cancel(uuid, reason).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to cancel order: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to cancel order: {}", e))
         })?;
 
         Ok(order.into())
@@ -653,10 +573,7 @@ impl Orders {
         let uuid = parse_uuid!(id, "order");
 
         let order = commerce.orders().confirm(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to confirm order: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to confirm order: {}", e))
         })?;
 
         Ok(order.into())
@@ -667,10 +584,7 @@ impl Orders {
         let uuid = parse_uuid!(id, "order");
 
         let order = commerce.orders().deliver(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to deliver order: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to deliver order: {}", e))
         })?;
 
         Ok(order.into())
@@ -835,10 +749,7 @@ impl Products {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create product: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create product: {}", e))
             })?;
 
         Ok(product.into())
@@ -849,10 +760,7 @@ impl Products {
         let uuid = parse_uuid!(id, "product");
 
         let product = commerce.products().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get product: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get product: {}", e))
         })?;
 
         Ok(product.map(|p| p.into()))
@@ -862,10 +770,7 @@ impl Products {
         let commerce = lock_commerce!(self.commerce);
 
         let products = commerce.products().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list products: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list products: {}", e))
         })?;
 
         Ok(products.into_iter().map(|p| p.into()).collect())
@@ -875,10 +780,7 @@ impl Products {
         let commerce = lock_commerce!(self.commerce);
 
         let count = commerce.products().count(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to count products: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to count products: {}", e))
         })?;
 
         Ok(count)
@@ -888,10 +790,7 @@ impl Products {
         let commerce = lock_commerce!(self.commerce);
 
         let variant = commerce.products().get_variant_by_sku(&sku).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get variant: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get variant: {}", e))
         })?;
 
         Ok(variant.map(|v| ProductVariant {
@@ -998,10 +897,7 @@ impl Inventory {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create inventory: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create inventory: {}", e))
             })?;
 
         Ok(item.into())
@@ -1012,10 +908,7 @@ impl Inventory {
         let uuid = parse_uuid!(id, "inventory");
 
         let item = commerce.inventory().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get inventory: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get inventory: {}", e))
         })?;
 
         Ok(item.map(|i| i.into()))
@@ -1025,10 +918,7 @@ impl Inventory {
         let commerce = lock_commerce!(self.commerce);
 
         let item = commerce.inventory().get_by_sku(&sku).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get inventory: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get inventory: {}", e))
         })?;
 
         Ok(item.map(|i| i.into()))
@@ -1038,10 +928,7 @@ impl Inventory {
         let commerce = lock_commerce!(self.commerce);
 
         let items = commerce.inventory().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list inventory: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list inventory: {}", e))
         })?;
 
         Ok(items.into_iter().map(|i| i.into()).collect())
@@ -1056,15 +943,9 @@ impl Inventory {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "inventory");
 
-        let item = commerce
-            .inventory()
-            .adjust(uuid, adjustment, reason)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to adjust inventory: {}", e),
-                )
-            })?;
+        let item = commerce.inventory().adjust(uuid, adjustment, reason).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to adjust inventory: {}", e))
+        })?;
 
         Ok(item.into())
     }
@@ -1079,15 +960,9 @@ impl Inventory {
         let uuid = parse_uuid!(id, "inventory");
         let order_uuid = order_id.map(|s| s.parse().ok()).flatten();
 
-        let item = commerce
-            .inventory()
-            .reserve(uuid, quantity, order_uuid)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to reserve inventory: {}", e),
-                )
-            })?;
+        let item = commerce.inventory().reserve(uuid, quantity, order_uuid).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to reserve inventory: {}", e))
+        })?;
 
         Ok(item.into())
     }
@@ -1097,10 +972,7 @@ impl Inventory {
         let uuid = parse_uuid!(id, "inventory");
 
         let item = commerce.inventory().release(uuid, quantity).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to release inventory: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to release inventory: {}", e))
         })?;
 
         Ok(item.into())
@@ -1188,10 +1060,7 @@ impl Returns {
             .unwrap_or(stateset_core::ReturnReason::Other);
 
         let order = commerce.orders().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to fetch order: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to fetch order: {}", e))
         })?;
 
         let order = match order {
@@ -1200,7 +1069,7 @@ impl Returns {
                 return Err(Error::new(
                     exception::runtime_error(),
                     format!("Order not found: {}", uuid),
-                ))
+                ));
             }
         };
 
@@ -1230,10 +1099,7 @@ impl Returns {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create return: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create return: {}", e))
             })?;
 
         Ok(ret.into())
@@ -1244,10 +1110,7 @@ impl Returns {
         let uuid = parse_uuid!(id, "return");
 
         let ret = commerce.returns().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get return: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get return: {}", e))
         })?;
 
         Ok(ret.map(|r| r.into()))
@@ -1257,10 +1120,7 @@ impl Returns {
         let commerce = lock_commerce!(self.commerce);
 
         let returns = commerce.returns().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list returns: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list returns: {}", e))
         })?;
 
         Ok(returns.into_iter().map(|r| r.into()).collect())
@@ -1272,10 +1132,7 @@ impl Returns {
         let amount = refund_amount.map(|a| Decimal::from_f64_retain(a).unwrap_or_default());
 
         let ret = commerce.returns().approve(uuid, amount).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to approve return: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to approve return: {}", e))
         })?;
 
         Ok(ret.into())
@@ -1286,10 +1143,7 @@ impl Returns {
         let uuid = parse_uuid!(id, "return");
 
         let ret = commerce.returns().reject(uuid, reason).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to reject return: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to reject return: {}", e))
         })?;
 
         Ok(ret.into())
@@ -1312,15 +1166,9 @@ impl Payments {
         let uuid = parse_uuid!(order_id, "order");
         let decimal_amount = Decimal::from_f64_retain(amount).unwrap_or_default();
 
-        commerce
-            .payments()
-            .record(uuid, decimal_amount, method)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to record payment: {}", e),
-                )
-            })?;
+        commerce.payments().record(uuid, decimal_amount, method).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to record payment: {}", e))
+        })?;
 
         Ok(true)
     }
@@ -1440,10 +1288,7 @@ impl Shipments {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create shipment: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create shipment: {}", e))
             })?;
         Ok(shipment.into())
     }
@@ -1452,35 +1297,23 @@ impl Shipments {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "shipment");
         let shipment = commerce.shipments().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get shipment: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get shipment: {}", e))
         })?;
         Ok(shipment.map(|s| s.into()))
     }
 
     fn get_by_tracking(&self, tracking_number: String) -> Result<Option<Shipment>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let shipment = commerce
-            .shipments()
-            .get_by_tracking(&tracking_number)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to get shipment: {}", e),
-                )
-            })?;
+        let shipment = commerce.shipments().get_by_tracking(&tracking_number).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to get shipment: {}", e))
+        })?;
         Ok(shipment.map(|s| s.into()))
     }
 
     fn list(&self) -> Result<Vec<Shipment>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let shipments = commerce.shipments().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list shipments: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list shipments: {}", e))
         })?;
         Ok(shipments.into_iter().map(|s| s.into()).collect())
     }
@@ -1489,10 +1322,7 @@ impl Shipments {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(order_id, "order");
         let shipments = commerce.shipments().for_order(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get shipments: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get shipments: {}", e))
         })?;
         Ok(shipments.into_iter().map(|s| s.into()).collect())
     }
@@ -1500,12 +1330,9 @@ impl Shipments {
     fn ship(&self, id: String, tracking_number: Option<String>) -> Result<Shipment, Error> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "shipment");
-        let shipment = commerce
-            .shipments()
-            .ship(uuid, tracking_number)
-            .map_err(|e| {
-                Error::new(exception::runtime_error(), format!("Failed to ship: {}", e))
-            })?;
+        let shipment = commerce.shipments().ship(uuid, tracking_number).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to ship: {}", e))
+        })?;
         Ok(shipment.into())
     }
 
@@ -1513,10 +1340,7 @@ impl Shipments {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "shipment");
         let shipment = commerce.shipments().mark_delivered(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to mark delivered: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to mark delivered: {}", e))
         })?;
         Ok(shipment.into())
     }
@@ -1525,25 +1349,16 @@ impl Shipments {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "shipment");
         let shipment = commerce.shipments().cancel(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to cancel: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to cancel: {}", e))
         })?;
         Ok(shipment.into())
     }
 
     fn count(&self) -> Result<i64, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let count = commerce
-            .shipments()
-            .count(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to count: {}", e),
-                )
-            })?;
+        let count = commerce.shipments().count(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to count: {}", e))
+        })?;
         Ok(count as i64)
     }
 }
@@ -1715,10 +1530,7 @@ impl Warranties {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create warranty: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create warranty: {}", e))
             })?;
         Ok(warranty.into())
     }
@@ -1727,25 +1539,16 @@ impl Warranties {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "warranty");
         let warranty = commerce.warranties().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get warranty: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get warranty: {}", e))
         })?;
         Ok(warranty.map(|w| w.into()))
     }
 
     fn list(&self) -> Result<Vec<Warranty>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let warranties = commerce
-            .warranties()
-            .list(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to list warranties: {}", e),
-                )
-            })?;
+        let warranties = commerce.warranties().list(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to list warranties: {}", e))
+        })?;
         Ok(warranties.into_iter().map(|w| w.into()).collect())
     }
 
@@ -1753,10 +1556,7 @@ impl Warranties {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(customer_id, "customer");
         let warranties = commerce.warranties().for_customer(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get warranties: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get warranties: {}", e))
         })?;
         Ok(warranties.into_iter().map(|w| w.into()).collect())
     }
@@ -1765,10 +1565,7 @@ impl Warranties {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "warranty");
         let valid = commerce.warranties().is_valid(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to check warranty: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to check warranty: {}", e))
         })?;
         Ok(valid)
     }
@@ -1788,10 +1585,7 @@ impl Warranties {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create claim: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create claim: {}", e))
             })?;
         Ok(claim.into())
     }
@@ -1800,10 +1594,7 @@ impl Warranties {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "claim");
         let claim = commerce.warranties().approve_claim(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to approve claim: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to approve claim: {}", e))
         })?;
         Ok(claim.into())
     }
@@ -1811,29 +1602,17 @@ impl Warranties {
     fn deny_claim(&self, id: String, reason: String) -> Result<WarrantyClaim, Error> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "claim");
-        let claim = commerce
-            .warranties()
-            .deny_claim(uuid, &reason)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to deny claim: {}", e),
-                )
-            })?;
+        let claim = commerce.warranties().deny_claim(uuid, &reason).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to deny claim: {}", e))
+        })?;
         Ok(claim.into())
     }
 
     fn count(&self) -> Result<i64, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let count = commerce
-            .warranties()
-            .count(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to count: {}", e),
-                )
-            })?;
+        let count = commerce.warranties().count(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to count: {}", e))
+        })?;
         Ok(count as i64)
     }
 }
@@ -1986,10 +1765,7 @@ impl PurchaseOrders {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create supplier: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create supplier: {}", e))
             })?;
         Ok(supplier.into())
     }
@@ -1998,24 +1774,16 @@ impl PurchaseOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "supplier");
         let supplier = commerce.purchase_orders().get_supplier(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get supplier: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get supplier: {}", e))
         })?;
         Ok(supplier.map(|s| s.into()))
     }
 
     fn list_suppliers(&self) -> Result<Vec<Supplier>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let suppliers = commerce
-            .purchase_orders()
-            .list_suppliers(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to list suppliers: {}", e),
-                )
+        let suppliers =
+            commerce.purchase_orders().list_suppliers(Default::default()).map_err(|e| {
+                Error::new(exception::runtime_error(), format!("Failed to list suppliers: {}", e))
             })?;
         Ok(suppliers.into_iter().map(|s| s.into()).collect())
     }
@@ -2035,10 +1803,7 @@ impl PurchaseOrders {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create PO: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create PO: {}", e))
             })?;
         Ok(po.into())
     }
@@ -2047,25 +1812,16 @@ impl PurchaseOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "purchase_order");
         let po = commerce.purchase_orders().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get PO: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get PO: {}", e))
         })?;
         Ok(po.map(|p| p.into()))
     }
 
     fn list(&self) -> Result<Vec<PurchaseOrder>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let pos = commerce
-            .purchase_orders()
-            .list(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to list POs: {}", e),
-                )
-            })?;
+        let pos = commerce.purchase_orders().list(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to list POs: {}", e))
+        })?;
         Ok(pos.into_iter().map(|p| p.into()).collect())
     }
 
@@ -2073,10 +1829,7 @@ impl PurchaseOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "purchase_order");
         let po = commerce.purchase_orders().submit(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to submit PO: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to submit PO: {}", e))
         })?;
         Ok(po.into())
     }
@@ -2084,15 +1837,9 @@ impl PurchaseOrders {
     fn approve(&self, id: String, approved_by: String) -> Result<PurchaseOrder, Error> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "purchase_order");
-        let po = commerce
-            .purchase_orders()
-            .approve(uuid, &approved_by)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to approve PO: {}", e),
-                )
-            })?;
+        let po = commerce.purchase_orders().approve(uuid, &approved_by).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to approve PO: {}", e))
+        })?;
         Ok(po.into())
     }
 
@@ -2100,10 +1847,7 @@ impl PurchaseOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "purchase_order");
         let po = commerce.purchase_orders().cancel(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to cancel PO: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to cancel PO: {}", e))
         })?;
         Ok(po.into())
     }
@@ -2112,25 +1856,16 @@ impl PurchaseOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "purchase_order");
         let po = commerce.purchase_orders().complete(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to complete PO: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to complete PO: {}", e))
         })?;
         Ok(po.into())
     }
 
     fn count(&self) -> Result<i64, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let count = commerce
-            .purchase_orders()
-            .count(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to count: {}", e),
-                )
-            })?;
+        let count = commerce.purchase_orders().count(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to count: {}", e))
+        })?;
         Ok(count as i64)
     }
 }
@@ -2202,10 +1937,7 @@ impl Invoice {
         self.updated_at.clone()
     }
     fn inspect(&self) -> String {
-        format!(
-            "#<StateSet::Invoice number=\"{}\" due={}>",
-            self.invoice_number, self.amount_due
-        )
+        format!("#<StateSet::Invoice number=\"{}\" due={}>", self.invoice_number, self.amount_due)
     }
 }
 
@@ -2255,10 +1987,7 @@ impl Invoices {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create invoice: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create invoice: {}", e))
             })?;
         Ok(invoice.into())
     }
@@ -2267,10 +1996,7 @@ impl Invoices {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "invoice");
         let invoice = commerce.invoices().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get invoice: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get invoice: {}", e))
         })?;
         Ok(invoice.map(|i| i.into()))
     }
@@ -2278,10 +2004,7 @@ impl Invoices {
     fn list(&self) -> Result<Vec<Invoice>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let invoices = commerce.invoices().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list invoices: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list invoices: {}", e))
         })?;
         Ok(invoices.into_iter().map(|i| i.into()).collect())
     }
@@ -2290,10 +2013,7 @@ impl Invoices {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(customer_id, "customer");
         let invoices = commerce.invoices().for_customer(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get invoices: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get invoices: {}", e))
         })?;
         Ok(invoices.into_iter().map(|i| i.into()).collect())
     }
@@ -2302,10 +2022,7 @@ impl Invoices {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "invoice");
         let invoice = commerce.invoices().send(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to send invoice: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to send invoice: {}", e))
         })?;
         Ok(invoice.into())
     }
@@ -2329,10 +2046,7 @@ impl Invoices {
                 },
             )
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to record payment: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to record payment: {}", e))
             })?;
         Ok(invoice.into())
     }
@@ -2341,10 +2055,7 @@ impl Invoices {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "invoice");
         let invoice = commerce.invoices().void(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to void invoice: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to void invoice: {}", e))
         })?;
         Ok(invoice.into())
     }
@@ -2352,10 +2063,7 @@ impl Invoices {
     fn get_overdue(&self) -> Result<Vec<Invoice>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let invoices = commerce.invoices().get_overdue().map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get overdue: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get overdue: {}", e))
         })?;
         Ok(invoices.into_iter().map(|i| i.into()).collect())
     }
@@ -2364,10 +2072,7 @@ impl Invoices {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(customer_id, "customer");
         let balance = commerce.invoices().customer_balance(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get balance: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get balance: {}", e))
         })?;
         Ok(to_f64_or_nan(balance))
     }
@@ -2375,10 +2080,7 @@ impl Invoices {
     fn count(&self) -> Result<i64, Error> {
         let commerce = lock_commerce!(self.commerce);
         let count = commerce.invoices().count(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to count: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to count: {}", e))
         })?;
         Ok(count as i64)
     }
@@ -2506,16 +2208,9 @@ impl BomApi {
         let prod_uuid = product_id.map(|s| s.parse().ok()).flatten();
         let bom = commerce
             .bom()
-            .create(stateset_core::CreateBom {
-                name,
-                product_id: prod_uuid,
-                ..Default::default()
-            })
+            .create(stateset_core::CreateBom { name, product_id: prod_uuid, ..Default::default() })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create BOM: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create BOM: {}", e))
             })?;
         Ok(bom.into())
     }
@@ -2524,10 +2219,7 @@ impl BomApi {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "bom");
         let bom = commerce.bom().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get BOM: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get BOM: {}", e))
         })?;
         Ok(bom.map(|b| b.into()))
     }
@@ -2535,10 +2227,7 @@ impl BomApi {
     fn list(&self) -> Result<Vec<BillOfMaterials>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let boms = commerce.bom().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list BOMs: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list BOMs: {}", e))
         })?;
         Ok(boms.into_iter().map(|b| b.into()).collect())
     }
@@ -2566,10 +2255,7 @@ impl BomApi {
                 },
             )
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to add component: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to add component: {}", e))
             })?;
         Ok(component.into())
     }
@@ -2578,10 +2264,7 @@ impl BomApi {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(bom_id, "bom");
         let components = commerce.bom().get_components(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get components: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get components: {}", e))
         })?;
         Ok(components.into_iter().map(|c| c.into()).collect())
     }
@@ -2590,10 +2273,7 @@ impl BomApi {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(component_id, "component");
         commerce.bom().remove_component(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to remove component: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to remove component: {}", e))
         })?;
         Ok(true)
     }
@@ -2602,10 +2282,7 @@ impl BomApi {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "bom");
         let bom = commerce.bom().activate(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to activate BOM: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to activate BOM: {}", e))
         })?;
         Ok(bom.into())
     }
@@ -2614,10 +2291,7 @@ impl BomApi {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "bom");
         commerce.bom().delete(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to delete BOM: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to delete BOM: {}", e))
         })?;
         Ok(true)
     }
@@ -2625,10 +2299,7 @@ impl BomApi {
     fn count(&self) -> Result<i64, Error> {
         let commerce = lock_commerce!(self.commerce);
         let count = commerce.bom().count(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to count: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to count: {}", e))
         })?;
         Ok(count as i64)
     }
@@ -2756,25 +2427,16 @@ impl WorkOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
         let wo = commerce.work_orders().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get work order: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get work order: {}", e))
         })?;
         Ok(wo.map(|w| w.into()))
     }
 
     fn list(&self) -> Result<Vec<WorkOrder>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let wos = commerce
-            .work_orders()
-            .list(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to list work orders: {}", e),
-                )
-            })?;
+        let wos = commerce.work_orders().list(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to list work orders: {}", e))
+        })?;
         Ok(wos.into_iter().map(|w| w.into()).collect())
     }
 
@@ -2782,10 +2444,7 @@ impl WorkOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
         let wo = commerce.work_orders().start(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to start: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to start: {}", e))
         })?;
         Ok(wo.into())
     }
@@ -2795,15 +2454,9 @@ impl WorkOrders {
         let uuid = parse_uuid!(id, "work_order");
         let wo = commerce
             .work_orders()
-            .complete(
-                uuid,
-                Decimal::from_f64_retain(quantity_completed).unwrap_or_default(),
-            )
+            .complete(uuid, Decimal::from_f64_retain(quantity_completed).unwrap_or_default())
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to complete: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to complete: {}", e))
             })?;
         Ok(wo.into())
     }
@@ -2821,10 +2474,7 @@ impl WorkOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
         let wo = commerce.work_orders().resume(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to resume: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to resume: {}", e))
         })?;
         Ok(wo.into())
     }
@@ -2833,25 +2483,16 @@ impl WorkOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
         let wo = commerce.work_orders().cancel(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to cancel: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to cancel: {}", e))
         })?;
         Ok(wo.into())
     }
 
     fn count(&self) -> Result<i64, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let count = commerce
-            .work_orders()
-            .count(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to count: {}", e),
-                )
-            })?;
+        let count = commerce.work_orders().count(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to count: {}", e))
+        })?;
         Ok(count as i64)
     }
 }
@@ -2991,10 +2632,7 @@ impl Carts {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create cart: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create cart: {}", e))
             })?;
 
         Ok(cart.into())
@@ -3005,10 +2643,7 @@ impl Carts {
         let uuid = parse_uuid!(id, "cart");
 
         let cart = commerce.carts().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get cart: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get cart: {}", e))
         })?;
 
         Ok(cart.map(|c| c.into()))
@@ -3018,10 +2653,7 @@ impl Carts {
         let commerce = lock_commerce!(self.commerce);
 
         let carts = commerce.carts().list(Default::default()).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to list carts: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to list carts: {}", e))
         })?;
 
         Ok(carts.into_iter().map(|c| c.into()).collect())
@@ -3052,10 +2684,7 @@ impl Carts {
                 },
             )
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to add item: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to add item: {}", e))
             })?;
 
         Ok(cart.into())
@@ -3066,10 +2695,7 @@ impl Carts {
         let uuid = parse_uuid!(cart_id, "cart");
 
         let order = commerce.carts().checkout(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to checkout: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to checkout: {}", e))
         })?;
 
         Ok(order.into())
@@ -3114,15 +2740,9 @@ impl Analytics {
     fn sales_summary(&self, days: Option<i64>) -> Result<SalesSummary, Error> {
         let commerce = lock_commerce!(self.commerce);
 
-        let summary = commerce
-            .analytics()
-            .sales_summary(days.unwrap_or(30))
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to get sales summary: {}", e),
-                )
-            })?;
+        let summary = commerce.analytics().sales_summary(days.unwrap_or(30)).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to get sales summary: {}", e))
+        })?;
 
         Ok(SalesSummary {
             total_revenue: to_f64_or_nan(summary.total_revenue),
@@ -3193,29 +2813,17 @@ impl CurrencyOps {
         let commerce = lock_commerce!(self.commerce);
         let from_currency = from.parse().unwrap_or_default();
         let to_currency = to.parse().unwrap_or_default();
-        let rate = commerce
-            .currency()
-            .get_rate(from_currency, to_currency)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to get rate: {}", e),
-                )
-            })?;
+        let rate = commerce.currency().get_rate(from_currency, to_currency).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to get rate: {}", e))
+        })?;
         Ok(rate.map(|r| r.into()))
     }
 
     fn list_rates(&self) -> Result<Vec<ExchangeRate>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let rates = commerce
-            .currency()
-            .list_rates(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to list rates: {}", e),
-                )
-            })?;
+        let rates = commerce.currency().list_rates(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to list rates: {}", e))
+        })?;
         Ok(rates.into_iter().map(|r| r.into()).collect())
     }
 
@@ -3230,10 +2838,7 @@ impl CurrencyOps {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to set rate: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to set rate: {}", e))
             })?;
         Ok(exchange_rate.into())
     }
@@ -3248,10 +2853,7 @@ impl CurrencyOps {
                 to.parse().unwrap_or_default(),
             )
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to convert: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to convert: {}", e))
             })?;
         Ok(to_f64_or_nan(result))
     }
@@ -3259,10 +2861,7 @@ impl CurrencyOps {
     fn base_currency(&self) -> Result<String, Error> {
         let commerce = lock_commerce!(self.commerce);
         let currency = commerce.currency().base_currency().map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get base currency: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get base currency: {}", e))
         })?;
         Ok(format!("{}", currency))
     }
@@ -3270,10 +2869,7 @@ impl CurrencyOps {
     fn enabled_currencies(&self) -> Result<Vec<String>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let currencies = commerce.currency().enabled_currencies().map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get currencies: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get currencies: {}", e))
         })?;
         Ok(currencies.into_iter().map(|c| format!("{}", c)).collect())
     }
@@ -3464,10 +3060,7 @@ impl Subscriptions {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create plan: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create plan: {}", e))
             })?;
         Ok(plan.into())
     }
@@ -3476,25 +3069,16 @@ impl Subscriptions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "plan");
         let plan = commerce.subscriptions().get_plan(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get plan: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get plan: {}", e))
         })?;
         Ok(plan.map(|p| p.into()))
     }
 
     fn list_plans(&self) -> Result<Vec<SubscriptionPlan>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let plans = commerce
-            .subscriptions()
-            .list_plans(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to list plans: {}", e),
-                )
-            })?;
+        let plans = commerce.subscriptions().list_plans(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to list plans: {}", e))
+        })?;
         Ok(plans.into_iter().map(|p| p.into()).collect())
     }
 
@@ -3510,10 +3094,7 @@ impl Subscriptions {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to subscribe: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to subscribe: {}", e))
             })?;
         Ok(sub.into())
     }
@@ -3522,25 +3103,16 @@ impl Subscriptions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "subscription");
         let sub = commerce.subscriptions().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get subscription: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get subscription: {}", e))
         })?;
         Ok(sub.map(|s| s.into()))
     }
 
     fn list(&self) -> Result<Vec<Subscription>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let subs = commerce
-            .subscriptions()
-            .list(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to list subscriptions: {}", e),
-                )
-            })?;
+        let subs = commerce.subscriptions().list(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to list subscriptions: {}", e))
+        })?;
         Ok(subs.into_iter().map(|s| s.into()).collect())
     }
 
@@ -3551,10 +3123,7 @@ impl Subscriptions {
             .subscriptions()
             .pause(uuid, stateset_core::PauseSubscription::default())
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to pause: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to pause: {}", e))
             })?;
         Ok(sub.into())
     }
@@ -3563,10 +3132,7 @@ impl Subscriptions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "subscription");
         let sub = commerce.subscriptions().resume(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to resume: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to resume: {}", e))
         })?;
         Ok(sub.into())
     }
@@ -3584,10 +3150,7 @@ impl Subscriptions {
                 },
             )
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to cancel: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to cancel: {}", e))
             })?;
         Ok(sub.into())
     }
@@ -3595,15 +3158,9 @@ impl Subscriptions {
     fn for_customer(&self, customer_id: String) -> Result<Vec<Subscription>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(customer_id, "customer");
-        let subs = commerce
-            .subscriptions()
-            .get_customer_subscriptions(uuid)
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to get subscriptions: {}", e),
-                )
-            })?;
+        let subs = commerce.subscriptions().get_customer_subscriptions(uuid).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to get subscriptions: {}", e))
+        })?;
         Ok(subs.into_iter().map(|s| s.into()).collect())
     }
 
@@ -3611,10 +3168,7 @@ impl Subscriptions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "subscription");
         let active = commerce.subscriptions().is_active(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to check: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to check: {}", e))
         })?;
         Ok(active)
     }
@@ -3687,10 +3241,7 @@ impl Promotion {
         self.updated_at.clone()
     }
     fn inspect(&self) -> String {
-        format!(
-            "#<StateSet::Promotion code=\"{}\" status=\"{}\">",
-            self.code, self.status
-        )
+        format!("#<StateSet::Promotion code=\"{}\" status=\"{}\">", self.code, self.status)
     }
 }
 
@@ -3740,10 +3291,7 @@ impl Promotions {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create promotion: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create promotion: {}", e))
             })?;
         Ok(promo.into())
     }
@@ -3752,10 +3300,7 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
         let promo = commerce.promotions().get(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get promotion: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get promotion: {}", e))
         })?;
         Ok(promo.map(|p| p.into()))
     }
@@ -3763,25 +3308,16 @@ impl Promotions {
     fn get_by_code(&self, code: String) -> Result<Option<Promotion>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let promo = commerce.promotions().get_by_code(&code).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get promotion: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get promotion: {}", e))
         })?;
         Ok(promo.map(|p| p.into()))
     }
 
     fn list(&self) -> Result<Vec<Promotion>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let promos = commerce
-            .promotions()
-            .list(Default::default())
-            .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to list promotions: {}", e),
-                )
-            })?;
+        let promos = commerce.promotions().list(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to list promotions: {}", e))
+        })?;
         Ok(promos.into_iter().map(|p| p.into()).collect())
     }
 
@@ -3789,10 +3325,7 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
         let promo = commerce.promotions().activate(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to activate: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to activate: {}", e))
         })?;
         Ok(promo.into())
     }
@@ -3801,10 +3334,7 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
         let promo = commerce.promotions().deactivate(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to deactivate: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to deactivate: {}", e))
         })?;
         Ok(promo.into())
     }
@@ -3812,10 +3342,7 @@ impl Promotions {
     fn get_active(&self) -> Result<Vec<Promotion>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let promos = commerce.promotions().get_active().map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to get active: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to get active: {}", e))
         })?;
         Ok(promos.into_iter().map(|p| p.into()).collect())
     }
@@ -3824,10 +3351,7 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
         let valid = commerce.promotions().is_valid(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to check: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to check: {}", e))
         })?;
         Ok(valid)
     }
@@ -3836,10 +3360,7 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
         commerce.promotions().delete(uuid).map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to delete: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to delete: {}", e))
         })?;
         Ok(true)
     }
@@ -3971,10 +3492,7 @@ impl Tax {
                 &address,
             )
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to calculate: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to calculate: {}", e))
             })?;
         Ok(to_f64_or_nan(result))
     }
@@ -3997,22 +3515,16 @@ impl Tax {
             .tax()
             .get_effective_rate(&address, category.parse().unwrap_or_default())
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to get rate: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to get rate: {}", e))
             })?;
         Ok(to_f64_or_nan(rate))
     }
 
     fn list_jurisdictions(&self) -> Result<Vec<TaxJurisdiction>, Error> {
         let commerce = lock_commerce!(self.commerce);
-        let jurisdictions = commerce
-            .tax()
-            .list_jurisdictions(Default::default())
-            .map_err(|e| {
-                Error::new(exception::runtime_error(), format!("Failed to list: {}", e))
-            })?;
+        let jurisdictions = commerce.tax().list_jurisdictions(Default::default()).map_err(|e| {
+            Error::new(exception::runtime_error(), format!("Failed to list: {}", e))
+        })?;
         Ok(jurisdictions.into_iter().map(|j| j.into()).collect())
     }
 
@@ -4034,10 +3546,7 @@ impl Tax {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create: {}", e))
             })?;
         Ok(j.into())
     }
@@ -4069,10 +3578,7 @@ impl Tax {
                 ..Default::default()
             })
             .map_err(|e| {
-                Error::new(
-                    exception::runtime_error(),
-                    format!("Failed to create: {}", e),
-                )
+                Error::new(exception::runtime_error(), format!("Failed to create: {}", e))
             })?;
         Ok(r.into())
     }
@@ -4080,10 +3586,7 @@ impl Tax {
     fn is_enabled(&self) -> Result<bool, Error> {
         let commerce = lock_commerce!(self.commerce);
         let enabled = commerce.tax().is_enabled().map_err(|e| {
-            Error::new(
-                exception::runtime_error(),
-                format!("Failed to check: {}", e),
-            )
+            Error::new(exception::runtime_error(), format!("Failed to check: {}", e))
         })?;
         Ok(enabled)
     }
@@ -4197,14 +3700,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     variant_class.define_method("sku", method!(ProductVariant::sku, 0))?;
     variant_class.define_method("name", method!(ProductVariant::name, 0))?;
     variant_class.define_method("price", method!(ProductVariant::price, 0))?;
-    variant_class.define_method(
-        "compare_at_price",
-        method!(ProductVariant::compare_at_price, 0),
-    )?;
-    variant_class.define_method(
-        "inventory_quantity",
-        method!(ProductVariant::inventory_quantity, 0),
-    )?;
+    variant_class
+        .define_method("compare_at_price", method!(ProductVariant::compare_at_price, 0))?;
+    variant_class
+        .define_method("inventory_quantity", method!(ProductVariant::inventory_quantity, 0))?;
     variant_class.define_method("weight", method!(ProductVariant::weight, 0))?;
     variant_class.define_method("barcode", method!(ProductVariant::barcode, 0))?;
 
@@ -4235,23 +3734,15 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let inv_item_class = module.define_class("InventoryItem", ruby.class_object())?;
     inv_item_class.define_method("id", method!(InventoryItem::id, 0))?;
     inv_item_class.define_method("sku", method!(InventoryItem::sku, 0))?;
-    inv_item_class.define_method(
-        "quantity_on_hand",
-        method!(InventoryItem::quantity_on_hand, 0),
-    )?;
-    inv_item_class.define_method(
-        "quantity_reserved",
-        method!(InventoryItem::quantity_reserved, 0),
-    )?;
-    inv_item_class.define_method(
-        "quantity_available",
-        method!(InventoryItem::quantity_available, 0),
-    )?;
+    inv_item_class
+        .define_method("quantity_on_hand", method!(InventoryItem::quantity_on_hand, 0))?;
+    inv_item_class
+        .define_method("quantity_reserved", method!(InventoryItem::quantity_reserved, 0))?;
+    inv_item_class
+        .define_method("quantity_available", method!(InventoryItem::quantity_available, 0))?;
     inv_item_class.define_method("reorder_point", method!(InventoryItem::reorder_point, 0))?;
-    inv_item_class.define_method(
-        "reorder_quantity",
-        method!(InventoryItem::reorder_quantity, 0),
-    )?;
+    inv_item_class
+        .define_method("reorder_quantity", method!(InventoryItem::reorder_quantity, 0))?;
     inv_item_class.define_method("location_id", method!(InventoryItem::location_id, 0))?;
     inv_item_class.define_method("inspect", method!(InventoryItem::inspect, 0))?;
     inv_item_class.define_method("to_s", method!(InventoryItem::inspect, 0))?;
@@ -4301,10 +3792,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     shipment_class.define_method("tracking_number", method!(Shipment::tracking_number, 0))?;
     shipment_class.define_method("shipping_method", method!(Shipment::shipping_method, 0))?;
     shipment_class.define_method("weight", method!(Shipment::weight, 0))?;
-    shipment_class.define_method(
-        "estimated_delivery",
-        method!(Shipment::estimated_delivery, 0),
-    )?;
+    shipment_class.define_method("estimated_delivery", method!(Shipment::estimated_delivery, 0))?;
     shipment_class.define_method("shipped_at", method!(Shipment::shipped_at, 0))?;
     shipment_class.define_method("delivered_at", method!(Shipment::delivered_at, 0))?;
     shipment_class.define_method("inspect", method!(Shipment::inspect, 0))?;
@@ -4372,14 +3860,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let sales_class = module.define_class("SalesSummary", ruby.class_object())?;
     sales_class.define_method("total_revenue", method!(SalesSummary::total_revenue, 0))?;
     sales_class.define_method("total_orders", method!(SalesSummary::total_orders, 0))?;
-    sales_class.define_method(
-        "average_order_value",
-        method!(SalesSummary::average_order_value, 0),
-    )?;
-    sales_class.define_method(
-        "total_items_sold",
-        method!(SalesSummary::total_items_sold, 0),
-    )?;
+    sales_class
+        .define_method("average_order_value", method!(SalesSummary::average_order_value, 0))?;
+    sales_class.define_method("total_items_sold", method!(SalesSummary::total_items_sold, 0))?;
 
     // Analytics API
     let analytics_class = module.define_class("Analytics", ruby.class_object())?;

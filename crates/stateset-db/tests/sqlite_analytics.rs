@@ -4,10 +4,9 @@ use chrono::{TimeZone, Utc};
 use rust_decimal_macros::dec;
 use stateset_core::{
     AnalyticsQuery, AnalyticsRepository, CreateCustomer, CreateOrder, CreateOrderItem,
-    CustomerRepository, OrderRepository, TimeGranularity,
+    CustomerRepository, OrderRepository, ProductId, TimeGranularity,
 };
 use stateset_db::SqliteDatabase;
-use uuid::Uuid;
 
 #[test]
 fn sqlite_revenue_by_period_quarter_groups_correctly() {
@@ -26,9 +25,9 @@ fn sqlite_revenue_by_period_quarter_groups_correctly() {
     let order1 = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: ProductId::new(),
                 sku: "SKU-Q1".into(),
                 name: "Quarter 1".into(),
                 quantity: 1,
@@ -42,9 +41,9 @@ fn sqlite_revenue_by_period_quarter_groups_correctly() {
     let order2 = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: ProductId::new(),
                 sku: "SKU-Q2".into(),
                 name: "Quarter 2".into(),
                 quantity: 1,
@@ -80,9 +79,7 @@ fn sqlite_revenue_by_period_quarter_groups_correctly() {
     let results = db
         .analytics()
         .get_revenue_by_period(
-            AnalyticsQuery::new()
-                .date_range(start, end)
-                .granularity(TimeGranularity::Quarter),
+            AnalyticsQuery::new().date_range(start, end).granularity(TimeGranularity::Quarter),
         )
         .expect("revenue_by_period");
 

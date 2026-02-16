@@ -2,7 +2,7 @@
 
 use stateset_core::{
     AddressType, CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
-    Result, UpdateCustomer,
+    CustomerId, Result, UpdateCustomer,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -29,11 +29,7 @@ impl Customers {
         event_system: Arc<EventSystem>,
         metrics: Metrics,
     ) -> Self {
-        Self {
-            db,
-            metrics,
-            event_system,
-        }
+        Self { db, metrics, event_system }
     }
 
     #[cfg(not(feature = "events"))]
@@ -94,8 +90,7 @@ impl Customers {
     /// ```
     pub fn create(&self, input: CreateCustomer) -> Result<Customer> {
         let customer = self.db.customers().create(input)?;
-        self.metrics
-            .record_customer_created(&customer.id.to_string());
+        self.metrics.record_customer_created(&customer.id.to_string());
         #[cfg(feature = "events")]
         {
             self.emit(CommerceEvent::CustomerCreated {
@@ -108,7 +103,7 @@ impl Customers {
     }
 
     /// Get a customer by ID.
-    pub fn get(&self, id: Uuid) -> Result<Option<Customer>> {
+    pub fn get(&self, id: CustomerId) -> Result<Option<Customer>> {
         self.db.customers().get(id)
     }
 
@@ -118,7 +113,7 @@ impl Customers {
     }
 
     /// Update a customer.
-    pub fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
+    pub fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {
         #[cfg(feature = "events")]
         let previous = self.db.customers().get(id)?;
         #[cfg(feature = "events")]
@@ -157,7 +152,7 @@ impl Customers {
     }
 
     /// Delete a customer (soft delete).
-    pub fn delete(&self, id: Uuid) -> Result<()> {
+    pub fn delete(&self, id: CustomerId) -> Result<()> {
         self.db.customers().delete(id)
     }
 
@@ -176,7 +171,7 @@ impl Customers {
     }
 
     /// Get all addresses for a customer.
-    pub fn get_addresses(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>> {
+    pub fn get_addresses(&self, customer_id: CustomerId) -> Result<Vec<CustomerAddress>> {
         self.db.customers().get_addresses(customer_id)
     }
 
@@ -197,13 +192,11 @@ impl Customers {
     /// Set a default address for a customer.
     pub fn set_default_address(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         address_id: Uuid,
         address_type: AddressType,
     ) -> Result<()> {
-        self.db
-            .customers()
-            .set_default_address(customer_id, address_id, address_type)
+        self.db.customers().set_default_address(customer_id, address_id, address_type)
     }
 
     /// Count customers matching a filter.

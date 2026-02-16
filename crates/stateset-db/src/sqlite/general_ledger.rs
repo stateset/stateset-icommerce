@@ -7,13 +7,13 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, types::Type};
 use rust_decimal::Decimal;
 use stateset_core::{
-    create_default_chart_of_accounts, generate_journal_entry_number, AccountStatus, AccountSubType,
-    AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine, BalanceSide, BatchResult,
-    CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod, CreateJournalEntry,
-    GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement,
-    IncomeStatementLine, JournalEntry, JournalEntryFilter, JournalEntryLine, JournalEntrySource,
-    JournalEntryStatus, JournalEntryType, PeriodStatus, Result, TrialBalance, TrialBalanceLine,
-    UpdateGlAccount,
+    AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine,
+    BalanceSide, BatchResult, CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod,
+    CreateJournalEntry, GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod,
+    GlPeriodFilter, IncomeStatement, IncomeStatementLine, JournalEntry, JournalEntryFilter,
+    JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType, PeriodStatus,
+    Result, TrialBalance, TrialBalanceLine, UpdateGlAccount, create_default_chart_of_accounts,
+    generate_journal_entry_number,
 };
 use uuid::Uuid;
 
@@ -30,10 +30,7 @@ where
         rusqlite::Error::FromSqlConversionFailure(
             column,
             Type::Text,
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                err.to_string(),
-            )),
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string())),
         )
     })
 }
@@ -58,7 +55,7 @@ impl SqliteGeneralLedgerRepository {
         Self { pool }
     }
 
-    fn map_account_row(row: &rusqlite::Row) -> rusqlite::Result<GlAccount> {
+    fn map_account_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GlAccount> {
         Ok(GlAccount {
             id: parse_required(row.get::<_, String>(0)?, 0)?,
             account_number: row.get(1)?,
@@ -78,7 +75,7 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
-    fn map_period_row(row: &rusqlite::Row) -> rusqlite::Result<GlPeriod> {
+    fn map_period_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GlPeriod> {
         Ok(GlPeriod {
             id: parse_required(row.get::<_, String>(0)?, 0)?,
             period_name: row.get(1)?,
@@ -96,7 +93,7 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
-    fn map_journal_entry_row(row: &rusqlite::Row) -> rusqlite::Result<JournalEntry> {
+    fn map_journal_entry_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntry> {
         Ok(JournalEntry {
             id: parse_required(row.get::<_, String>(0)?, 0)?,
             entry_number: row.get(1)?,
@@ -121,7 +118,7 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
-    fn map_journal_entry_line_row(row: &rusqlite::Row) -> rusqlite::Result<JournalEntryLine> {
+    fn map_journal_entry_line_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntryLine> {
         Ok(JournalEntryLine {
             id: parse_required(row.get::<_, String>(0)?, 0)?,
             journal_entry_id: parse_required(row.get::<_, String>(1)?, 1)?,
@@ -139,7 +136,7 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
-    fn map_auto_posting_config_row(row: &rusqlite::Row) -> rusqlite::Result<AutoPostingConfig> {
+    fn map_auto_posting_config_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutoPostingConfig> {
         Ok(AutoPostingConfig {
             id: parse_required(row.get::<_, String>(0)?, 0)?,
             config_name: row.get(1)?,
@@ -235,8 +232,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get_account(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_account(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>> {
@@ -309,12 +305,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             values.push(Box::new(id.to_string()));
             let sql = format!("UPDATE gl_accounts SET {} WHERE id = ?", updates.join(", "));
             let params: Vec<&dyn rusqlite::ToSql> = values.iter().map(|v| v.as_ref()).collect();
-            conn.execute(&sql, params.as_slice())
-                .map_err(map_db_error)?;
+            conn.execute(&sql, params.as_slice()).map_err(map_db_error)?;
         }
 
-        self.get_account(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_account(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn list_accounts(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>> {
@@ -373,9 +367,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::map_account_row)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map(params_refs.as_slice(), Self::map_account_row).map_err(map_db_error)?;
 
         let mut accounts = Vec::new();
         for row in rows {
@@ -409,11 +402,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             ));
         }
 
-        conn.execute(
-            "DELETE FROM gl_accounts WHERE id = ?1",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        conn.execute("DELETE FROM gl_accounts WHERE id = ?1", params![id.to_string()])
+            .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -462,8 +452,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_period(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>> {
@@ -556,9 +545,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::map_period_row)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map(params_refs.as_slice(), Self::map_period_row).map_err(map_db_error)?;
 
         let mut periods = Vec::new();
         for row in rows {
@@ -579,8 +567,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_period(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
@@ -597,8 +584,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_period(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
@@ -615,8 +601,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_period(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
@@ -632,8 +617,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_period(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     // ========================================================================
@@ -678,10 +662,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 entry_number,
                 input.entry_date.to_string(),
                 period.id.to_string(),
-                input
-                    .entry_type
-                    .unwrap_or(JournalEntryType::Standard)
-                    .to_string(),
+                input.entry_type.unwrap_or(JournalEntryType::Standard).to_string(),
                 JournalEntrySource::Manual.to_string(),
                 input.source_document_type,
                 input.source_document_id.map(|id| id.to_string()),
@@ -701,9 +682,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             let line_id = Uuid::new_v4();
 
             // Get account info
-            let account = self
-                .get_account(line.account_id)?
-                .ok_or(stateset_core::CommerceError::NotFound)?;
+            let account =
+                self.get_account(line.account_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
             conn.execute(
                 "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number,
@@ -734,8 +714,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             return self.post_journal_entry(id, "system");
         }
 
-        self.get_journal_entry(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>> {
@@ -857,9 +836,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
-        let entry = self
-            .get_journal_entry(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !entry.can_post() {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -884,14 +861,11 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             self.update_account_balance(line.account_id, line.debit_amount, line.credit_amount)?;
         }
 
-        self.get_journal_entry(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
-        let entry = self
-            .get_journal_entry(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !entry.can_void() {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -916,14 +890,11 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_journal_entry(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry> {
-        let entry = self
-            .get_journal_entry(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if entry.status != JournalEntryStatus::Posted {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -971,8 +942,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_journal_entry(reversing_entry.id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(reversing_entry.id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>> {
@@ -991,10 +961,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map(
-                params![journal_entry_id.to_string()],
-                Self::map_journal_entry_line_row,
-            )
+            .query_map(params![journal_entry_id.to_string()], Self::map_journal_entry_line_row)
             .map_err(map_db_error)?;
 
         let mut lines = Vec::new();
@@ -1066,8 +1033,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_auto_posting_config()?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_auto_posting_config()?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry> {
@@ -1276,26 +1242,12 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 stateset_core::CreateJournalEntryLine::debit(
                     debit_account,
                     cost,
-                    Some(
-                        if transaction_type == "sale" {
-                            "COGS"
-                        } else {
-                            "Inventory"
-                        }
-                        .to_string(),
-                    ),
+                    Some(if transaction_type == "sale" { "COGS" } else { "Inventory" }.to_string()),
                 ),
                 stateset_core::CreateJournalEntryLine::credit(
                     credit_account,
                     cost,
-                    Some(
-                        if transaction_type == "sale" {
-                            "Inventory"
-                        } else {
-                            "COGS"
-                        }
-                        .to_string(),
-                    ),
+                    Some(if transaction_type == "sale" { "Inventory" } else { "COGS" }.to_string()),
                 ),
             ],
             source_document_type: Some("cost_transaction".to_string()),
@@ -1378,6 +1330,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 let (debit_balance, credit_balance) = match normal_balance {
                     BalanceSide::Debit => (balance, Decimal::ZERO),
                     BalanceSide::Credit => (Decimal::ZERO, balance),
+                    _ => (balance, Decimal::ZERO),
                 };
 
                 Ok(TrialBalanceLine {
@@ -1441,6 +1394,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 let display_balance = match normal_balance {
                     BalanceSide::Debit => balance,
                     BalanceSide::Credit => balance,
+                    _ => balance,
                 };
 
                 Ok((
@@ -1536,30 +1490,27 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map(
-                params![start_date.to_string(), end_date.to_string()],
-                |row| {
-                    let total_debits = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
-                    let total_credits = parse_decimal_required(row.get::<_, String>(6)?, 6)?;
-                    let account_type: AccountType = parse_required(row.get::<_, String>(3)?, 3)?;
+            .query_map(params![start_date.to_string(), end_date.to_string()], |row| {
+                let total_debits = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+                let total_credits = parse_decimal_required(row.get::<_, String>(6)?, 6)?;
+                let account_type: AccountType = parse_required(row.get::<_, String>(3)?, 3)?;
 
-                    // Revenue has credit normal balance, expense has debit
-                    let amount = match account_type {
-                        AccountType::Revenue => total_credits - total_debits,
-                        AccountType::Expense => total_debits - total_credits,
-                        _ => Decimal::ZERO,
-                    };
+                // Revenue has credit normal balance, expense has debit
+                let amount = match account_type {
+                    AccountType::Revenue => total_credits - total_debits,
+                    AccountType::Expense => total_debits - total_credits,
+                    _ => Decimal::ZERO,
+                };
 
-                    Ok((
-                        parse_required(row.get::<_, String>(0)?, 0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        account_type,
-                        parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
-                        amount,
-                    ))
-                },
-            )
+                Ok((
+                    parse_required(row.get::<_, String>(0)?, 0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    account_type,
+                    parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
+                    amount,
+                ))
+            })
             .map_err(map_db_error)?;
 
         for row in rows {
@@ -1615,9 +1566,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         account_id: Uuid,
         _as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
-        Ok(self
-            .get_account(account_id)?
-            .map(|account| account.current_balance))
+        Ok(self.get_account(account_id)?.map(|account| account.current_balance))
     }
 
     fn get_account_transactions(
@@ -1673,9 +1622,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
-        let period = self
-            .get_period(period_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let period = self.get_period(period_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if period.status != PeriodStatus::Open {
             return Err(stateset_core::CommerceError::ValidationError(

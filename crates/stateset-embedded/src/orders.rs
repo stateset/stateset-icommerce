@@ -2,13 +2,12 @@
 
 use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
-    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus, PaymentStatus,
-    Result, UpdateOrder,
+    CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId, OrderItem,
+    OrderItemId, OrderStatus, PaymentStatus, Result, UpdateOrder,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
 use std::sync::Arc;
-use uuid::Uuid;
 
 #[cfg(feature = "events")]
 use crate::events::EventSystem;
@@ -32,11 +31,7 @@ impl Orders {
         event_system: Arc<EventSystem>,
         metrics: Metrics,
     ) -> Self {
-        Self {
-            db,
-            metrics,
-            event_system,
-        }
+        Self { db, metrics, event_system }
     }
 
     #[cfg(not(feature = "events"))]
@@ -95,9 +90,9 @@ impl Orders {
     /// # use rust_decimal_macros::dec;
     /// # let commerce = Commerce::new(":memory:")?;
     /// let order = commerce.orders().create(CreateOrder {
-    ///     customer_id: uuid::Uuid::new_v4(),
+    ///     customer_id: stateset_core::CustomerId::new(),
     ///     items: vec![CreateOrderItem {
-    ///         product_id: uuid::Uuid::new_v4(),
+    ///         product_id: stateset_core::ProductId::new(),
     ///         sku: "SKU-001".into(),
     ///         name: "Widget".into(),
     ///         quantity: 2,
@@ -131,7 +126,7 @@ impl Orders {
     }
 
     /// Get an order by ID.
-    pub fn get(&self, id: Uuid) -> Result<Option<Order>> {
+    pub fn get(&self, id: OrderId) -> Result<Option<Order>> {
         self.db.orders().get(id)
     }
 
@@ -141,7 +136,7 @@ impl Orders {
     }
 
     /// Update an order.
-    pub fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
+    pub fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
         #[cfg(feature = "events")]
         let previous = self.db.orders().get(id)?;
 
@@ -157,7 +152,7 @@ impl Orders {
 
     /// Update order status.
     #[tracing::instrument(skip(self), fields(order_id = %id, status = ?status))]
-    pub fn update_status(&self, id: Uuid, status: OrderStatus) -> Result<Order> {
+    pub fn update_status(&self, id: OrderId, status: OrderStatus) -> Result<Order> {
         tracing::info!("updating order status");
         let mut tracking_number = None;
         let mut payment_status = None;
@@ -188,20 +183,17 @@ impl Orders {
     }
 
     /// List orders for a specific customer.
-    pub fn list_for_customer(&self, customer_id: Uuid) -> Result<Vec<Order>> {
-        self.db.orders().list(OrderFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
+    pub fn list_for_customer(&self, customer_id: CustomerId) -> Result<Vec<Order>> {
+        self.db.orders().list(OrderFilter { customer_id: Some(customer_id), ..Default::default() })
     }
 
     /// Delete an order.
-    pub fn delete(&self, id: Uuid) -> Result<()> {
+    pub fn delete(&self, id: OrderId) -> Result<()> {
         self.db.orders().delete(id)
     }
 
     /// Add an item to an order.
-    pub fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
+    pub fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem> {
         let order_item = self.db.orders().add_item(order_id, item)?;
         #[cfg(feature = "events")]
         {
@@ -217,15 +209,11 @@ impl Orders {
     }
 
     /// Remove an item from an order.
-    pub fn remove_item(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
+    pub fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
         self.db.orders().remove_item(order_id, item_id)?;
         #[cfg(feature = "events")]
         {
-            self.emit(CommerceEvent::OrderItemRemoved {
-                order_id,
-                item_id,
-                timestamp: Utc::now(),
-            });
+            self.emit(CommerceEvent::OrderItemRemoved { order_id, item_id, timestamp: Utc::now() });
         }
         Ok(())
     }
@@ -237,14 +225,14 @@ impl Orders {
 
     /// Cancel an order.
     #[tracing::instrument(skip(self), fields(order_id = %id))]
-    pub fn cancel(&self, id: Uuid) -> Result<Order> {
+    pub fn cancel(&self, id: OrderId) -> Result<Order> {
         tracing::info!("cancelling order");
         self.update_status(id, OrderStatus::Cancelled)
     }
 
     /// Mark an order as shipped.
     #[tracing::instrument(skip(self), fields(order_id = %id, has_tracking = tracking_number.is_some()))]
-    pub fn ship(&self, id: Uuid, tracking_number: Option<&str>) -> Result<Order> {
+    pub fn ship(&self, id: OrderId, tracking_number: Option<&str>) -> Result<Order> {
         tracing::info!("shipping order");
         if let Some(order) = self.get(id)? {
             match order.status {
@@ -270,7 +258,7 @@ impl Orders {
 
     /// Mark an order as delivered.
     #[tracing::instrument(skip(self), fields(order_id = %id))]
-    pub fn deliver(&self, id: Uuid) -> Result<Order> {
+    pub fn deliver(&self, id: OrderId) -> Result<Order> {
         tracing::info!("marking order as delivered");
         self.update_status(id, OrderStatus::Delivered)
     }

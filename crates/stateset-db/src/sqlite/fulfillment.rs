@@ -12,11 +12,11 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use stateset_core::{
-    generate_carton_number, generate_wave_number, AddCarton, AddCartonItem, BatchResult, Carton,
-    CartonItem, CommerceError, CompletePick, CompleteShip, CreatePackTask, CreatePickTask,
-    CreateShipTask, CreateWave, FulfillmentRepository, PackStatus, PackTask, PackTaskFilter,
-    PickStatus, PickTask, PickTaskFilter, Result, ShipStatus, ShipTask, ShipTaskFilter, Wave,
-    WaveFilter, WaveStatus,
+    AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CommerceError, CompletePick,
+    CompleteShip, CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, FulfillmentId,
+    FulfillmentRepository, OrderId, OrderItemId, PackStatus, PackTask, PackTaskFilter, PickStatus,
+    PickTask, PickTaskFilter, Result, ShipStatus, ShipTask, ShipTaskFilter, ShipmentId, Wave,
+    WaveFilter, WaveStatus, generate_carton_number, generate_wave_number,
 };
 
 /// SQLite fulfillment repository
@@ -30,19 +30,17 @@ impl SqliteFulfillmentRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_wave(row: &rusqlite::Row) -> rusqlite::Result<Wave> {
+    fn row_to_wave(row: &rusqlite::Row<'_>) -> rusqlite::Result<Wave> {
         let id_str: String = row.get("id")?;
         let status_str: String = row.get("status")?;
         let started_str: Option<String> = row.get("started_at")?;
         let completed_str: Option<String> = row.get("completed_at")?;
 
         Ok(Wave {
-            id: parse_uuid_row(&id_str, "wave", "id")?,
+            id: FulfillmentId::from(parse_uuid_row(&id_str, "wave", "id")?),
             wave_number: row.get("wave_number")?,
             warehouse_id: row.get("warehouse_id")?,
             status: parse_enum_row(&status_str, "wave", "status")?,
@@ -67,7 +65,7 @@ impl SqliteFulfillmentRepository {
         })
     }
 
-    fn row_to_pick(row: &rusqlite::Row) -> rusqlite::Result<PickTask> {
+    fn row_to_pick(row: &rusqlite::Row<'_>) -> rusqlite::Result<PickTask> {
         let id_str: String = row.get("id")?;
         let wave_id_str: Option<String> = row.get("wave_id")?;
         let order_id_str: String = row.get("order_id")?;
@@ -82,9 +80,9 @@ impl SqliteFulfillmentRepository {
 
         Ok(PickTask {
             id: parse_uuid_row(&id_str, "pick_task", "id")?,
-            wave_id: parse_uuid_opt_row(wave_id_str, "pick_task", "wave_id")?,
-            order_id: parse_uuid_row(&order_id_str, "pick_task", "order_id")?,
-            order_item_id: parse_uuid_row(&order_item_id_str, "pick_task", "order_item_id")?,
+            wave_id: parse_uuid_opt_row(wave_id_str, "pick_task", "wave_id")?.map(FulfillmentId::from),
+            order_id: OrderId::from(parse_uuid_row(&order_id_str, "pick_task", "order_id")?),
+            order_item_id: OrderItemId::from(parse_uuid_row(&order_item_id_str, "pick_task", "order_item_id")?),
             warehouse_id: row.get("warehouse_id")?,
             status: parse_enum_row(&status_str, "pick_task", "status")?,
             sku: row.get("sku")?,
@@ -115,7 +113,7 @@ impl SqliteFulfillmentRepository {
         })
     }
 
-    fn row_to_pack(row: &rusqlite::Row) -> rusqlite::Result<PackTask> {
+    fn row_to_pack(row: &rusqlite::Row<'_>) -> rusqlite::Result<PackTask> {
         let id_str: String = row.get("id")?;
         let order_id_str: String = row.get("order_id")?;
         let shipment_id_str: Option<String> = row.get("shipment_id")?;
@@ -126,8 +124,8 @@ impl SqliteFulfillmentRepository {
 
         Ok(PackTask {
             id: parse_uuid_row(&id_str, "pack_task", "id")?,
-            order_id: parse_uuid_row(&order_id_str, "pack_task", "order_id")?,
-            shipment_id: parse_uuid_opt_row(shipment_id_str, "pack_task", "shipment_id")?,
+            order_id: OrderId::from(parse_uuid_row(&order_id_str, "pack_task", "order_id")?),
+            shipment_id: parse_uuid_opt_row(shipment_id_str, "pack_task", "shipment_id")?.map(ShipmentId::from),
             status: parse_enum_row(&status_str, "pack_task", "status")?,
             carton_count: row.get("carton_count")?,
             total_weight_kg: parse_decimal_opt_row(weight_str, "pack_task", "total_weight_kg")?,
@@ -149,7 +147,7 @@ impl SqliteFulfillmentRepository {
         })
     }
 
-    fn row_to_carton(row: &rusqlite::Row) -> rusqlite::Result<Carton> {
+    fn row_to_carton(row: &rusqlite::Row<'_>) -> rusqlite::Result<Carton> {
         let id_str: String = row.get("id")?;
         let pack_task_id_str: String = row.get("pack_task_id")?;
         let pkg_type_str: String = row.get("package_type")?;
@@ -177,7 +175,7 @@ impl SqliteFulfillmentRepository {
         })
     }
 
-    fn row_to_carton_item(row: &rusqlite::Row) -> rusqlite::Result<CartonItem> {
+    fn row_to_carton_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<CartonItem> {
         let id_str: String = row.get("id")?;
         let carton_id_str: String = row.get("carton_id")?;
         let qty_str: String = row.get("quantity")?;
@@ -193,7 +191,7 @@ impl SqliteFulfillmentRepository {
         })
     }
 
-    fn row_to_ship(row: &rusqlite::Row) -> rusqlite::Result<ShipTask> {
+    fn row_to_ship(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShipTask> {
         let id_str: String = row.get("id")?;
         let order_id_str: String = row.get("order_id")?;
         let shipment_id_str: String = row.get("shipment_id")?;
@@ -204,8 +202,8 @@ impl SqliteFulfillmentRepository {
 
         Ok(ShipTask {
             id: parse_uuid_row(&id_str, "ship_task", "id")?,
-            order_id: parse_uuid_row(&order_id_str, "ship_task", "order_id")?,
-            shipment_id: parse_uuid_row(&shipment_id_str, "ship_task", "shipment_id")?,
+            order_id: OrderId::from(parse_uuid_row(&order_id_str, "ship_task", "order_id")?),
+            shipment_id: ShipmentId::from(parse_uuid_row(&shipment_id_str, "ship_task", "shipment_id")?),
             pack_task_id: parse_uuid_row(&pack_task_id_str, "ship_task", "pack_task_id")?,
             status: parse_enum_row(&status_str, "ship_task", "status")?,
             carrier: row.get("carrier")?,
@@ -238,7 +236,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     fn create_wave(&self, input: CreateWave) -> Result<Wave> {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
-        let id = Uuid::new_v4();
+        let id = FulfillmentId::new();
         let wave_number = generate_wave_number();
         let order_count = input.order_ids.len() as i32;
 
@@ -272,11 +270,9 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create wave".into()))
     }
 
-    fn get_wave(&self, id: Uuid) -> Result<Option<Wave>> {
+    fn get_wave(&self, id: FulfillmentId) -> Result<Option<Wave>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM waves WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt = conn.prepare("SELECT * FROM waves WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -288,9 +284,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
     fn get_wave_by_number(&self, number: &str) -> Result<Option<Wave>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM waves WHERE wave_number = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM waves WHERE wave_number = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![number]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -333,7 +328,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(waves)
     }
 
-    fn release_wave(&self, id: Uuid) -> Result<Wave> {
+    fn release_wave(&self, id: FulfillmentId) -> Result<Wave> {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
 
@@ -348,7 +343,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to release wave".into()))
     }
 
-    fn complete_wave(&self, id: Uuid) -> Result<Wave> {
+    fn complete_wave(&self, id: FulfillmentId) -> Result<Wave> {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
 
@@ -363,7 +358,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to complete wave".into()))
     }
 
-    fn cancel_wave(&self, id: Uuid) -> Result<Wave> {
+    fn cancel_wave(&self, id: FulfillmentId) -> Result<Wave> {
         let conn = self.conn()?;
 
         conn.execute(
@@ -377,19 +372,17 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel wave".into()))
     }
 
-    fn get_wave_orders(&self, wave_id: Uuid) -> Result<Vec<Uuid>> {
+    fn get_wave_orders(&self, wave_id: FulfillmentId) -> Result<Vec<OrderId>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare("SELECT order_id FROM wave_orders WHERE wave_id = ?1")
             .map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(params![wave_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![wave_id.to_string()]).map_err(map_db_error)?;
 
         let mut orders = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
             let id_str: String = row.get(0).map_err(map_db_error)?;
-            let id = parse_uuid(&id_str, "wave_order", "order_id")?;
+            let id = OrderId::from(parse_uuid(&id_str, "wave_order", "order_id")?);
             orders.push(id);
         }
         Ok(orders)
@@ -407,9 +400,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -452,9 +444,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
     fn get_pick(&self, id: Uuid) -> Result<Option<PickTask>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM pick_tasks WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM pick_tasks WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -517,11 +508,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
         conn.execute(
             "UPDATE pick_tasks SET assigned_to = ?1, status = ?2 WHERE id = ?3",
-            params![
-                assigned_to,
-                PickStatus::Assigned.to_string(),
-                id.to_string()
-            ],
+            params![assigned_to, PickStatus::Assigned.to_string(), id.to_string()],
         )
         .map_err(map_db_error)?;
 
@@ -549,11 +536,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
         let short_qty = input.quantity_short.unwrap_or(Decimal::ZERO);
-        let status = if short_qty > Decimal::ZERO {
-            PickStatus::Short
-        } else {
-            PickStatus::Completed
-        };
+        let status =
+            if short_qty > Decimal::ZERO { PickStatus::Short } else { PickStatus::Completed };
 
         conn.execute(
             "UPDATE pick_tasks SET status = ?1, quantity_picked = ?2, quantity_short = ?3,
@@ -572,12 +556,9 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         .map_err(map_db_error)?;
 
         let pick = {
-            let mut stmt = conn
-                .prepare("SELECT * FROM pick_tasks WHERE id = ?1")
-                .map_err(map_db_error)?;
-            let mut rows = stmt
-                .query(params![input.pick_id.to_string()])
-                .map_err(map_db_error)?;
+            let mut stmt =
+                conn.prepare("SELECT * FROM pick_tasks WHERE id = ?1").map_err(map_db_error)?;
+            let mut rows = stmt.query(params![input.pick_id.to_string()]).map_err(map_db_error)?;
 
             if let Some(row) = rows.next().map_err(map_db_error)? {
                 Self::row_to_pick(row).map_err(map_db_error)?
@@ -602,12 +583,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
         conn.execute(
             "UPDATE pick_tasks SET status = ?1, quantity_short = ?2, notes = ?3 WHERE id = ?4",
-            params![
-                PickStatus::Short.to_string(),
-                short_qty.to_string(),
-                reason,
-                id.to_string()
-            ],
+            params![PickStatus::Short.to_string(), short_qty.to_string(), reason, id.to_string()],
         )
         .map_err(map_db_error)?;
 
@@ -630,18 +606,12 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel pick".into()))
     }
 
-    fn get_picks_for_order(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
-        self.list_picks(PickTaskFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
+    fn get_picks_for_order(&self, order_id: OrderId) -> Result<Vec<PickTask>> {
+        self.list_picks(PickTaskFilter { order_id: Some(order_id), ..Default::default() })
     }
 
-    fn get_picks_for_wave(&self, wave_id: Uuid) -> Result<Vec<PickTask>> {
-        self.list_picks(PickTaskFilter {
-            wave_id: Some(wave_id),
-            ..Default::default()
-        })
+    fn get_picks_for_wave(&self, wave_id: FulfillmentId) -> Result<Vec<PickTask>> {
+        self.list_picks(PickTaskFilter { wave_id: Some(wave_id), ..Default::default() })
     }
 
     fn count_picks(&self, filter: PickTaskFilter) -> Result<u64> {
@@ -656,9 +626,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -691,9 +660,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
     fn get_pack(&self, id: Uuid) -> Result<Option<PackTask>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM pack_tasks WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM pack_tasks WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -809,17 +777,13 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         )
         .map_err(map_db_error)?;
 
-        let mut stmt = conn
-            .prepare("SELECT * FROM cartons WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt = conn.prepare("SELECT * FROM cartons WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
             Ok(Self::row_to_carton(row).map_err(map_db_error)?)
         } else {
-            Err(CommerceError::DatabaseError(
-                "Failed to create carton".into(),
-            ))
+            Err(CommerceError::DatabaseError("Failed to create carton".into()))
         }
     }
 
@@ -841,28 +805,22 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         )
         .map_err(map_db_error)?;
 
-        let mut stmt = conn
-            .prepare("SELECT * FROM carton_items WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM carton_items WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
             Ok(Self::row_to_carton_item(row).map_err(map_db_error)?)
         } else {
-            Err(CommerceError::DatabaseError(
-                "Failed to create carton item".into(),
-            ))
+            Err(CommerceError::DatabaseError("Failed to create carton item".into()))
         }
     }
 
     fn get_cartons(&self, pack_task_id: Uuid) -> Result<Vec<Carton>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM cartons WHERE pack_task_id = ?1")
-            .map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(params![pack_task_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM cartons WHERE pack_task_id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![pack_task_id.to_string()]).map_err(map_db_error)?;
 
         let mut cartons = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -876,9 +834,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         let mut stmt = conn
             .prepare("SELECT * FROM carton_items WHERE carton_id = ?1")
             .map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(params![carton_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![carton_id.to_string()]).map_err(map_db_error)?;
 
         let mut items = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -896,12 +852,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         )
         .map_err(map_db_error)?;
 
-        let mut stmt = conn
-            .prepare("SELECT * FROM cartons WHERE id = ?1")
-            .map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(params![carton_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut stmt = conn.prepare("SELECT * FROM cartons WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![carton_id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
             Ok(Self::row_to_carton(row).map_err(map_db_error)?)
@@ -936,9 +888,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -974,9 +925,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
     fn get_ship(&self, id: Uuid) -> Result<Option<ShipTask>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM ship_tasks WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM ship_tasks WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -1038,11 +988,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
         conn.execute(
             "UPDATE ship_tasks SET status = ?1, label_url = ?2 WHERE id = ?3",
-            params![
-                ShipStatus::LabelPrinted.to_string(),
-                label_url,
-                id.to_string()
-            ],
+            params![ShipStatus::LabelPrinted.to_string(), label_url, id.to_string()],
         )
         .map_err(map_db_error)?;
 
@@ -1097,9 +1043,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -1107,7 +1052,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     // Workflow Helpers
     // ========================================================================
 
-    fn create_picks_for_order(&self, order_id: Uuid, warehouse_id: i32) -> Result<Vec<PickTask>> {
+    fn create_picks_for_order(&self, order_id: OrderId, warehouse_id: i32) -> Result<Vec<PickTask>> {
         let conn = self.conn()?;
 
         let mut inputs = Vec::new();
@@ -1117,9 +1062,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                 .prepare("SELECT id, sku, name, quantity FROM order_items WHERE order_id = ?1")
                 .map_err(map_db_error)?;
 
-            let mut rows = stmt
-                .query(params![order_id.to_string()])
-                .map_err(map_db_error)?;
+            let mut rows = stmt.query(params![order_id.to_string()]).map_err(map_db_error)?;
 
             while let Some(row) = rows.next().map_err(map_db_error)? {
                 let item_id_str: String = row.get(0).map_err(map_db_error)?;
@@ -1142,7 +1085,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
                 inputs.push(CreatePickTask {
                     wave_id: None,
                     order_id,
-                    order_item_id: parse_uuid(&item_id_str, "order_item", "id")?,
+                    order_item_id: OrderItemId::from(parse_uuid(&item_id_str, "order_item", "id")?),
                     warehouse_id,
                     sku,
                     product_name: name,
@@ -1166,7 +1109,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(picks)
     }
 
-    fn is_order_ready_to_pack(&self, order_id: Uuid) -> Result<bool> {
+    fn is_order_ready_to_pack(&self, order_id: OrderId) -> Result<bool> {
         let conn = self.conn()?;
 
         let incomplete: i64 = conn.query_row(
@@ -1178,7 +1121,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         Ok(incomplete == 0)
     }
 
-    fn is_order_ready_to_ship(&self, order_id: Uuid) -> Result<bool> {
+    fn is_order_ready_to_ship(&self, order_id: OrderId) -> Result<bool> {
         let conn = self.conn()?;
 
         let completed: i64 = conn

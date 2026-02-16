@@ -5,11 +5,13 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CustomerId, InvoiceId, OrderId, OrderItemId, ProductId};
 use uuid::Uuid;
 
 /// Invoice status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum InvoiceStatus {
     /// Draft - not yet sent
     #[default]
@@ -70,6 +72,7 @@ impl std::str::FromStr for InvoiceStatus {
 /// Invoice type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum InvoiceType {
     /// Standard invoice
     #[default]
@@ -119,13 +122,13 @@ impl std::str::FromStr for InvoiceType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invoice {
     /// Unique ID
-    pub id: Uuid,
+    pub id: InvoiceId,
     /// Human-readable invoice number
     pub invoice_number: String,
     /// Customer ID
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     /// Associated order ID (optional)
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Invoice status
     pub status: InvoiceStatus,
     /// Invoice type
@@ -228,11 +231,11 @@ pub struct InvoiceItem {
     /// Unique ID
     pub id: Uuid,
     /// Parent invoice ID
-    pub invoice_id: Uuid,
+    pub invoice_id: InvoiceId,
     /// Associated order item ID
-    pub order_item_id: Option<Uuid>,
+    pub order_item_id: Option<OrderItemId>,
     /// Product ID
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// SKU
     pub sku: Option<String>,
     /// Item description
@@ -261,9 +264,9 @@ pub struct InvoiceItem {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateInvoice {
     /// Customer ID
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     /// Order ID (optional)
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Invoice type
     pub invoice_type: Option<InvoiceType>,
     /// Invoice date (defaults to now)
@@ -321,9 +324,9 @@ pub struct CreateInvoice {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateInvoiceItem {
     /// Order item ID
-    pub order_item_id: Option<Uuid>,
+    pub order_item_id: Option<OrderItemId>,
     /// Product ID
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// SKU
     pub sku: Option<String>,
     /// Description
@@ -402,9 +405,9 @@ pub struct RecordInvoicePayment {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InvoiceFilter {
     /// Filter by customer ID
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     /// Filter by order ID
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Filter by status
     pub status: Option<InvoiceStatus>,
     /// Filter by invoice type

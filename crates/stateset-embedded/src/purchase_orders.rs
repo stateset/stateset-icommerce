@@ -202,9 +202,7 @@ impl PurchaseOrders {
     /// * `id` - Purchase order ID
     /// * `supplier_reference` - Optional reference number from supplier
     pub fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
-        self.db
-            .purchase_orders()
-            .acknowledge(id, supplier_reference)
+        self.db.purchase_orders().acknowledge(id, supplier_reference)
     }
 
     /// Put a purchase order on hold

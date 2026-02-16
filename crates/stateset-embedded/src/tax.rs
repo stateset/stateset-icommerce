@@ -178,16 +178,9 @@ impl Tax {
         category: ProductTaxCategory,
     ) -> Result<Decimal> {
         let today = chrono::Utc::now().date_naive();
-        let rates = self
-            .db
-            .tax()
-            .get_rates_for_address(address, category, today)?;
+        let rates = self.db.tax().get_rates_for_address(address, category, today)?;
 
-        let total_rate: Decimal = rates
-            .iter()
-            .filter(|r| !r.is_compound)
-            .map(|r| r.rate)
-            .sum();
+        let total_rate: Decimal = rates.iter().filter(|r| !r.is_compound).map(|r| r.rate).sum();
 
         Ok(total_rate)
     }

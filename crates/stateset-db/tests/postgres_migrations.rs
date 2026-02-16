@@ -7,9 +7,7 @@ use std::env;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL")
-        .ok()
-        .or_else(|| env::var("DATABASE_URL").ok())
+    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
 }
 
 #[cfg(feature = "postgres")]
@@ -23,9 +21,7 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         }
     };
 
-    PostgresDatabase::connect(&url)
-        .await
-        .expect("connect to postgres and run migrations");
+    PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
 
     let pool = PgPoolOptions::new()
         .max_connections(1)
@@ -38,10 +34,7 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         .await
         .expect("count _migrations");
     let expected = if cfg!(feature = "saga") { 38 } else { 37 };
-    assert_eq!(
-        applied, expected,
-        "expected all embedded migrations to apply"
-    );
+    assert_eq!(applied, expected, "expected all embedded migrations to apply");
 
     let mut tables = vec![
         "exchange_rates",
@@ -83,10 +76,7 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
     .fetch_one(&pool)
     .await
     .expect("query orders.currency");
-    assert_eq!(
-        currency_cols, 1,
-        "`orders.currency` should exist exactly once"
-    );
+    assert_eq!(currency_cols, 1, "`orders.currency` should exist exactly once");
 
     let cart_cols: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'cart_id'",
@@ -101,8 +91,5 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
             .fetch_one(&pool)
             .await
             .expect("query store_currency_settings default row");
-    assert_eq!(
-        defaults, 1,
-        "expected a default store_currency_settings row"
-    );
+    assert_eq!(defaults, 1, "expected a default store_currency_settings row");
 }

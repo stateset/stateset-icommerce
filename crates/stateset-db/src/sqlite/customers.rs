@@ -10,10 +10,10 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
-    validate_batch_size, validate_email, validate_phone, validate_postal_code,
-    validate_required_text, validate_required_uuid, AddressType, BatchResult, CommerceError,
-    CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
-    CustomerRepository, CustomerStatus, Result, UpdateCustomer,
+    AddressType, BatchResult, CommerceError, CreateCustomer, CreateCustomerAddress, Customer,
+    CustomerAddress, CustomerFilter, CustomerId, CustomerRepository, CustomerStatus, Result,
+    UpdateCustomer, validate_batch_size, validate_email, validate_phone, validate_postal_code,
+    validate_required_text, validate_required_uuid,
 };
 use uuid::Uuid;
 
@@ -28,17 +28,15 @@ impl SqliteCustomerRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_customer(row: &rusqlite::Row) -> rusqlite::Result<Customer> {
+    fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<Customer> {
         let tags_json: String = row.get("tags")?;
         let metadata_json: Option<String> = row.get("metadata")?;
 
         Ok(Customer {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "customer", "id")?,
+            id: CustomerId::from(parse_uuid_row(&row.get::<_, String>("id")?, "customer", "id")?),
             email: row.get("email")?,
             first_name: row.get("first_name")?,
             last_name: row.get("last_name")?,
@@ -73,14 +71,14 @@ impl SqliteCustomerRepository {
         })
     }
 
-    fn row_to_address(row: &rusqlite::Row) -> rusqlite::Result<CustomerAddress> {
+    fn row_to_address(row: &rusqlite::Row<'_>) -> rusqlite::Result<CustomerAddress> {
         Ok(CustomerAddress {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "customer_address", "id")?,
-            customer_id: parse_uuid_row(
+            customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "customer_address",
                 "customer_id",
-            )?,
+            )?),
             address_type: parse_enum_row(
                 &row.get::<_, String>("address_type")?,
                 "customer_address",
@@ -111,7 +109,7 @@ impl SqliteCustomerRepository {
     }
 
     fn validate_address_input(input: &CreateCustomerAddress) -> Result<()> {
-        validate_required_uuid("customer_address.customer_id", input.customer_id)?;
+        validate_required_uuid("customer_address.customer_id", input.customer_id.into_uuid())?;
         validate_required_text("customer_address.first_name", &input.first_name, 100)?;
         validate_required_text("customer_address.last_name", &input.last_name, 100)?;
         validate_required_text("customer_address.line1", &input.line1, 255)?;
@@ -143,7 +141,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             validate_phone(phone)?;
         }
 
-        let id = Uuid::new_v4();
+        let id = CustomerId::new();
         let tags = input.tags.clone().unwrap_or_default();
         let metadata = input.metadata.clone();
         let email = input.email.clone();
@@ -156,11 +154,10 @@ impl CustomerRepository for SqliteCustomerRepository {
             let now = Utc::now();
 
             // Check email uniqueness
-            let exists: i32 = tx.query_row(
-                "SELECT COUNT(*) FROM customers WHERE email = ?",
-                [&email],
-                |row| row.get(0),
-            )?;
+            let exists: i32 =
+                tx.query_row("SELECT COUNT(*) FROM customers WHERE email = ?", [&email], |row| {
+                    row.get(0)
+                })?;
 
             if exists > 0 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -169,9 +166,8 @@ impl CustomerRepository for SqliteCustomerRepository {
             }
 
             let tags_json = serde_json::to_string(&tags).unwrap_or_default();
-            let metadata_json = metadata
-                .as_ref()
-                .map(|m| serde_json::to_string(m).unwrap_or_default());
+            let metadata_json =
+                metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
 
             tx.execute(
                 "INSERT INTO customers (id, email, first_name, last_name, phone, status,
@@ -214,7 +210,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         })
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Customer>> {
+    fn get(&self, id: CustomerId) -> Result<Option<Customer>> {
         let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT * FROM customers WHERE id = ?",
@@ -244,17 +240,15 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
+    fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {
         let conn = self.conn()?;
         let now = Utc::now();
         let current_version: i32 = conn
-            .query_row(
-                "SELECT version FROM customers WHERE id = ?",
-                [id.to_string()],
-                |row| row.get(0),
-            )
+            .query_row("SELECT version FROM customers WHERE id = ?", [id.to_string()], |row| {
+                row.get(0)
+            })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::CustomerNotFound(id),
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::CustomerNotFound(id.into_uuid()),
                 e => map_db_error(e),
             })?;
 
@@ -264,9 +258,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         if let Some(email) = &input.email {
             validate_email(email)?;
             let existing_id: Option<String> = conn
-                .query_row("SELECT id FROM customers WHERE email = ?", [email], |row| {
-                    row.get(0)
-                })
+                .query_row("SELECT id FROM customers WHERE email = ?", [email], |row| row.get(0))
                 .optional()
                 .map_err(map_db_error)?;
             if let Some(existing_id) = existing_id {
@@ -306,24 +298,18 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
         if let Some(metadata) = &input.metadata {
             updates.push("metadata = ?");
-            params.push(Box::new(
-                serde_json::to_string(metadata).unwrap_or_default(),
-            ));
+            params.push(Box::new(serde_json::to_string(metadata).unwrap_or_default()));
         }
 
         updates.push("version = version + 1");
         params.push(Box::new(id.to_string()));
         params.push(Box::new(current_version));
 
-        let sql = format!(
-            "UPDATE customers SET {} WHERE id = ? AND version = ?",
-            updates.join(", ")
-        );
+        let sql =
+            format!("UPDATE customers SET {} WHERE id = ? AND version = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        let rows_affected = conn
-            .execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
         if rows_affected == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "customer".to_string(),
@@ -332,7 +318,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             });
         }
 
-        self.get(id)?.ok_or(CommerceError::CustomerNotFound(id))
+        self.get(id)?.ok_or(CommerceError::CustomerNotFound(id.into_uuid()))
     }
 
     fn list(&self, filter: CustomerFilter) -> Result<Vec<Customer>> {
@@ -386,7 +372,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(customers)
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: CustomerId) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
             "UPDATE customers SET status = ?, updated_at = ? WHERE id = ?",
@@ -444,11 +430,13 @@ impl CustomerRepository for SqliteCustomerRepository {
                 AddressType::Both => {
                     "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?"
                 }
+                _ => {
+                    "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?"
+                }
             };
 
             // Clear defaults for the relevant address types.
-            tx.execute(clear_sql, [input.customer_id.to_string()])
-                .map_err(map_db_error)?;
+            tx.execute(clear_sql, [input.customer_id.to_string()]).map_err(map_db_error)?;
 
             // Set new default
             tx.execute(
@@ -472,7 +460,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                     )
                     .map_err(map_db_error)?;
                 }
-                AddressType::Both => {
+                AddressType::Both | _ => {
                     tx.execute(
                         "UPDATE customers SET default_shipping_address_id = ?, default_billing_address_id = ?, updated_at = ? WHERE id = ?",
                         rusqlite::params![id.to_string(), id.to_string(), now.to_rfc3339(), input.customer_id.to_string()],
@@ -494,7 +482,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(addr)
     }
 
-    fn get_addresses(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>> {
+    fn get_addresses(&self, customer_id: CustomerId) -> Result<Vec<CustomerAddress>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare("SELECT * FROM customer_addresses WHERE customer_id = ?")
@@ -601,7 +589,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                     )
                     .map_err(map_db_error)?;
                 }
-                AddressType::Both => {
+                AddressType::Both | _ => {
                     tx.execute(
                         "UPDATE customers SET default_shipping_address_id = NULL, default_billing_address_id = NULL, updated_at = ? WHERE id = ?",
                         rusqlite::params![now.to_rfc3339(), customer_id],
@@ -611,18 +599,15 @@ impl CustomerRepository for SqliteCustomerRepository {
             }
         }
 
-        tx.execute(
-            "DELETE FROM customer_addresses WHERE id = ?",
-            [address_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        tx.execute("DELETE FROM customer_addresses WHERE id = ?", [address_id.to_string()])
+            .map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
     fn set_default_address(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         address_id: Uuid,
         address_type: AddressType,
     ) -> Result<()> {
@@ -658,12 +643,11 @@ impl CustomerRepository for SqliteCustomerRepository {
             AddressType::Billing => {
                 "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ? AND (address_type = 'billing' OR address_type = 'both')"
             }
-            AddressType::Both => {
+            AddressType::Both | _ => {
                 "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?"
             }
         };
-        tx.execute(clear_sql, [customer_id.to_string()])
-            .map_err(map_db_error)?;
+        tx.execute(clear_sql, [customer_id.to_string()]).map_err(map_db_error)?;
 
         // Set new default
         tx.execute(
@@ -688,7 +672,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                 )
                 .map_err(map_db_error)?;
             }
-            AddressType::Both => {
+            AddressType::Both | _ => {
                 tx.execute(
                     "UPDATE customers SET default_shipping_address_id = ?, default_billing_address_id = ?, updated_at = ? WHERE id = ?",
                     rusqlite::params![address_id.to_string(), address_id.to_string(), now.to_rfc3339(), customer_id.to_string()],
@@ -733,9 +717,8 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
         Ok(count as u64)
     }
@@ -767,7 +750,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
-            let id = Uuid::new_v4();
+            let id = CustomerId::new();
             let now = Utc::now();
             let tags = input.tags.clone().unwrap_or_default();
             let metadata = input.metadata.clone();
@@ -791,9 +774,8 @@ impl CustomerRepository for SqliteCustomerRepository {
             }
 
             let tags_json = serde_json::to_string(&tags).unwrap_or_default();
-            let metadata_json = metadata
-                .as_ref()
-                .map(|m| serde_json::to_string(m).unwrap_or_default());
+            let metadata_json =
+                metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
 
             tx.execute(
                 "INSERT INTO customers (id, email, first_name, last_name, phone, status,
@@ -839,7 +821,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<BatchResult<Customer>> {
+    fn update_batch(&self, updates: Vec<(CustomerId, UpdateCustomer)>) -> Result<BatchResult<Customer>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -853,7 +835,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<Vec<Customer>> {
+    fn update_batch_atomic(&self, updates: Vec<(CustomerId, UpdateCustomer)>) -> Result<Vec<Customer>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -866,13 +848,11 @@ impl CustomerRepository for SqliteCustomerRepository {
         for (id, input) in updates {
             let now = Utc::now();
             let current_version: i32 = tx
-                .query_row(
-                    "SELECT version FROM customers WHERE id = ?",
-                    [id.to_string()],
-                    |row| row.get(0),
-                )
+                .query_row("SELECT version FROM customers WHERE id = ?", [id.to_string()], |row| {
+                    row.get(0)
+                })
                 .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => CommerceError::CustomerNotFound(id),
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::CustomerNotFound(id.into_uuid()),
                     e => map_db_error(e),
                 })?;
 
@@ -924,9 +904,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             }
             if let Some(metadata) = &input.metadata {
                 update_parts.push("metadata = ?");
-                params.push(Box::new(
-                    serde_json::to_string(metadata).unwrap_or_default(),
-                ));
+                params.push(Box::new(serde_json::to_string(metadata).unwrap_or_default()));
             }
 
             update_parts.push("version = version + 1");
@@ -940,9 +918,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
                 params.iter().map(|p| p.as_ref()).collect();
-            let rows_affected = tx
-                .execute(&sql, params_refs.as_slice())
-                .map_err(map_db_error)?;
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
             if rows_affected == 0 {
                 return Err(CommerceError::VersionConflict {
                     entity: "customer".to_string(),
@@ -966,7 +942,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<CustomerId>) -> Result<BatchResult<CustomerId>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
@@ -980,7 +956,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<CustomerId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -1005,14 +981,13 @@ impl CustomerRepository for SqliteCustomerRepository {
         let all_params_refs: Vec<&dyn rusqlite::ToSql> =
             all_params.iter().map(|p| p.as_ref()).collect();
 
-        tx.execute(&sql, all_params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, all_params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>> {
+    fn get_batch(&self, ids: Vec<CustomerId>) -> Result<Vec<Customer>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
@@ -1022,7 +997,8 @@ impl CustomerRepository for SqliteCustomerRepository {
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM customers WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;

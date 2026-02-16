@@ -3,7 +3,7 @@
 //! Run with: cargo bench --package stateset-core
 
 use chrono::Utc;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::thread;
@@ -93,10 +93,7 @@ fn create_test_cart_item(idx: usize) -> CartItem {
 fn create_test_cart(item_count: usize) -> Cart {
     let now = Utc::now();
     let items: Vec<CartItem> = (0..item_count).map(create_test_cart_item).collect();
-    let subtotal: Decimal = items
-        .iter()
-        .map(|i| i.unit_price * Decimal::from(i.quantity))
-        .sum();
+    let subtotal: Decimal = items.iter().map(|i| i.unit_price * Decimal::from(i.quantity)).sum();
     let tax: Decimal = items.iter().map(|i| i.tax_amount).sum();
     let discount: Decimal = items.iter().map(|i| i.discount_amount).sum();
 
@@ -145,13 +142,9 @@ fn benchmark_order_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("order_creation");
 
     for item_count in [1, 5, 10, 50, 100].iter() {
-        group.bench_with_input(
-            BenchmarkId::new("items", item_count),
-            item_count,
-            |b, &count| {
-                b.iter(|| create_test_order(black_box(count)));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("items", item_count), item_count, |b, &count| {
+            b.iter(|| create_test_order(black_box(count)));
+        });
     }
 
     group.finish();
@@ -161,13 +154,9 @@ fn benchmark_cart_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("cart_creation");
 
     for item_count in [1, 5, 10, 50, 100].iter() {
-        group.bench_with_input(
-            BenchmarkId::new("items", item_count),
-            item_count,
-            |b, &count| {
-                b.iter(|| create_test_cart(black_box(count)));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("items", item_count), item_count, |b, &count| {
+            b.iter(|| create_test_cart(black_box(count)));
+        });
     }
 
     group.finish();
@@ -179,26 +168,18 @@ fn benchmark_order_serialization(c: &mut Criterion) {
     for item_count in [1, 10, 100].iter() {
         let order = create_test_order(*item_count);
 
-        group.bench_with_input(
-            BenchmarkId::new("to_json", item_count),
-            &order,
-            |b, order| {
-                b.iter(|| serde_json::to_string(black_box(order)).unwrap());
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("to_json", item_count), &order, |b, order| {
+            b.iter(|| serde_json::to_string(black_box(order)).unwrap());
+        });
     }
 
     for item_count in [1, 10, 100].iter() {
         let order = create_test_order(*item_count);
         let json = serde_json::to_string(&order).unwrap();
 
-        group.bench_with_input(
-            BenchmarkId::new("from_json", item_count),
-            &json,
-            |b, json| {
-                b.iter(|| serde_json::from_str::<Order>(black_box(json)).unwrap());
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("from_json", item_count), &json, |b, json| {
+            b.iter(|| serde_json::from_str::<Order>(black_box(json)).unwrap());
+        });
     }
 
     group.finish();
@@ -317,9 +298,8 @@ fn benchmark_decimal_operations(c: &mut Criterion) {
 
     // Simulate order total calculation
     group.bench_function("calculate_order_total_10_items", |b| {
-        let items: Vec<(Decimal, i32, Decimal, Decimal)> = (0..10)
-            .map(|_| (dec!(29.99), 2, dec!(0.00), dec!(2.40)))
-            .collect();
+        let items: Vec<(Decimal, i32, Decimal, Decimal)> =
+            (0..10).map(|_| (dec!(29.99), 2, dec!(0.00), dec!(2.40))).collect();
 
         b.iter(|| {
             let total: Decimal = items

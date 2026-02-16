@@ -13,6 +13,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CartId, CustomerId, OrderId, ProductId, PromotionId};
 use uuid::Uuid;
 
 // ============================================================================
@@ -22,6 +23,7 @@ use uuid::Uuid;
 /// Type of promotion
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PromotionType {
     /// Percentage off (e.g., 20% off)
     #[default]
@@ -92,6 +94,7 @@ impl std::str::FromStr for PromotionType {
 /// Status of a promotion
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PromotionStatus {
     /// Draft - not yet active
     #[default]
@@ -144,6 +147,7 @@ impl std::str::FromStr for PromotionStatus {
 /// How the promotion is triggered
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PromotionTrigger {
     /// Automatically applied when conditions are met
     #[default]
@@ -187,6 +191,7 @@ impl std::str::FromStr for PromotionTrigger {
 /// What the promotion applies to
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PromotionTarget {
     /// Applies to entire order
     #[default]
@@ -238,6 +243,7 @@ impl std::str::FromStr for PromotionTarget {
 /// Stacking behavior with other promotions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum StackingBehavior {
     /// Can be combined with other promotions
     #[default]
@@ -281,6 +287,7 @@ impl std::str::FromStr for StackingBehavior {
 /// Condition operator for rules
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ConditionOperator {
     #[default]
     Equals,
@@ -348,6 +355,7 @@ impl std::str::FromStr for ConditionOperator {
 /// Type of condition
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ConditionType {
     /// Minimum cart subtotal
     #[default]
@@ -447,7 +455,7 @@ impl std::str::FromStr for ConditionType {
 /// A promotion/discount offer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Promotion {
-    pub id: Uuid,
+    pub id: PromotionId,
     /// Unique code for the promotion (for internal reference)
     pub code: String,
     /// Display name
@@ -486,7 +494,7 @@ pub struct Promotion {
 
     // Bundle specifics
     /// Required product IDs for bundle
-    pub bundle_product_ids: Option<Vec<Uuid>>,
+    pub bundle_product_ids: Option<Vec<ProductId>>,
     /// Bundle discount when all products purchased
     pub bundle_discount: Option<Decimal>,
 
@@ -507,19 +515,19 @@ pub struct Promotion {
 
     // Targeting
     /// Specific product IDs this applies to (empty = all)
-    pub applicable_product_ids: Vec<Uuid>,
+    pub applicable_product_ids: Vec<ProductId>,
     /// Specific category IDs this applies to (empty = all)
     pub applicable_category_ids: Vec<Uuid>,
     /// Specific SKUs this applies to (empty = all)
     pub applicable_skus: Vec<String>,
     /// Excluded product IDs
-    pub excluded_product_ids: Vec<Uuid>,
+    pub excluded_product_ids: Vec<ProductId>,
     /// Excluded category IDs
     pub excluded_category_ids: Vec<Uuid>,
 
     // Customer targeting
     /// Specific customer IDs (empty = all customers)
-    pub eligible_customer_ids: Vec<Uuid>,
+    pub eligible_customer_ids: Vec<CustomerId>,
     /// Customer groups/segments
     pub eligible_customer_groups: Vec<String>,
 
@@ -552,7 +560,7 @@ pub struct DiscountTier {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromotionCondition {
     pub id: Uuid,
-    pub promotion_id: Uuid,
+    pub promotion_id: PromotionId,
     pub condition_type: ConditionType,
     pub operator: ConditionOperator,
     /// The value to compare against (string, number, or JSON array)
@@ -569,7 +577,7 @@ pub struct PromotionCondition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CouponCode {
     pub id: Uuid,
-    pub promotion_id: Uuid,
+    pub promotion_id: PromotionId,
     /// The code customers enter (e.g., "SAVE20")
     pub code: String,
     pub status: CouponStatus,
@@ -592,6 +600,7 @@ pub struct CouponCode {
 /// Status of an individual coupon code
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CouponStatus {
     #[default]
     Active,
@@ -633,11 +642,11 @@ impl std::str::FromStr for CouponStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromotionUsage {
     pub id: Uuid,
-    pub promotion_id: Uuid,
+    pub promotion_id: PromotionId,
     pub coupon_id: Option<Uuid>,
-    pub customer_id: Option<Uuid>,
-    pub order_id: Option<Uuid>,
-    pub cart_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
+    pub order_id: Option<OrderId>,
+    pub cart_id: Option<CartId>,
 
     /// Discount amount applied
     pub discount_amount: Decimal,
@@ -653,8 +662,8 @@ pub struct PromotionUsage {
 /// Request to apply promotions to a cart
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ApplyPromotionsRequest {
-    pub cart_id: Option<Uuid>,
-    pub customer_id: Option<Uuid>,
+    pub cart_id: Option<CartId>,
+    pub customer_id: Option<CustomerId>,
     pub coupon_codes: Vec<String>,
     pub line_items: Vec<PromotionLineItem>,
     pub subtotal: Decimal,
@@ -669,7 +678,7 @@ pub struct ApplyPromotionsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromotionLineItem {
     pub id: String,
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     pub variant_id: Option<Uuid>,
     pub sku: Option<String>,
     pub category_ids: Vec<Uuid>,
@@ -706,7 +715,7 @@ pub struct ApplyPromotionsResult {
 /// A promotion that was successfully applied
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppliedPromotion {
-    pub promotion_id: Uuid,
+    pub promotion_id: PromotionId,
     pub promotion_code: String,
     pub promotion_name: String,
     pub coupon_code: Option<String>,
@@ -720,7 +729,7 @@ pub struct AppliedPromotion {
 /// A promotion that could not be applied
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RejectedPromotion {
-    pub promotion_id: Option<Uuid>,
+    pub promotion_id: Option<PromotionId>,
     pub coupon_code: Option<String>,
     pub reason: String,
     pub reason_code: RejectionReason,
@@ -729,6 +738,7 @@ pub struct RejectedPromotion {
 /// Reason a promotion or coupon was rejected during evaluation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RejectionReason {
     InvalidCode,
     Expired,
@@ -747,7 +757,7 @@ pub enum RejectionReason {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineItemDiscount {
     pub line_item_id: String,
-    pub promotion_id: Uuid,
+    pub promotion_id: PromotionId,
     pub original_price: Decimal,
     pub discount_amount: Decimal,
     pub final_price: Decimal,
@@ -784,7 +794,7 @@ pub struct CreatePromotion {
     pub tiers: Option<Vec<DiscountTier>>,
 
     // Bundle
-    pub bundle_product_ids: Option<Vec<Uuid>>,
+    pub bundle_product_ids: Option<Vec<ProductId>>,
     pub bundle_discount: Option<Decimal>,
 
     // Validity
@@ -799,14 +809,14 @@ pub struct CreatePromotion {
     pub conditions: Option<Vec<CreatePromotionCondition>>,
 
     // Targeting
-    pub applicable_product_ids: Option<Vec<Uuid>>,
+    pub applicable_product_ids: Option<Vec<ProductId>>,
     pub applicable_category_ids: Option<Vec<Uuid>>,
     pub applicable_skus: Option<Vec<String>>,
-    pub excluded_product_ids: Option<Vec<Uuid>>,
+    pub excluded_product_ids: Option<Vec<ProductId>>,
     pub excluded_category_ids: Option<Vec<Uuid>>,
 
     // Customer targeting
-    pub eligible_customer_ids: Option<Vec<Uuid>>,
+    pub eligible_customer_ids: Option<Vec<CustomerId>>,
     pub eligible_customer_groups: Option<Vec<String>>,
 
     pub currency: Option<String>,
@@ -848,7 +858,7 @@ pub struct UpdatePromotion {
 /// Create a coupon code
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCouponCode {
-    pub promotion_id: Uuid,
+    pub promotion_id: PromotionId,
     pub code: String,
     pub usage_limit: Option<i32>,
     pub per_customer_limit: Option<i32>,
@@ -872,7 +882,7 @@ pub struct PromotionFilter {
 /// Filter for listing coupon codes
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CouponFilter {
-    pub promotion_id: Option<Uuid>,
+    pub promotion_id: Option<PromotionId>,
     pub status: Option<CouponStatus>,
     pub search: Option<String>,
     pub limit: Option<u32>,
@@ -1017,10 +1027,7 @@ mod tests {
             PromotionType::from_str("percentage_off").unwrap(),
             PromotionType::PercentageOff
         );
-        assert_eq!(
-            PromotionType::from_str("buyxgety").unwrap(),
-            PromotionType::BuyXGetY
-        );
+        assert_eq!(PromotionType::from_str("buyxgety").unwrap(), PromotionType::BuyXGetY);
     }
 
     #[test]
@@ -1029,10 +1036,7 @@ mod tests {
             PromotionTrigger::from_str("coupon_code").unwrap(),
             PromotionTrigger::CouponCode
         );
-        assert_eq!(
-            PromotionTrigger::from_str("couponcode").unwrap(),
-            PromotionTrigger::CouponCode
-        );
+        assert_eq!(PromotionTrigger::from_str("couponcode").unwrap(), PromotionTrigger::CouponCode);
     }
 
     #[test]
@@ -1061,13 +1065,7 @@ mod tests {
 
     #[test]
     fn test_coupon_status_from_str() {
-        assert_eq!(
-            CouponStatus::from_str("active").unwrap(),
-            CouponStatus::Active
-        );
-        assert_eq!(
-            CouponStatus::from_str("exhausted").unwrap(),
-            CouponStatus::Exhausted
-        );
+        assert_eq!(CouponStatus::from_str("active").unwrap(), CouponStatus::Active);
+        assert_eq!(CouponStatus::from_str("exhausted").unwrap(), CouponStatus::Exhausted);
     }
 }

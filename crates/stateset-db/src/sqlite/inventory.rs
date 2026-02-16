@@ -11,10 +11,10 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, validate_quantity, validate_sku, AdjustInventory, BatchResult,
-    CommerceError, CreateInventoryItem, InventoryBalance, InventoryFilter, InventoryItem,
-    InventoryRepository, InventoryReservation, InventoryTransaction, LocationStock,
-    ReservationStatus, ReserveInventory, Result, StockLevel, TransactionType,
+    AdjustInventory, BatchResult, CommerceError, CreateInventoryItem, InventoryBalance,
+    InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
+    InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
+    TransactionType, validate_batch_size, validate_quantity, validate_sku,
 };
 use uuid::Uuid;
 
@@ -35,9 +35,7 @@ impl SqliteInventoryRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn expire_reservation_in_tx(
@@ -143,30 +141,26 @@ impl SqliteInventoryRepository {
         let now = Utc::now();
 
         let item = tx
-            .query_row(
-                "SELECT * FROM inventory_items WHERE sku = ?",
-                [&sku],
-                |row| {
-                    Ok(InventoryItem {
-                        id: row.get("id")?,
-                        sku: row.get("sku")?,
-                        name: row.get("name")?,
-                        description: row.get("description")?,
-                        unit_of_measure: row.get("unit_of_measure")?,
-                        is_active: row.get::<_, i32>("is_active")? != 0,
-                        created_at: parse_datetime_row(
-                            &row.get::<_, String>("created_at")?,
-                            "inventory_item",
-                            "created_at",
-                        )?,
-                        updated_at: parse_datetime_row(
-                            &row.get::<_, String>("updated_at")?,
-                            "inventory_item",
-                            "updated_at",
-                        )?,
-                    })
-                },
-            )
+            .query_row("SELECT * FROM inventory_items WHERE sku = ?", [&sku], |row| {
+                Ok(InventoryItem {
+                    id: row.get("id")?,
+                    sku: row.get("sku")?,
+                    name: row.get("name")?,
+                    description: row.get("description")?,
+                    unit_of_measure: row.get("unit_of_measure")?,
+                    is_active: row.get::<_, i32>("is_active")? != 0,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>("created_at")?,
+                        "inventory_item",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>("updated_at")?,
+                        "inventory_item",
+                        "updated_at",
+                    )?,
+                })
+            })
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => rusqlite::Error::ToSqlConversionFailure(
                     Box::new(CommerceError::InventoryItemNotFound(sku.clone())),
@@ -557,10 +551,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let sku = input.sku.clone();
         let name = input.name.clone();
         let description = input.description.clone();
-        let unit_of_measure = input
-            .unit_of_measure
-            .clone()
-            .unwrap_or_else(|| "EA".to_string());
+        let unit_of_measure = input.unit_of_measure.clone().unwrap_or_else(|| "EA".to_string());
         let location_id = input.location_id.unwrap_or(1);
         let initial_qty = input.initial_quantity.unwrap_or_default();
         let reorder_point = input.reorder_point;
@@ -666,30 +657,26 @@ impl InventoryRepository for SqliteInventoryRepository {
 
     fn get_item_by_sku(&self, sku: &str) -> Result<Option<InventoryItem>> {
         let conn = self.conn()?;
-        let result = conn.query_row(
-            "SELECT * FROM inventory_items WHERE sku = ?",
-            [sku],
-            |row| {
-                Ok(InventoryItem {
-                    id: row.get("id")?,
-                    sku: row.get("sku")?,
-                    name: row.get("name")?,
-                    description: row.get("description")?,
-                    unit_of_measure: row.get("unit_of_measure")?,
-                    is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: parse_datetime_row(
-                        &row.get::<_, String>("created_at")?,
-                        "inventory_item",
-                        "created_at",
-                    )?,
-                    updated_at: parse_datetime_row(
-                        &row.get::<_, String>("updated_at")?,
-                        "inventory_item",
-                        "updated_at",
-                    )?,
-                })
-            },
-        );
+        let result = conn.query_row("SELECT * FROM inventory_items WHERE sku = ?", [sku], |row| {
+            Ok(InventoryItem {
+                id: row.get("id")?,
+                sku: row.get("sku")?,
+                name: row.get("name")?,
+                description: row.get("description")?,
+                unit_of_measure: row.get("unit_of_measure")?,
+                is_active: row.get::<_, i32>("is_active")? != 0,
+                created_at: parse_datetime_row(
+                    &row.get::<_, String>("created_at")?,
+                    "inventory_item",
+                    "created_at",
+                )?,
+                updated_at: parse_datetime_row(
+                    &row.get::<_, String>("updated_at")?,
+                    "inventory_item",
+                    "updated_at",
+                )?,
+            })
+        });
 
         match result {
             Ok(item) => Ok(Some(item)),
@@ -699,19 +686,18 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn get_stock(&self, sku: &str) -> Result<Option<StockLevel>> {
-        with_retry(|| {
-            let conn = self.pool.get().map_err(|e| {
-                rusqlite::Error::SqliteFailure(
-                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-                    Some(e.to_string()),
-                )
+        with_retry(
+            || {
+                let conn = self.pool.get().map_err(|e| {
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                        Some(e.to_string()),
+                    )
             })?;
 
             // Get item directly with this connection
-            let item_result = conn.query_row(
-                "SELECT * FROM inventory_items WHERE sku = ?",
-                [sku],
-                |row| {
+            let item_result =
+                conn.query_row("SELECT * FROM inventory_items WHERE sku = ?", [sku], |row| {
                     Ok(InventoryItem {
                         id: row.get("id")?,
                         sku: row.get("sku")?,
@@ -730,8 +716,7 @@ impl InventoryRepository for SqliteInventoryRepository {
                             "updated_at",
                         )?,
                     })
-                },
-            );
+                });
 
             let item = match item_result {
                 Ok(item) => item,
@@ -775,15 +760,17 @@ impl InventoryRepository for SqliteInventoryRepository {
             let total_allocated: Decimal = locations.iter().map(|l| l.allocated).sum();
             let total_available: Decimal = locations.iter().map(|l| l.available).sum();
 
-            Ok(Some(StockLevel {
-                sku: item.sku,
-                name: item.name,
-                total_on_hand,
-                total_allocated,
-                total_available,
-                locations,
-            }))
-        })
+                Ok(Some(StockLevel {
+                    sku: item.sku,
+                    name: item.name,
+                    total_on_hand,
+                    total_allocated,
+                    total_available,
+                    locations,
+                }))
+            },
+            MAX_RETRIES,
+        )
         .map_err(map_db_error)
     }
 
@@ -1355,18 +1342,13 @@ impl InventoryRepository for SqliteInventoryRepository {
             let sku = input.sku.clone();
             let name = input.name.clone();
             let description = input.description.clone();
-            let unit_of_measure = input
-                .unit_of_measure
-                .clone()
-                .unwrap_or_else(|| "EA".to_string());
+            let unit_of_measure = input.unit_of_measure.clone().unwrap_or_else(|| "EA".to_string());
 
             // Check SKU uniqueness
             let exists: i32 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM inventory_items WHERE sku = ?",
-                    [&sku],
-                    |row| row.get(0),
-                )
+                .query_row("SELECT COUNT(*) FROM inventory_items WHERE sku = ?", [&sku], |row| {
+                    row.get(0)
+                })
                 .map_err(map_db_error)?;
 
             if exists > 0 {
@@ -1475,30 +1457,26 @@ impl InventoryRepository for SqliteInventoryRepository {
             }
             // Get item directly with this connection
             let item = tx
-                .query_row(
-                    "SELECT * FROM inventory_items WHERE sku = ?",
-                    [&input.sku],
-                    |row| {
-                        Ok(InventoryItem {
-                            id: row.get("id")?,
-                            sku: row.get("sku")?,
-                            name: row.get("name")?,
-                            description: row.get("description")?,
-                            unit_of_measure: row.get("unit_of_measure")?,
-                            is_active: row.get::<_, i32>("is_active")? != 0,
-                            created_at: parse_datetime_row(
-                                &row.get::<_, String>("created_at")?,
-                                "inventory_item",
-                                "created_at",
-                            )?,
-                            updated_at: parse_datetime_row(
-                                &row.get::<_, String>("updated_at")?,
-                                "inventory_item",
-                                "updated_at",
-                            )?,
-                        })
-                    },
-                )
+                .query_row("SELECT * FROM inventory_items WHERE sku = ?", [&input.sku], |row| {
+                    Ok(InventoryItem {
+                        id: row.get("id")?,
+                        sku: row.get("sku")?,
+                        name: row.get("name")?,
+                        description: row.get("description")?,
+                        unit_of_measure: row.get("unit_of_measure")?,
+                        is_active: row.get::<_, i32>("is_active")? != 0,
+                        created_at: parse_datetime_row(
+                            &row.get::<_, String>("created_at")?,
+                            "inventory_item",
+                            "created_at",
+                        )?,
+                        updated_at: parse_datetime_row(
+                            &row.get::<_, String>("updated_at")?,
+                            "inventory_item",
+                            "updated_at",
+                        )?,
+                    })
+                })
                 .map_err(|e| match e {
                     rusqlite::Error::QueryReturnedNoRows => {
                         CommerceError::InventoryItemNotFound(input.sku.clone())
@@ -1664,11 +1642,7 @@ impl InventoryRepository for SqliteInventoryRepository {
             }
 
             // Record transaction
-            let tx_type = if input.quantity >= Decimal::ZERO {
-                "receipt"
-            } else {
-                "adjustment"
-            };
+            let tx_type = if input.quantity >= Decimal::ZERO { "receipt" } else { "adjustment" };
             tx.execute(
                 "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason, created_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1716,10 +1690,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!(
-            "SELECT * FROM inventory_items WHERE id IN ({})",
-            placeholders
-        );
+        let sql = format!("SELECT * FROM inventory_items WHERE id IN ({})", placeholders);
 
         let params = i64_params(&ids);
         let params_refs = params_refs(&params);
@@ -1761,10 +1732,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(skus.len());
-        let sql = format!(
-            "SELECT * FROM inventory_items WHERE sku IN ({})",
-            placeholders
-        );
+        let sql = format!("SELECT * FROM inventory_items WHERE sku IN ({})", placeholders);
 
         let params = string_params(&skus);
         let params_refs = params_refs(&params);

@@ -6,9 +6,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product,
-    ProductFilter, ProductRepository, ProductStatus, ProductType, ProductVariant, Result,
-    UpdateProduct,
+    BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product, ProductFilter,
+    ProductId, ProductRepository, ProductStatus, ProductType, ProductVariant, Result, UpdateProduct,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -89,7 +89,7 @@ impl PgProductRepository {
         })?;
 
         Ok(Product {
-            id,
+            id: ProductId::from(id),
             name,
             slug,
             description,
@@ -127,7 +127,7 @@ impl PgProductRepository {
 
         Ok(ProductVariant {
             id,
-            product_id,
+            product_id: ProductId::from(product_id),
             sku,
             name,
             price,
@@ -146,21 +146,15 @@ impl PgProductRepository {
 
     /// Create a product (async)
     pub async fn create_async(&self, input: CreateProduct) -> Result<Product> {
-        let id = Uuid::new_v4();
+        let id = ProductId::new();
         let now = Utc::now();
-        let slug = input
-            .slug
-            .clone()
-            .unwrap_or_else(|| Product::generate_slug(&input.name));
+        let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
         let description = input.description.clone().unwrap_or_default();
         let product_type = input.product_type.unwrap_or_default();
         let attributes = input.attributes.clone().unwrap_or_default();
 
         let attributes_json = serde_json::to_value(&attributes).unwrap_or_default();
-        let seo_json = input
-            .seo
-            .as_ref()
-            .map(|s| serde_json::to_value(s).unwrap_or_default());
+        let seo_json = input.seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
 
         sqlx::query(
             r#"
@@ -168,7 +162,7 @@ impl PgProductRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
-        .bind(id)
+        .bind(id.into_uuid())
         .bind(&input.name)
         .bind(&slug)
         .bind(&description)
@@ -185,7 +179,7 @@ impl PgProductRepository {
         // Create variants if provided
         if let Some(variant_inputs) = &input.variants {
             for (i, vi) in variant_inputs.iter().enumerate() {
-                self.add_variant_async(id, vi.clone(), i == 0).await?;
+                self.add_variant_async(id.into_uuid(), vi.clone(), i == 0).await?;
             }
         }
 
@@ -204,9 +198,9 @@ impl PgProductRepository {
     }
 
     /// Get a product by ID (async)
-    pub async fn get_async(&self, id: Uuid) -> Result<Option<Product>> {
+    pub async fn get_async(&self, id: ProductId) -> Result<Option<Product>> {
         let row = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1")
-            .bind(id)
+            .bind(id.into_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -226,15 +220,15 @@ impl PgProductRepository {
     }
 
     /// Update a product (async)
-    pub async fn update_async(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
+    pub async fn update_async(&self, id: ProductId, input: UpdateProduct) -> Result<Product> {
         let now = Utc::now();
 
         let existing_row = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1")
-            .bind(id)
+            .bind(id.into_uuid())
             .fetch_optional(&self.pool)
             .await
             .map_err(map_db_error)?
-            .ok_or(CommerceError::ProductNotFound(id))?;
+            .ok_or(CommerceError::ProductNotFound(id.into_uuid()))?;
         let current_version = existing_row.version;
         let existing = Self::row_to_product(existing_row)?;
 
@@ -246,9 +240,7 @@ impl PgProductRepository {
         let new_seo = input.seo.or(existing.seo);
 
         let attributes_json = serde_json::to_value(&new_attributes).unwrap_or_default();
-        let seo_json = new_seo
-            .as_ref()
-            .map(|s| serde_json::to_value(s).unwrap_or_default());
+        let seo_json = new_seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
 
         let result = sqlx::query(
             r#"
@@ -265,7 +257,7 @@ impl PgProductRepository {
         .bind(&attributes_json)
         .bind(&seo_json)
         .bind(now)
-        .bind(id)
+        .bind(id.into_uuid())
         .bind(current_version)
         .execute(&self.pool)
         .await
@@ -278,9 +270,7 @@ impl PgProductRepository {
             });
         }
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::ProductNotFound(id))
+        self.get_async(id).await?.ok_or(CommerceError::ProductNotFound(id.into_uuid()))
     }
 
     /// List products (async)
@@ -305,9 +295,7 @@ impl PgProductRepository {
             builder.push(" AND status != 'archived'");
         }
         if let Some(product_type) = product_type {
-            builder
-                .push(" AND product_type = ")
-                .push_bind(product_type.to_string());
+            builder.push(" AND product_type = ").push_bind(product_type.to_string());
         }
         if let Some(search) = search {
             let pattern = format!("%{}%", search);
@@ -384,10 +372,10 @@ impl PgProductRepository {
     }
 
     /// Delete a product (async)
-    pub async fn delete_async(&self, id: Uuid) -> Result<()> {
+    pub async fn delete_async(&self, id: ProductId) -> Result<()> {
         sqlx::query("UPDATE products SET status = 'archived', updated_at = $1 WHERE id = $2")
             .bind(Utc::now())
-            .bind(id)
+            .bind(id.into_uuid())
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -436,7 +424,7 @@ impl PgProductRepository {
 
         Ok(ProductVariant {
             id,
-            product_id,
+            product_id: ProductId::from(product_id),
             sku: input.sku,
             name: input.name.unwrap_or_default(),
             price: input.price,
@@ -456,10 +444,10 @@ impl PgProductRepository {
     /// Add variant (public async)
     pub async fn add_variant_public_async(
         &self,
-        product_id: Uuid,
+        product_id: ProductId,
         input: CreateProductVariant,
     ) -> Result<ProductVariant> {
-        self.add_variant_async(product_id, input, false).await
+        self.add_variant_async(product_id.into_uuid(), input, false).await
     }
 
     /// Get variant by ID (async)
@@ -534,9 +522,7 @@ impl PgProductRepository {
             });
         }
 
-        self.get_variant_async(id)
-            .await?
-            .ok_or(CommerceError::ProductVariantNotFound(id))
+        self.get_variant_async(id).await?.ok_or(CommerceError::ProductVariantNotFound(id))
     }
 
     /// Delete variant (async)
@@ -551,10 +537,10 @@ impl PgProductRepository {
     }
 
     /// Get all variants for product (async)
-    pub async fn get_variants_async(&self, product_id: Uuid) -> Result<Vec<ProductVariant>> {
+    pub async fn get_variants_async(&self, product_id: ProductId) -> Result<Vec<ProductVariant>> {
         let rows =
             sqlx::query_as::<_, VariantRow>("SELECT * FROM product_variants WHERE product_id = $1")
-                .bind(product_id)
+                .bind(product_id.into_uuid())
                 .fetch_all(&self.pool)
                 .await
                 .map_err(map_db_error)?;
@@ -588,9 +574,7 @@ impl PgProductRepository {
             builder.push(" AND status != 'archived'");
         }
         if let Some(product_type) = product_type {
-            builder
-                .push(" AND product_type = ")
-                .push_bind(product_type.to_string());
+            builder.push(" AND product_type = ").push_bind(product_type.to_string());
         }
         if let Some(search) = search {
             let pattern = format!("%{}%", search);
@@ -644,11 +628,8 @@ impl PgProductRepository {
             }
         }
 
-        let count: (i64,) = builder
-            .build_query_as()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }
@@ -683,21 +664,15 @@ impl PgProductRepository {
         let mut products = Vec::with_capacity(inputs.len());
 
         for input in inputs {
-            let id = Uuid::new_v4();
+            let id = ProductId::new();
             let now = Utc::now();
-            let slug = input
-                .slug
-                .clone()
-                .unwrap_or_else(|| Product::generate_slug(&input.name));
+            let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
             let description = input.description.clone().unwrap_or_default();
             let product_type = input.product_type.unwrap_or_default();
             let attributes = input.attributes.clone().unwrap_or_default();
 
             let attributes_json = serde_json::to_value(&attributes).unwrap_or_default();
-            let seo_json = input
-                .seo
-                .as_ref()
-                .map(|s| serde_json::to_value(s).unwrap_or_default());
+            let seo_json = input.seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
 
             sqlx::query(
                 r#"
@@ -705,7 +680,7 @@ impl PgProductRepository {
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 "#,
             )
-            .bind(id)
+            .bind(id.into_uuid())
             .bind(&input.name)
             .bind(&slug)
             .bind(&description)
@@ -735,7 +710,7 @@ impl PgProductRepository {
                         "#,
                     )
                     .bind(variant_id)
-                    .bind(id)
+                    .bind(id.into_uuid())
                     .bind(&vi.sku)
                     .bind(vi.name.as_deref().unwrap_or(&vi.sku))
                     .bind(vi.price)
@@ -776,7 +751,7 @@ impl PgProductRepository {
     /// Update multiple products - partial success allowed (async)
     pub async fn update_batch_async(
         &self,
-        updates: Vec<(Uuid, UpdateProduct)>,
+        updates: Vec<(ProductId, UpdateProduct)>,
     ) -> Result<BatchResult<Product>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
@@ -794,7 +769,7 @@ impl PgProductRepository {
     /// Update multiple products - atomic (all-or-nothing) (async)
     pub async fn update_batch_atomic_async(
         &self,
-        updates: Vec<(Uuid, UpdateProduct)>,
+        updates: Vec<(ProductId, UpdateProduct)>,
     ) -> Result<Vec<Product>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -805,11 +780,11 @@ impl PgProductRepository {
 
             let existing_row =
                 sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1 FOR UPDATE")
-                    .bind(id)
+                    .bind(id.into_uuid())
                     .fetch_optional(tx.as_mut())
                     .await
                     .map_err(map_db_error)?
-                    .ok_or(CommerceError::ProductNotFound(id))?;
+                    .ok_or(CommerceError::ProductNotFound(id.into_uuid()))?;
             let current_version = existing_row.version;
             let existing = Self::row_to_product(existing_row)?;
 
@@ -821,9 +796,7 @@ impl PgProductRepository {
             let new_seo = input.seo.or(existing.seo);
 
             let attributes_json = serde_json::to_value(&new_attributes).unwrap_or_default();
-            let seo_json = new_seo
-                .as_ref()
-                .map(|s| serde_json::to_value(s).unwrap_or_default());
+            let seo_json = new_seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
 
             let result = sqlx::query(
                 r#"
@@ -840,7 +813,7 @@ impl PgProductRepository {
             .bind(&attributes_json)
             .bind(&seo_json)
             .bind(now)
-            .bind(id)
+            .bind(id.into_uuid())
             .bind(current_version)
             .execute(tx.as_mut())
             .await
@@ -873,7 +846,7 @@ impl PgProductRepository {
     }
 
     /// Delete multiple products - partial success allowed (async)
-    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    pub async fn delete_batch_async(&self, ids: Vec<ProductId>) -> Result<BatchResult<ProductId>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
@@ -888,7 +861,7 @@ impl PgProductRepository {
     }
 
     /// Delete multiple products - atomic (all-or-nothing) (async)
-    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<ProductId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -897,9 +870,10 @@ impl PgProductRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
+        let uuid_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         sqlx::query("UPDATE products SET status = 'archived', updated_at = $1 WHERE id = ANY($2)")
             .bind(now)
-            .bind(&ids)
+            .bind(&uuid_ids)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -909,14 +883,15 @@ impl PgProductRepository {
     }
 
     /// Get multiple products by ID (async)
-    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Product>> {
+    pub async fn get_batch_async(&self, ids: Vec<ProductId>) -> Result<Vec<Product>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
+        let uuid_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let rows = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = ANY($1)")
-            .bind(&ids)
+            .bind(&uuid_ids)
             .fetch_all(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -934,7 +909,7 @@ impl ProductRepository for PgProductRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Product>> {
+    fn get(&self, id: ProductId) -> Result<Option<Product>> {
         super::block_on(self.get_async(id))
     }
 
@@ -942,7 +917,7 @@ impl ProductRepository for PgProductRepository {
         super::block_on(self.get_by_slug_async(slug))
     }
 
-    fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
+    fn update(&self, id: ProductId, input: UpdateProduct) -> Result<Product> {
         super::block_on(self.update_async(id, input))
     }
 
@@ -950,13 +925,13 @@ impl ProductRepository for PgProductRepository {
         super::block_on(self.list_async(filter))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: ProductId) -> Result<()> {
         super::block_on(self.delete_async(id))
     }
 
     fn add_variant(
         &self,
-        product_id: Uuid,
+        product_id: ProductId,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
         super::block_on(self.add_variant_public_async(product_id, variant))
@@ -978,7 +953,7 @@ impl ProductRepository for PgProductRepository {
         super::block_on(self.delete_variant_async(id))
     }
 
-    fn get_variants(&self, product_id: Uuid) -> Result<Vec<ProductVariant>> {
+    fn get_variants(&self, product_id: ProductId) -> Result<Vec<ProductVariant>> {
         super::block_on(self.get_variants_async(product_id))
     }
 
@@ -996,23 +971,23 @@ impl ProductRepository for PgProductRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<BatchResult<Product>> {
+    fn update_batch(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<BatchResult<Product>> {
         super::block_on(self.update_batch_async(updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<Vec<Product>> {
+    fn update_batch_atomic(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<Vec<Product>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<ProductId>) -> Result<BatchResult<ProductId>> {
         super::block_on(self.delete_batch_async(ids))
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<ProductId>) -> Result<()> {
         super::block_on(self.delete_batch_atomic_async(ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Product>> {
+    fn get_batch(&self, ids: Vec<ProductId>) -> Result<Vec<Product>> {
         super::block_on(self.get_batch_async(ids))
     }
 }

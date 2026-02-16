@@ -2,9 +2,9 @@
 //!
 //! This crate provides Java/JNI bindings for the StateSet commerce engine.
 
+use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::sys::{jdouble, jint, jlong};
-use jni::JNIEnv;
 use rust_decimal::Decimal;
 use stateset_core::{OrderStatus, ReturnReason};
 use stateset_embedded::{
@@ -107,14 +107,11 @@ fn create_customer_object<'a>(
         None => return JObject::null(),
     };
     let first_name_result = env.new_string(&customer.first_name);
-    let first_name = match jni_or_throw(
-        env,
-        first_name_result,
-        "Failed to create customer first name",
-    ) {
-        Some(value) => value,
-        None => return JObject::null(),
-    };
+    let first_name =
+        match jni_or_throw(env, first_name_result, "Failed to create customer first name") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
     let last_name_result = env.new_string(&customer.last_name);
     let last_name = match jni_or_throw(env, last_name_result, "Failed to create customer last name")
     {
@@ -127,14 +124,11 @@ fn create_customer_object<'a>(
         None => return JObject::null(),
     };
     let created_at_result = env.new_string(customer.created_at.to_rfc3339());
-    let created_at = match jni_or_throw(
-        env,
-        created_at_result,
-        "Failed to create customer created_at",
-    ) {
-        Some(value) => value,
-        None => return JObject::null(),
-    };
+    let created_at =
+        match jni_or_throw(env, created_at_result, "Failed to create customer created_at") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
 
     let obj_result = env.new_object(
         class,
@@ -216,14 +210,11 @@ fn create_order_object<'a>(env: &mut JNIEnv<'a>, order: &stateset_core::Order) -
         None => return JObject::null(),
     };
     let customer_id_result = env.new_string(order.customer_id.to_string());
-    let customer_id = match jni_or_throw(
-        env,
-        customer_id_result,
-        "Failed to create order customer id",
-    ) {
-        Some(value) => value,
-        None => return JObject::null(),
-    };
+    let customer_id =
+        match jni_or_throw(env, customer_id_result, "Failed to create order customer id") {
+            Some(value) => value,
+            None => return JObject::null(),
+        };
     let status_result = env.new_string(format!("{:?}", order.status));
     let status = match jni_or_throw(env, status_result, "Failed to create order status") {
         Some(value) => value,
@@ -318,11 +309,8 @@ fn create_cart_object<'a>(env: &mut JNIEnv<'a>, cart: &stateset_core::Cart) -> J
         Some(value) => value,
         None => return JObject::null(),
     };
-    let customer_id_result = env.new_string(
-        cart.customer_id
-            .map(|id| id.to_string())
-            .unwrap_or_default(),
-    );
+    let customer_id_result =
+        env.new_string(cart.customer_id.map(|id| id.to_string()).unwrap_or_default());
     let customer_id =
         match jni_or_throw(env, customer_id_result, "Failed to create cart customer id") {
             Some(value) => value,
@@ -373,11 +361,7 @@ fn create_sales_summary_object<'a>(
     let obj_result = env.new_object(
         class,
         "(DID)V",
-        &[
-            JValue::Double(total_revenue),
-            JValue::Int(total_orders),
-            JValue::Double(aov),
-        ],
+        &[JValue::Double(total_revenue), JValue::Int(total_orders), JValue::Double(aov)],
     );
     match jni_or_throw(env, obj_result, "Failed to create sales summary object") {
         Some(obj) => obj,
@@ -517,9 +501,8 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeGet<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| {
-        commerce.customers().get(uuid).map_err(|e| e.to_string())
-    });
+    let result =
+        use_handle(ptr, |commerce| commerce.customers().get(uuid).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(customer)) => create_customer_object(&mut env, &customer),
@@ -538,10 +521,7 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeList<'local>(
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .customers()
-            .list(CustomerFilter::default())
-            .map_err(|e| e.to_string())
+        commerce.customers().list(CustomerFilter::default()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -561,12 +541,8 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeList<'local>(
 
             for customer in &customers {
                 let obj = create_customer_object(&mut env, customer);
-                let add_result = env.call_method(
-                    &list,
-                    "add",
-                    "(Ljava/lang/Object;)Z",
-                    &[JValue::Object(&obj)],
-                );
+                let add_result =
+                    env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]);
                 if jni_or_throw(&mut env, add_result, "Failed to add customer to list").is_none() {
                     return JObject::null();
                 }
@@ -635,15 +611,10 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeGet<'local>(
 
     // Get variant by SKU, then get its parent product
     let result = use_handle(ptr, |commerce| {
-        if let Some(variant) = commerce
-            .products()
-            .get_variant_by_sku(&sku_str)
-            .map_err(|e| e.to_string())?
+        if let Some(variant) =
+            commerce.products().get_variant_by_sku(&sku_str).map_err(|e| e.to_string())?
         {
-            commerce
-                .products()
-                .get(variant.product_id)
-                .map_err(|e| e.to_string())
+            commerce.products().get(variant.product_id).map_err(|e| e.to_string())
         } else {
             Ok(None)
         }
@@ -666,10 +637,7 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeList<'local>(
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .products()
-            .list(ProductFilter::default())
-            .map_err(|e| e.to_string())
+        commerce.products().list(ProductFilter::default()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -689,12 +657,8 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeList<'local>(
 
             for product in &products {
                 let obj = create_product_object(&mut env, product);
-                let add_result = env.call_method(
-                    &list,
-                    "add",
-                    "(Ljava/lang/Object;)Z",
-                    &[JValue::Object(&obj)],
-                );
+                let add_result =
+                    env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]);
                 if jni_or_throw(&mut env, add_result, "Failed to add product to list").is_none() {
                     return JObject::null();
                 }
@@ -761,10 +725,7 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeAdjust<'local>
     let qty = Decimal::try_from(quantity).unwrap_or_default();
 
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .inventory()
-            .adjust(&sku_str, qty, &reason_str)
-            .map_err(|e| e.to_string())?;
+        commerce.inventory().adjust(&sku_str, qty, &reason_str).map_err(|e| e.to_string())?;
         // Return the updated item
         commerce
             .inventory()
@@ -792,10 +753,7 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeGet<'local>(
     let sku_str = get_string(&mut env, &sku);
 
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .inventory()
-            .get_item_by_sku(&sku_str)
-            .map_err(|e| e.to_string())
+        commerce.inventory().get_item_by_sku(&sku_str).map_err(|e| e.to_string())
     });
 
     match result {
@@ -909,9 +867,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeGet<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| {
-        commerce.orders().get(uuid).map_err(|e| e.to_string())
-    });
+    let result = use_handle(ptr, |commerce| commerce.orders().get(uuid).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(order)) => create_order_object(&mut env, &order),
@@ -930,10 +886,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeList<'local>(
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .orders()
-            .list(OrderFilter::default())
-            .map_err(|e| e.to_string())
+        commerce.orders().list(OrderFilter::default()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -953,12 +906,8 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeList<'local>(
 
             for order in &orders {
                 let obj = create_order_object(&mut env, order);
-                let add_result = env.call_method(
-                    &list,
-                    "add",
-                    "(Ljava/lang/Object;)Z",
-                    &[JValue::Object(&obj)],
-                );
+                let add_result =
+                    env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]);
                 if jni_or_throw(&mut env, add_result, "Failed to add order to list").is_none() {
                     return JObject::null();
                 }
@@ -1002,10 +951,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeUpdateStatus<'loc
             "cancelled" => OrderStatus::Cancelled,
             _ => OrderStatus::Pending,
         };
-        commerce
-            .orders()
-            .update_status(uuid, status)
-            .map_err(|e| e.to_string())
+        commerce.orders().update_status(uuid, status).map_err(|e| e.to_string())
     });
 
     if let Err(e) = result {
@@ -1041,11 +987,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCreate<'local>(
                 customer_id: customer_uuid,
                 customer_email: None,
                 customer_name: None,
-                currency: if currency_str.is_empty() {
-                    None
-                } else {
-                    Some(currency_str)
-                },
+                currency: if currency_str.is_empty() { None } else { Some(currency_str) },
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1076,9 +1018,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeGet<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| {
-        commerce.carts().get(uuid).map_err(|e| e.to_string())
-    });
+    let result = use_handle(ptr, |commerce| commerce.carts().get(uuid).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(cart)) => create_cart_object(&mut env, &cart),
@@ -1228,11 +1168,7 @@ pub extern "system" fn Java_com_stateset_embedded_Payments_nativeRecordPayment<'
                 amount: amt,
                 currency: Some("USD".to_string()),
                 payment_method,
-                external_id: if reference_str.is_empty() {
-                    None
-                } else {
-                    Some(reference_str)
-                },
+                external_id: if reference_str.is_empty() { None } else { Some(reference_str) },
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1328,9 +1264,8 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeProcess<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| {
-        commerce.returns().approve(uuid).map_err(|e| e.to_string())
-    });
+    let result =
+        use_handle(ptr, |commerce| commerce.returns().approve(uuid).map_err(|e| e.to_string()));
 
     if let Err(e) = result {
         throw_exception(&mut env, &e);
@@ -1356,9 +1291,8 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeRefund<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| {
-        commerce.returns().complete(uuid).map_err(|e| e.to_string())
-    });
+    let result =
+        use_handle(ptr, |commerce| commerce.returns().complete(uuid).map_err(|e| e.to_string()));
 
     if let Err(e) = result {
         throw_exception(&mut env, &e);
@@ -1410,10 +1344,7 @@ pub extern "system" fn Java_com_stateset_embedded_Analytics_nativeSalesSummary<'
 
 fn to_json_string<'a>(env: &mut JNIEnv<'a>, data: &impl serde::Serialize) -> JObject<'a> {
     match serde_json::to_string(data) {
-        Ok(json) => env
-            .new_string(&json)
-            .map(|s| s.into())
-            .unwrap_or(JObject::null()),
+        Ok(json) => env.new_string(&json).map(|s| s.into()).unwrap_or(JObject::null()),
         Err(_) => JObject::null(),
     }
 }
@@ -1472,10 +1403,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeListInspections<
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .quality()
-            .list_inspections(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.quality().list_inspections(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(inspections) => to_json_string(&mut env, &inspections),
@@ -1599,10 +1527,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeList<'local>(
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .lots()
-            .list(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.lots().list(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(lots) => to_json_string(&mut env, &lots),
@@ -1622,10 +1547,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetBySku<'local>(
 ) -> JObject<'local> {
     let sku_str = get_string(&mut env, &sku);
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .lots()
-            .get_available_lots_for_sku(&sku_str)
-            .map_err(|e| e.to_string())
+        commerce.lots().get_available_lots_for_sku(&sku_str).map_err(|e| e.to_string())
     });
     match result {
         Ok(lots) => to_json_string(&mut env, &lots),
@@ -1644,10 +1566,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetExpiring<'local>
     days: jint,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .lots()
-            .get_expiring_lots(days)
-            .map_err(|e| e.to_string())
+        commerce.lots().get_expiring_lots(days).map_err(|e| e.to_string())
     });
     match result {
         Ok(lots) => to_json_string(&mut env, &lots),
@@ -1700,10 +1619,7 @@ pub extern "system" fn Java_com_stateset_embedded_Serials_nativeList<'local>(
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .serials()
-            .list(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.serials().list(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(serials) => to_json_string(&mut env, &serials),
@@ -1723,10 +1639,7 @@ pub extern "system" fn Java_com_stateset_embedded_Serials_nativeGetByNumber<'loc
 ) -> JObject<'local> {
     let serial_str = get_string(&mut env, &serial_number);
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .serials()
-            .get_by_serial(&serial_str)
-            .map_err(|e| e.to_string())
+        commerce.serials().get_by_serial(&serial_str).map_err(|e| e.to_string())
     });
     match result {
         Ok(Some(serial)) => to_json_string(&mut env, &serial),
@@ -1780,10 +1693,7 @@ pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeList<'local>(
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .warehouse()
-            .list_warehouses(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.warehouse().list_warehouses(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(warehouses) => to_json_string(&mut env, &warehouses),
@@ -1857,10 +1767,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeListReceipts<'
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .receiving()
-            .list_receipts(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.receiving().list_receipts(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(receipts) => to_json_string(&mut env, &receipts),
@@ -1941,10 +1848,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeComplete<'loca
     };
 
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .receiving()
-            .complete_receiving(uuid)
-            .map_err(|e| e.to_string())
+        commerce.receiving().complete_receiving(uuid).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1970,10 +1874,7 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreateWave<'
     let result = use_handle(ptr, |commerce| {
         commerce
             .fulfillment()
-            .create_wave(stateset_core::CreateWave {
-                warehouse_id,
-                ..Default::default()
-            })
+            .create_wave(stateset_core::CreateWave { warehouse_id, ..Default::default() })
             .map_err(|e| e.to_string())
     });
 
@@ -1993,10 +1894,7 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeListWaves<'l
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .fulfillment()
-            .list_waves(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.fulfillment().list_waves(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(waves) => to_json_string(&mut env, &waves),
@@ -2027,10 +1925,7 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreatePickTa
 
     // Create all pick tasks for the order at once
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .fulfillment()
-            .create_picks_for_order(uuid, warehouse_id)
-            .map_err(|e| e.to_string())
+        commerce.fulfillment().create_picks_for_order(uuid, warehouse_id).map_err(|e| e.to_string())
     });
 
     match result {
@@ -2098,10 +1993,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeListBill
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .accounts_payable()
-            .list_bills(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.accounts_payable().list_bills(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(bills) => to_json_string(&mut env, &bills),
@@ -2119,10 +2011,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeGetAging
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .accounts_payable()
-            .get_aging_summary()
-            .map_err(|e| e.to_string())
+        commerce.accounts_payable().get_aging_summary().map_err(|e| e.to_string())
     });
     match result {
         Ok(summary) => to_json_string(&mut env, &summary),
@@ -2146,10 +2035,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetAg
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .accounts_receivable()
-            .get_aging_summary()
-            .map_err(|e| e.to_string())
+        commerce.accounts_receivable().get_aging_summary().map_err(|e| e.to_string())
     });
     match result {
         Ok(summary) => to_json_string(&mut env, &summary),
@@ -2168,10 +2054,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetDs
     days: jint,
 ) -> jdouble {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .accounts_receivable()
-            .get_dso(days)
-            .map_err(|e| e.to_string())
+        commerce.accounts_receivable().get_dso(days).map_err(|e| e.to_string())
     });
     match result {
         Ok(dso) => to_f64_or_nan(dso),
@@ -2251,10 +2134,7 @@ pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetItemCo
 ) -> JObject<'local> {
     let sku_str = get_string(&mut env, &sku);
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .cost_accounting()
-            .get_item_cost(&sku_str)
-            .map_err(|e| e.to_string())
+        commerce.cost_accounting().get_item_cost(&sku_str).map_err(|e| e.to_string())
     });
     match result {
         Ok(Some(cost)) => to_json_string(&mut env, &cost),
@@ -2306,10 +2186,7 @@ pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetTotalI
     ptr: jlong,
 ) -> jdouble {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .cost_accounting()
-            .get_total_inventory_value()
-            .map_err(|e| e.to_string())
+        commerce.cost_accounting().get_total_inventory_value().map_err(|e| e.to_string())
     });
     match result {
         Ok(value) => to_f64_or_nan(value),
@@ -2383,10 +2260,7 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCheckCredit<'loca
     };
 
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .credit()
-            .check_credit(uuid, amount)
-            .map_err(|e| e.to_string())
+        commerce.credit().check_credit(uuid, amount).map_err(|e| e.to_string())
     });
 
     match result {
@@ -2405,10 +2279,7 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeGetOverLimitCusto
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .credit()
-            .get_over_limit_customers()
-            .map_err(|e| e.to_string())
+        commerce.credit().get_over_limit_customers().map_err(|e| e.to_string())
     });
     match result {
         Ok(customers) => to_json_string(&mut env, &customers),
@@ -2487,10 +2358,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeList<'local>(
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .backorder()
-            .list_backorders(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.backorder().list_backorders(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(backorders) => to_json_string(&mut env, &backorders),
@@ -2507,12 +2375,8 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetSummary<'l
     _class: JClass<'local>,
     ptr: jlong,
 ) -> JObject<'local> {
-    let result = use_handle(ptr, |commerce| {
-        commerce
-            .backorder()
-            .get_summary()
-            .map_err(|e| e.to_string())
-    });
+    let result =
+        use_handle(ptr, |commerce| commerce.backorder().get_summary().map_err(|e| e.to_string()));
     match result {
         Ok(summary) => to_json_string(&mut env, &summary),
         Err(e) => {
@@ -2529,10 +2393,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetOverdue<'l
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .backorder()
-            .get_overdue_backorders()
-            .map_err(|e| e.to_string())
+        commerce.backorder().get_overdue_backorders().map_err(|e| e.to_string())
     });
     match result {
         Ok(backorders) => to_json_string(&mut env, &backorders),
@@ -2602,10 +2463,7 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeListAccoun
     ptr: jlong,
 ) -> JObject<'local> {
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .general_ledger()
-            .list_accounts(Default::default())
-            .map_err(|e| e.to_string())
+        commerce.general_ledger().list_accounts(Default::default()).map_err(|e| e.to_string())
     });
     match result {
         Ok(accounts) => to_json_string(&mut env, &accounts),
@@ -2625,10 +2483,7 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeGetTrialBa
     // Use today's date as the as_of_date for the trial balance
     let today = chrono::Utc::now().date_naive();
     let result = use_handle(ptr, |commerce| {
-        commerce
-            .general_ledger()
-            .get_trial_balance(today)
-            .map_err(|e| e.to_string())
+        commerce.general_ledger().get_trial_balance(today).map_err(|e| e.to_string())
     });
     match result {
         Ok(balance) => to_json_string(&mut env, &balance),

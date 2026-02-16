@@ -1,38 +1,61 @@
-//! Repository traits for data access abstraction
+//! Repository traits for data access abstraction.
 //!
-//! These traits define the interface for data persistence.
-//! Implementations can be SQLite, PostgreSQL, in-memory, etc.
+//! This module defines the interface for data persistence. Implementations
+//! can be SQLite, PostgreSQL, in-memory, etc.
+//!
+//! # Generic Repository
+//!
+//! The [`Repository`] trait provides a generic CRUD interface using associated
+//! types. Domain-specific traits (e.g. [`OrderRepository`]) extend it with
+//! entity-specific operations.
+//!
+//! # Auto-impl
+//!
+//! Key traits use [`auto_impl`](https://docs.rs/auto_impl) so that `&T`,
+//! `Box<T>`, and `Arc<T>` automatically implement the trait when `T` does.
+
+pub mod async_repository;
+pub mod repository;
+
+pub use async_repository::{AsyncRepository, AsyncTransactional};
+pub use repository::{Repository, Transactional};
 
 use crate::errors::{BatchResult, Result};
 use crate::models::*;
 use chrono::{DateTime, Utc};
+use stateset_primitives::{
+    CartId, CreditId, CustomerId, FulfillmentId, InvoiceId, OrderId, OrderItemId, PaymentId,
+    ProductId, PromotionId, PurchaseOrderId, ReturnId, ShipmentId, SubscriptionId, WarehouseId,
+    WarrantyId,
+};
 use uuid::Uuid;
 
-/// Order repository trait
-pub trait OrderRepository {
+/// Order repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait OrderRepository: Send + Sync {
     /// Create a new order
     fn create(&self, input: CreateOrder) -> Result<Order>;
 
     /// Get order by ID
-    fn get(&self, id: Uuid) -> Result<Option<Order>>;
+    fn get(&self, id: OrderId) -> Result<Option<Order>>;
 
     /// Get order by order number
     fn get_by_number(&self, order_number: &str) -> Result<Option<Order>>;
 
     /// Update an order
-    fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order>;
+    fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order>;
 
     /// List orders with filter
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>>;
 
     /// Delete an order
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: OrderId) -> Result<()>;
 
     /// Add item to order
-    fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem>;
+    fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem>;
 
     /// Remove item from order
-    fn remove_item(&self, order_id: Uuid, item_id: Uuid) -> Result<()>;
+    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()>;
 
     /// Count orders matching filter
     fn count(&self, filter: OrderFilter) -> Result<u64>;
@@ -46,23 +69,24 @@ pub trait OrderRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateOrder>) -> Result<Vec<Order>>;
 
     /// Update multiple orders - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<BatchResult<Order>>;
+    fn update_batch(&self, updates: Vec<(OrderId, UpdateOrder)>) -> Result<BatchResult<Order>>;
 
     /// Update multiple orders - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<Vec<Order>>;
+    fn update_batch_atomic(&self, updates: Vec<(OrderId, UpdateOrder)>) -> Result<Vec<Order>>;
 
     /// Delete multiple orders - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<OrderId>) -> Result<BatchResult<OrderId>>;
 
     /// Delete multiple orders - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<OrderId>) -> Result<()>;
 
     /// Get multiple orders by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Order>>;
+    fn get_batch(&self, ids: Vec<OrderId>) -> Result<Vec<Order>>;
 }
 
-/// Inventory repository trait
-pub trait InventoryRepository {
+/// Inventory repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait InventoryRepository: Send + Sync {
     /// Create a new inventory item
     fn create_item(&self, input: CreateInventoryItem) -> Result<InventoryItem>;
 
@@ -108,7 +132,7 @@ pub trait InventoryRepository {
 
     /// Record transaction
     fn record_transaction(&self, transaction: InventoryTransaction)
-        -> Result<InventoryTransaction>;
+    -> Result<InventoryTransaction>;
 
     /// Get transaction history
     fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>>;
@@ -146,31 +170,32 @@ pub trait InventoryRepository {
     fn get_stock_batch(&self, skus: Vec<String>) -> Result<Vec<StockLevel>>;
 }
 
-/// Customer repository trait
-pub trait CustomerRepository {
+/// Customer repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait CustomerRepository: Send + Sync {
     /// Create a new customer
     fn create(&self, input: CreateCustomer) -> Result<Customer>;
 
     /// Get customer by ID
-    fn get(&self, id: Uuid) -> Result<Option<Customer>>;
+    fn get(&self, id: CustomerId) -> Result<Option<Customer>>;
 
     /// Get customer by email
     fn get_by_email(&self, email: &str) -> Result<Option<Customer>>;
 
     /// Update a customer
-    fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer>;
+    fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer>;
 
     /// List customers with filter
     fn list(&self, filter: CustomerFilter) -> Result<Vec<Customer>>;
 
     /// Delete a customer (soft delete)
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: CustomerId) -> Result<()>;
 
     /// Add address for customer
     fn add_address(&self, input: CreateCustomerAddress) -> Result<CustomerAddress>;
 
     /// Get customer addresses
-    fn get_addresses(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>>;
+    fn get_addresses(&self, customer_id: CustomerId) -> Result<Vec<CustomerAddress>>;
 
     /// Update address
     fn update_address(
@@ -185,7 +210,7 @@ pub trait CustomerRepository {
     /// Set default address
     fn set_default_address(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         address_id: Uuid,
         address_type: AddressType,
     ) -> Result<()>;
@@ -202,45 +227,52 @@ pub trait CustomerRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateCustomer>) -> Result<Vec<Customer>>;
 
     /// Update multiple customers - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<BatchResult<Customer>>;
+    fn update_batch(
+        &self,
+        updates: Vec<(CustomerId, UpdateCustomer)>,
+    ) -> Result<BatchResult<Customer>>;
 
     /// Update multiple customers - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<Vec<Customer>>;
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(CustomerId, UpdateCustomer)>,
+    ) -> Result<Vec<Customer>>;
 
     /// Delete multiple customers - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<CustomerId>) -> Result<BatchResult<CustomerId>>;
 
     /// Delete multiple customers - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<CustomerId>) -> Result<()>;
 
     /// Get multiple customers by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>>;
+    fn get_batch(&self, ids: Vec<CustomerId>) -> Result<Vec<Customer>>;
 }
 
-/// Product repository trait
-pub trait ProductRepository {
+/// Product repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ProductRepository: Send + Sync {
     /// Create a new product
     fn create(&self, input: CreateProduct) -> Result<Product>;
 
     /// Get product by ID
-    fn get(&self, id: Uuid) -> Result<Option<Product>>;
+    fn get(&self, id: ProductId) -> Result<Option<Product>>;
 
     /// Get product by slug
     fn get_by_slug(&self, slug: &str) -> Result<Option<Product>>;
 
     /// Update a product
-    fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product>;
+    fn update(&self, id: ProductId, input: UpdateProduct) -> Result<Product>;
 
     /// List products with filter
     fn list(&self, filter: ProductFilter) -> Result<Vec<Product>>;
 
     /// Delete a product (archive)
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: ProductId) -> Result<()>;
 
     /// Add variant to product
     fn add_variant(
         &self,
-        product_id: Uuid,
+        product_id: ProductId,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant>;
 
@@ -257,7 +289,7 @@ pub trait ProductRepository {
     fn delete_variant(&self, id: Uuid) -> Result<()>;
 
     /// Get all variants for product
-    fn get_variants(&self, product_id: Uuid) -> Result<Vec<ProductVariant>>;
+    fn get_variants(&self, product_id: ProductId) -> Result<Vec<ProductVariant>>;
 
     /// Count products matching filter
     fn count(&self, filter: ProductFilter) -> Result<u64>;
@@ -271,46 +303,47 @@ pub trait ProductRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateProduct>) -> Result<Vec<Product>>;
 
     /// Update multiple products - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<BatchResult<Product>>;
+    fn update_batch(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<BatchResult<Product>>;
 
     /// Update multiple products - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<Vec<Product>>;
+    fn update_batch_atomic(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<Vec<Product>>;
 
     /// Delete multiple products - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<ProductId>) -> Result<BatchResult<ProductId>>;
 
     /// Delete multiple products - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<ProductId>) -> Result<()>;
 
     /// Get multiple products by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Product>>;
+    fn get_batch(&self, ids: Vec<ProductId>) -> Result<Vec<Product>>;
 }
 
-/// Return repository trait
-pub trait ReturnRepository {
+/// Return repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ReturnRepository: Send + Sync {
     /// Create a new return
     fn create(&self, input: CreateReturn) -> Result<Return>;
 
     /// Get return by ID
-    fn get(&self, id: Uuid) -> Result<Option<Return>>;
+    fn get(&self, id: ReturnId) -> Result<Option<Return>>;
 
     /// Update a return
-    fn update(&self, id: Uuid, input: UpdateReturn) -> Result<Return>;
+    fn update(&self, id: ReturnId, input: UpdateReturn) -> Result<Return>;
 
     /// List returns with filter
     fn list(&self, filter: ReturnFilter) -> Result<Vec<Return>>;
 
     /// Approve a return
-    fn approve(&self, id: Uuid) -> Result<Return>;
+    fn approve(&self, id: ReturnId) -> Result<Return>;
 
     /// Reject a return
-    fn reject(&self, id: Uuid, reason: &str) -> Result<Return>;
+    fn reject(&self, id: ReturnId, reason: &str) -> Result<Return>;
 
     /// Complete a return
-    fn complete(&self, id: Uuid) -> Result<Return>;
+    fn complete(&self, id: ReturnId) -> Result<Return>;
 
     /// Cancel a return
-    fn cancel(&self, id: Uuid) -> Result<Return>;
+    fn cancel(&self, id: ReturnId) -> Result<Return>;
 
     /// Count returns matching filter
     fn count(&self, filter: ReturnFilter) -> Result<u64>;
@@ -324,29 +357,31 @@ pub trait ReturnRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateReturn>) -> Result<Vec<Return>>;
 
     /// Update multiple returns - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<BatchResult<Return>>;
+    fn update_batch(&self, updates: Vec<(ReturnId, UpdateReturn)>) -> Result<BatchResult<Return>>;
 
     /// Update multiple returns - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<Vec<Return>>;
+    fn update_batch_atomic(&self, updates: Vec<(ReturnId, UpdateReturn)>) -> Result<Vec<Return>>;
 
     /// Delete multiple returns - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<ReturnId>) -> Result<BatchResult<Uuid>>;
 
     /// Delete multiple returns - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<ReturnId>) -> Result<()>;
 
     /// Get multiple returns by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Return>>;
+    fn get_batch(&self, ids: Vec<ReturnId>) -> Result<Vec<Return>>;
 }
 
 /// Event handler trait for domain events
-pub trait EventHandler {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait EventHandler: Send + Sync {
     /// Handle a commerce event
     fn handle(&self, event: &crate::events::CommerceEvent) -> Result<()>;
 }
 
 /// Bill of Materials repository trait
-pub trait BomRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait BomRepository: Send + Sync {
     /// Create a new BOM
     fn create(&self, input: CreateBom) -> Result<BillOfMaterials>;
 
@@ -397,7 +432,7 @@ pub trait BomRepository {
 
     /// Update multiple BOMs - partial success allowed
     fn update_batch(&self, updates: Vec<(Uuid, UpdateBom)>)
-        -> Result<BatchResult<BillOfMaterials>>;
+    -> Result<BatchResult<BillOfMaterials>>;
 
     /// Update multiple BOMs - atomic (all-or-nothing)
     fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<Vec<BillOfMaterials>>;
@@ -413,7 +448,8 @@ pub trait BomRepository {
 }
 
 /// Work Order repository trait
-pub trait WorkOrderRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait WorkOrderRepository: Send + Sync {
     /// Create a new work order
     fn create(&self, input: CreateWorkOrder) -> Result<WorkOrder>;
 
@@ -501,7 +537,7 @@ pub trait WorkOrderRepository {
 
     /// Update multiple work orders - partial success allowed
     fn update_batch(&self, updates: Vec<(Uuid, UpdateWorkOrder)>)
-        -> Result<BatchResult<WorkOrder>>;
+    -> Result<BatchResult<WorkOrder>>;
 
     /// Update multiple work orders - atomic (all-or-nothing)
     fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<Vec<WorkOrder>>;
@@ -517,12 +553,13 @@ pub trait WorkOrderRepository {
 }
 
 /// Shipment repository trait
-pub trait ShipmentRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ShipmentRepository: Send + Sync {
     /// Create a new shipment
     fn create(&self, input: CreateShipment) -> Result<Shipment>;
 
     /// Get shipment by ID
-    fn get(&self, id: Uuid) -> Result<Option<Shipment>>;
+    fn get(&self, id: ShipmentId) -> Result<Option<Shipment>>;
 
     /// Get shipment by shipment number
     fn get_by_number(&self, shipment_number: &str) -> Result<Option<Shipment>>;
@@ -531,61 +568,61 @@ pub trait ShipmentRepository {
     fn get_by_tracking(&self, tracking_number: &str) -> Result<Option<Shipment>>;
 
     /// Update a shipment
-    fn update(&self, id: Uuid, input: UpdateShipment) -> Result<Shipment>;
+    fn update(&self, id: ShipmentId, input: UpdateShipment) -> Result<Shipment>;
 
     /// List shipments with filter
     fn list(&self, filter: ShipmentFilter) -> Result<Vec<Shipment>>;
 
     /// Get shipments for an order
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Shipment>>;
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Shipment>>;
 
     /// Delete a shipment (cancel if not shipped)
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: ShipmentId) -> Result<()>;
 
     // Status transitions
     /// Mark shipment as processing
-    fn mark_processing(&self, id: Uuid) -> Result<Shipment>;
+    fn mark_processing(&self, id: ShipmentId) -> Result<Shipment>;
 
     /// Mark shipment as ready to ship
-    fn mark_ready(&self, id: Uuid) -> Result<Shipment>;
+    fn mark_ready(&self, id: ShipmentId) -> Result<Shipment>;
 
     /// Mark shipment as shipped with tracking number
-    fn ship(&self, id: Uuid, tracking_number: Option<String>) -> Result<Shipment>;
+    fn ship(&self, id: ShipmentId, tracking_number: Option<String>) -> Result<Shipment>;
 
     /// Mark shipment as in transit
-    fn mark_in_transit(&self, id: Uuid) -> Result<Shipment>;
+    fn mark_in_transit(&self, id: ShipmentId) -> Result<Shipment>;
 
     /// Mark shipment as out for delivery
-    fn mark_out_for_delivery(&self, id: Uuid) -> Result<Shipment>;
+    fn mark_out_for_delivery(&self, id: ShipmentId) -> Result<Shipment>;
 
     /// Mark shipment as delivered
-    fn mark_delivered(&self, id: Uuid) -> Result<Shipment>;
+    fn mark_delivered(&self, id: ShipmentId) -> Result<Shipment>;
 
     /// Mark shipment as failed delivery
-    fn mark_failed(&self, id: Uuid) -> Result<Shipment>;
+    fn mark_failed(&self, id: ShipmentId) -> Result<Shipment>;
 
     /// Put shipment on hold
-    fn hold(&self, id: Uuid) -> Result<Shipment>;
+    fn hold(&self, id: ShipmentId) -> Result<Shipment>;
 
     /// Cancel shipment
-    fn cancel(&self, id: Uuid) -> Result<Shipment>;
+    fn cancel(&self, id: ShipmentId) -> Result<Shipment>;
 
     // Item operations
     /// Add item to shipment
-    fn add_item(&self, shipment_id: Uuid, item: CreateShipmentItem) -> Result<ShipmentItem>;
+    fn add_item(&self, shipment_id: ShipmentId, item: CreateShipmentItem) -> Result<ShipmentItem>;
 
     /// Remove item from shipment
     fn remove_item(&self, item_id: Uuid) -> Result<()>;
 
     /// Get items in shipment
-    fn get_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>>;
+    fn get_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>>;
 
     // Event/tracking operations
     /// Add tracking event
-    fn add_event(&self, shipment_id: Uuid, event: AddShipmentEvent) -> Result<ShipmentEvent>;
+    fn add_event(&self, shipment_id: ShipmentId, event: AddShipmentEvent) -> Result<ShipmentEvent>;
 
     /// Get tracking events for shipment
-    fn get_events(&self, shipment_id: Uuid) -> Result<Vec<ShipmentEvent>>;
+    fn get_events(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentEvent>>;
 
     /// Count shipments matching filter
     fn count(&self, filter: ShipmentFilter) -> Result<u64>;
@@ -599,28 +636,29 @@ pub trait ShipmentRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>>;
 
     /// Update multiple shipments - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<BatchResult<Shipment>>;
+    fn update_batch(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<BatchResult<Shipment>>;
 
     /// Update multiple shipments - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<Vec<Shipment>>;
+    fn update_batch_atomic(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<Vec<Shipment>>;
 
     /// Delete multiple shipments - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<ShipmentId>) -> Result<BatchResult<Uuid>>;
 
     /// Delete multiple shipments - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<ShipmentId>) -> Result<()>;
 
     /// Get multiple shipments by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Shipment>>;
+    fn get_batch(&self, ids: Vec<ShipmentId>) -> Result<Vec<Shipment>>;
 }
 
 /// Payment repository trait
-pub trait PaymentRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PaymentRepository: Send + Sync {
     /// Create a new payment
     fn create(&self, input: CreatePayment) -> Result<Payment>;
 
     /// Get payment by ID
-    fn get(&self, id: Uuid) -> Result<Option<Payment>>;
+    fn get(&self, id: PaymentId) -> Result<Option<Payment>>;
 
     /// Get payment by payment number
     fn get_by_number(&self, payment_number: &str) -> Result<Option<Payment>>;
@@ -629,29 +667,29 @@ pub trait PaymentRepository {
     fn get_by_external_id(&self, external_id: &str) -> Result<Option<Payment>>;
 
     /// Update a payment
-    fn update(&self, id: Uuid, input: UpdatePayment) -> Result<Payment>;
+    fn update(&self, id: PaymentId, input: UpdatePayment) -> Result<Payment>;
 
     /// List payments with filter
     fn list(&self, filter: PaymentFilter) -> Result<Vec<Payment>>;
 
     /// Get payments for an order
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Payment>>;
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Payment>>;
 
     /// Get payments for an invoice
-    fn for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Payment>>;
+    fn for_invoice(&self, invoice_id: InvoiceId) -> Result<Vec<Payment>>;
 
     // Status transitions
     /// Mark payment as processing
-    fn mark_processing(&self, id: Uuid) -> Result<Payment>;
+    fn mark_processing(&self, id: PaymentId) -> Result<Payment>;
 
     /// Mark payment as completed (paid)
-    fn mark_completed(&self, id: Uuid) -> Result<Payment>;
+    fn mark_completed(&self, id: PaymentId) -> Result<Payment>;
 
     /// Mark payment as failed
-    fn mark_failed(&self, id: Uuid, reason: &str, code: Option<&str>) -> Result<Payment>;
+    fn mark_failed(&self, id: PaymentId, reason: &str, code: Option<&str>) -> Result<Payment>;
 
     /// Cancel payment
-    fn cancel(&self, id: Uuid) -> Result<Payment>;
+    fn cancel(&self, id: PaymentId) -> Result<Payment>;
 
     // Refund operations
     /// Create a refund for a payment
@@ -661,7 +699,7 @@ pub trait PaymentRepository {
     fn get_refund(&self, id: Uuid) -> Result<Option<Refund>>;
 
     /// Get refunds for a payment
-    fn get_refunds(&self, payment_id: Uuid) -> Result<Vec<Refund>>;
+    fn get_refunds(&self, payment_id: PaymentId) -> Result<Vec<Refund>>;
 
     /// Process refund (mark as completed)
     fn complete_refund(&self, id: Uuid) -> Result<Refund>;
@@ -674,13 +712,13 @@ pub trait PaymentRepository {
     fn create_payment_method(&self, input: CreatePaymentMethod) -> Result<PaymentMethod>;
 
     /// Get payment methods for a customer
-    fn get_payment_methods(&self, customer_id: Uuid) -> Result<Vec<PaymentMethod>>;
+    fn get_payment_methods(&self, customer_id: CustomerId) -> Result<Vec<PaymentMethod>>;
 
     /// Delete a payment method
     fn delete_payment_method(&self, id: Uuid) -> Result<()>;
 
     /// Set default payment method
-    fn set_default_payment_method(&self, customer_id: Uuid, method_id: Uuid) -> Result<()>;
+    fn set_default_payment_method(&self, customer_id: CustomerId, method_id: Uuid) -> Result<()>;
 
     /// Count payments matching filter
     fn count(&self, filter: PaymentFilter) -> Result<u64>;
@@ -694,28 +732,29 @@ pub trait PaymentRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreatePayment>) -> Result<Vec<Payment>>;
 
     /// Update multiple payments - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>>;
+    fn update_batch(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<BatchResult<Payment>>;
 
     /// Update multiple payments - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>>;
+    fn update_batch_atomic(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<Vec<Payment>>;
 
     /// Delete multiple payments - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<PaymentId>) -> Result<BatchResult<Uuid>>;
 
     /// Delete multiple payments - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<PaymentId>) -> Result<()>;
 
     /// Get multiple payments by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Payment>>;
+    fn get_batch(&self, ids: Vec<PaymentId>) -> Result<Vec<Payment>>;
 }
 
 /// Warranty repository trait
-pub trait WarrantyRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait WarrantyRepository: Send + Sync {
     /// Create a new warranty
     fn create(&self, input: CreateWarranty) -> Result<Warranty>;
 
     /// Get warranty by ID
-    fn get(&self, id: Uuid) -> Result<Option<Warranty>>;
+    fn get(&self, id: WarrantyId) -> Result<Option<Warranty>>;
 
     /// Get warranty by warranty number
     fn get_by_number(&self, warranty_number: &str) -> Result<Option<Warranty>>;
@@ -724,26 +763,26 @@ pub trait WarrantyRepository {
     fn get_by_serial(&self, serial_number: &str) -> Result<Option<Warranty>>;
 
     /// Update a warranty
-    fn update(&self, id: Uuid, input: UpdateWarranty) -> Result<Warranty>;
+    fn update(&self, id: WarrantyId, input: UpdateWarranty) -> Result<Warranty>;
 
     /// List warranties with filter
     fn list(&self, filter: WarrantyFilter) -> Result<Vec<Warranty>>;
 
     /// Get warranties for a customer
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Warranty>>;
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Warranty>>;
 
     /// Get warranties for an order
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Warranty>>;
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Warranty>>;
 
     // Status transitions
     /// Void a warranty
-    fn void(&self, id: Uuid) -> Result<Warranty>;
+    fn void(&self, id: WarrantyId) -> Result<Warranty>;
 
     /// Expire a warranty
-    fn expire(&self, id: Uuid) -> Result<Warranty>;
+    fn expire(&self, id: WarrantyId) -> Result<Warranty>;
 
     /// Transfer warranty to new owner
-    fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty>;
+    fn transfer(&self, id: WarrantyId, new_customer_id: CustomerId) -> Result<Warranty>;
 
     // Claim operations
     /// Create a warranty claim
@@ -762,7 +801,7 @@ pub trait WarrantyRepository {
     fn list_claims(&self, filter: WarrantyClaimFilter) -> Result<Vec<WarrantyClaim>>;
 
     /// Get claims for a warranty
-    fn get_claims(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>>;
+    fn get_claims(&self, warranty_id: WarrantyId) -> Result<Vec<WarrantyClaim>>;
 
     // Claim status transitions
     /// Approve a claim
@@ -792,23 +831,24 @@ pub trait WarrantyRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateWarranty>) -> Result<Vec<Warranty>>;
 
     /// Update multiple warranties - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>>;
+    fn update_batch(&self, updates: Vec<(WarrantyId, UpdateWarranty)>) -> Result<BatchResult<Warranty>>;
 
     /// Update multiple warranties - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>>;
+    fn update_batch_atomic(&self, updates: Vec<(WarrantyId, UpdateWarranty)>) -> Result<Vec<Warranty>>;
 
     /// Delete multiple warranties - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<WarrantyId>) -> Result<BatchResult<Uuid>>;
 
     /// Delete multiple warranties - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<WarrantyId>) -> Result<()>;
 
     /// Get multiple warranties by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Warranty>>;
+    fn get_batch(&self, ids: Vec<WarrantyId>) -> Result<Vec<Warranty>>;
 }
 
 /// Purchase Order repository trait
-pub trait PurchaseOrderRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PurchaseOrderRepository: Send + Sync {
     // Supplier operations
     /// Create a new supplier
     fn create_supplier(&self, input: CreateSupplier) -> Result<Supplier>;
@@ -833,13 +873,13 @@ pub trait PurchaseOrderRepository {
     fn create(&self, input: CreatePurchaseOrder) -> Result<PurchaseOrder>;
 
     /// Get purchase order by ID
-    fn get(&self, id: Uuid) -> Result<Option<PurchaseOrder>>;
+    fn get(&self, id: PurchaseOrderId) -> Result<Option<PurchaseOrder>>;
 
     /// Get purchase order by PO number
     fn get_by_number(&self, po_number: &str) -> Result<Option<PurchaseOrder>>;
 
     /// Update a purchase order
-    fn update(&self, id: Uuid, input: UpdatePurchaseOrder) -> Result<PurchaseOrder>;
+    fn update(&self, id: PurchaseOrderId, input: UpdatePurchaseOrder) -> Result<PurchaseOrder>;
 
     /// List purchase orders with filter
     fn list(&self, filter: PurchaseOrderFilter) -> Result<Vec<PurchaseOrder>>;
@@ -848,36 +888,48 @@ pub trait PurchaseOrderRepository {
     fn for_supplier(&self, supplier_id: Uuid) -> Result<Vec<PurchaseOrder>>;
 
     /// Delete a purchase order (only if draft)
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: PurchaseOrderId) -> Result<()>;
 
     // Status transitions
     /// Submit for approval
-    fn submit_for_approval(&self, id: Uuid) -> Result<PurchaseOrder>;
+    fn submit_for_approval(&self, id: PurchaseOrderId) -> Result<PurchaseOrder>;
 
     /// Approve purchase order
-    fn approve(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder>;
+    fn approve(&self, id: PurchaseOrderId, approved_by: &str) -> Result<PurchaseOrder>;
 
     /// Send to supplier
-    fn send(&self, id: Uuid) -> Result<PurchaseOrder>;
+    fn send(&self, id: PurchaseOrderId) -> Result<PurchaseOrder>;
 
     /// Mark as acknowledged by supplier
-    fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder>;
+    fn acknowledge(
+        &self,
+        id: PurchaseOrderId,
+        supplier_reference: Option<&str>,
+    ) -> Result<PurchaseOrder>;
 
     /// Put on hold
-    fn hold(&self, id: Uuid) -> Result<PurchaseOrder>;
+    fn hold(&self, id: PurchaseOrderId) -> Result<PurchaseOrder>;
 
     /// Cancel purchase order
-    fn cancel(&self, id: Uuid) -> Result<PurchaseOrder>;
+    fn cancel(&self, id: PurchaseOrderId) -> Result<PurchaseOrder>;
 
     /// Receive items on a purchase order
-    fn receive(&self, id: Uuid, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder>;
+    fn receive(
+        &self,
+        id: PurchaseOrderId,
+        items: ReceivePurchaseOrderItems,
+    ) -> Result<PurchaseOrder>;
 
     /// Complete/close purchase order
-    fn complete(&self, id: Uuid) -> Result<PurchaseOrder>;
+    fn complete(&self, id: PurchaseOrderId) -> Result<PurchaseOrder>;
 
     // Item operations
     /// Add item to purchase order
-    fn add_item(&self, po_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem>;
+    fn add_item(
+        &self,
+        po_id: PurchaseOrderId,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem>;
 
     /// Update a PO item
     fn update_item(
@@ -890,7 +942,7 @@ pub trait PurchaseOrderRepository {
     fn remove_item(&self, item_id: Uuid) -> Result<()>;
 
     /// Get items for purchase order
-    fn get_items(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>>;
+    fn get_items(&self, po_id: PurchaseOrderId) -> Result<Vec<PurchaseOrderItem>>;
 
     /// Count purchase orders matching filter
     fn count(&self, filter: PurchaseOrderFilter) -> Result<u64>;
@@ -909,73 +961,74 @@ pub trait PurchaseOrderRepository {
     /// Update multiple purchase orders - partial success allowed
     fn update_batch(
         &self,
-        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+        updates: Vec<(PurchaseOrderId, UpdatePurchaseOrder)>,
     ) -> Result<BatchResult<PurchaseOrder>>;
 
     /// Update multiple purchase orders - atomic (all-or-nothing)
     fn update_batch_atomic(
         &self,
-        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+        updates: Vec<(PurchaseOrderId, UpdatePurchaseOrder)>,
     ) -> Result<Vec<PurchaseOrder>>;
 
     /// Delete multiple purchase orders - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<PurchaseOrderId>) -> Result<BatchResult<PurchaseOrderId>>;
 
     /// Delete multiple purchase orders - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<PurchaseOrderId>) -> Result<()>;
 
     /// Get multiple purchase orders by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<PurchaseOrder>>;
+    fn get_batch(&self, ids: Vec<PurchaseOrderId>) -> Result<Vec<PurchaseOrder>>;
 }
 
 /// Invoice repository trait
-pub trait InvoiceRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait InvoiceRepository: Send + Sync {
     /// Create a new invoice
     fn create(&self, input: CreateInvoice) -> Result<Invoice>;
 
     /// Get invoice by ID
-    fn get(&self, id: Uuid) -> Result<Option<Invoice>>;
+    fn get(&self, id: InvoiceId) -> Result<Option<Invoice>>;
 
     /// Get invoice by invoice number
     fn get_by_number(&self, invoice_number: &str) -> Result<Option<Invoice>>;
 
     /// Update an invoice
-    fn update(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice>;
+    fn update(&self, id: InvoiceId, input: UpdateInvoice) -> Result<Invoice>;
 
     /// List invoices with filter
     fn list(&self, filter: InvoiceFilter) -> Result<Vec<Invoice>>;
 
     /// Get invoices for a customer
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Invoice>>;
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Invoice>>;
 
     /// Get invoices for an order
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Invoice>>;
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Invoice>>;
 
     /// Delete an invoice (only if draft)
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: InvoiceId) -> Result<()>;
 
     // Status transitions
     /// Send invoice to customer
-    fn send(&self, id: Uuid) -> Result<Invoice>;
+    fn send(&self, id: InvoiceId) -> Result<Invoice>;
 
     /// Mark invoice as viewed
-    fn mark_viewed(&self, id: Uuid) -> Result<Invoice>;
+    fn mark_viewed(&self, id: InvoiceId) -> Result<Invoice>;
 
     /// Record a payment on the invoice
-    fn record_payment(&self, id: Uuid, payment: RecordInvoicePayment) -> Result<Invoice>;
+    fn record_payment(&self, id: InvoiceId, payment: RecordInvoicePayment) -> Result<Invoice>;
 
     /// Void an invoice
-    fn void(&self, id: Uuid) -> Result<Invoice>;
+    fn void(&self, id: InvoiceId) -> Result<Invoice>;
 
     /// Write off an invoice as uncollectible
-    fn write_off(&self, id: Uuid) -> Result<Invoice>;
+    fn write_off(&self, id: InvoiceId) -> Result<Invoice>;
 
     /// Mark invoice as disputed
-    fn dispute(&self, id: Uuid) -> Result<Invoice>;
+    fn dispute(&self, id: InvoiceId) -> Result<Invoice>;
 
     // Item operations
     /// Add item to invoice
-    fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem>;
+    fn add_item(&self, invoice_id: InvoiceId, item: CreateInvoiceItem) -> Result<InvoiceItem>;
 
     /// Update an invoice item
     fn update_item(&self, item_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem>;
@@ -984,10 +1037,10 @@ pub trait InvoiceRepository {
     fn remove_item(&self, item_id: Uuid) -> Result<()>;
 
     /// Get items for invoice
-    fn get_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>>;
+    fn get_items(&self, invoice_id: InvoiceId) -> Result<Vec<InvoiceItem>>;
 
     /// Recalculate invoice totals
-    fn recalculate(&self, id: Uuid) -> Result<Invoice>;
+    fn recalculate(&self, id: InvoiceId) -> Result<Invoice>;
 
     /// Get overdue invoices
     fn get_overdue(&self) -> Result<Vec<Invoice>>;
@@ -1004,47 +1057,54 @@ pub trait InvoiceRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateInvoice>) -> Result<Vec<Invoice>>;
 
     /// Update multiple invoices - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<BatchResult<Invoice>>;
+    fn update_batch(
+        &self,
+        updates: Vec<(InvoiceId, UpdateInvoice)>,
+    ) -> Result<BatchResult<Invoice>>;
 
     /// Update multiple invoices - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<Vec<Invoice>>;
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(InvoiceId, UpdateInvoice)>,
+    ) -> Result<Vec<Invoice>>;
 
     /// Delete multiple invoices - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<InvoiceId>) -> Result<BatchResult<Uuid>>;
 
     /// Delete multiple invoices - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<InvoiceId>) -> Result<()>;
 
     /// Get multiple invoices by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Invoice>>;
+    fn get_batch(&self, ids: Vec<InvoiceId>) -> Result<Vec<Invoice>>;
 }
 
 /// Cart/Checkout repository trait
-pub trait CartRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait CartRepository: Send + Sync {
     /// Create a new cart/checkout session
     fn create(&self, input: CreateCart) -> Result<Cart>;
 
     /// Get cart by ID
-    fn get(&self, id: Uuid) -> Result<Option<Cart>>;
+    fn get(&self, id: CartId) -> Result<Option<Cart>>;
 
     /// Get cart by cart number
     fn get_by_number(&self, cart_number: &str) -> Result<Option<Cart>>;
 
     /// Update a cart
-    fn update(&self, id: Uuid, input: UpdateCart) -> Result<Cart>;
+    fn update(&self, id: CartId, input: UpdateCart) -> Result<Cart>;
 
     /// List carts with filter
     fn list(&self, filter: CartFilter) -> Result<Vec<Cart>>;
 
     /// Get carts for a customer
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Cart>>;
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Cart>>;
 
     /// Delete a cart (or mark as cancelled)
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: CartId) -> Result<()>;
 
     // Item operations
     /// Add item to cart
-    fn add_item(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem>;
+    fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem>;
 
     /// Update a cart item (quantity, etc)
     fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem>;
@@ -1053,76 +1113,76 @@ pub trait CartRepository {
     fn remove_item(&self, item_id: Uuid) -> Result<()>;
 
     /// Get items for a cart
-    fn get_items(&self, cart_id: Uuid) -> Result<Vec<CartItem>>;
+    fn get_items(&self, cart_id: CartId) -> Result<Vec<CartItem>>;
 
     /// Clear all items from cart
-    fn clear_items(&self, cart_id: Uuid) -> Result<()>;
+    fn clear_items(&self, cart_id: CartId) -> Result<()>;
 
     // Address operations
     /// Set shipping address
-    fn set_shipping_address(&self, id: Uuid, address: CartAddress) -> Result<Cart>;
+    fn set_shipping_address(&self, id: CartId, address: CartAddress) -> Result<Cart>;
 
     /// Set billing address
-    fn set_billing_address(&self, id: Uuid, address: CartAddress) -> Result<Cart>;
+    fn set_billing_address(&self, id: CartId, address: CartAddress) -> Result<Cart>;
 
     // Shipping operations
     /// Set shipping method
-    fn set_shipping(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart>;
+    fn set_shipping(&self, id: CartId, shipping: SetCartShipping) -> Result<Cart>;
 
     /// Get available shipping rates for cart
-    fn get_shipping_rates(&self, id: Uuid) -> Result<Vec<ShippingRate>>;
+    fn get_shipping_rates(&self, id: CartId) -> Result<Vec<ShippingRate>>;
 
     // Payment operations
     /// Set payment method/token
-    fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart>;
+    fn set_payment(&self, id: CartId, payment: SetCartPayment) -> Result<Cart>;
 
     /// Set x402 payment method (stablecoin)
-    fn set_x402_payment(&self, id: Uuid, payment: SetCartX402Payment) -> Result<Cart>;
+    fn set_x402_payment(&self, id: CartId, payment: SetCartX402Payment) -> Result<Cart>;
 
     /// Complete checkout with x402 payment
     /// Returns PaymentRequired if no intent exists, IntentCreated if awaiting signature,
     /// AwaitingSettlement if signed but not settled, or Completed if settled
-    fn complete_with_x402(&self, id: Uuid, payee_address: &str) -> Result<X402CheckoutResult>;
+    fn complete_with_x402(&self, id: CartId, payee_address: &str) -> Result<X402CheckoutResult>;
 
     // Discount operations
     /// Apply coupon/discount code
-    fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart>;
+    fn apply_discount(&self, id: CartId, coupon_code: &str) -> Result<Cart>;
 
     /// Remove discount
-    fn remove_discount(&self, id: Uuid) -> Result<Cart>;
+    fn remove_discount(&self, id: CartId) -> Result<Cart>;
 
     // Status transitions
     /// Mark cart as ready for payment (validates all requirements met)
-    fn mark_ready_for_payment(&self, id: Uuid) -> Result<Cart>;
+    fn mark_ready_for_payment(&self, id: CartId) -> Result<Cart>;
 
     /// Begin checkout/payment process
-    fn begin_checkout(&self, id: Uuid) -> Result<Cart>;
+    fn begin_checkout(&self, id: CartId) -> Result<Cart>;
 
     /// Complete checkout (creates order, returns checkout result)
-    fn complete(&self, id: Uuid) -> Result<CheckoutResult>;
+    fn complete(&self, id: CartId) -> Result<CheckoutResult>;
 
     /// Cancel a cart
-    fn cancel(&self, id: Uuid) -> Result<Cart>;
+    fn cancel(&self, id: CartId) -> Result<Cart>;
 
     /// Mark cart as abandoned
-    fn abandon(&self, id: Uuid) -> Result<Cart>;
+    fn abandon(&self, id: CartId) -> Result<Cart>;
 
     /// Expire a cart
-    fn expire(&self, id: Uuid) -> Result<Cart>;
+    fn expire(&self, id: CartId) -> Result<Cart>;
 
     // Inventory operations
     /// Reserve inventory for cart items
-    fn reserve_inventory(&self, id: Uuid) -> Result<Cart>;
+    fn reserve_inventory(&self, id: CartId) -> Result<Cart>;
 
     /// Release inventory reservations
-    fn release_inventory(&self, id: Uuid) -> Result<Cart>;
+    fn release_inventory(&self, id: CartId) -> Result<Cart>;
 
     // Totals
     /// Recalculate cart totals
-    fn recalculate(&self, id: Uuid) -> Result<Cart>;
+    fn recalculate(&self, id: CartId) -> Result<Cart>;
 
     /// Set tax amount
-    fn set_tax(&self, id: Uuid, tax_amount: rust_decimal::Decimal) -> Result<Cart>;
+    fn set_tax(&self, id: CartId, tax_amount: rust_decimal::Decimal) -> Result<Cart>;
 
     // Queries
     /// Get abandoned carts (for recovery campaigns)
@@ -1143,23 +1203,24 @@ pub trait CartRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateCart>) -> Result<Vec<Cart>>;
 
     /// Update multiple carts - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<BatchResult<Cart>>;
+    fn update_batch(&self, updates: Vec<(CartId, UpdateCart)>) -> Result<BatchResult<Cart>>;
 
     /// Update multiple carts - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<Vec<Cart>>;
+    fn update_batch_atomic(&self, updates: Vec<(CartId, UpdateCart)>) -> Result<Vec<Cart>>;
 
     /// Delete multiple carts - partial success allowed
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+    fn delete_batch(&self, ids: Vec<CartId>) -> Result<BatchResult<CartId>>;
 
     /// Delete multiple carts - atomic (all-or-nothing)
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+    fn delete_batch_atomic(&self, ids: Vec<CartId>) -> Result<()>;
 
     /// Get multiple carts by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Cart>>;
+    fn get_batch(&self, ids: Vec<CartId>) -> Result<Vec<Cart>>;
 }
 
 /// Analytics repository trait
-pub trait AnalyticsRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait AnalyticsRepository: Send + Sync {
     // Sales analytics
     /// Get sales summary for a time period
     fn get_sales_summary(&self, query: AnalyticsQuery) -> Result<SalesSummary>;
@@ -1226,7 +1287,8 @@ pub trait AnalyticsRepository {
 }
 
 /// Currency and exchange rate repository trait
-pub trait CurrencyRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait CurrencyRepository: Send + Sync {
     /// Get current exchange rate between two currencies
     fn get_rate(&self, from: Currency, to: Currency) -> Result<Option<ExchangeRate>>;
 
@@ -1271,7 +1333,8 @@ pub trait CurrencyRepository {
 }
 
 /// Tax repository trait
-pub trait TaxRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait TaxRepository: Send + Sync {
     /// Create a tax jurisdiction
     fn create_jurisdiction(&self, input: CreateTaxJurisdiction) -> Result<TaxJurisdiction>;
     /// Get a tax jurisdiction by ID
@@ -1322,23 +1385,24 @@ pub trait TaxRepository {
 }
 
 /// Promotions repository trait
-pub trait PromotionRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait PromotionRepository: Send + Sync {
     /// Create a promotion
     fn create(&self, input: CreatePromotion) -> Result<Promotion>;
     /// Get a promotion by ID
-    fn get(&self, id: Uuid) -> Result<Option<Promotion>>;
+    fn get(&self, id: PromotionId) -> Result<Option<Promotion>>;
     /// Get a promotion by code
     fn get_by_code(&self, code: &str) -> Result<Option<Promotion>>;
     /// List promotions matching a filter
     fn list(&self, filter: PromotionFilter) -> Result<Vec<Promotion>>;
     /// Update a promotion
-    fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion>;
+    fn update(&self, id: PromotionId, input: UpdatePromotion) -> Result<Promotion>;
     /// Delete a promotion
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: PromotionId) -> Result<()>;
     /// Activate a promotion
-    fn activate(&self, id: Uuid) -> Result<Promotion>;
+    fn activate(&self, id: PromotionId) -> Result<Promotion>;
     /// Deactivate a promotion
-    fn deactivate(&self, id: Uuid) -> Result<Promotion>;
+    fn deactivate(&self, id: PromotionId) -> Result<Promotion>;
 
     /// Create a coupon code
     fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode>;
@@ -1355,18 +1419,19 @@ pub trait PromotionRepository {
     #[allow(clippy::too_many_arguments)]
     fn record_usage(
         &self,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
         coupon_id: Option<Uuid>,
-        customer_id: Option<Uuid>,
-        order_id: Option<Uuid>,
-        cart_id: Option<Uuid>,
+        customer_id: Option<CustomerId>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
         discount_amount: rust_decimal::Decimal,
         currency: &str,
     ) -> Result<PromotionUsage>;
 }
 
 /// Subscriptions repository trait
-pub trait SubscriptionRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait SubscriptionRepository: Send + Sync {
     /// Create a subscription plan
     fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan>;
     /// Get a subscription plan by ID
@@ -1385,19 +1450,19 @@ pub trait SubscriptionRepository {
     /// Create a subscription
     fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription>;
     /// Get a subscription by ID
-    fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>>;
+    fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>>;
     /// Get a subscription by number
     fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>>;
     /// List subscriptions matching a filter
     fn list_subscriptions(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>>;
     /// Update a subscription
-    fn update_subscription(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription>;
+    fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription>;
     /// Cancel a subscription
-    fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription>;
+    fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription>;
     /// Pause a subscription
-    fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription>;
+    fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription>;
     /// Resume a paused subscription
-    fn resume_subscription(&self, id: Uuid) -> Result<Subscription>;
+    fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription>;
 
     /// Create a billing cycle
     fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle>;
@@ -1412,37 +1477,29 @@ pub trait SubscriptionRepository {
         status: BillingCycleStatus,
     ) -> Result<BillingCycle>;
     /// Skip a billing cycle
-    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription>;
+    fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription>;
 
     /// Record a subscription event
     fn record_event(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         notes: Option<String>,
     ) -> Result<SubscriptionEvent>;
     /// Get all events for a subscription
-    fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>>;
+    fn get_subscription_events(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionEvent>>;
 }
 
-/// Optional: Transaction support trait
-pub trait Transactional {
-    /// Begin a transaction
-    fn begin_transaction(&self) -> Result<()>;
-
-    /// Commit the current transaction
-    fn commit(&self) -> Result<()>;
-
-    /// Rollback the current transaction
-    fn rollback(&self) -> Result<()>;
-}
+// The `Transactional` trait is defined in `repository.rs` and re-exported
+// from this module via `pub use repository::Transactional;`.
 
 // ============================================================================
 // Quality Control Repository
 // ============================================================================
 
 /// Quality Control repository trait
-pub trait QualityRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait QualityRepository: Send + Sync {
     // Inspection operations
     /// Create a new inspection
     fn create_inspection(&self, input: CreateInspection) -> Result<Inspection>;
@@ -1543,7 +1600,8 @@ pub trait QualityRepository {
 // ============================================================================
 
 /// Lot/Batch tracking repository trait
-pub trait LotRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait LotRepository: Send + Sync {
     /// Create a new lot
     fn create(&self, input: CreateLot) -> Result<Lot>;
 
@@ -1644,7 +1702,8 @@ pub trait LotRepository {
 // ============================================================================
 
 /// Serial number management repository trait
-pub trait SerialRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait SerialRepository: Send + Sync {
     /// Create a serial number
     fn create(&self, input: CreateSerialNumber) -> Result<SerialNumber>;
 
@@ -1753,7 +1812,8 @@ pub trait SerialRepository {
 // ============================================================================
 
 /// Warehouse management repository trait
-pub trait WarehouseRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait WarehouseRepository: Send + Sync {
     // Warehouse operations
     /// Create a new warehouse
     fn create_warehouse(&self, input: CreateWarehouse) -> Result<Warehouse>;
@@ -1829,7 +1889,7 @@ pub trait WarehouseRepository {
 
     /// Get inventory for SKU across locations
     fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str)
-        -> Result<Vec<LocationInventory>>;
+    -> Result<Vec<LocationInventory>>;
 
     /// Adjust inventory at location
     fn adjust_inventory(&self, input: AdjustLocationInventory) -> Result<LocationInventory>;
@@ -1863,7 +1923,8 @@ pub trait WarehouseRepository {
 // ============================================================================
 
 /// Receiving/Goods receipt repository trait
-pub trait ReceivingRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ReceivingRepository: Send + Sync {
     // Receipt operations
     /// Create a new receipt
     fn create_receipt(&self, input: CreateReceipt) -> Result<Receipt>;
@@ -1946,13 +2007,14 @@ pub trait ReceivingRepository {
 // ============================================================================
 
 /// Fulfillment (pick/pack/ship) repository trait
-pub trait FulfillmentRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait FulfillmentRepository: Send + Sync {
     // Wave operations
     /// Create a wave from orders
     fn create_wave(&self, input: CreateWave) -> Result<Wave>;
 
     /// Get wave by ID
-    fn get_wave(&self, id: Uuid) -> Result<Option<Wave>>;
+    fn get_wave(&self, id: FulfillmentId) -> Result<Option<Wave>>;
 
     /// Get wave by number
     fn get_wave_by_number(&self, number: &str) -> Result<Option<Wave>>;
@@ -1961,16 +2023,16 @@ pub trait FulfillmentRepository {
     fn list_waves(&self, filter: WaveFilter) -> Result<Vec<Wave>>;
 
     /// Release wave for picking
-    fn release_wave(&self, id: Uuid) -> Result<Wave>;
+    fn release_wave(&self, id: FulfillmentId) -> Result<Wave>;
 
     /// Complete a wave
-    fn complete_wave(&self, id: Uuid) -> Result<Wave>;
+    fn complete_wave(&self, id: FulfillmentId) -> Result<Wave>;
 
     /// Cancel a wave
-    fn cancel_wave(&self, id: Uuid) -> Result<Wave>;
+    fn cancel_wave(&self, id: FulfillmentId) -> Result<Wave>;
 
     /// Get orders in a wave
-    fn get_wave_orders(&self, wave_id: Uuid) -> Result<Vec<Uuid>>;
+    fn get_wave_orders(&self, wave_id: FulfillmentId) -> Result<Vec<OrderId>>;
 
     /// Count waves
     fn count_waves(&self, filter: WaveFilter) -> Result<u64>;
@@ -2006,10 +2068,10 @@ pub trait FulfillmentRepository {
     fn cancel_pick(&self, id: Uuid) -> Result<PickTask>;
 
     /// Get picks for order
-    fn get_picks_for_order(&self, order_id: Uuid) -> Result<Vec<PickTask>>;
+    fn get_picks_for_order(&self, order_id: OrderId) -> Result<Vec<PickTask>>;
 
     /// Get picks for wave
-    fn get_picks_for_wave(&self, wave_id: Uuid) -> Result<Vec<PickTask>>;
+    fn get_picks_for_wave(&self, wave_id: FulfillmentId) -> Result<Vec<PickTask>>;
 
     /// Count picks
     fn count_picks(&self, filter: PickTaskFilter) -> Result<u64>;
@@ -2081,13 +2143,13 @@ pub trait FulfillmentRepository {
 
     // Workflow helpers
     /// Create picks for an order
-    fn create_picks_for_order(&self, order_id: Uuid, warehouse_id: i32) -> Result<Vec<PickTask>>;
+    fn create_picks_for_order(&self, order_id: OrderId, warehouse_id: i32) -> Result<Vec<PickTask>>;
 
     /// Check if order is ready to pack
-    fn is_order_ready_to_pack(&self, order_id: Uuid) -> Result<bool>;
+    fn is_order_ready_to_pack(&self, order_id: OrderId) -> Result<bool>;
 
     /// Check if order is ready to ship
-    fn is_order_ready_to_ship(&self, order_id: Uuid) -> Result<bool>;
+    fn is_order_ready_to_ship(&self, order_id: OrderId) -> Result<bool>;
 
     // Batch operations
     /// Create multiple waves
@@ -2102,7 +2164,8 @@ pub trait FulfillmentRepository {
 // ============================================================================
 
 /// Accounts Payable repository trait
-pub trait AccountsPayableRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait AccountsPayableRepository: Send + Sync {
     // Bill operations
     /// Create a new bill
     fn create_bill(&self, input: CreateBill) -> Result<Bill>;
@@ -2218,7 +2281,8 @@ pub trait AccountsPayableRepository {
 }
 
 /// Cost Accounting repository trait
-pub trait CostAccountingRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait CostAccountingRepository: Send + Sync {
     // Item cost operations
     /// Get item cost by SKU
     fn get_item_cost(&self, sku: &str) -> Result<Option<ItemCost>>;
@@ -2276,7 +2340,7 @@ pub trait CostAccountingRepository {
 
     /// List cost transactions
     fn list_cost_transactions(&self, filter: CostTransactionFilter)
-        -> Result<Vec<CostTransaction>>;
+    -> Result<Vec<CostTransaction>>;
 
     // Cost variance operations
     /// Record a cost variance
@@ -2330,19 +2394,27 @@ pub trait CostAccountingRepository {
 }
 
 /// Credit Management repository trait
-pub trait CreditRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait CreditRepository: Send + Sync {
     // Credit account operations
     /// Create a credit account for a customer
     fn create_credit_account(&self, input: CreateCreditAccount) -> Result<CreditAccount>;
 
     /// Get credit account by ID
-    fn get_credit_account(&self, id: Uuid) -> Result<Option<CreditAccount>>;
+    fn get_credit_account(&self, id: CreditId) -> Result<Option<CreditAccount>>;
 
     /// Get credit account by customer ID
-    fn get_credit_account_by_customer(&self, customer_id: Uuid) -> Result<Option<CreditAccount>>;
+    fn get_credit_account_by_customer(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Option<CreditAccount>>;
 
     /// Update credit account
-    fn update_credit_account(&self, id: Uuid, input: UpdateCreditAccount) -> Result<CreditAccount>;
+    fn update_credit_account(
+        &self,
+        id: CreditId,
+        input: UpdateCreditAccount,
+    ) -> Result<CreditAccount>;
 
     /// List credit accounts
     fn list_credit_accounts(&self, filter: CreditAccountFilter) -> Result<Vec<CreditAccount>>;
@@ -2350,45 +2422,49 @@ pub trait CreditRepository {
     /// Adjust credit limit
     fn adjust_credit_limit(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         new_limit: rust_decimal::Decimal,
         reason: &str,
     ) -> Result<CreditAccount>;
 
     /// Suspend credit account
-    fn suspend_credit_account(&self, customer_id: Uuid, reason: &str) -> Result<CreditAccount>;
+    fn suspend_credit_account(
+        &self,
+        customer_id: CustomerId,
+        reason: &str,
+    ) -> Result<CreditAccount>;
 
     /// Reactivate credit account
-    fn reactivate_credit_account(&self, customer_id: Uuid) -> Result<CreditAccount>;
+    fn reactivate_credit_account(&self, customer_id: CustomerId) -> Result<CreditAccount>;
 
     // Credit check operations
     /// Check credit for an order
     fn check_credit(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         order_amount: rust_decimal::Decimal,
     ) -> Result<CreditCheckResult>;
 
     /// Reserve credit for an order
     fn reserve_credit(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
         amount: rust_decimal::Decimal,
     ) -> Result<CreditAccount>;
 
     /// Release credit reservation
     fn release_credit_reservation(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
     ) -> Result<CreditAccount>;
 
     /// Charge credit (convert reservation to balance)
     fn charge_credit(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
         amount: rust_decimal::Decimal,
     ) -> Result<CreditAccount>;
 
@@ -2406,10 +2482,10 @@ pub trait CreditRepository {
     fn release_hold(&self, input: ReleaseCreditHold) -> Result<CreditHold>;
 
     /// Get active holds for customer
-    fn get_active_holds(&self, customer_id: Uuid) -> Result<Vec<CreditHold>>;
+    fn get_active_holds(&self, customer_id: CustomerId) -> Result<Vec<CreditHold>>;
 
     /// Get active holds for order
-    fn get_holds_for_order(&self, order_id: Uuid) -> Result<Vec<CreditHold>>;
+    fn get_holds_for_order(&self, order_id: OrderId) -> Result<Vec<CreditHold>>;
 
     // Credit application operations
     /// Submit a credit application
@@ -2437,24 +2513,28 @@ pub trait CreditRepository {
     /// Apply payment to balance
     fn apply_payment(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         amount: rust_decimal::Decimal,
         reference_id: Option<Uuid>,
     ) -> Result<CreditAccount>;
 
     // Analytics
     /// Get customer credit summary
-    fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerCreditSummary>>;
+    fn get_customer_summary(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Option<CustomerCreditSummary>>;
 
     /// Get credit aging buckets
-    fn get_aging_report(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>>;
+    fn get_aging_report(&self) -> Result<Vec<(CustomerId, CreditAgingBucket)>>;
 
     /// Get customers over credit limit
     fn get_over_limit_customers(&self) -> Result<Vec<CreditAccount>>;
 }
 
 /// Backorder repository trait
-pub trait BackorderRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait BackorderRepository: Send + Sync {
     // Backorder operations
     /// Create a backorder
     fn create_backorder(&self, input: CreateBackorder) -> Result<Backorder>;
@@ -2529,7 +2609,8 @@ pub trait BackorderRepository {
 // ============================================================================
 
 /// Accounts Receivable repository trait
-pub trait AccountsReceivableRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait AccountsReceivableRepository: Send + Sync {
     // Aging reports
     /// Get AR aging summary across all customers
     fn get_aging_summary(&self) -> Result<ArAgingSummary>;
@@ -2554,7 +2635,7 @@ pub trait AccountsReceivableRepository {
     ) -> Result<Vec<CollectionActivity>>;
 
     /// Update invoice collection status
-    fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()>;
+    fn update_collection_status(&self, invoice_id: InvoiceId, status: CollectionStatus) -> Result<()>;
 
     /// Get invoices due for dunning (based on aging)
     fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>>;
@@ -2562,7 +2643,7 @@ pub trait AccountsReceivableRepository {
     /// Send dunning letter (records activity, updates status)
     fn send_dunning_letter(
         &self,
-        invoice_id: Uuid,
+        invoice_id: InvoiceId,
         letter_type: DunningLetterType,
         sent_by: Option<&str>,
     ) -> Result<CollectionActivity>;
@@ -2643,7 +2724,8 @@ pub trait AccountsReceivableRepository {
 use chrono::NaiveDate;
 
 /// General Ledger repository trait
-pub trait GeneralLedgerRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait GeneralLedgerRepository: Send + Sync {
     // Chart of Accounts
     /// Create a GL account
     fn create_account(&self, input: CreateGlAccount) -> Result<GlAccount>;
@@ -2730,7 +2812,7 @@ pub trait GeneralLedgerRepository {
     fn set_auto_posting_config(&self, input: CreateAutoPostingConfig) -> Result<AutoPostingConfig>;
 
     /// Auto-post invoice creation (DR AR / CR Revenue)
-    fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry>;
+    fn auto_post_invoice(&self, invoice_id: InvoiceId) -> Result<JournalEntry>;
 
     /// Auto-post payment received (DR Cash / CR AR)
     fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry>;
@@ -2781,7 +2863,7 @@ pub trait GeneralLedgerRepository {
 
     // Batch operations
     fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>)
-        -> Result<BatchResult<GlAccount>>;
+    -> Result<BatchResult<GlAccount>>;
     fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>>;
 }
 
@@ -2790,7 +2872,8 @@ pub trait GeneralLedgerRepository {
 // ============================================================================
 
 /// Vector search repository trait for semantic similarity search
-pub trait VectorRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait VectorRepository: Send + Sync {
     /// Store embedding for an entity
     fn store_embedding(
         &self,
@@ -2854,7 +2937,8 @@ pub trait VectorRepository {
 // ============================================================================
 
 /// X402 Payment Intent repository trait for off-chain payment signing
-pub trait X402PaymentIntentRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait X402PaymentIntentRepository: Send + Sync {
     /// Create a new x402 payment intent
     fn create(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent>;
 
@@ -2877,7 +2961,7 @@ pub trait X402PaymentIntentRepository {
 
     /// Mark intent as settled (confirmed on-chain)
     fn mark_settled(&self, id: Uuid, tx_hash: &str, block_number: u64)
-        -> Result<X402PaymentIntent>;
+    -> Result<X402PaymentIntent>;
 
     /// Mark intent as failed
     fn mark_failed(&self, id: Uuid, reason: &str) -> Result<X402PaymentIntent>;
@@ -2929,7 +3013,8 @@ pub trait X402PaymentIntentRepository {
 // ============================================================================
 
 /// X402 credit ledger repository for prepaid balances and metered usage.
-pub trait X402CreditRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait X402CreditRepository: Send + Sync {
     /// Get a credit account for payer/asset/network
     fn get_account(
         &self,
@@ -2969,7 +3054,8 @@ pub trait X402CreditRepository {
 // ============================================================================
 
 /// Agent Card repository trait for AI agent identity and capabilities
-pub trait AgentCardRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait AgentCardRepository: Send + Sync {
     /// Create a new agent card
     fn create(&self, input: CreateAgentCard) -> Result<AgentCard>;
 
@@ -3020,7 +3106,8 @@ pub trait AgentCardRepository {
 // ============================================================================
 
 /// Agent identity registry repository (ERC-8004)
-pub trait AgentIdentityRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait AgentIdentityRepository: Send + Sync {
     /// Register a new agent identity
     fn register(&self, input: CreateAgentIdentity) -> Result<AgentIdentity>;
 
@@ -3090,7 +3177,8 @@ pub trait AgentIdentityRepository {
 // ============================================================================
 
 /// Reputation feedback registry repository (ERC-8004)
-pub trait AgentReputationRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait AgentReputationRepository: Send + Sync {
     /// Submit feedback for an agent
     fn give_feedback(&self, input: CreateAgentFeedback) -> Result<AgentFeedback>;
 
@@ -3155,7 +3243,8 @@ pub trait AgentReputationRepository {
 // ============================================================================
 
 /// Validation registry repository (ERC-8004)
-pub trait AgentValidationRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait AgentValidationRepository: Send + Sync {
     /// Submit a validation request
     fn request_validation(
         &self,
@@ -3193,25 +3282,26 @@ pub trait AgentValidationRepository {
 // ============================================================================
 
 /// A2A (Agent-to-Agent) Commerce repository trait
-pub trait A2ACommerceRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait A2ACommerceRepository: Send + Sync {
     // Quote operations
     /// Create a new quote
-    fn create_quote(&self, input: CreateA2AQuote) -> Result<A2AQuote>;
+    fn create_quote(&self, input: CreateA2AQuote) -> Result<SkillQuote>;
 
     /// Get quote by ID
-    fn get_quote(&self, id: Uuid) -> Result<Option<A2AQuote>>;
+    fn get_quote(&self, id: Uuid) -> Result<Option<SkillQuote>>;
 
     /// Get quote by quote number
-    fn get_quote_by_number(&self, quote_number: &str) -> Result<Option<A2AQuote>>;
+    fn get_quote_by_number(&self, quote_number: &str) -> Result<Option<SkillQuote>>;
 
     /// Update quote status
-    fn update_quote_status(&self, id: Uuid, status: QuoteStatus) -> Result<A2AQuote>;
+    fn update_quote_status(&self, id: Uuid, status: QuoteStatus) -> Result<SkillQuote>;
 
     /// List quotes with filter
-    fn list_quotes(&self, filter: A2AQuoteFilter) -> Result<Vec<A2AQuote>>;
+    fn list_quotes(&self, filter: SkillQuoteFilter) -> Result<Vec<SkillQuote>>;
 
     /// Count quotes matching filter
-    fn count_quotes(&self, filter: A2AQuoteFilter) -> Result<u64>;
+    fn count_quotes(&self, filter: SkillQuoteFilter) -> Result<u64>;
 
     // Purchase operations
     /// Create a new purchase
@@ -3254,7 +3344,8 @@ pub trait A2ACommerceRepository {
 /// Provides a schema-driven custom data system:
 /// - Define types (schemas) with typed fields
 /// - Create records (instances) that validate against the schema
-pub trait CustomObjectRepository {
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait CustomObjectRepository: Send + Sync {
     // ------------------------------------------------------------------------
     // Type (schema) operations
     // ------------------------------------------------------------------------

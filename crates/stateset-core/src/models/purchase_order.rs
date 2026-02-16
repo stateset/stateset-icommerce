@@ -5,11 +5,13 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{ProductId, PurchaseOrderId};
 use uuid::Uuid;
 
 /// Purchase order status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PurchaseOrderStatus {
     /// Draft - not yet submitted
     #[default]
@@ -74,6 +76,7 @@ impl std::str::FromStr for PurchaseOrderStatus {
 /// Payment terms for purchase orders
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PaymentTerms {
     /// Payment due on receipt
     #[default]
@@ -279,7 +282,7 @@ pub struct SupplierFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PurchaseOrder {
     /// Unique ID
-    pub id: Uuid,
+    pub id: PurchaseOrderId,
     /// Human-readable PO number
     pub po_number: String,
     /// Supplier ID
@@ -344,9 +347,9 @@ pub struct PurchaseOrderItem {
     /// Unique ID
     pub id: Uuid,
     /// Parent PO ID
-    pub purchase_order_id: Uuid,
+    pub purchase_order_id: PurchaseOrderId,
     /// Product ID (if linked)
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// SKU
     pub sku: String,
     /// Item name/description
@@ -418,7 +421,7 @@ pub struct CreatePurchaseOrder {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreatePurchaseOrderItem {
     /// Product ID
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// SKU
     pub sku: String,
     /// Item name

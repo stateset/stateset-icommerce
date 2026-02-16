@@ -39,6 +39,7 @@ pub struct Lot {
 /// Status of a lot
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum LotStatus {
     /// Lot is active and available
     Active,
@@ -116,6 +117,7 @@ pub struct LotTransaction {
 /// Type of lot transaction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum LotTransactionType {
     /// Initial creation/receipt of lot
     Received,
@@ -212,6 +214,7 @@ pub struct LotCertificate {
 /// Type of certificate
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CertificateType {
     /// Certificate of Analysis
     Coa,
@@ -313,6 +316,7 @@ pub struct TraceNode {
 /// Type of node in traceability chain
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TraceNodeType {
     PurchaseOrder,
     Receipt,
@@ -501,12 +505,7 @@ pub struct SplitLot {
 
 impl Default for SplitLot {
     fn default() -> Self {
-        Self {
-            lot_id: Uuid::nil(),
-            quantity: Decimal::ZERO,
-            new_lot_number: None,
-            reason: None,
-        }
+        Self { lot_id: Uuid::nil(), quantity: Decimal::ZERO, new_lot_number: None, reason: None }
     }
 }
 
@@ -580,11 +579,7 @@ impl Lot {
 
     /// Check if lot is expired
     pub fn is_expired(&self) -> bool {
-        if let Some(exp) = self.expiration_date {
-            Utc::now() > exp
-        } else {
-            false
-        }
+        if let Some(exp) = self.expiration_date { Utc::now() > exp } else { false }
     }
 
     /// Check if lot is expiring soon (within days)
@@ -609,8 +604,7 @@ impl Lot {
 
     /// Get days until expiration
     pub fn days_until_expiration(&self) -> Option<i64> {
-        self.expiration_date
-            .map(|exp| (exp - Utc::now()).num_days())
+        self.expiration_date.map(|exp| (exp - Utc::now()).num_days())
     }
 
     /// Get shelf life percentage remaining

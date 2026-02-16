@@ -1,7 +1,12 @@
 //! Tracing helpers for StateSet iCommerce.
 //!
 //! This module intentionally keeps initialization lightweight to avoid
-//! imposing a tracing backend on downstream applications.
+//! imposing a tracing backend on downstream applications. It configures a
+//! global `tracing_subscriber` formatter that respects the `RUST_LOG`
+//! environment variable (defaulting to `info`).
+//!
+//! If the host application has already set a global subscriber, initialization
+//! is a no-op — this avoids double-init panics in test and library contexts.
 
 use crate::{ObservabilityError, Result};
 use tracing_subscriber::EnvFilter;
@@ -46,14 +51,10 @@ pub fn init_tracing(service_name: &str, environment: &str, region: &str) -> Resu
         ));
     }
     if environment.is_empty() {
-        return Err(ObservabilityError::InvalidConfig(
-            "environment must be non-empty".to_string(),
-        ));
+        return Err(ObservabilityError::InvalidConfig("environment must be non-empty".to_string()));
     }
     if region.is_empty() {
-        return Err(ObservabilityError::InvalidConfig(
-            "region must be non-empty".to_string(),
-        ));
+        return Err(ObservabilityError::InvalidConfig("region must be non-empty".to_string()));
     }
 
     if tracing::dispatcher::has_been_set() {
@@ -61,10 +62,7 @@ pub fn init_tracing(service_name: &str, environment: &str, region: &str) -> Resu
     }
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .finish();
+    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).with_target(true).finish();
 
     match tracing::subscriber::set_global_default(subscriber) {
         Ok(()) => {

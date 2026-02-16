@@ -3,15 +3,15 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
-    generate_promotion_code, AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult,
-    CommerceError, ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus,
-    CreateCouponCode, CreatePromotion, DiscountTier, Promotion, PromotionCondition,
-    PromotionFilter, PromotionRepository, PromotionStatus, PromotionTarget, PromotionTrigger,
-    PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result, StackingBehavior,
-    UpdatePromotion,
+    AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CommerceError,
+    ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode,
+    CreatePromotion, CustomerId, DiscountTier, OrderId, Promotion, PromotionCondition,
+    PromotionFilter, PromotionId, PromotionRepository, PromotionStatus, PromotionTarget,
+    PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result,
+    StackingBehavior, UpdatePromotion, generate_promotion_code,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -171,10 +171,8 @@ impl PgPromotionRepository {
         let tiers = tiers.map(serde_json::from_value).transpose().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid JSON for promotion.tiers: {}", e))
         })?;
-        let bundle_product_ids = bundle_product_ids
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
+        let bundle_product_ids =
+            bundle_product_ids.map(serde_json::from_value).transpose().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for promotion.bundle_product_ids: {}",
                     e
@@ -225,15 +223,12 @@ impl PgPromotionRepository {
                     e
                 ))
             })?;
-        let metadata = metadata
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
-                CommerceError::DatabaseError(format!("Invalid JSON for promotion.metadata: {}", e))
-            })?;
+        let metadata = metadata.map(serde_json::from_value).transpose().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid JSON for promotion.metadata: {}", e))
+        })?;
 
         Ok(Promotion {
-            id,
+            id: PromotionId::from(id),
             code,
             name,
             description,
@@ -296,19 +291,13 @@ impl PgPromotionRepository {
                 e
             ))
         })?;
-        let metadata = metadata
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid JSON for coupon_code.metadata: {}",
-                    e
-                ))
-            })?;
+        let metadata = metadata.map(serde_json::from_value).transpose().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid JSON for coupon_code.metadata: {}", e))
+        })?;
 
         Ok(CouponCode {
             id,
-            promotion_id,
+            promotion_id: PromotionId::from(promotion_id),
             code,
             status,
             usage_limit,
@@ -351,7 +340,7 @@ impl PgPromotionRepository {
 
             conditions.push(PromotionCondition {
                 id: row.id,
-                promotion_id: row.promotion_id,
+                promotion_id: PromotionId::from(row.promotion_id),
                 condition_type,
                 operator,
                 value: row.value,
@@ -363,7 +352,7 @@ impl PgPromotionRepository {
     }
 
     pub async fn create_async(&self, input: CreatePromotion) -> Result<Promotion> {
-        let id = Uuid::new_v4();
+        let id = PromotionId::new();
         let code = input.code.unwrap_or_else(generate_promotion_code);
         let now = Utc::now();
         let starts_at = input.starts_at.unwrap_or(now);
@@ -397,7 +386,7 @@ impl PgPromotionRepository {
             )
             "#,
         )
-        .bind(id)
+        .bind(id.into_uuid())
         .bind(&code)
         .bind(&input.name)
         .bind(&input.description)
@@ -413,14 +402,7 @@ impl PgPromotionRepository {
         .bind(input.buy_quantity)
         .bind(input.get_quantity)
         .bind(input.get_discount_percent)
-        .bind(
-            input
-                .tiers
-                .as_ref()
-                .map(serde_json::to_value)
-                .transpose()
-                .unwrap_or_default(),
-        )
+        .bind(input.tiers.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(
             input
                 .bundle_product_ids
@@ -461,14 +443,7 @@ impl PgPromotionRepository {
         )
         .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
         .bind(input.priority.unwrap_or(0))
-        .bind(
-            input
-                .metadata
-                .as_ref()
-                .map(serde_json::to_value)
-                .transpose()
-                .unwrap_or_default(),
-        )
+        .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -483,7 +458,7 @@ impl PgPromotionRepository {
                      VALUES ($1,$2,$3,$4,$5,$6)",
                 )
                 .bind(cond_id)
-                .bind(id)
+                .bind(id.into_uuid())
                 .bind(cond.condition_type.to_string())
                 .bind(cond.operator.to_string())
                 .bind(cond.value)
@@ -494,7 +469,7 @@ impl PgPromotionRepository {
             }
         }
 
-        self.get_async(id).await?.ok_or_else(|| {
+        self.get_async(id.into_uuid()).await?.ok_or_else(|| {
             CommerceError::DatabaseError("Failed to retrieve created promotion".into())
         })
     }
@@ -542,7 +517,7 @@ impl PgPromotionRepository {
 
         if let Some(row) = row {
             let mut promo = self.row_to_promotion(row)?;
-            promo.conditions = self.get_conditions_async(promo.id).await?;
+            promo.conditions = self.get_conditions_async(promo.id.into_uuid()).await?;
             Ok(Some(promo))
         } else {
             Ok(None)
@@ -615,7 +590,7 @@ impl PgPromotionRepository {
         let mut promotions = Vec::new();
         for row in rows {
             let mut promo = self.row_to_promotion(row)?;
-            promo.conditions = self.get_conditions_async(promo.id).await?;
+            promo.conditions = self.get_conditions_async(promo.id.into_uuid()).await?;
             promotions.push(promo);
         }
 
@@ -677,10 +652,7 @@ impl PgPromotionRepository {
     pub async fn activate_async(&self, id: Uuid) -> Result<Promotion> {
         self.update_async(
             id,
-            UpdatePromotion {
-                status: Some(PromotionStatus::Active),
-                ..Default::default()
-            },
+            UpdatePromotion { status: Some(PromotionStatus::Active), ..Default::default() },
         )
         .await
     }
@@ -688,10 +660,7 @@ impl PgPromotionRepository {
     pub async fn deactivate_async(&self, id: Uuid) -> Result<Promotion> {
         self.update_async(
             id,
-            UpdatePromotion {
-                status: Some(PromotionStatus::Paused),
-                ..Default::default()
-            },
+            UpdatePromotion { status: Some(PromotionStatus::Paused), ..Default::default() },
         )
         .await
     }
@@ -709,30 +678,21 @@ impl PgPromotionRepository {
             "#,
         )
         .bind(id)
-        .bind(input.promotion_id)
+        .bind(input.promotion_id.into_uuid())
         .bind(input.code.to_uppercase())
         .bind("active")
         .bind(input.usage_limit)
         .bind(input.per_customer_limit)
         .bind(input.starts_at)
         .bind(input.ends_at)
-        .bind(
-            input
-                .metadata
-                .as_ref()
-                .map(serde_json::to_value)
-                .transpose()
-                .unwrap_or_default(),
-        )
+        .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
         .bind(now)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        self.get_coupon_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_coupon_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_coupon_async(&self, id: Uuid) -> Result<Option<CouponCode>> {
@@ -795,7 +755,7 @@ impl PgPromotionRepository {
         let mut q = sqlx::query_as::<_, CouponRow>(&sql);
 
         if let Some(promotion_id) = filter.promotion_id {
-            q = q.bind(promotion_id);
+            q = q.bind(promotion_id.into_uuid());
         }
         if let Some(status) = &filter.status {
             q = q.bind(status.to_string());
@@ -823,10 +783,7 @@ impl PgPromotionRepository {
         };
 
         let auto_promotions = self
-            .list_async(PromotionFilter {
-                is_active: Some(true),
-                ..Default::default()
-            })
+            .list_async(PromotionFilter { is_active: Some(true), ..Default::default() })
             .await?
             .into_iter()
             .filter(|p| {
@@ -863,11 +820,8 @@ impl PgPromotionRepository {
             }
         }
 
-        let mut all_promotions: Vec<(Promotion, Option<String>)> = auto_promotions
-            .into_iter()
-            .map(|p| (p, None))
-            .chain(coupon_promotions)
-            .collect();
+        let mut all_promotions: Vec<(Promotion, Option<String>)> =
+            auto_promotions.into_iter().map(|p| (p, None)).chain(coupon_promotions).collect();
 
         all_promotions.sort_by_key(|(p, _)| p.priority);
 
@@ -1169,11 +1123,9 @@ impl PgPromotionRepository {
                 }
             }
             PromotionType::BuyXGetY => {
-                if let (Some(buy), Some(get), Some(discount_pct)) = (
-                    promo.buy_quantity,
-                    promo.get_quantity,
-                    promo.get_discount_percent,
-                ) {
+                if let (Some(buy), Some(get), Some(discount_pct)) =
+                    (promo.buy_quantity, promo.get_quantity, promo.get_discount_percent)
+                {
                     let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
                     let sets = total_qty / (buy + get);
                     if sets > 0 {

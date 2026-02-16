@@ -82,14 +82,15 @@ pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
 
-use crate::migrations;
 use crate::DatabaseConfig;
+use crate::migrations;
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OpenFlags;
 use rust_decimal::Decimal;
 use stateset_core::CommerceError;
 use std::thread;
+use std::panic::{self, AssertUnwindSafe};
 use std::time::Duration;
 
 /// SQLite database connection pool
@@ -132,7 +133,10 @@ impl SqliteDatabase {
         };
         let manager = manager.with_init(move |conn| {
             // Use longer busy_timeout for high concurrency scenarios
-            conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 30000;")?;
+            conn.execute_batch(&format!(
+                "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = {};",
+                crate::DEFAULT_TRANSACTION_TIMEOUT_MS
+            ))?;
             if !is_memory {
                 conn.execute_batch("PRAGMA journal_mode = WAL;")?;
             }
@@ -146,9 +150,7 @@ impl SqliteDatabase {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Get connection for setup
-        let mut conn = pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Run migrations
         migrations::run_migrations(&mut conn)
@@ -164,9 +166,7 @@ impl SqliteDatabase {
 
     /// Get a connection from the pool
     pub fn conn(&self) -> Result<PooledConnection<SqliteConnectionManager>, CommerceError> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     /// Get order repository
@@ -410,9 +410,11 @@ pub(crate) use parse_helpers::{
 /// Build SQL IN clause with placeholders for the given count
 /// Example: build_in_clause(3) returns "?, ?, ?"
 pub(crate) fn build_in_clause(count: usize) -> String {
-    std::iter::repeat_n("?", count)
-        .collect::<Vec<_>>()
-        .join(", ")
+    if count == 0 {
+        return "NULL".to_string();
+    }
+
+    std::iter::repeat_n("?", count).collect::<Vec<_>>().join(", ")
 }
 
 /// Check if SQLite JSON1 functions are available.
@@ -448,9 +450,7 @@ pub(crate) fn sum_decimal_query(
 
 /// Convert a slice of UUIDs to boxed parameter vector for rusqlite
 pub(crate) fn uuid_params(ids: &[uuid::Uuid]) -> Vec<Box<dyn rusqlite::ToSql>> {
-    ids.iter()
-        .map(|id| Box::new(id.to_string()) as Box<dyn rusqlite::ToSql>)
-        .collect()
+    ids.iter().map(|id| Box::new(id.to_string()) as Box<dyn rusqlite::ToSql>).collect()
 }
 
 /// Convert boxed params to references for rusqlite execution
@@ -460,17 +460,12 @@ pub(crate) fn params_refs(params: &[Box<dyn rusqlite::ToSql>]) -> Vec<&dyn rusql
 
 /// Convert a slice of i64 IDs to boxed parameter vector for rusqlite
 pub(crate) fn i64_params(ids: &[i64]) -> Vec<Box<dyn rusqlite::ToSql>> {
-    ids.iter()
-        .map(|id| Box::new(*id) as Box<dyn rusqlite::ToSql>)
-        .collect()
+    ids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::ToSql>).collect()
 }
 
 /// Convert a slice of strings to boxed parameter vector for rusqlite
 pub(crate) fn string_params(strings: &[String]) -> Vec<Box<dyn rusqlite::ToSql>> {
-    strings
-        .iter()
-        .map(|s| Box::new(s.clone()) as Box<dyn rusqlite::ToSql>)
-        .collect()
+    strings.iter().map(|s| Box::new(s.clone()) as Box<dyn rusqlite::ToSql>).collect()
 }
 
 // ============================================================================
@@ -503,7 +498,7 @@ pub(crate) fn is_retryable_error(e: &rusqlite::Error) -> bool {
 
 /// Execute a database operation with retry logic for transient lock errors.
 /// Uses exponential backoff with jitter to avoid thundering herd.
-pub(crate) fn with_retry<T, F>(mut f: F) -> Result<T, rusqlite::Error>
+pub(crate) fn with_retry<T, F>(mut f: F, max_retries: u32) -> Result<T, rusqlite::Error>
 where
     F: FnMut() -> Result<T, rusqlite::Error>,
 {
@@ -523,7 +518,7 @@ where
     loop {
         match f() {
             Ok(result) => return Ok(result),
-            Err(e) if is_retryable_error(&e) && retries < MAX_RETRIES => {
+            Err(e) if is_retryable_error(&e) && retries < max_retries => {
                 retries += 1;
                 // Simple xorshift for pseudo-random jitter
                 let jitter = SEED.with(|seed| {
@@ -554,21 +549,24 @@ pub(crate) fn with_immediate_transaction<T, F>(
 where
     F: Fn(&rusqlite::Transaction<'_>) -> Result<T, rusqlite::Error>,
 {
-    with_retry(|| {
-        let mut conn = pool.get().map_err(|e| {
-            rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-                Some(e.to_string()),
-            )
-        })?;
+    with_retry(
+        || {
+            let mut conn = pool.get().map_err(|e| {
+                rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                    Some(e.to_string()),
+                )
+            })?;
 
-        // Use IMMEDIATE transaction to acquire write lock immediately
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            // Use IMMEDIATE transaction to acquire write lock immediately
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
-        let result = f(&tx)?;
-        tx.commit()?;
-        Ok(result)
-    })
+            let result = f(&tx)?;
+            tx.commit()?;
+            Ok(result)
+        },
+        MAX_RETRIES,
+    )
     .map_err(map_db_error)
 }
 
@@ -578,26 +576,175 @@ use crate::DatabaseExt;
 impl DatabaseExt for SqliteDatabase {
     fn with_transaction<F, T>(&self, f: F) -> stateset_core::Result<T>
     where
-        F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
+        F: FnMut(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
     {
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        // Use IMMEDIATE transaction to prevent lock upgrade deadlocks
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(map_db_error)?;
-
-        match f(&tx) {
-            Ok(result) => {
-                tx.commit().map_err(map_db_error)?;
-                Ok(result)
-            }
-            Err(e) => {
-                // Transaction is automatically rolled back on drop
-                Err(map_db_error(e))
-            }
-        }
+        self.with_transaction_opts(crate::TransactionOptions::new(), f)
     }
+
+    fn with_transaction_opts<F, T>(
+        &self,
+        opts: crate::TransactionOptions,
+        mut f: F,
+    ) -> stateset_core::Result<T>
+    where
+        F: FnMut(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
+    {
+        let retries = if opts.retry_on_conflict { opts.max_retries } else { 0 };
+        let timeout_ms = opts
+            .timeout_ms
+            .unwrap_or(crate::DEFAULT_TRANSACTION_TIMEOUT_MS);
+        let set_read_uncommitted = matches!(opts.isolation, crate::TransactionIsolation::ReadUncommitted);
+        let fallback_timeout_ms = timeout_ms;
+
+        crate::sqlite::with_retry(
+            || {
+                let mut conn = self
+                    .pool
+                    .get()
+                    .map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY), Some(e.to_string())))?;
+                let previous_timeout: u64 = conn
+                    .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, u64>(0))
+                    .unwrap_or(fallback_timeout_ms);
+
+                conn.execute_batch(&format!("PRAGMA busy_timeout = {}", timeout_ms))
+                    .map_err(map_db_error)?;
+
+                let previous_read_uncommitted = if set_read_uncommitted {
+                    let previous: i64 = conn
+                        .query_row("PRAGMA read_uncommitted", [], |row| row.get::<_, i64>(0))
+                        .unwrap_or(0);
+                    let previous_read_uncommitted = previous == 1;
+                    conn.execute_batch("PRAGMA read_uncommitted = true")?;
+                    Some(previous_read_uncommitted)
+                } else {
+                    None
+                };
+
+                let tx = conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(map_db_error)?;
+
+                let result = panic::catch_unwind(AssertUnwindSafe(|| f(&tx)));
+
+                let _ = conn.execute_batch(&format!("PRAGMA busy_timeout = {}", previous_timeout));
+                if let Some(previous_read_uncommitted) = previous_read_uncommitted {
+                    let _ = conn.execute_batch(&format!(
+                        "PRAGMA read_uncommitted = {}",
+                        if previous_read_uncommitted { "true" } else { "false" }
+                    ));
+                }
+
+                match result {
+                    Ok(result) => match result {
+                        Ok(result) => {
+                            tx.commit().map_err(map_db_error)?;
+                            Ok(result)
+                        }
+                        Err(e) => {
+                            // Transaction is automatically rolled back on drop
+                            Err(map_db_error(e))
+                        }
+                    },
+                    Err(panic_payload) => {
+                        panic::resume_unwind(panic_payload);
+                    }
+                }
+            },
+            retries,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn retryable_error() -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some("database is locked".to_string()),
+        )
+    }
+
+    #[test]
+    fn build_in_clause_empty_is_null() {
+        assert_eq!(build_in_clause(0), "NULL".to_string());
+    }
+
+    #[test]
+    fn build_in_clause_uses_question_mark_placeholders() {
+        assert_eq!(build_in_clause(3), "?, ?, ?".to_string());
+    }
+
+    #[test]
+    fn with_transaction_restores_read_uncommitted_pragma() {
+        let db = SqliteDatabase::new(&DatabaseConfig {
+            url: ":memory:".to_string(),
+            max_connections: 1,
+        })
+        .expect("db should initialize");
+
+        {
+            let conn = db.conn().expect("connection should open");
+            conn.execute_batch("PRAGMA read_uncommitted = true")
+                .expect("read_uncommitted pragma should be set");
+            let before: i64 = conn
+                .query_row("PRAGMA read_uncommitted", [], |row| row.get::<_, i64>(0))
+                .expect("read_uncommitted pragma should be readable");
+            assert_eq!(before, 1);
+        }
+
+        db.with_transaction_opts(
+            crate::TransactionOptions::new().isolation(TransactionIsolation::ReadUncommitted),
+            |conn| {
+                conn.execute_batch("PRAGMA read_uncommitted = true")?;
+                Ok(())
+            },
+        )
+        .expect("transaction should succeed");
+
+        let conn = db.conn().expect("connection should reopen");
+        let after: i64 = conn
+            .query_row("PRAGMA read_uncommitted", [], |row| row.get::<_, i64>(0))
+            .expect("read_uncommitted pragma should be readable");
+        assert_eq!(after, 1);
+    }
+
+    #[test]
+    fn with_retry_respects_zero_retries() {
+        let attempts = Cell::new(0u32);
+        let err = with_retry(
+            || {
+                attempts.set(attempts.get() + 1);
+                Err(retryable_error())
+            },
+            0,
+        );
+
+        assert!(err.is_err());
+        assert_eq!(attempts.get(), 1);
+    }
+
+    #[test]
+    fn with_retry_retries_until_success() {
+        let attempts = Cell::new(0u32);
+        let result = with_retry(
+            || {
+                let attempt = attempts.get() + 1;
+                attempts.set(attempt);
+                if attempt < 3 {
+                    Err(retryable_error())
+                } else {
+                    Ok(attempt)
+                }
+            },
+            5,
+        )
+        .expect("operation should succeed after retries");
+
+        assert_eq!(result, 3);
+        assert_eq!(attempts.get(), 3);
+    }
+
 }

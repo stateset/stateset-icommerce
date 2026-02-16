@@ -1,0 +1,15 @@
+too-large-for-stack = 128
+doc-valid-idents = [
+    "StateSet",
+    "iCommerce",
+    "SQLite",
+    "PostgreSQL",
+    "ERC8004",
+    "x402",
+    "A2A",
+    "BOM",
+    "SKU",
+    "RMA",
+    "ISO",
+]
+allow-dbg-in-tests = true

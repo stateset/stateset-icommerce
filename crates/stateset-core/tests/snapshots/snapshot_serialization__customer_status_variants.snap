@@ -1,0 +1,10 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+assertion_line: 141
+expression: statuses
+---
+[
+  "active",
+  "inactive",
+  "suspended"
+]

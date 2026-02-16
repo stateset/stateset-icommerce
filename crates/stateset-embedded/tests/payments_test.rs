@@ -3,8 +3,8 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     CardBrand, Commerce, CreateCustomer, CreateOrder, CreateOrderItem, CreatePayment,
-    CreatePaymentMethod, CreateRefund, Payment, PaymentFilter, PaymentMethodType,
-    PaymentTransactionStatus, RefundStatus, UpdatePayment,
+    CreatePaymentMethod, CreateRefund, CustomerId, OrderId, Payment, PaymentFilter, PaymentId,
+    PaymentMethodType, PaymentTransactionStatus, RefundStatus, UpdatePayment,
 };
 use uuid::Uuid;
 
@@ -13,7 +13,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Helper to create a test customer
-fn create_test_customer(commerce: &Commerce) -> Uuid {
+fn create_test_customer(commerce: &Commerce) -> CustomerId {
     commerce
         .customers()
         .create(CreateCustomer {
@@ -27,13 +27,13 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
 }
 
 /// Helper to create a test order with default items
-fn create_test_order(commerce: &Commerce, customer_id: Uuid) -> Uuid {
+fn create_test_order(commerce: &Commerce, customer_id: CustomerId) -> OrderId {
     commerce
         .orders()
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 2,
@@ -49,8 +49,8 @@ fn create_test_order(commerce: &Commerce, customer_id: Uuid) -> Uuid {
 /// Helper to create a test payment for an order
 fn create_test_payment(
     commerce: &Commerce,
-    order_id: Option<Uuid>,
-    customer_id: Option<Uuid>,
+    order_id: Option<OrderId>,
+    customer_id: Option<CustomerId>,
 ) -> Payment {
     commerce
         .payments()
@@ -206,10 +206,9 @@ fn test_get_payment_by_id() {
 fn test_get_payment_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce
-        .payments()
-        .get(Uuid::new_v4())
-        .expect("Should not error for missing payment");
+    let fake_id: PaymentId = Uuid::new_v4().into();
+    let result =
+        commerce.payments().get(fake_id).expect("Should not error for missing payment");
 
     assert!(result.is_none());
 }
@@ -276,10 +275,8 @@ fn test_payment_status_pending_to_completed() {
 
     assert_eq!(payment.status, PaymentTransactionStatus::Pending);
 
-    let completed = commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to mark payment completed");
+    let completed =
+        commerce.payments().mark_completed(payment.id).expect("Failed to mark payment completed");
 
     assert_eq!(completed.status, PaymentTransactionStatus::Completed);
     assert!(completed.paid_at.is_some());
@@ -292,10 +289,8 @@ fn test_payment_status_pending_to_processing() {
 
     assert_eq!(payment.status, PaymentTransactionStatus::Pending);
 
-    let processing = commerce
-        .payments()
-        .mark_processing(payment.id)
-        .expect("Failed to mark payment processing");
+    let processing =
+        commerce.payments().mark_processing(payment.id).expect("Failed to mark payment processing");
 
     assert_eq!(processing.status, PaymentTransactionStatus::Processing);
 }
@@ -324,10 +319,7 @@ fn test_payment_status_pending_to_cancelled() {
 
     assert_eq!(payment.status, PaymentTransactionStatus::Pending);
 
-    let cancelled = commerce
-        .payments()
-        .cancel(payment.id)
-        .expect("Failed to cancel payment");
+    let cancelled = commerce.payments().cancel(payment.id).expect("Failed to cancel payment");
 
     assert_eq!(cancelled.status, PaymentTransactionStatus::Cancelled);
 }
@@ -338,16 +330,11 @@ fn test_payment_status_processing_to_completed() {
     let payment = create_test_payment(&commerce, None, None);
 
     // Move to processing first
-    commerce
-        .payments()
-        .mark_processing(payment.id)
-        .expect("Failed to mark processing");
+    commerce.payments().mark_processing(payment.id).expect("Failed to mark processing");
 
     // Then complete
-    let completed = commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to mark completed");
+    let completed =
+        commerce.payments().mark_completed(payment.id).expect("Failed to mark completed");
 
     assert_eq!(completed.status, PaymentTransactionStatus::Completed);
 }
@@ -358,10 +345,7 @@ fn test_payment_status_processing_to_failed() {
     let payment = create_test_payment(&commerce, None, None);
 
     // Move to processing first
-    commerce
-        .payments()
-        .mark_processing(payment.id)
-        .expect("Failed to mark processing");
+    commerce.payments().mark_processing(payment.id).expect("Failed to mark processing");
 
     // Then fail
     let failed = commerce
@@ -383,10 +367,7 @@ fn test_create_refund() {
     let payment = create_test_payment(&commerce, None, None);
 
     // Complete the payment first
-    commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     // Create a full refund
     let refund = commerce
@@ -413,10 +394,7 @@ fn test_partial_refund() {
     let payment = create_test_payment(&commerce, None, None);
 
     // Complete the payment first
-    commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     // Create a partial refund
     let refund = commerce
@@ -448,10 +426,7 @@ fn test_multiple_partial_refunds() {
         .expect("Failed to create payment");
 
     // Complete the payment
-    commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     // First partial refund
     let refund1 = commerce
@@ -479,10 +454,7 @@ fn test_multiple_partial_refunds() {
     assert_eq!(refund2.amount, dec!(20.00));
 
     // Get all refunds for the payment
-    let refunds = commerce
-        .payments()
-        .get_refunds(payment.id)
-        .expect("Failed to get refunds");
+    let refunds = commerce.payments().get_refunds(payment.id).expect("Failed to get refunds");
 
     assert_eq!(refunds.len(), 2);
 }
@@ -492,10 +464,7 @@ fn test_get_refund_by_id() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let payment = create_test_payment(&commerce, None, None);
 
-    commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     let created_refund = commerce
         .payments()
@@ -522,10 +491,7 @@ fn test_complete_refund() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let payment = create_test_payment(&commerce, None, None);
 
-    commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     let refund = commerce
         .payments()
@@ -538,10 +504,8 @@ fn test_complete_refund() {
 
     assert_eq!(refund.status, RefundStatus::Pending);
 
-    let completed_refund = commerce
-        .payments()
-        .complete_refund(refund.id)
-        .expect("Failed to complete refund");
+    let completed_refund =
+        commerce.payments().complete_refund(refund.id).expect("Failed to complete refund");
 
     assert_eq!(completed_refund.status, RefundStatus::Completed);
     assert!(completed_refund.refunded_at.is_some());
@@ -552,10 +516,7 @@ fn test_fail_refund() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let payment = create_test_payment(&commerce, None, None);
 
-    commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     let refund = commerce
         .payments()
@@ -572,10 +533,7 @@ fn test_fail_refund() {
         .expect("Failed to fail refund");
 
     assert_eq!(failed_refund.status, RefundStatus::Failed);
-    assert_eq!(
-        failed_refund.failure_reason,
-        Some("Refund processing error".into())
-    );
+    assert_eq!(failed_refund.failure_reason, Some("Refund processing error".into()));
 }
 
 #[test]
@@ -583,10 +541,7 @@ fn test_refund_with_external_id() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let payment = create_test_payment(&commerce, None, None);
 
-    commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     let refund = commerce
         .payments()
@@ -616,10 +571,8 @@ fn test_list_payments() {
         create_test_payment(&commerce, None, None);
     }
 
-    let payments = commerce
-        .payments()
-        .list(PaymentFilter::default())
-        .expect("Failed to list payments");
+    let payments =
+        commerce.payments().list(PaymentFilter::default()).expect("Failed to list payments");
 
     assert!(payments.len() >= 5);
 }
@@ -647,10 +600,8 @@ fn test_list_payments_by_order() {
     create_test_payment(&commerce, None, None);
     create_test_payment(&commerce, None, None);
 
-    let order_payments = commerce
-        .payments()
-        .for_order(order_id)
-        .expect("Failed to get payments for order");
+    let order_payments =
+        commerce.payments().for_order(order_id).expect("Failed to get payments for order");
 
     assert_eq!(order_payments.len(), 3);
     assert!(order_payments.iter().all(|p| p.order_id == Some(order_id)));
@@ -674,16 +625,11 @@ fn test_list_payments_by_customer() {
 
     let customer1_payments = commerce
         .payments()
-        .list(PaymentFilter {
-            customer_id: Some(customer1),
-            ..Default::default()
-        })
+        .list(PaymentFilter { customer_id: Some(customer1), ..Default::default() })
         .expect("Failed to list payments");
 
     assert_eq!(customer1_payments.len(), 3);
-    assert!(customer1_payments
-        .iter()
-        .all(|p| p.customer_id == Some(customer1)));
+    assert!(customer1_payments.iter().all(|p| p.customer_id == Some(customer1)));
 }
 
 #[test]
@@ -696,14 +642,8 @@ fn test_list_payments_by_status() {
     let _payment3 = create_test_payment(&commerce, None, None);
 
     // Complete some payments
-    commerce
-        .payments()
-        .mark_completed(payment1.id)
-        .expect("Failed to complete payment");
-    commerce
-        .payments()
-        .mark_completed(payment2.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment1.id).expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment2.id).expect("Failed to complete payment");
 
     let completed_payments = commerce
         .payments()
@@ -714,9 +654,7 @@ fn test_list_payments_by_status() {
         .expect("Failed to list payments");
 
     assert_eq!(completed_payments.len(), 2);
-    assert!(completed_payments
-        .iter()
-        .all(|p| p.status == PaymentTransactionStatus::Completed));
+    assert!(completed_payments.iter().all(|p| p.status == PaymentTransactionStatus::Completed));
 }
 
 #[test]
@@ -730,10 +668,7 @@ fn test_list_payments_with_limit() {
 
     let payments = commerce
         .payments()
-        .list(PaymentFilter {
-            limit: Some(5),
-            ..Default::default()
-        })
+        .list(PaymentFilter { limit: Some(5), ..Default::default() })
         .expect("Failed to list payments");
 
     assert_eq!(payments.len(), 5);
@@ -750,11 +685,7 @@ fn test_list_payments_with_offset() {
 
     let payments = commerce
         .payments()
-        .list(PaymentFilter {
-            limit: Some(5),
-            offset: Some(3),
-            ..Default::default()
-        })
+        .list(PaymentFilter { limit: Some(5), offset: Some(3), ..Default::default() })
         .expect("Failed to list payments");
 
     assert!(payments.len() <= 5);
@@ -769,10 +700,8 @@ fn test_count_payments() {
         create_test_payment(&commerce, None, None);
     }
 
-    let count = commerce
-        .payments()
-        .count(PaymentFilter::default())
-        .expect("Failed to count payments");
+    let count =
+        commerce.payments().count(PaymentFilter::default()).expect("Failed to count payments");
 
     assert!(count >= 7);
 }
@@ -784,10 +713,7 @@ fn test_count_payments_by_status() {
     // Create and complete some payments
     for _ in 0..4 {
         let payment = create_test_payment(&commerce, None, None);
-        commerce
-            .payments()
-            .mark_completed(payment.id)
-            .expect("Failed to complete");
+        commerce.payments().mark_completed(payment.id).expect("Failed to complete");
     }
 
     // Create some pending payments
@@ -847,10 +773,7 @@ fn test_payment_methods() {
 
     assert_eq!(credit_card.payment_method, PaymentMethodType::CreditCard);
     assert_eq!(paypal.payment_method, PaymentMethodType::PayPal);
-    assert_eq!(
-        bank_transfer.payment_method,
-        PaymentMethodType::BankTransfer
-    );
+    assert_eq!(bank_transfer.payment_method, PaymentMethodType::BankTransfer);
 }
 
 #[test]
@@ -948,10 +871,7 @@ fn test_delete_payment_method() {
         })
         .expect("Failed to create payment method");
 
-    commerce
-        .payments()
-        .delete_payment_method(method.id)
-        .expect("Failed to delete payment method");
+    commerce.payments().delete_payment_method(method.id).expect("Failed to delete payment method");
 
     let methods = commerce
         .payments()
@@ -1156,10 +1076,7 @@ fn test_payment_update_increments_timestamp() {
         .payments()
         .update(
             payment.id,
-            UpdatePayment {
-                external_id: Some("updated_id".into()),
-                ..Default::default()
-            },
+            UpdatePayment { external_id: Some("updated_id".into()), ..Default::default() },
         )
         .expect("Failed to update payment");
 
@@ -1172,10 +1089,7 @@ fn test_refund_number_uniqueness() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let payment = create_test_payment(&commerce, None, None);
 
-    commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     let refund1 = commerce
         .payments()
@@ -1281,10 +1195,8 @@ fn test_list_payments_by_amount_range() {
 
     // Get all payments and filter by amount range in code
     // (min_amount/max_amount filters may not be implemented at the DB level)
-    let all_payments = commerce
-        .payments()
-        .list(PaymentFilter::default())
-        .expect("Failed to list payments");
+    let all_payments =
+        commerce.payments().list(PaymentFilter::default()).expect("Failed to list payments");
 
     // Manually filter by amount range
     let mid_range_payments: Vec<_> = all_payments
@@ -1330,21 +1242,15 @@ fn test_list_payments_by_payment_method() {
 
     // Get all payments and filter by payment method in code
     // (payment_method filter may not be implemented at the DB level)
-    let all_payments = commerce
-        .payments()
-        .list(PaymentFilter::default())
-        .expect("Failed to list payments");
+    let all_payments =
+        commerce.payments().list(PaymentFilter::default()).expect("Failed to list payments");
 
     // Manually filter by payment method
-    let credit_card_payments: Vec<_> = all_payments
-        .iter()
-        .filter(|p| p.payment_method == PaymentMethodType::CreditCard)
-        .collect();
+    let credit_card_payments: Vec<_> =
+        all_payments.iter().filter(|p| p.payment_method == PaymentMethodType::CreditCard).collect();
 
     assert_eq!(credit_card_payments.len(), 2);
-    assert!(credit_card_payments
-        .iter()
-        .all(|p| p.payment_method == PaymentMethodType::CreditCard));
+    assert!(credit_card_payments.iter().all(|p| p.payment_method == PaymentMethodType::CreditCard));
 }
 
 // ============================================================================
@@ -1381,18 +1287,14 @@ fn test_full_payment_flow() {
     assert_eq!(payment.status, PaymentTransactionStatus::Pending);
 
     // 2. Mark as processing (simulating payment processor)
-    let payment = commerce
-        .payments()
-        .mark_processing(payment.id)
-        .expect("Failed to mark processing");
+    let payment =
+        commerce.payments().mark_processing(payment.id).expect("Failed to mark processing");
 
     assert_eq!(payment.status, PaymentTransactionStatus::Processing);
 
     // 3. Complete the payment
-    let payment = commerce
-        .payments()
-        .mark_completed(payment.id)
-        .expect("Failed to complete payment");
+    let payment =
+        commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
     assert_eq!(payment.status, PaymentTransactionStatus::Completed);
     assert!(payment.paid_at.is_some());
@@ -1413,10 +1315,7 @@ fn test_full_payment_flow() {
     assert_eq!(refund.amount, dec!(29.99));
 
     // 5. Complete the refund
-    let refund = commerce
-        .payments()
-        .complete_refund(refund.id)
-        .expect("Failed to complete refund");
+    let refund = commerce.payments().complete_refund(refund.id).expect("Failed to complete refund");
 
     assert_eq!(refund.status, RefundStatus::Completed);
     assert!(refund.refunded_at.is_some());
@@ -1429,16 +1328,10 @@ fn test_full_payment_flow() {
         .expect("Payment not found");
 
     // After a partial refund, the payment status should be PartiallyRefunded
-    assert_eq!(
-        updated_payment.status,
-        PaymentTransactionStatus::PartiallyRefunded
-    );
+    assert_eq!(updated_payment.status, PaymentTransactionStatus::PartiallyRefunded);
 
     // 7. Verify we can list all refunds for this payment
-    let refunds = commerce
-        .payments()
-        .get_refunds(payment.id)
-        .expect("Failed to get refunds");
+    let refunds = commerce.payments().get_refunds(payment.id).expect("Failed to get refunds");
 
     assert_eq!(refunds.len(), 1);
     assert_eq!(refunds[0].amount, dec!(29.99));
@@ -1506,10 +1399,7 @@ fn test_payment_method_lifecycle() {
     assert_eq!(default.id, method2.id);
 
     // 6. Delete the old default
-    commerce
-        .payments()
-        .delete_payment_method(method.id)
-        .expect("Failed to delete payment method");
+    commerce.payments().delete_payment_method(method.id).expect("Failed to delete payment method");
 
     // 7. Verify only one method remains
     let methods = commerce

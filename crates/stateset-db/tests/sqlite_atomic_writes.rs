@@ -15,8 +15,7 @@ fn sqlite_invoice_create_rolls_back_when_item_insert_fails() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     {
         let conn = db.conn().expect("get sqlite connection");
-        conn.execute("DROP TABLE invoice_items", [])
-            .expect("drop invoice_items");
+        conn.execute("DROP TABLE invoice_items", []).expect("drop invoice_items");
     }
 
     let repo = db.invoices();
@@ -45,16 +44,12 @@ fn sqlite_purchase_order_create_rolls_back_when_item_insert_fails() {
     let repo = db.purchase_orders();
 
     let supplier = repo
-        .create_supplier(CreateSupplier {
-            name: "Test supplier".to_string(),
-            ..Default::default()
-        })
+        .create_supplier(CreateSupplier { name: "Test supplier".to_string(), ..Default::default() })
         .expect("create supplier");
 
     {
         let conn = db.conn().expect("get sqlite connection");
-        conn.execute("DROP TABLE purchase_order_items", [])
-            .expect("drop purchase_order_items");
+        conn.execute("DROP TABLE purchase_order_items", []).expect("drop purchase_order_items");
     }
 
     repo.create(CreatePurchaseOrder {
@@ -74,10 +69,7 @@ fn sqlite_purchase_order_create_rolls_back_when_item_insert_fails() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM purchase_orders", [], |row| row.get(0))
         .expect("count purchase_orders");
-    assert_eq!(
-        count, 0,
-        "purchase order insert should have been rolled back"
-    );
+    assert_eq!(count, 0, "purchase order insert should have been rolled back");
 }
 
 #[test]
@@ -85,13 +77,12 @@ fn sqlite_shipment_create_rolls_back_when_item_insert_fails() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     {
         let conn = db.conn().expect("get sqlite connection");
-        conn.execute("DROP TABLE shipment_items", [])
-            .expect("drop shipment_items");
+        conn.execute("DROP TABLE shipment_items", []).expect("drop shipment_items");
     }
 
     let repo = db.shipments();
     repo.create(CreateShipment {
-        order_id: Uuid::new_v4(),
+        order_id: Uuid::new_v4().into(),
         recipient_name: "Test recipient".to_string(),
         shipping_address: "123 Test St".to_string(),
         items: Some(vec![CreateShipmentItem {
@@ -127,8 +118,7 @@ fn sqlite_inventory_adjust_rolls_back_when_transaction_insert_fails() {
 
     {
         let conn = db.conn().expect("get sqlite connection");
-        conn.execute("DROP TABLE inventory_transactions", [])
-            .expect("drop inventory_transactions");
+        conn.execute("DROP TABLE inventory_transactions", []).expect("drop inventory_transactions");
     }
 
     repo.adjust(AdjustInventory {
@@ -179,12 +169,10 @@ fn sqlite_inventory_release_reservation_rolls_back_when_balance_update_fails() {
 
     {
         let conn = db.conn().expect("get sqlite connection");
-        conn.execute("DROP TABLE inventory_balances", [])
-            .expect("drop inventory_balances");
+        conn.execute("DROP TABLE inventory_balances", []).expect("drop inventory_balances");
     }
 
-    repo.release_reservation(reservation.id)
-        .expect_err("expected release_reservation to fail");
+    repo.release_reservation(reservation.id).expect_err("expected release_reservation to fail");
 
     let conn = db.conn().expect("get sqlite connection");
     let status: String = conn

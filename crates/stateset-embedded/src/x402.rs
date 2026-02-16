@@ -127,9 +127,7 @@ impl X402 {
         sequence_number: u64,
         batch_id: Uuid,
     ) -> Result<X402PaymentIntent> {
-        self.db
-            .x402_payment_intents()
-            .mark_sequenced(id, sequence_number, batch_id)
+        self.db.x402_payment_intents().mark_sequenced(id, sequence_number, batch_id)
     }
 
     /// Mark an intent as settled on-chain
@@ -152,9 +150,7 @@ impl X402 {
         tx_hash: &str,
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
-        self.db
-            .x402_payment_intents()
-            .mark_settled(id, tx_hash, block_number)
+        self.db.x402_payment_intents().mark_settled(id, tx_hash, block_number)
     }
 
     /// Mark an intent as failed
@@ -217,10 +213,7 @@ impl X402 {
 
     /// Get intents by status
     pub fn intents_by_status(&self, status: X402IntentStatus) -> Result<Vec<X402PaymentIntent>> {
-        self.list_intents(X402PaymentIntentFilter {
-            status: Some(status),
-            ..Default::default()
-        })
+        self.list_intents(X402PaymentIntentFilter { status: Some(status), ..Default::default() })
     }
 
     /// Get pending intents (created but not yet signed)
@@ -249,9 +242,7 @@ impl X402 {
         asset: X402Asset,
         network: X402Network,
     ) -> Result<Option<X402CreditAccount>> {
-        self.db
-            .x402_credits()
-            .get_account(payer_address, asset, network)
+        self.db.x402_credits().get_account(payer_address, asset, network)
     }
 
     /// Get or create a credit account (balance default = 0)
@@ -261,9 +252,7 @@ impl X402 {
         asset: X402Asset,
         network: X402Network,
     ) -> Result<X402CreditAccount> {
-        self.db
-            .x402_credits()
-            .get_or_create_account(payer_address, asset, network)
+        self.db.x402_credits().get_or_create_account(payer_address, asset, network)
     }
 
     /// Get current credit balance for a payer/asset/network
@@ -273,9 +262,7 @@ impl X402 {
         asset: X402Asset,
         network: X402Network,
     ) -> Result<u64> {
-        self.db
-            .x402_credits()
-            .get_balance(payer_address, asset, network)
+        self.db.x402_credits().get_balance(payer_address, asset, network)
     }
 
     /// Apply a credit or debit adjustment
@@ -405,9 +392,7 @@ impl X402 {
     ///
     /// Upgrades the agent's trust level to `Verified`.
     pub fn verify_agent(&self, id: Uuid) -> Result<AgentCard> {
-        self.db
-            .agent_cards()
-            .verify(id, TrustLevel::Verified, "system")
+        self.db.agent_cards().verify(id, TrustLevel::Verified, "system")
     }
 
     /// Suspend an agent card
@@ -459,10 +444,7 @@ impl X402 {
 
     /// Get all active agents
     pub fn active_agents(&self) -> Result<Vec<AgentCard>> {
-        self.list_agents(AgentCardFilter {
-            active: Some(true),
-            ..Default::default()
-        })
+        self.list_agents(AgentCardFilter { active: Some(true), ..Default::default() })
     }
 
     /// Get agents by trust level
@@ -742,10 +724,7 @@ mod tests {
             .unwrap();
 
         // Then settle
-        let settled = commerce
-            .x402()
-            .mark_settled(intent.id, "0xTxHash123", 12345)
-            .unwrap();
+        let settled = commerce.x402().mark_settled(intent.id, "0xTxHash123", 12345).unwrap();
 
         assert_eq!(settled.status, X402IntentStatus::Settled);
         assert_eq!(settled.tx_hash, Some("0xTxHash123".to_string()));
@@ -808,10 +787,8 @@ mod tests {
             .unwrap();
 
         // Discover agents on SetChain
-        let set_chain_agents = commerce
-            .x402()
-            .discover_agents(Some(X402Network::SetChain), None, None, None)
-            .unwrap();
+        let set_chain_agents =
+            commerce.x402().discover_agents(Some(X402Network::SetChain), None, None, None).unwrap();
 
         assert_eq!(set_chain_agents.len(), 1);
         assert_eq!(set_chain_agents[0].name, "Seller 1");

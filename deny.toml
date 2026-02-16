@@ -35,6 +35,9 @@ exceptions = []
 ignore = false
 registries = []
 
+[advisories]
+yanked = "warn"
+
 [bans]
 multiple-versions = "warn"
 wildcards = "warn"
@@ -42,7 +45,8 @@ highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
-deny = []
+# Ban openssl — we use rustls for TLS to keep container images minimal.
+deny = [{ name = "openssl" }, { name = "openssl-sys" }]
 skip = []
 skip-tree = []
 

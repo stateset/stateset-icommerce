@@ -1,0 +1,10 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+assertion_line: 166
+expression: statuses
+---
+[
+  "draft",
+  "active",
+  "archived"
+]

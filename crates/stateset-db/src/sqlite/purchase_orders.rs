@@ -19,14 +19,14 @@ use super::{
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, Row};
+use rusqlite::{Row, params};
 use rust_decimal::Decimal;
 use stateset_core::{
-    generate_po_number, generate_supplier_code, validate_batch_size, BatchResult, CommerceError,
-    CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PurchaseOrder,
-    PurchaseOrderFilter, PurchaseOrderItem, PurchaseOrderRepository, PurchaseOrderStatus,
-    ReceivePurchaseOrderItems, Result, Supplier, SupplierFilter, UpdatePurchaseOrder,
-    UpdateSupplier,
+    BatchResult, CommerceError, CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier,
+    ProductId, PurchaseOrder, PurchaseOrderFilter, PurchaseOrderId, PurchaseOrderItem,
+    PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItems, Result, Supplier,
+    SupplierFilter, UpdatePurchaseOrder, UpdateSupplier, generate_po_number,
+    generate_supplier_code, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -40,12 +40,10 @@ impl SqlitePurchaseOrderRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_supplier(row: &Row) -> rusqlite::Result<Supplier> {
+    fn row_to_supplier(row: &Row<'_>) -> rusqlite::Result<Supplier> {
         Ok(Supplier {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "supplier", "id")?,
             supplier_code: row.get("supplier_code")?,
@@ -87,9 +85,13 @@ impl SqlitePurchaseOrderRepository {
         })
     }
 
-    fn row_to_po(row: &Row) -> rusqlite::Result<PurchaseOrder> {
+    fn row_to_po(row: &Row<'_>) -> rusqlite::Result<PurchaseOrder> {
         Ok(PurchaseOrder {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "purchase_order", "id")?,
+            id: PurchaseOrderId::from(parse_uuid_row(
+                &row.get::<_, String>("id")?,
+                "purchase_order",
+                "id",
+            )?),
             po_number: row.get("po_number")?,
             supplier_id: parse_uuid_row(
                 &row.get::<_, String>("supplier_id")?,
@@ -177,19 +179,19 @@ impl SqlitePurchaseOrderRepository {
         })
     }
 
-    fn row_to_po_item(row: &Row) -> rusqlite::Result<PurchaseOrderItem> {
+    fn row_to_po_item(row: &Row<'_>) -> rusqlite::Result<PurchaseOrderItem> {
         Ok(PurchaseOrderItem {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "purchase_order_item", "id")?,
-            purchase_order_id: parse_uuid_row(
+            purchase_order_id: PurchaseOrderId::from(parse_uuid_row(
                 &row.get::<_, String>("purchase_order_id")?,
                 "purchase_order_item",
                 "purchase_order_id",
-            )?,
+            )?),
             product_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("product_id")?,
                 "purchase_order_item",
                 "product_id",
-            )?,
+            )?.map(ProductId::from),
             sku: row.get("sku")?,
             name: row.get("name")?,
             supplier_sku: row.get("supplier_sku")?,
@@ -258,14 +260,13 @@ impl SqlitePurchaseOrderRepository {
 
     fn get_po_items_with_conn(
         conn: &rusqlite::Connection,
-        po_id: Uuid,
+        po_id: PurchaseOrderId,
     ) -> Result<Vec<PurchaseOrderItem>> {
         let mut stmt = conn
             .prepare("SELECT * FROM purchase_order_items WHERE purchase_order_id = ?")
             .map_err(map_db_error)?;
-        let rows = stmt
-            .query_map([po_id.to_string()], Self::row_to_po_item)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map([po_id.to_string()], Self::row_to_po_item).map_err(map_db_error)?;
 
         let mut items = Vec::new();
         for row in rows {
@@ -274,7 +275,7 @@ impl SqlitePurchaseOrderRepository {
         Ok(items)
     }
 
-    fn get_po_with_conn(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<PurchaseOrder>> {
+    fn get_po_with_conn(conn: &rusqlite::Connection, id: PurchaseOrderId) -> Result<Option<PurchaseOrder>> {
         let result = conn.query_row(
             "SELECT * FROM purchase_orders WHERE id = ?",
             [id.to_string()],
@@ -290,12 +291,12 @@ impl SqlitePurchaseOrderRepository {
         }
     }
 
-    fn get_po_items(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>> {
+    fn get_po_items(&self, po_id: PurchaseOrderId) -> Result<Vec<PurchaseOrderItem>> {
         let conn = self.conn()?;
         Self::get_po_items_with_conn(&conn, po_id)
     }
 
-    fn recalculate_totals_with_conn(conn: &rusqlite::Connection, po_id: Uuid) -> Result<()> {
+    fn recalculate_totals_with_conn(conn: &rusqlite::Connection, po_id: PurchaseOrderId) -> Result<()> {
         // Calculate subtotal from items
         let po_id_param = po_id.to_string();
         let po_params: [&dyn rusqlite::ToSql; 1] = [&po_id_param];
@@ -335,7 +336,7 @@ impl SqlitePurchaseOrderRepository {
     }
 
     #[allow(dead_code)]
-    fn recalculate_totals(&self, po_id: Uuid) -> Result<()> {
+    fn recalculate_totals(&self, po_id: PurchaseOrderId) -> Result<()> {
         let conn = self.conn()?;
         Self::recalculate_totals_with_conn(&conn, po_id)
     }
@@ -430,10 +431,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 input.postal_code.or(supplier.postal_code),
                 input.country.or(supplier.country),
                 input.tax_id.or(supplier.tax_id),
-                input
-                    .payment_terms
-                    .unwrap_or(supplier.payment_terms)
-                    .to_string(),
+                input.payment_terms.unwrap_or(supplier.payment_terms).to_string(),
                 input.currency.unwrap_or(supplier.currency),
                 input.lead_time_days.or(supplier.lead_time_days),
                 input
@@ -469,9 +467,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt
-            .query_map([], Self::row_to_supplier)
-            .map_err(map_db_error)?;
+        let rows = stmt.query_map([], Self::row_to_supplier).map_err(map_db_error)?;
 
         let mut suppliers = Vec::new();
         for row in rows {
@@ -499,7 +495,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let supplier =
             Self::get_supplier_with_conn(&tx, input.supplier_id)?.ok_or(CommerceError::NotFound)?;
 
-        let id = Uuid::new_v4();
+        let id = PurchaseOrderId::new();
         let now = chrono::Utc::now();
         let po_number = generate_po_number();
         let order_date = input.order_date.unwrap_or(now);
@@ -522,10 +518,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 input.ship_to_state,
                 input.ship_to_postal_code,
                 input.ship_to_country,
-                input
-                    .payment_terms
-                    .unwrap_or(supplier.payment_terms)
-                    .to_string(),
+                input.payment_terms.unwrap_or(supplier.payment_terms).to_string(),
                 input.currency.unwrap_or(supplier.currency),
                 "0",
                 input.tax_amount.unwrap_or_default().to_string(),
@@ -584,7 +577,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<PurchaseOrder>> {
+    fn get(&self, id: PurchaseOrderId) -> Result<Option<PurchaseOrder>> {
         let conn = self.conn()?;
         Self::get_po_with_conn(&conn, id)
     }
@@ -606,7 +599,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
+    fn update(&self, id: PurchaseOrderId, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
@@ -636,10 +629,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 input.payment_terms.unwrap_or(po.payment_terms).to_string(),
                 input.tax_amount.unwrap_or(po.tax_amount).to_string(),
                 input.shipping_cost.unwrap_or(po.shipping_cost).to_string(),
-                input
-                    .discount_amount
-                    .unwrap_or(po.discount_amount)
-                    .to_string(),
+                input.discount_amount.unwrap_or(po.discount_amount).to_string(),
                 input.notes.or(po.notes),
                 input.supplier_notes.or(po.supplier_notes),
                 input.supplier_reference.or(po.supplier_reference),
@@ -679,9 +669,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::row_to_po)
-            .map_err(map_db_error)?;
+        let rows = stmt.query_map(params_refs.as_slice(), Self::row_to_po).map_err(map_db_error)?;
 
         let mut orders = Vec::new();
         for row in rows {
@@ -693,22 +681,17 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
     }
 
     fn for_supplier(&self, supplier_id: Uuid) -> Result<Vec<PurchaseOrder>> {
-        self.list(PurchaseOrderFilter {
-            supplier_id: Some(supplier_id),
-            ..Default::default()
-        })
+        self.list(PurchaseOrderFilter { supplier_id: Some(supplier_id), ..Default::default() })
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: PurchaseOrderId) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let status: String = tx
-            .query_row(
-                "SELECT status FROM purchase_orders WHERE id = ?",
-                [id.to_string()],
-                |row| row.get(0),
-            )
+            .query_row("SELECT status FROM purchase_orders WHERE id = ?", [id.to_string()], |row| {
+                row.get(0)
+            })
             .map_err(map_db_error)?;
 
         let parsed_status: PurchaseOrderStatus = status.parse().map_err(|e| {
@@ -734,7 +717,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Ok(())
     }
 
-    fn submit_for_approval(&self, id: Uuid) -> Result<PurchaseOrder> {
+    fn submit_for_approval(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
         let rows_affected = conn
@@ -753,7 +736,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn approve(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
+    fn approve(&self, id: PurchaseOrderId, approved_by: &str) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
         conn.execute(
@@ -763,7 +746,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn send(&self, id: Uuid) -> Result<PurchaseOrder> {
+    fn send(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
         conn.execute(
@@ -779,7 +762,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
+    fn acknowledge(&self, id: PurchaseOrderId, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
         conn.execute(
@@ -789,47 +772,37 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn hold(&self, id: Uuid) -> Result<PurchaseOrder> {
+    fn hold(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
-            params![
-                PurchaseOrderStatus::OnHold.to_string(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
+            params![PurchaseOrderStatus::OnHold.to_string(), now.to_rfc3339(), id.to_string()],
         )
         .map_err(map_db_error)?;
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn cancel(&self, id: Uuid) -> Result<PurchaseOrder> {
+    fn cancel(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
-            params![
-                PurchaseOrderStatus::Cancelled.to_string(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
+            params![PurchaseOrderStatus::Cancelled.to_string(), now.to_rfc3339(), id.to_string()],
         )
         .map_err(map_db_error)?;
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn receive(&self, id: Uuid, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
+    fn receive(&self, id: PurchaseOrderId, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
 
         let status: String = tx
-            .query_row(
-                "SELECT status FROM purchase_orders WHERE id = ?",
-                [id.to_string()],
-                |row| row.get::<_, String>(0),
-            )
+            .query_row("SELECT status FROM purchase_orders WHERE id = ?", [id.to_string()], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(map_db_error)?;
         let current_status: PurchaseOrderStatus = status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
@@ -902,22 +875,18 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn complete(&self, id: Uuid) -> Result<PurchaseOrder> {
+    fn complete(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
         conn.execute(
             "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
-            params![
-                PurchaseOrderStatus::Completed.to_string(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
+            params![PurchaseOrderStatus::Completed.to_string(), now.to_rfc3339(), id.to_string()],
         )
         .map_err(map_db_error)?;
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn add_item(&self, po_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
+    fn add_item(&self, po_id: PurchaseOrderId, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
@@ -1038,11 +1007,8 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             )
             .map_err(map_db_error)?;
 
-        tx.execute(
-            "DELETE FROM purchase_order_items WHERE id = ?",
-            [item_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        tx.execute("DELETE FROM purchase_order_items WHERE id = ?", [item_id.to_string()])
+            .map_err(map_db_error)?;
 
         Self::recalculate_totals_with_conn(
             &tx,
@@ -1052,7 +1018,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Ok(())
     }
 
-    fn get_items(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>> {
+    fn get_items(&self, po_id: PurchaseOrderId) -> Result<Vec<PurchaseOrderItem>> {
         self.get_po_items(po_id)
     }
 
@@ -1073,9 +1039,8 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -1088,9 +1053,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             sql.push_str(" AND is_active = 1");
         }
 
-        let count: i64 = conn
-            .query_row(&sql, [], |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 = conn.query_row(&sql, [], |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -1125,7 +1088,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             let supplier = Self::get_supplier_with_conn(&tx, input.supplier_id)?
                 .ok_or(CommerceError::NotFound)?;
 
-            let id = Uuid::new_v4();
+            let id = PurchaseOrderId::new();
             let now = chrono::Utc::now();
             let po_number = generate_po_number();
             let order_date = input.order_date.unwrap_or(now);
@@ -1148,10 +1111,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                     input.ship_to_state,
                     input.ship_to_postal_code,
                     input.ship_to_country,
-                    input
-                        .payment_terms
-                        .unwrap_or(supplier.payment_terms)
-                        .to_string(),
+                    input.payment_terms.unwrap_or(supplier.payment_terms).to_string(),
                     input.currency.unwrap_or(supplier.currency),
                     "0",
                     input.tax_amount.unwrap_or_default().to_string(),
@@ -1216,7 +1176,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn update_batch(
         &self,
-        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+        updates: Vec<(PurchaseOrderId, UpdatePurchaseOrder)>,
     ) -> Result<BatchResult<PurchaseOrder>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
@@ -1347,13 +1307,11 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             "DELETE FROM purchase_order_items WHERE purchase_order_id IN ({})",
             placeholders
         );
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete purchase orders
         let sql = format!("DELETE FROM purchase_orders WHERE id IN ({})", placeholders);
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
@@ -1367,18 +1325,13 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!(
-            "SELECT * FROM purchase_orders WHERE id IN ({})",
-            placeholders
-        );
+        let sql = format!("SELECT * FROM purchase_orders WHERE id IN ({})", placeholders);
 
         let params = uuid_params(&ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::row_to_po)
-            .map_err(map_db_error)?;
+        let rows = stmt.query_map(params_refs.as_slice(), Self::row_to_po).map_err(map_db_error)?;
 
         let mut orders = Vec::new();
         for row in rows {

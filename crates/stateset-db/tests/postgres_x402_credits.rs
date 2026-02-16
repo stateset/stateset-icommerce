@@ -12,9 +12,7 @@ use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL")
-        .ok()
-        .or_else(|| env::var("DATABASE_URL").ok())
+    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
 }
 
 #[cfg(feature = "postgres")]
@@ -28,19 +26,14 @@ async fn postgres_x402_credit_ledger_smoke() {
         }
     };
 
-    let db = PostgresDatabase::connect(&url)
-        .await
-        .expect("connect to postgres and run migrations");
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
 
     let repo = db.x402_credits();
     let payer = format!("0xtest{}", Uuid::new_v4().to_string().replace('-', ""));
     let asset = X402Asset::Usdc;
     let network = X402Network::SetChain;
 
-    let balance = repo
-        .get_balance_async(&payer, asset, network)
-        .await
-        .expect("initial balance");
+    let balance = repo.get_balance_async(&payer, asset, network).await.expect("initial balance");
     assert_eq!(balance, 0);
 
     let credit_tx = repo
@@ -73,10 +66,8 @@ async fn postgres_x402_credit_ledger_smoke() {
         .expect("debit balance");
     assert_eq!(debit_tx.balance_after, 600);
 
-    let balance = repo
-        .get_balance_async(&payer, asset, network)
-        .await
-        .expect("balance after debit");
+    let balance =
+        repo.get_balance_async(&payer, asset, network).await.expect("balance after debit");
     assert_eq!(balance, 600);
 
     let err = repo

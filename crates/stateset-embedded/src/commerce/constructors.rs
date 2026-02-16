@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use stateset_core::CommerceError;
 use stateset_db::{Database, DatabaseConfig};
-use stateset_observability::{init_metrics, MetricsConfig};
+use stateset_observability::{MetricsConfig, init_metrics};
 
 #[cfg(feature = "events")]
 use crate::events::EventSystem;
@@ -114,10 +114,7 @@ impl Commerce {
     /// ```
     #[cfg(feature = "sqlite")]
     pub fn sqlite_pool(path: &str, max_connections: u32) -> Result<Self, CommerceError> {
-        Self::builder()
-            .sqlite(path)
-            .max_connections(max_connections)
-            .build()
+        Self::builder().sqlite(path).max_connections(max_connections).build()
     }
 
     /// Create a Commerce instance with PostgreSQL and custom pool size.

@@ -6,12 +6,12 @@ use super::{
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, Row};
+use rusqlite::{Row, params};
 use stateset_core::{
-    generate_payment_number, generate_refund_number, validate_batch_size, BatchResult,
-    CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, Payment, PaymentFilter,
-    PaymentMethod, PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result,
-    UpdatePayment,
+    BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
+    OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentRepository,
+    PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
+    generate_payment_number, generate_refund_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -25,20 +25,18 @@ impl SqlitePaymentRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_payment(row: &Row) -> rusqlite::Result<Payment> {
+    fn row_to_payment(row: &Row<'_>) -> rusqlite::Result<Payment> {
         Ok(Payment {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "payment", "id")?,
+            id: PaymentId::from(parse_uuid_row(&row.get::<_, String>("id")?, "payment", "id")?),
             payment_number: row.get("payment_number")?,
             order_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("order_id")?,
                 "payment",
                 "order_id",
-            )?,
+            )?.map(OrderId::from),
             invoice_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("invoice_id")?,
                 "payment",
@@ -48,7 +46,7 @@ impl SqlitePaymentRepository {
                 row.get::<_, Option<String>>("customer_id")?,
                 "payment",
                 "customer_id",
-            )?,
+            )?.map(CustomerId::from),
             status: parse_enum_row(&row.get::<_, String>("status")?, "payment", "status")?,
             payment_method: parse_enum_row(
                 &row.get::<_, String>("payment_method")?,
@@ -81,11 +79,7 @@ impl SqlitePaymentRepository {
                 Some(value) => Some(parse_enum_row(&value, "payment", "blockchain_network")?),
                 None => None,
             },
-            stablecoin_type: match row
-                .get::<_, Option<String>>("stablecoin_type")
-                .ok()
-                .flatten()
-            {
+            stablecoin_type: match row.get::<_, Option<String>>("stablecoin_type").ok().flatten() {
                 Some(value) => Some(parse_enum_row(&value, "payment", "stablecoin_type")?),
                 None => None,
             },
@@ -122,15 +116,15 @@ impl SqlitePaymentRepository {
         })
     }
 
-    fn row_to_refund(row: &Row) -> rusqlite::Result<Refund> {
+    fn row_to_refund(row: &Row<'_>) -> rusqlite::Result<Refund> {
         Ok(Refund {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "refund", "id")?,
             refund_number: row.get("refund_number")?,
-            payment_id: parse_uuid_row(
+            payment_id: PaymentId::from(parse_uuid_row(
                 &row.get::<_, String>("payment_id")?,
                 "refund",
                 "payment_id",
-            )?,
+            )?),
             status: parse_enum_row(&row.get::<_, String>("status")?, "refund", "status")?,
             amount: parse_decimal_row(&row.get::<_, String>("amount")?, "refund", "amount")?,
             currency: row.get("currency")?,
@@ -157,14 +151,14 @@ impl SqlitePaymentRepository {
         })
     }
 
-    fn row_to_payment_method(row: &Row) -> rusqlite::Result<PaymentMethod> {
+    fn row_to_payment_method(row: &Row<'_>) -> rusqlite::Result<PaymentMethod> {
         Ok(PaymentMethod {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "payment_method", "id")?,
-            customer_id: parse_uuid_row(
+            customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "payment_method",
                 "customer_id",
-            )?,
+            )?),
             method_type: parse_enum_row(
                 &row.get::<_, String>("method_type")?,
                 "payment_method",
@@ -188,18 +182,12 @@ impl SqlitePaymentRepository {
                 .ok()
                 .flatten()
             {
-                Some(value) => Some(parse_enum_row(
-                    &value,
-                    "payment_method",
-                    "blockchain_network",
-                )?),
+                Some(value) => {
+                    Some(parse_enum_row(&value, "payment_method", "blockchain_network")?)
+                }
                 None => None,
             },
-            stablecoin_type: match row
-                .get::<_, Option<String>>("stablecoin_type")
-                .ok()
-                .flatten()
-            {
+            stablecoin_type: match row.get::<_, Option<String>>("stablecoin_type").ok().flatten() {
                 Some(value) => Some(parse_enum_row(&value, "payment_method", "stablecoin_type")?),
                 None => None,
             },
@@ -219,10 +207,7 @@ impl SqlitePaymentRepository {
     }
 
     fn get_by_idempotency_key(&self, key: &str) -> Result<Option<Payment>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn
             .prepare("SELECT * FROM payments WHERE idempotency_key = ?")
             .map_err(map_db_error)?;
@@ -235,10 +220,7 @@ impl SqlitePaymentRepository {
     }
 
     fn get_refund_by_idempotency_key(&self, key: &str) -> Result<Option<Refund>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn
             .prepare("SELECT * FROM refunds WHERE idempotency_key = ?")
             .map_err(map_db_error)?;
@@ -264,10 +246,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         let payment_number = generate_payment_number();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
                  payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
@@ -303,17 +282,12 @@ impl PaymentRepository for SqlitePaymentRepository {
             ).map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        self.get(PaymentId::from(id))?.ok_or(CommerceError::NotFound)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Payment>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM payments WHERE id = ?")
-            .map_err(map_db_error)?;
+    fn get(&self, id: PaymentId) -> Result<Option<Payment>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT * FROM payments WHERE id = ?").map_err(map_db_error)?;
         let result = stmt.query_row([id.to_string()], Self::row_to_payment);
         match result {
             Ok(payment) => Ok(Some(payment)),
@@ -323,10 +297,7 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn get_by_number(&self, payment_number: &str) -> Result<Option<Payment>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn
             .prepare("SELECT * FROM payments WHERE payment_number = ?")
             .map_err(map_db_error)?;
@@ -339,13 +310,9 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn get_by_external_id(&self, external_id: &str) -> Result<Option<Payment>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM payments WHERE external_id = ?")
-            .map_err(map_db_error)?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM payments WHERE external_id = ?").map_err(map_db_error)?;
         let result = stmt.query_row([external_id], Self::row_to_payment);
         match result {
             Ok(payment) => Ok(Some(payment)),
@@ -354,15 +321,12 @@ impl PaymentRepository for SqlitePaymentRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdatePayment) -> Result<Payment> {
+    fn update(&self, id: PaymentId, input: UpdatePayment) -> Result<Payment> {
         let payment = self.get(id)?.ok_or(CommerceError::NotFound)?;
         let now = chrono::Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
                  failure_code = ?, metadata = ?, updated_at = ? WHERE id = ?",
@@ -383,10 +347,7 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn list(&self, filter: PaymentFilter) -> Result<Vec<Payment>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT * FROM payments WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -416,9 +377,8 @@ impl PaymentRepository for SqlitePaymentRepository {
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::row_to_payment)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map(params_refs.as_slice(), Self::row_to_payment).map_err(map_db_error)?;
 
         let mut payments = Vec::new();
         for row in rows {
@@ -427,21 +387,15 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(payments)
     }
 
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Payment>> {
-        self.list(PaymentFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Payment>> {
+        self.list(PaymentFilter { order_id: Some(order_id), ..Default::default() })
     }
 
     fn for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
-        self.list(PaymentFilter {
-            invoice_id: Some(invoice_id),
-            ..Default::default()
-        })
+        self.list(PaymentFilter { invoice_id: Some(invoice_id), ..Default::default() })
     }
 
-    fn mark_processing(&self, id: Uuid) -> Result<Payment> {
+    fn mark_processing(&self, id: PaymentId) -> Result<Payment> {
         self.update(
             id,
             UpdatePayment {
@@ -451,14 +405,11 @@ impl PaymentRepository for SqlitePaymentRepository {
         )
     }
 
-    fn mark_completed(&self, id: Uuid) -> Result<Payment> {
+    fn mark_completed(&self, id: PaymentId) -> Result<Payment> {
         let now = chrono::Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE payments SET status = ?, paid_at = ?, updated_at = ? WHERE id = ?",
                 params![
@@ -474,14 +425,11 @@ impl PaymentRepository for SqlitePaymentRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn mark_failed(&self, id: Uuid, reason: &str, code: Option<&str>) -> Result<Payment> {
+    fn mark_failed(&self, id: PaymentId, reason: &str, code: Option<&str>) -> Result<Payment> {
         let now = chrono::Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE payments SET status = ?, failure_reason = ?, failure_code = ?, updated_at = ? WHERE id = ?",
                 params![PaymentTransactionStatus::Failed.to_string(), reason, code, now.to_rfc3339(), id.to_string()],
@@ -491,7 +439,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn cancel(&self, id: Uuid) -> Result<Payment> {
+    fn cancel(&self, id: PaymentId) -> Result<Payment> {
         self.update(
             id,
             UpdatePayment {
@@ -510,19 +458,14 @@ impl PaymentRepository for SqlitePaymentRepository {
 
         // Get payment to determine refund amount
         let payment = self.get(input.payment_id)?.ok_or(CommerceError::NotFound)?;
-        let refund_amount = input
-            .amount
-            .unwrap_or(payment.amount - payment.amount_refunded);
+        let refund_amount = input.amount.unwrap_or(payment.amount - payment.amount_refunded);
 
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let refund_number = generate_refund_number();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -547,13 +490,8 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn get_refund(&self, id: Uuid) -> Result<Option<Refund>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM refunds WHERE id = ?")
-            .map_err(map_db_error)?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT * FROM refunds WHERE id = ?").map_err(map_db_error)?;
         let result = stmt.query_row([id.to_string()], Self::row_to_refund);
         match result {
             Ok(refund) => Ok(Some(refund)),
@@ -562,17 +500,13 @@ impl PaymentRepository for SqlitePaymentRepository {
         }
     }
 
-    fn get_refunds(&self, payment_id: Uuid) -> Result<Vec<Refund>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn get_refunds(&self, payment_id: PaymentId) -> Result<Vec<Refund>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn
             .prepare("SELECT * FROM refunds WHERE payment_id = ? ORDER BY created_at DESC")
             .map_err(map_db_error)?;
-        let rows = stmt
-            .query_map([payment_id.to_string()], Self::row_to_refund)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map([payment_id.to_string()], Self::row_to_refund).map_err(map_db_error)?;
 
         let mut refunds = Vec::new();
         for row in rows {
@@ -586,10 +520,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         let now = chrono::Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE refunds SET status = ?, refunded_at = ?, updated_at = ? WHERE id = ?",
                 params![
@@ -623,18 +554,10 @@ impl PaymentRepository for SqlitePaymentRepository {
         let now = chrono::Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? WHERE id = ?",
-                params![
-                    RefundStatus::Failed.to_string(),
-                    reason,
-                    now.to_rfc3339(),
-                    id.to_string()
-                ],
+                params![RefundStatus::Failed.to_string(), reason, now.to_rfc3339(), id.to_string()],
             )
             .map_err(map_db_error)?;
         }
@@ -643,10 +566,7 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn create_payment_method(&self, input: CreatePaymentMethod) -> Result<PaymentMethod> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
 
@@ -684,18 +604,13 @@ impl PaymentRepository for SqlitePaymentRepository {
         )
         .map_err(map_db_error)?;
 
-        let mut stmt = conn
-            .prepare("SELECT * FROM payment_methods WHERE id = ?")
-            .map_err(map_db_error)?;
-        stmt.query_row([id.to_string()], Self::row_to_payment_method)
-            .map_err(map_db_error)
+        let mut stmt =
+            conn.prepare("SELECT * FROM payment_methods WHERE id = ?").map_err(map_db_error)?;
+        stmt.query_row([id.to_string()], Self::row_to_payment_method).map_err(map_db_error)
     }
 
-    fn get_payment_methods(&self, customer_id: Uuid) -> Result<Vec<PaymentMethod>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn get_payment_methods(&self, customer_id: CustomerId) -> Result<Vec<PaymentMethod>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn.prepare("SELECT * FROM payment_methods WHERE customer_id = ? ORDER BY is_default DESC, created_at DESC").map_err(map_db_error)?;
         let rows = stmt
             .query_map([customer_id.to_string()], Self::row_to_payment_method)
@@ -709,20 +624,14 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn delete_payment_method(&self, id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         conn.execute("DELETE FROM payment_methods WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
         Ok(())
     }
 
-    fn set_default_payment_method(&self, customer_id: Uuid, method_id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn set_default_payment_method(&self, customer_id: CustomerId, method_id: Uuid) -> Result<()> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "UPDATE payment_methods SET is_default = 0 WHERE customer_id = ?",
@@ -740,10 +649,7 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn count(&self, filter: PaymentFilter) -> Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT COUNT(*) FROM payments WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -763,9 +669,8 @@ impl PaymentRepository for SqlitePaymentRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -835,7 +740,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             ).map_err(map_db_error)?;
 
             results.push(Payment {
-                id,
+                id: PaymentId::from(id),
                 payment_number,
                 order_id: input.order_id,
                 invoice_id: input.invoice_id,
@@ -880,7 +785,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+    fn update_batch(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<BatchResult<Payment>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -894,7 +799,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>> {
+    fn update_batch_atomic(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<Vec<Payment>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -950,14 +855,15 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<PaymentId>) -> Result<BatchResult<Uuid>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
         for (index, id) in ids.into_iter().enumerate() {
+            let raw_id: Uuid = id.into();
             let conn = self.conn()?;
             match conn.execute("DELETE FROM payments WHERE id = ?", [id.to_string()]) {
-                Ok(rows) if rows > 0 => result.record_success(id),
+                Ok(rows) if rows > 0 => result.record_success(raw_id),
                 Ok(_) => {
                     result.record_failure(index, Some(id.to_string()), &CommerceError::NotFound)
                 }
@@ -968,7 +874,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<PaymentId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -977,35 +883,35 @@ impl PaymentRepository for SqlitePaymentRepository {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
         let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         // Delete refunds associated with these payments first
         let sql = format!("DELETE FROM refunds WHERE payment_id IN ({})", placeholders);
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete payments
         let sql = format!("DELETE FROM payments WHERE id IN ({})", placeholders);
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Payment>> {
+    fn get_batch(&self, ids: Vec<PaymentId>) -> Result<Vec<Payment>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
         }
 
         let conn = self.conn()?;
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM payments WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;

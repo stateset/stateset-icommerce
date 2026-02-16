@@ -50,9 +50,7 @@ impl SagaStatus {
             "failed" => Ok(SagaStatus::Failed),
             "completed" => Ok(SagaStatus::Completed),
             "rolled_back" => Ok(SagaStatus::RolledBack),
-            other => Err(SagaError::StepExecutionFailed(format!(
-                "Unknown saga status: {other}"
-            ))),
+            other => Err(SagaError::StepExecutionFailed(format!("Unknown saga status: {other}"))),
         }
     }
 }
@@ -218,13 +216,11 @@ impl SagaCoordinator {
         }
 
         // Idempotency conflict: return the existing saga.
-        self.get_saga_by_idempotency_key(&idempotency_key)
-            .await?
-            .ok_or_else(|| {
-                SagaError::StepExecutionFailed(format!(
-                    "Saga idempotency_key conflict but saga not found: {idempotency_key}"
-                ))
-            })
+        self.get_saga_by_idempotency_key(&idempotency_key).await?.ok_or_else(|| {
+            SagaError::StepExecutionFailed(format!(
+                "Saga idempotency_key conflict but saga not found: {idempotency_key}"
+            ))
+        })
     }
 
     pub async fn add_step(
@@ -282,10 +278,8 @@ impl SagaCoordinator {
         Fut: std::future::Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>>,
     {
         let pool = self.db.pool();
-        let mut tx = pool
-            .begin()
-            .await
-            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
+        let mut tx =
+            pool.begin().await.map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
         let step: SagaStepDbRow = sqlx::query_as(
             r#"
@@ -307,9 +301,7 @@ impl SagaCoordinator {
 
         let status = SagaStatus::from_str(&step.status)?;
         if status == SagaStatus::Completed {
-            tx.commit()
-                .await
-                .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
+            tx.commit().await.map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
             return Ok(step.result.unwrap_or(serde_json::Value::Null));
         }
 
@@ -333,9 +325,7 @@ impl SagaCoordinator {
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
-        tx.commit()
-            .await
-            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
+        tx.commit().await.map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
         Ok(result)
     }

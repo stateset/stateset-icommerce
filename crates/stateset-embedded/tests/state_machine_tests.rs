@@ -30,15 +30,16 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
         })
         .expect("Failed to create test customer")
         .id
+        .into_uuid()
 }
 
 fn create_test_order(commerce: &Commerce, customer_id: Uuid) -> Order {
     commerce
         .orders()
         .create(CreateOrder {
-            customer_id,
+            customer_id: customer_id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 2,
@@ -98,9 +99,7 @@ fn test_order_state_machine_invalid_transitions() {
     let order = create_test_order(&commerce, customer_id);
 
     // Cannot transition from Pending directly to Shipped
-    let result = commerce
-        .orders()
-        .update_status(order.id, OrderStatus::Shipped);
+    let result = commerce.orders().update_status(order.id, OrderStatus::Shipped);
     assert!(result.is_err());
 
     // Cannot transition from Shipped to Confirmed
@@ -117,22 +116,15 @@ fn test_order_state_machine_invalid_transitions() {
         .update_status(order.id, OrderStatus::Shipped)
         .expect("Failed to ship order");
 
-    let result = commerce
-        .orders()
-        .update_status(order.id, OrderStatus::Confirmed);
+    let result = commerce.orders().update_status(order.id, OrderStatus::Confirmed);
     assert!(result.is_err());
 
     // Cannot transition from Cancelled
     let order2 = create_test_order(&commerce, customer_id);
-    let order2 = commerce
-        .orders()
-        .cancel(order2.id)
-        .expect("Failed to cancel order");
+    let order2 = commerce.orders().cancel(order2.id).expect("Failed to cancel order");
     assert_eq!(order2.status, OrderStatus::Cancelled);
 
-    let result = commerce
-        .orders()
-        .update_status(order2.id, OrderStatus::Confirmed);
+    let result = commerce.orders().update_status(order2.id, OrderStatus::Confirmed);
     assert!(result.is_err());
 }
 
@@ -143,10 +135,7 @@ fn test_order_cancellation_before_shipment() {
     let order = create_test_order(&commerce, customer_id);
 
     // Can cancel pending order
-    let order = commerce
-        .orders()
-        .cancel(order.id)
-        .expect("Failed to cancel pending order");
+    let order = commerce.orders().cancel(order.id).expect("Failed to cancel pending order");
     assert_eq!(order.status, OrderStatus::Cancelled);
 }
 
@@ -157,10 +146,7 @@ fn test_order_cancellation_after_shipment_fails() {
     let mut order = create_test_order(&commerce, customer_id);
 
     // Ship the order
-    order = commerce
-        .orders()
-        .ship(order.id, Some("FEDEX123456"))
-        .expect("Failed to ship order");
+    order = commerce.orders().ship(order.id, Some("FEDEX123456")).expect("Failed to ship order");
 
     // Cannot cancel after shipment
     let result = commerce.orders().cancel(order.id);
@@ -181,10 +167,7 @@ fn test_inventory_reservation_lifecycle() {
         })
         .expect("Failed to create inventory item");
 
-    let stock = commerce
-        .inventory()
-        .get_stock("SKU-001")
-        .expect("Failed to get stock");
+    let stock = commerce.inventory().get_stock("SKU-001").expect("Failed to get stock");
     let stock = stock.expect("Stock missing");
     assert_eq!(stock.total_on_hand, dec!(100));
     assert_eq!(stock.total_allocated, dec!(0));
@@ -199,10 +182,7 @@ fn test_inventory_reservation_lifecycle() {
         .expect("Failed to reserve inventory");
     assert_eq!(reservation.status, ReservationStatus::Pending);
 
-    let stock = commerce
-        .inventory()
-        .get_stock("SKU-001")
-        .expect("Failed to get stock");
+    let stock = commerce.inventory().get_stock("SKU-001").expect("Failed to get stock");
     let stock = stock.expect("Stock missing");
     assert_eq!(stock.total_on_hand, dec!(100));
     assert_eq!(stock.total_allocated, dec!(5));
@@ -213,10 +193,7 @@ fn test_inventory_reservation_lifecycle() {
         .confirm_reservation(reservation.id)
         .expect("Failed to confirm reservation");
 
-    let stock = commerce
-        .inventory()
-        .get_stock("SKU-001")
-        .expect("Failed to get stock");
+    let stock = commerce.inventory().get_stock("SKU-001").expect("Failed to get stock");
     let stock = stock.expect("Stock missing");
     assert_eq!(stock.total_on_hand, dec!(100));
     assert_eq!(stock.total_allocated, dec!(5));
@@ -249,9 +226,7 @@ fn test_inventory_reservation_conflict_handling() {
 
     // Try to reserve 5 more from order2 (only 2 available)
     let result =
-        commerce
-            .inventory()
-            .reserve("SKU-001", dec!(5), "order", &order2.id.to_string(), None);
+        commerce.inventory().reserve("SKU-001", dec!(5), "order", &order2.id.to_string(), None);
     assert!(result.is_err());
 }
 
@@ -276,11 +251,7 @@ fn test_subscription_state_machine() {
 
     let mut subscription = commerce
         .subscriptions()
-        .subscribe(CreateSubscription {
-            customer_id,
-            plan_id: plan.id,
-            ..Default::default()
-        })
+        .subscribe(CreateSubscription { customer_id, plan_id: plan.id, ..Default::default() })
         .expect("Failed to create subscription");
     assert_eq!(subscription.status, SubscriptionStatus::Active);
 
@@ -290,10 +261,8 @@ fn test_subscription_state_machine() {
         .expect("Failed to pause subscription");
     assert_eq!(subscription.status, SubscriptionStatus::Paused);
 
-    subscription = commerce
-        .subscriptions()
-        .resume(subscription.id)
-        .expect("Failed to resume subscription");
+    subscription =
+        commerce.subscriptions().resume(subscription.id).expect("Failed to resume subscription");
     assert_eq!(subscription.status, SubscriptionStatus::Active);
 
     subscription = commerce
@@ -341,22 +310,16 @@ fn test_serial_number_state_machine() {
             ..Default::default()
         })
         .expect("Failed to reserve serial");
-    let serial = commerce
-        .serials()
-        .get(serial.id)
-        .expect("Failed to get serial")
-        .expect("Serial not found");
+    let serial =
+        commerce.serials().get(serial.id).expect("Failed to get serial").expect("Serial not found");
     assert_eq!(serial.status, SerialStatus::Reserved);
 
     commerce
         .serials()
         .confirm_reservation(reservation.id)
         .expect("Failed to confirm serial reservation");
-    let serial = commerce
-        .serials()
-        .get(serial.id)
-        .expect("Failed to get serial")
-        .expect("Serial not found");
+    let serial =
+        commerce.serials().get(serial.id).expect("Failed to get serial").expect("Serial not found");
     assert_eq!(serial.status, SerialStatus::Reserved);
 
     let customer_id = create_test_customer(&commerce);
@@ -371,14 +334,10 @@ fn test_serial_number_state_machine() {
 fn test_work_order_state_machine() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let product_id = Uuid::new_v4();
+    let product_id = Uuid::new_v4().into();
     let bom = commerce
         .bom()
-        .create(CreateBom {
-            product_id,
-            name: "Widget Assembly".into(),
-            ..Default::default()
-        })
+        .create(CreateBom { product_id, name: "Widget Assembly".into(), ..Default::default() })
         .expect("Failed to create BOM");
 
     let mut work_order = commerce
@@ -392,10 +351,7 @@ fn test_work_order_state_machine() {
         .expect("Failed to create work order");
     assert_eq!(work_order.status, WorkOrderStatus::Planned);
 
-    work_order = commerce
-        .work_orders()
-        .start(work_order.id)
-        .expect("Failed to start work order");
+    work_order = commerce.work_orders().start(work_order.id).expect("Failed to start work order");
     assert_eq!(work_order.status, WorkOrderStatus::InProgress);
 
     work_order = commerce
@@ -426,7 +382,7 @@ fn test_backorder_allocation_and_fulfillment() {
     let backorder = commerce
         .backorder()
         .create_backorder(CreateBackorder {
-            order_id: order.id,
+            order_id: order.id.into(),
             order_line_id: None,
             sku: "SKU-001".into(),
             quantity: dec!(2),

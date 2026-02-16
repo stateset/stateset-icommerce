@@ -1,0 +1,14 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+assertion_line: 61
+expression: statuses
+---
+[
+  "pending",
+  "authorized",
+  "paid",
+  "partially_paid",
+  "refunded",
+  "partially_refunded",
+  "failed"
+]

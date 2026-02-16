@@ -1,7 +1,8 @@
 //! Bill of Materials (BOM) operations
 
 use stateset_core::{
-    BillOfMaterials, BomComponent, BomFilter, CreateBom, CreateBomComponent, Result, UpdateBom,
+    BillOfMaterials, BomComponent, BomFilter, CreateBom, CreateBomComponent, ProductId, Result,
+    UpdateBom,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -14,15 +15,14 @@ use uuid::Uuid;
 /// # Example
 ///
 /// ```rust,no_run
-/// use stateset_embedded::{Commerce, CreateBom, CreateBomComponent};
+/// use stateset_embedded::{Commerce, CreateBom, CreateBomComponent, ProductId};
 /// use rust_decimal_macros::dec;
-/// use uuid::Uuid;
 ///
 /// let commerce = Commerce::new("./store.db")?;
 ///
 /// // Create a BOM
 /// let bom = commerce.bom().create(CreateBom {
-///     product_id: Uuid::new_v4(),
+///     product_id: ProductId::new(),
 ///     name: "Widget Assembly".into(),
 ///     description: Some("Assembly instructions for widget".into()),
 ///     components: Some(vec![
@@ -51,14 +51,13 @@ impl Bom {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, CreateBom, CreateBomComponent};
+    /// use stateset_embedded::{Commerce, CreateBom, CreateBomComponent, ProductId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let bom = commerce.bom().create(CreateBom {
-    ///     product_id: Uuid::new_v4(),
+    ///     product_id: ProductId::new(),
     ///     name: "Widget Assembly".into(),
     ///     components: Some(vec![
     ///         CreateBomComponent {
@@ -161,10 +160,7 @@ impl Bom {
     }
 
     /// Get BOMs for a specific product.
-    pub fn for_product(&self, product_id: Uuid) -> Result<Vec<BillOfMaterials>> {
-        self.list(BomFilter {
-            product_id: Some(product_id),
-            ..Default::default()
-        })
+    pub fn for_product(&self, product_id: ProductId) -> Result<Vec<BillOfMaterials>> {
+        self.list(BomFilter { product_id: Some(product_id), ..Default::default() })
     }
 }

@@ -1830,137 +1830,103 @@ impl Commerce {
     /// Create a new Commerce instance with in-memory storage.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Commerce {
-        Commerce {
-            store: Rc::new(RefCell::new(Store::default())),
-        }
+        Commerce { store: Rc::new(RefCell::new(Store::default())) }
     }
 
     /// Get the customers API.
     #[wasm_bindgen(getter)]
     pub fn customers(&self) -> Customers {
-        Customers {
-            store: Rc::clone(&self.store),
-        }
+        Customers { store: Rc::clone(&self.store) }
     }
 
     /// Get the orders API.
     #[wasm_bindgen(getter)]
     pub fn orders(&self) -> Orders {
-        Orders {
-            store: Rc::clone(&self.store),
-        }
+        Orders { store: Rc::clone(&self.store) }
     }
 
     /// Get the products API.
     #[wasm_bindgen(getter)]
     pub fn products(&self) -> Products {
-        Products {
-            store: Rc::clone(&self.store),
-        }
+        Products { store: Rc::clone(&self.store) }
     }
 
     /// Get the inventory API.
     #[wasm_bindgen(getter)]
     pub fn inventory(&self) -> Inventory {
-        Inventory {
-            store: Rc::clone(&self.store),
-        }
+        Inventory { store: Rc::clone(&self.store) }
     }
 
     /// Get the returns API.
     #[wasm_bindgen(getter)]
     pub fn returns(&self) -> Returns {
-        Returns {
-            store: Rc::clone(&self.store),
-        }
+        Returns { store: Rc::clone(&self.store) }
     }
 
     /// Get the payments API.
     #[wasm_bindgen(getter)]
     pub fn payments(&self) -> Payments {
-        Payments {
-            store: Rc::clone(&self.store),
-        }
+        Payments { store: Rc::clone(&self.store) }
     }
 
     /// Get the shipments API.
     #[wasm_bindgen(getter)]
     pub fn shipments(&self) -> Shipments {
-        Shipments {
-            store: Rc::clone(&self.store),
-        }
+        Shipments { store: Rc::clone(&self.store) }
     }
 
     /// Get the warranties API.
     #[wasm_bindgen(getter)]
     pub fn warranties(&self) -> Warranties {
-        Warranties {
-            store: Rc::clone(&self.store),
-        }
+        Warranties { store: Rc::clone(&self.store) }
     }
 
     /// Get the purchase orders API.
     #[wasm_bindgen(getter, js_name = purchaseOrders)]
     pub fn purchase_orders(&self) -> PurchaseOrders {
-        PurchaseOrders {
-            store: Rc::clone(&self.store),
-        }
+        PurchaseOrders { store: Rc::clone(&self.store) }
     }
 
     /// Get the invoices API.
     #[wasm_bindgen(getter)]
     pub fn invoices(&self) -> Invoices {
-        Invoices {
-            store: Rc::clone(&self.store),
-        }
+        Invoices { store: Rc::clone(&self.store) }
     }
 
     /// Get the bill of materials API.
     #[wasm_bindgen(getter)]
     pub fn bom(&self) -> Bom {
-        Bom {
-            store: Rc::clone(&self.store),
-        }
+        Bom { store: Rc::clone(&self.store) }
     }
 
     /// Get the work orders API.
     #[wasm_bindgen(getter, js_name = workOrders)]
     pub fn work_orders(&self) -> WorkOrders {
-        WorkOrders {
-            store: Rc::clone(&self.store),
-        }
+        WorkOrders { store: Rc::clone(&self.store) }
     }
 
     /// Get the carts API.
     #[wasm_bindgen(getter)]
     pub fn carts(&self) -> Carts {
-        Carts {
-            store: Rc::clone(&self.store),
-        }
+        Carts { store: Rc::clone(&self.store) }
     }
 
     /// Get the subscriptions API.
     #[wasm_bindgen(getter)]
     pub fn subscriptions(&self) -> Subscriptions {
-        Subscriptions {
-            store: Rc::clone(&self.store),
-        }
+        Subscriptions { store: Rc::clone(&self.store) }
     }
 
     /// Get the promotions API.
     #[wasm_bindgen(getter)]
     pub fn promotions(&self) -> Promotions {
-        Promotions {
-            store: Rc::clone(&self.store),
-        }
+        Promotions { store: Rc::clone(&self.store) }
     }
 
     /// Get the tax API.
     #[wasm_bindgen(getter)]
     pub fn tax(&self) -> Tax {
-        Tax {
-            store: Rc::clone(&self.store),
-        }
+        Tax { store: Rc::clone(&self.store) }
     }
 }
 
@@ -2225,10 +2191,8 @@ impl Orders {
 
         // Update the order
         {
-            let data = store
-                .orders
-                .get_mut(&uuid)
-                .ok_or_else(|| JsValue::from_str("Order not found"))?;
+            let data =
+                store.orders.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Order not found"))?;
 
             data.status = status.to_string();
             data.updated_at = Utc::now().to_rfc3339();
@@ -2265,10 +2229,8 @@ impl Orders {
 
         // Update the order
         {
-            let data = store
-                .orders
-                .get_mut(&uuid)
-                .ok_or_else(|| JsValue::from_str("Order not found"))?;
+            let data =
+                store.orders.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Order not found"))?;
 
             data.status = "shipped".to_string();
             data.fulfillment_status = "shipped".to_string();
@@ -2668,10 +2630,8 @@ impl Returns {
         let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
-        let data = store
-            .returns
-            .get_mut(&uuid)
-            .ok_or_else(|| JsValue::from_str("Return not found"))?;
+        let data =
+            store.returns.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Return not found"))?;
 
         data.status = "approved".to_string();
 
@@ -2684,10 +2644,8 @@ impl Returns {
         let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
-        let data = store
-            .returns
-            .get_mut(&uuid)
-            .ok_or_else(|| JsValue::from_str("Return not found"))?;
+        let data =
+            store.returns.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Return not found"))?;
 
         data.status = "rejected".to_string();
 
@@ -2736,14 +2694,8 @@ impl Payments {
         let data = PaymentData {
             id,
             payment_number,
-            order_id: input
-                .order_id
-                .as_ref()
-                .and_then(|s| Uuid::parse_str(s).ok()),
-            customer_id: input
-                .customer_id
-                .as_ref()
-                .and_then(|s| Uuid::parse_str(s).ok()),
+            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+            customer_id: input.customer_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
             amount: input.amount,
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
             status: "pending".to_string(),
@@ -2779,10 +2731,8 @@ impl Payments {
         let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
-        let data = store
-            .payments
-            .get_mut(&uuid)
-            .ok_or_else(|| JsValue::from_str("Payment not found"))?;
+        let data =
+            store.payments.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Payment not found"))?;
 
         data.status = "completed".to_string();
         data.updated_at = Utc::now().to_rfc3339();
@@ -2976,14 +2926,8 @@ impl Warranties {
             id,
             warranty_number,
             customer_id,
-            product_id: input
-                .product_id
-                .as_ref()
-                .and_then(|s| Uuid::parse_str(s).ok()),
-            order_id: input
-                .order_id
-                .as_ref()
-                .and_then(|s| Uuid::parse_str(s).ok()),
+            product_id: input.product_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
             status: "active".to_string(),
             duration_months,
             start_date: now.to_rfc3339(),
@@ -3215,11 +3159,8 @@ impl PurchaseOrders {
     /// List all purchase orders.
     pub fn list(&self) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let pos: Vec<JsPurchaseOrder> = store
-            .purchase_orders
-            .values()
-            .map(|data| data.into())
-            .collect();
+        let pos: Vec<JsPurchaseOrder> =
+            store.purchase_orders.values().map(|data| data.into()).collect();
         serde_wasm_bindgen::to_value(&pos).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -3263,10 +3204,7 @@ impl Invoices {
             id,
             invoice_number,
             customer_id,
-            order_id: input
-                .order_id
-                .as_ref()
-                .and_then(|s| Uuid::parse_str(s).ok()),
+            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
             status: "draft".to_string(),
             subtotal: input.subtotal,
             tax_amount,
@@ -3303,10 +3241,8 @@ impl Invoices {
         let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
-        let data = store
-            .invoices
-            .get_mut(&uuid)
-            .ok_or_else(|| JsValue::from_str("Invoice not found"))?;
+        let data =
+            store.invoices.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Invoice not found"))?;
 
         data.status = "sent".to_string();
         data.updated_at = Utc::now().to_rfc3339();
@@ -3321,10 +3257,8 @@ impl Invoices {
         let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
-        let data = store
-            .invoices
-            .get_mut(&uuid)
-            .ok_or_else(|| JsValue::from_str("Invoice not found"))?;
+        let data =
+            store.invoices.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Invoice not found"))?;
 
         let amount = Money::from_f64(amount);
         data.amount_paid += amount;
@@ -3429,11 +3363,7 @@ impl Bom {
         };
 
         let mut store = self.store.borrow_mut();
-        store
-            .bom_components
-            .entry(bom_uuid)
-            .or_default()
-            .push(component.clone());
+        store.bom_components.entry(bom_uuid).or_default().push(component.clone());
 
         let js_component: JsBomComponent = (&component).into();
         serde_wasm_bindgen::to_value(&js_component).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -3459,10 +3389,7 @@ impl Bom {
         let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
-        let data = store
-            .boms
-            .get_mut(&uuid)
-            .ok_or_else(|| JsValue::from_str("BOM not found"))?;
+        let data = store.boms.get_mut(&uuid).ok_or_else(|| JsValue::from_str("BOM not found"))?;
 
         data.status = "active".to_string();
         data.updated_at = Utc::now().to_rfc3339();
@@ -3917,21 +3844,16 @@ impl Carts {
 
         // First, extract all data we need from the cart (immutable borrow)
         let (_cart_status, customer_id, grand_total, currency, notes) = {
-            let cart = store
-                .carts
-                .get(&cart_uuid)
-                .ok_or_else(|| JsValue::from_str("Cart not found"))?;
+            let cart =
+                store.carts.get(&cart_uuid).ok_or_else(|| JsValue::from_str("Cart not found"))?;
 
             // Check cart status
             if cart.status != "active" && cart.status != "ready_for_payment" {
-                return Err(JsValue::from_str(
-                    "Cart is not in a valid state for checkout",
-                ));
+                return Err(JsValue::from_str("Cart is not in a valid state for checkout"));
             }
 
-            let customer_id = cart
-                .customer_id
-                .ok_or_else(|| JsValue::from_str("Cart has no customer"))?;
+            let customer_id =
+                cart.customer_id.ok_or_else(|| JsValue::from_str("Cart has no customer"))?;
 
             (
                 cart.status.clone(),
@@ -3943,15 +3865,9 @@ impl Carts {
         };
 
         // Get cart items
-        let items = store
-            .cart_items
-            .get(&cart_uuid)
-            .cloned()
-            .unwrap_or_default();
+        let items = store.cart_items.get(&cart_uuid).cloned().unwrap_or_default();
         if items.is_empty() {
-            return Err(JsValue::from_str(
-                "Cannot complete checkout with empty cart",
-            ));
+            return Err(JsValue::from_str("Cannot complete checkout with empty cart"));
         }
 
         // Create order
@@ -4166,9 +4082,7 @@ impl Subscriptions {
             code: input.code,
             name: input.name,
             description: input.description,
-            billing_interval: input
-                .billing_interval
-                .unwrap_or_else(|| "monthly".to_string()),
+            billing_interval: input.billing_interval.unwrap_or_else(|| "monthly".to_string()),
             billing_interval_count: input.billing_interval_count.unwrap_or(1),
             price: input.price,
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
@@ -4205,11 +4119,8 @@ impl Subscriptions {
     #[wasm_bindgen(js_name = listPlans)]
     pub fn list_plans(&self) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let plans: Vec<JsSubscriptionPlan> = store
-            .subscription_plans
-            .values()
-            .map(|p| p.into())
-            .collect();
+        let plans: Vec<JsSubscriptionPlan> =
+            store.subscription_plans.values().map(|p| p.into()).collect();
 
         serde_wasm_bindgen::to_value(&plans).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -4298,13 +4209,7 @@ impl Subscriptions {
             )
         } else {
             let period_end_dt = now + chrono::Duration::days(30);
-            (
-                "active".to_string(),
-                None,
-                None,
-                now.to_rfc3339(),
-                period_end_dt.to_rfc3339(),
-            )
+            ("active".to_string(), None, None, now.to_rfc3339(), period_end_dt.to_rfc3339())
         };
 
         let id = Uuid::new_v4();
@@ -4380,9 +4285,7 @@ impl Subscriptions {
             .ok_or_else(|| JsValue::from_str("Subscription not found"))?;
 
         if sub.status != "active" && sub.status != "trialing" {
-            return Err(JsValue::from_str(
-                "Subscription cannot be paused in current state",
-            ));
+            return Err(JsValue::from_str("Subscription cannot be paused in current state"));
         }
 
         let now = Utc::now();
@@ -4402,11 +4305,7 @@ impl Subscriptions {
         };
 
         let js_sub: JsSubscription = (&*sub).into();
-        store
-            .subscription_events
-            .entry(uuid)
-            .or_default()
-            .push(event);
+        store.subscription_events.entry(uuid).or_default().push(event);
 
         serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -4440,11 +4339,7 @@ impl Subscriptions {
         };
 
         let js_sub: JsSubscription = (&*sub).into();
-        store
-            .subscription_events
-            .entry(uuid)
-            .or_default()
-            .push(event);
+        store.subscription_events.entry(uuid).or_default().push(event);
 
         serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -4491,11 +4386,7 @@ impl Subscriptions {
         };
 
         let js_sub: JsSubscription = (&*sub).into();
-        store
-            .subscription_events
-            .entry(uuid)
-            .or_default()
-            .push(event);
+        store.subscription_events.entry(uuid).or_default().push(event);
 
         serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -4529,11 +4420,7 @@ impl Subscriptions {
         };
 
         let js_sub: JsSubscription = (&*sub).into();
-        store
-            .subscription_events
-            .entry(uuid)
-            .or_default()
-            .push(event);
+        store.subscription_events.entry(uuid).or_default().push(event);
 
         serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -4585,9 +4472,7 @@ impl Subscriptions {
     #[wasm_bindgen(js_name = listBillingCycles)]
     pub fn list_billing_cycles(&self, subscription_id: Option<String>) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let sub_uuid = subscription_id
-            .as_ref()
-            .and_then(|s| Uuid::parse_str(s).ok());
+        let sub_uuid = subscription_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
 
         let cycles: Vec<JsBillingCycle> = store
             .billing_cycles
@@ -4663,9 +4548,7 @@ impl Promotions {
     /// Create a new Promotions instance (typically from Commerce.promotions()).
     #[wasm_bindgen(constructor)]
     pub fn new() -> Promotions {
-        Promotions {
-            store: Rc::new(RefCell::new(Store::default())),
-        }
+        Promotions { store: Rc::new(RefCell::new(Store::default())) }
     }
 
     pub(crate) fn with_store(store: StoreRef) -> Promotions {
@@ -4687,18 +4570,15 @@ impl Promotions {
         let id = Uuid::new_v4();
 
         store.next_promotion_code_number += 1;
-        let code = input
-            .code
-            .unwrap_or_else(|| format!("PROMO-{:06}", store.next_promotion_code_number));
+        let code =
+            input.code.unwrap_or_else(|| format!("PROMO-{:06}", store.next_promotion_code_number));
 
         let promo = PromotionData {
             id,
             code,
             name: input.name,
             description: input.description,
-            promotion_type: input
-                .promotion_type
-                .unwrap_or_else(|| "percentage_off".to_string()),
+            promotion_type: input.promotion_type.unwrap_or_else(|| "percentage_off".to_string()),
             trigger: input.trigger.unwrap_or_else(|| "automatic".to_string()),
             target: input.target.unwrap_or_else(|| "order".to_string()),
             stacking: input.stacking.unwrap_or_else(|| "stackable".to_string()),
@@ -4771,11 +4651,7 @@ impl Promotions {
             .filter(|p| {
                 let status_match = status.as_ref().map_or(true, |s| &p.status == s);
                 let active_match = is_active.map_or(true, |active| {
-                    if active {
-                        p.status == "active"
-                    } else {
-                        p.status != "active"
-                    }
+                    if active { p.status == "active" } else { p.status != "active" }
                 });
                 status_match && active_match
             })
@@ -5712,9 +5588,7 @@ impl Tax {
             id,
             jurisdiction_id,
             tax_type: input.tax_type.unwrap_or_else(|| "sales_tax".to_string()),
-            product_category: input
-                .product_category
-                .unwrap_or_else(|| "standard".to_string()),
+            product_category: input.product_category.unwrap_or_else(|| "standard".to_string()),
             rate: input.rate,
             name: input.name,
             description: input.description,
@@ -5851,10 +5725,8 @@ impl Tax {
             Uuid::parse_str(customer_id).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let store = self.store.borrow();
-        let has_exemption = store
-            .tax_exemptions
-            .values()
-            .any(|e| e.customer_id == customer_uuid && e.active);
+        let has_exemption =
+            store.tax_exemptions.values().any(|e| e.customer_id == customer_uuid && e.active);
 
         Ok(has_exemption)
     }
@@ -5923,11 +5795,7 @@ impl Tax {
                 Some(max) if taxable > max => max,
                 _ => taxable,
             };
-            if capped <= Money::zero() {
-                None
-            } else {
-                Some(capped)
-            }
+            if capped <= Money::zero() { None } else { Some(capped) }
         };
 
         // Calculate line item taxes
@@ -5948,10 +5816,7 @@ impl Tax {
             let mut line_tax = Money::zero();
             let item_category = item.tax_category.as_deref().unwrap_or(default_category);
 
-            for rate in applicable_rates
-                .iter()
-                .filter(|r| r.product_category == item_category)
-            {
+            for rate in applicable_rates.iter().filter(|r| r.product_category == item_category) {
                 let Some(capped_base) =
                     rate_base(line_total, rate.threshold_min, rate.threshold_max)
                 else {
@@ -5974,18 +5839,16 @@ impl Tax {
 
                 if let Some(j) = store.tax_jurisdictions.get(&rate.jurisdiction_id) {
                     let entry =
-                        tax_breakdown_map
-                            .entry(rate.id)
-                            .or_insert_with(|| TaxBreakdownAccum {
-                                jurisdiction_id: j.id,
-                                jurisdiction_name: j.name.clone(),
-                                tax_type: rate.tax_type.clone(),
-                                rate_name: rate.name.clone(),
-                                rate: rate.rate,
-                                taxable_amount: Money::zero(),
-                                tax_amount: Money::zero(),
-                                is_compound: rate.is_compound,
-                            });
+                        tax_breakdown_map.entry(rate.id).or_insert_with(|| TaxBreakdownAccum {
+                            jurisdiction_id: j.id,
+                            jurisdiction_name: j.name.clone(),
+                            tax_type: rate.tax_type.clone(),
+                            rate_name: rate.name.clone(),
+                            rate: rate.rate,
+                            taxable_amount: Money::zero(),
+                            tax_amount: Money::zero(),
+                            is_compound: rate.is_compound,
+                        });
                     entry.taxable_amount += taxable_amount;
                     entry.tax_amount += rate_tax;
                 }
@@ -6012,18 +5875,12 @@ impl Tax {
         if has_shipping {
             let settings = store.tax_settings.as_ref();
             if settings.map_or(true, |s| s.tax_shipping) {
-                let mut shipping_taxable = if shipping_amount > Money::zero() {
-                    shipping_amount
-                } else {
-                    Money::zero()
-                };
+                let mut shipping_taxable =
+                    if shipping_amount > Money::zero() { shipping_amount } else { Money::zero() };
                 if shipping_taxable < Money::zero() {
                     shipping_taxable = Money::zero();
                 }
-                for rate in applicable_rates
-                    .iter()
-                    .filter(|r| r.product_category == "standard")
-                {
+                for rate in applicable_rates.iter().filter(|r| r.product_category == "standard") {
                     let Some(capped_base) =
                         rate_base(shipping_taxable, rate.threshold_min, rate.threshold_max)
                     else {
@@ -6046,18 +5903,16 @@ impl Tax {
 
                     if let Some(j) = store.tax_jurisdictions.get(&rate.jurisdiction_id) {
                         let entry =
-                            tax_breakdown_map
-                                .entry(rate.id)
-                                .or_insert_with(|| TaxBreakdownAccum {
-                                    jurisdiction_id: j.id,
-                                    jurisdiction_name: j.name.clone(),
-                                    tax_type: rate.tax_type.clone(),
-                                    rate_name: rate.name.clone(),
-                                    rate: rate.rate,
-                                    taxable_amount: Money::zero(),
-                                    tax_amount: Money::zero(),
-                                    is_compound: rate.is_compound,
-                                });
+                            tax_breakdown_map.entry(rate.id).or_insert_with(|| TaxBreakdownAccum {
+                                jurisdiction_id: j.id,
+                                jurisdiction_name: j.name.clone(),
+                                tax_type: rate.tax_type.clone(),
+                                rate_name: rate.name.clone(),
+                                rate: rate.rate,
+                                taxable_amount: Money::zero(),
+                                tax_amount: Money::zero(),
+                                is_compound: rate.is_compound,
+                            });
                         entry.taxable_amount += taxable_amount;
                         entry.tax_amount += rate_tax;
                     }
@@ -6256,11 +6111,7 @@ impl Tax {
     /// Check if tax calculation is enabled.
     #[wasm_bindgen(js_name = isEnabled)]
     pub fn is_enabled(&self) -> bool {
-        self.store
-            .borrow()
-            .tax_settings
-            .as_ref()
-            .map_or(true, |s| s.enabled)
+        self.store.borrow().tax_settings.as_ref().map_or(true, |s| s.enabled)
     }
 
     // ========================================================================

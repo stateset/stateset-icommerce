@@ -14,9 +14,7 @@ use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL")
-        .ok()
-        .or_else(|| env::var("DATABASE_URL").ok())
+    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
 }
 
 #[cfg(feature = "postgres")]
@@ -30,9 +28,7 @@ async fn postgres_core_crud_smoke() {
         }
     };
 
-    let db = PostgresDatabase::connect(&url)
-        .await
-        .expect("connect to postgres and run migrations");
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
 
     let unique = Uuid::new_v4().to_string();
     let sku = format!("SKU-{}", unique.replace('-', ""));
@@ -55,10 +51,7 @@ async fn postgres_core_crud_smoke() {
         .customers()
         .update_async(
             customer.id,
-            UpdateCustomer {
-                last_name: Some("Updated".into()),
-                ..Default::default()
-            },
+            UpdateCustomer { last_name: Some("Updated".into()), ..Default::default() },
         )
         .await
         .expect("update customer");
@@ -82,10 +75,7 @@ async fn postgres_core_crud_smoke() {
         .products()
         .update_async(
             product.id,
-            UpdateProduct {
-                description: Some("Updated".into()),
-                ..Default::default()
-            },
+            UpdateProduct { description: Some("Updated".into()), ..Default::default() },
         )
         .await
         .expect("update product");
@@ -107,12 +97,7 @@ async fn postgres_core_crud_smoke() {
         .expect("create inventory item");
     assert_eq!(inventory_item.sku, sku);
 
-    let stock = db
-        .inventory()
-        .get_stock_async(&sku)
-        .await
-        .expect("get stock")
-        .expect("stock row");
+    let stock = db.inventory().get_stock_async(&sku).await.expect("get stock").expect("stock row");
     assert_eq!(stock.total_on_hand, dec!(10));
 
     db.inventory()
@@ -154,12 +139,7 @@ async fn postgres_core_crud_smoke() {
         .await
         .expect("create order");
 
-    let fetched = db
-        .orders()
-        .get_async(order.id)
-        .await
-        .expect("get order")
-        .expect("order row");
+    let fetched = db.orders().get_async(order.id).await.expect("get order").expect("order row");
     assert_eq!(fetched.items.len(), 1);
 
     let updated = db
@@ -180,16 +160,7 @@ async fn postgres_core_crud_smoke() {
         .expect("update order");
     assert_eq!(updated.status, OrderStatus::Confirmed);
 
-    db.orders()
-        .delete_async(order.id)
-        .await
-        .expect("delete order");
-    db.products()
-        .delete_async(product.id)
-        .await
-        .expect("delete product");
-    db.customers()
-        .delete_async(customer.id)
-        .await
-        .expect("delete customer");
+    db.orders().delete_async(order.id).await.expect("delete order");
+    db.products().delete_async(product.id).await.expect("delete product");
+    db.customers().delete_async(customer.id).await.expect("delete customer");
 }

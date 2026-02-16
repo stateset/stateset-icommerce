@@ -21,23 +21,24 @@
 //!
 //! ## Example
 //!
-//! ```rust,ignore
-//! use stateset_core::x402::{X402PaymentIntent, X402Network, X402Asset};
+//! ```rust
+//! use stateset_core::models::x402::{X402PaymentIntent, X402Network, X402Asset};
 //!
 //! let intent = X402PaymentIntent::new(
-//!     "0x1234...sender",
-//!     "0x5678...recipient",
+//!     "0x1234abcd1234abcd1234abcd1234abcd1234abcd",
+//!     "0x5678efab5678efab5678efab5678efab5678efab",
 //!     1_000_000, // 1 USDC (6 decimals)
 //!     X402Asset::Usdc,
 //!     X402Network::SetChain,
 //! );
+//! assert_eq!(intent.amount, 1_000_000);
 //! ```
 
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rs_merkle::{algorithms::Sha256 as MerkleSha256, MerkleProof};
-use rust_decimal::prelude::ToPrimitive;
+use rs_merkle::{MerkleProof, algorithms::Sha256 as MerkleSha256};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -66,6 +67,7 @@ pub const X402_DEFAULT_VALIDITY_SECONDS: u64 = 3600;
 /// Supported blockchain networks for x402 payments
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum X402Network {
     /// Set Chain L2 (StateSet native) - primary network
     #[default]
@@ -156,6 +158,7 @@ impl std::str::FromStr for X402Network {
 /// Supported payment assets for x402
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum X402Asset {
     /// USD Coin (USDC) - primary stablecoin
     #[default]
@@ -250,6 +253,7 @@ impl std::str::FromStr for X402Asset {
 /// Status of an x402 payment intent
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum X402IntentStatus {
     /// Intent created, not yet signed
     #[default]
@@ -306,6 +310,7 @@ impl std::str::FromStr for X402IntentStatus {
 /// Direction of x402 credit ledger entries
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum X402CreditDirection {
     Credit,
     Debit,
@@ -648,10 +653,8 @@ impl X402PaymentIntent {
     pub fn verify_signature(&self) -> Result<bool, X402CryptoError> {
         let signing_hash = self.sequencer_signing_hash();
 
-        let stored_hash = self
-            .signing_hash
-            .as_deref()
-            .ok_or(X402CryptoError::MissingField("signing_hash"))?;
+        let stored_hash =
+            self.signing_hash.as_deref().ok_or(X402CryptoError::MissingField("signing_hash"))?;
         if decode_hex_array::<32>(stored_hash)? != signing_hash {
             return Ok(false);
         }
@@ -773,17 +776,15 @@ impl X402PaymentRequired {
 
     /// Encode as base64 for HTTP header
     pub fn to_header_value(&self) -> String {
-        use base64::{engine::general_purpose::STANDARD, Engine};
+        use base64::{Engine, engine::general_purpose::STANDARD};
         let json = serde_json::to_string(self).unwrap_or_default();
         STANDARD.encode(json.as_bytes())
     }
 
     /// Decode from HTTP header value
     pub fn from_header_value(value: &str) -> Result<Self, String> {
-        use base64::{engine::general_purpose::STANDARD, Engine};
-        let bytes = STANDARD
-            .decode(value)
-            .map_err(|e| format!("Invalid base64: {}", e))?;
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let bytes = STANDARD.decode(value).map_err(|e| format!("Invalid base64: {}", e))?;
         let json = String::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8: {}", e))?;
         serde_json::from_str(&json).map_err(|e| format!("Invalid JSON: {}", e))
     }
@@ -878,12 +879,7 @@ impl X402PaymentReceipt {
         }
 
         let proof = MerkleProof::<MerkleSha256>::new(proof_hashes);
-        proof.verify(
-            root,
-            &[self.leaf_index as usize],
-            &[leaf],
-            self.total_leaves as usize,
-        )
+        proof.verify(root, &[self.leaf_index as usize], &[leaf], self.total_leaves as usize)
     }
 }
 
@@ -960,6 +956,7 @@ pub struct X402CreditTransactionFilter {
 /// Status of a payment batch
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum X402BatchStatus {
     /// Batch is being assembled
     #[default]
@@ -1171,10 +1168,7 @@ fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N], X402CryptoEr
     let trimmed = value.strip_prefix("0x").unwrap_or(value);
     let bytes = hex::decode(trimmed).map_err(|e| X402CryptoError::InvalidHex(e.to_string()))?;
     if bytes.len() != N {
-        return Err(X402CryptoError::InvalidLength {
-            expected: N,
-            got: bytes.len(),
-        });
+        return Err(X402CryptoError::InvalidLength { expected: N, got: bytes.len() });
     }
     let mut arr = [0u8; N];
     arr.copy_from_slice(&bytes);
@@ -1256,13 +1250,8 @@ mod tests {
 
     #[test]
     fn test_x402_payment_required_header() {
-        let req = X402PaymentRequired::new(
-            "0xpayee",
-            1_000_000,
-            X402Asset::Usdc,
-            "/api/resource",
-            "GET",
-        );
+        let req =
+            X402PaymentRequired::new("0xpayee", 1_000_000, X402Asset::Usdc, "/api/resource", "GET");
 
         let header = req.to_header_value();
         let decoded = X402PaymentRequired::from_header_value(&header).unwrap();
@@ -1312,11 +1301,8 @@ mod tests {
         let root = tree.root().expect("merkle root");
         let proof = tree.proof(&[0]);
 
-        receipt.inclusion_proof = proof
-            .proof_hashes()
-            .iter()
-            .map(|h| format!("0x{}", hex::encode(h)))
-            .collect();
+        receipt.inclusion_proof =
+            proof.proof_hashes().iter().map(|h| format!("0x{}", hex::encode(h))).collect();
         receipt.merkle_root = format!("0x{}", hex::encode(root));
         receipt.total_leaves = leaves.len() as u32;
         receipt.leaf_index = 0;

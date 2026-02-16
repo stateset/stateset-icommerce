@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/stateset-primitives",
     "crates/stateset-core",
     "crates/stateset-db",
     "crates/stateset-embedded",
     "crates/stateset-observability",
+    "crates/stateset-test-utils",
     "bindings/node",
     "bindings/python",
     "bindings/wasm",
@@ -19,19 +21,86 @@ members = [
 # Bindings require extra toolchains (Node, Python, wasm-pack, JDK, etc.).
 # Keep default-members focused on core crates to avoid unexpected build failures.
 default-members = [
+    "crates/stateset-primitives",
     "crates/stateset-core",
     "crates/stateset-db",
     "crates/stateset-embedded",
     "crates/stateset-observability",
+    "crates/stateset-test-utils",
 ]
 
 [workspace.package]
 version = "0.7.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
+homepage = "https://github.com/stateset/stateset-icommerce"
 repository = "https://github.com/stateset/stateset-icommerce"
 authors = ["StateSet <support@stateset.com>"]
 
+# ---------------------------------------------------------------------------
+# Workspace-wide lints (inherited by crates via `[lints] workspace = true`)
+# Modeled on reth, foundry, and alloy conventions.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_must_use = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+[workspace.lints.rustdoc]
+all = "warn"
+
+[workspace.lints.clippy]
+# Enable all default lints as warnings
+all = { level = "warn", priority = -1 }
+# Nursery / pedantic lints worth enforcing
+borrow_as_ptr = "warn"
+cloned_instead_of_copied = "warn"
+dbg_macro = "warn"
+derive_partial_eq_without_eq = "warn"
+doc_markdown = "warn"
+explicit_iter_loop = "warn"
+flat_map_option = "warn"
+implicit_clone = "warn"
+manual_string_new = "warn"
+missing_const_for_fn = "warn"
+needless_pass_by_ref_mut = "warn"
+redundant_clone = "warn"
+use_self = "warn"
+# Allowed — we have large error enums by design
+result_large_err = "allow"
+
+# ---------------------------------------------------------------------------
+# Profiles
+# ---------------------------------------------------------------------------
+
+# Speed up dev builds by reducing debug info (like reth/foundry).
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Faster proptest / rand in dev builds.
+[profile.dev.package]
+proptest.opt-level = 3
+rand_chacha.opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"
+panic = "abort"
+codegen-units = 16
+
+# Use `--profile profiling` to keep symbols for perf / flamegraph.
+[profile.profiling]
+inherits = "release"
+debug = "full"
+strip = "none"
+
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
 [workspace.dependencies]
 # Core dependencies (minimal)
 serde = { version = "1.0", features = ["derive"] }
@@ -48,6 +117,9 @@ sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 once_cell = "1.19"
 prometheus = "0.14"
+auto_impl = "1"
+async-trait = "0.1"
+strum = { version = "0.26", features = ["derive"] }
 
 
 # Database (SQLite)
@@ -60,7 +132,7 @@ r2d2_sqlite = "0.25"
 # unused database stacks. This keeps `cargo audit` green and dependency trees
 # smaller while still supporting PostgreSQL.
 sqlx = { version = "0.8.1", default-features = false, features = ["runtime-tokio", "postgres", "macros", "json", "uuid", "chrono", "rust_decimal", "tls-none"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 
 # HTTP client (for embeddings service)
 # Use rustls TLS to avoid a hard runtime dependency on OpenSSL (libssl.so.1.1),
@@ -68,9 +140,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
 
 # Internal crates
+stateset-primitives = { path = "crates/stateset-primitives", version = "0.7.0" }
 stateset-core = { path = "crates/stateset-core", version = "0.7.0" }
 stateset-db = { path = "crates/stateset-db", version = "0.7.0" }
 stateset-embedded = { path = "crates/stateset-embedded", version = "0.7.0" }
 stateset-observability = { path = "crates/stateset-observability", version = "0.7.0" }
+stateset-test-utils = { path = "crates/stateset-test-utils" }
+
+# Testing
+insta = { version = "1.34", features = ["json"] }
 
 # Note: Testing dependencies (criterion, proptest) are added to individual crates

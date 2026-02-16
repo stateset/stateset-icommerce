@@ -1,7 +1,7 @@
 //! Inventory operations
 
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
     CreateInventoryItem, InventoryFilter, InventoryItem, InventoryReservation,
     InventoryTransaction, Result, StockLevel,
@@ -33,11 +33,7 @@ impl Inventory {
         event_system: Arc<EventSystem>,
         metrics: Metrics,
     ) -> Self {
-        Self {
-            db,
-            metrics,
-            event_system,
-        }
+        Self { db, metrics, event_system }
     }
 
     #[cfg(not(feature = "events"))]
@@ -52,10 +48,8 @@ impl Inventory {
 
     #[cfg(feature = "events")]
     fn emit_adjustment_events(&self, transaction: &InventoryTransaction, sku: &str, reason: &str) {
-        if let Ok(Some(balance)) = self
-            .db
-            .inventory()
-            .get_balance(transaction.item_id, transaction.location_id)
+        if let Ok(Some(balance)) =
+            self.db.inventory().get_balance(transaction.item_id, transaction.location_id)
         {
             self.emit(CommerceEvent::InventoryAdjusted {
                 item_id: transaction.item_id,
@@ -193,8 +187,7 @@ impl Inventory {
             reference_type: None,
             reference_id: None,
         })?;
-        self.metrics
-            .record_inventory_adjusted(sku, quantity.to_f64().unwrap_or(0.0));
+        self.metrics.record_inventory_adjusted(sku, quantity.to_f64().unwrap_or(0.0));
         #[cfg(feature = "events")]
         {
             self.emit_adjustment_events(&transaction, sku, reason);
@@ -218,8 +211,7 @@ impl Inventory {
             reference_type: None,
             reference_id: None,
         })?;
-        self.metrics
-            .record_inventory_adjusted(sku, quantity.to_f64().unwrap_or(0.0));
+        self.metrics.record_inventory_adjusted(sku, quantity.to_f64().unwrap_or(0.0));
         #[cfg(feature = "events")]
         {
             self.emit_adjustment_events(&transaction, sku, reason);
@@ -254,17 +246,14 @@ impl Inventory {
         expires_in_seconds: Option<i64>,
     ) -> Result<InventoryReservation> {
         tracing::info!("reserving inventory");
-        let reservation = self
-            .db
-            .inventory()
-            .reserve(stateset_core::ReserveInventory {
-                sku: sku.to_string(),
-                location_id: None,
-                quantity,
-                reference_type: reference_type.to_string(),
-                reference_id: reference_id.to_string(),
-                expires_in_seconds,
-            })?;
+        let reservation = self.db.inventory().reserve(stateset_core::ReserveInventory {
+            sku: sku.to_string(),
+            location_id: None,
+            quantity,
+            reference_type: reference_type.to_string(),
+            reference_id: reference_id.to_string(),
+            expires_in_seconds,
+        })?;
         #[cfg(feature = "events")]
         {
             self.emit(CommerceEvent::InventoryReserved {
@@ -319,9 +308,7 @@ impl Inventory {
         reference_type: &str,
         reference_id: &str,
     ) -> Result<Vec<InventoryReservation>> {
-        self.db
-            .inventory()
-            .list_reservations_by_reference(reference_type, reference_id)
+        self.db.inventory().list_reservations_by_reference(reference_type, reference_id)
     }
 
     /// List inventory items with optional filtering.

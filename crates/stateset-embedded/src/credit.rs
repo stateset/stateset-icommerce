@@ -9,15 +9,14 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use stateset_embedded::{Commerce, CreateCreditAccount};
+//! use stateset_embedded::{Commerce, CreateCreditAccount, CustomerId};
 //! use rust_decimal_macros::dec;
-//! use uuid::Uuid;
 //!
 //! let commerce = Commerce::new("./store.db")?;
 //!
 //! // Create a credit account for a customer
 //! let account = commerce.credit().create_credit_account(CreateCreditAccount {
-//!     customer_id: Uuid::new_v4(),
+//!     customer_id: CustomerId::new(),
 //!     credit_limit: dec!(10000.00),
 //!     payment_terms: Some("Net 30".into()),
 //!     ..Default::default()
@@ -30,10 +29,10 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     CreateCreditAccount, CreditAccount, CreditAccountFilter, CreditAgingBucket, CreditApplication,
-    CreditApplicationFilter, CreditCheckResult, CreditHold, CreditHoldFilter, CreditTransaction,
-    CreditTransactionFilter, CustomerCreditSummary, PlaceCreditHold, RecordCreditTransaction,
-    ReleaseCreditHold, Result, ReviewCreditApplication, SubmitCreditApplication,
-    UpdateCreditAccount,
+    CreditApplicationFilter, CreditCheckResult, CreditHold, CreditHoldFilter, CreditId,
+    CreditTransaction, CreditTransactionFilter, CustomerId, CustomerCreditSummary, OrderId,
+    PlaceCreditHold, RecordCreditTransaction, ReleaseCreditHold, Result, ReviewCreditApplication,
+    SubmitCreditApplication, UpdateCreditAccount,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -58,14 +57,13 @@ impl Credit {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, CreateCreditAccount, RiskRating};
+    /// use stateset_embedded::{Commerce, CreateCreditAccount, CustomerId, RiskRating};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let account = commerce.credit().create_credit_account(CreateCreditAccount {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: CustomerId::new(),
     ///     credit_limit: dec!(25000.00),
     ///     payment_terms: Some("Net 45".into()),
     ///     risk_rating: Some(RiskRating::Low),
@@ -79,14 +77,14 @@ impl Credit {
     }
 
     /// Get a credit account by ID.
-    pub fn get_credit_account(&self, id: Uuid) -> Result<Option<CreditAccount>> {
+    pub fn get_credit_account(&self, id: CreditId) -> Result<Option<CreditAccount>> {
         self.db.credit().get_credit_account(id)
     }
 
     /// Get a credit account by customer ID.
     pub fn get_credit_account_by_customer(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
     ) -> Result<Option<CreditAccount>> {
         self.db.credit().get_credit_account_by_customer(customer_id)
     }
@@ -94,7 +92,7 @@ impl Credit {
     /// Update a credit account.
     pub fn update_credit_account(
         &self,
-        id: Uuid,
+        id: CreditId,
         input: UpdateCreditAccount,
     ) -> Result<CreditAccount> {
         self.db.credit().update_credit_account(id, input)
@@ -110,14 +108,13 @@ impl Credit {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::Commerce;
+    /// use stateset_embedded::{Commerce, CustomerId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let account = commerce.credit().adjust_credit_limit(
-    ///     Uuid::new_v4(),
+    ///     CustomerId::new(),
     ///     dec!(50000.00),
     ///     "Annual review - increased based on payment history"
     /// )?;
@@ -125,22 +122,20 @@ impl Credit {
     /// ```
     pub fn adjust_credit_limit(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         new_limit: Decimal,
         reason: &str,
     ) -> Result<CreditAccount> {
-        self.db
-            .credit()
-            .adjust_credit_limit(customer_id, new_limit, reason)
+        self.db.credit().adjust_credit_limit(customer_id, new_limit, reason)
     }
 
     /// Suspend a credit account.
-    pub fn suspend_credit_account(&self, customer_id: Uuid, reason: &str) -> Result<CreditAccount> {
+    pub fn suspend_credit_account(&self, customer_id: CustomerId, reason: &str) -> Result<CreditAccount> {
         self.db.credit().suspend_credit_account(customer_id, reason)
     }
 
     /// Reactivate a suspended credit account.
-    pub fn reactivate_credit_account(&self, customer_id: Uuid) -> Result<CreditAccount> {
+    pub fn reactivate_credit_account(&self, customer_id: CustomerId) -> Result<CreditAccount> {
         self.db.credit().reactivate_credit_account(customer_id)
     }
 
@@ -153,15 +148,14 @@ impl Credit {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::Commerce;
+    /// use stateset_embedded::{Commerce, CustomerId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let result = commerce.credit().check_credit(
-    ///     Uuid::new_v4(), // customer ID
-    ///     dec!(5000.00),  // order amount
+    ///     CustomerId::new(), // customer ID
+    ///     dec!(5000.00),     // order amount
     /// )?;
     ///
     /// if result.approved {
@@ -176,7 +170,7 @@ impl Credit {
     /// ```
     pub fn check_credit(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         order_amount: Decimal,
     ) -> Result<CreditCheckResult> {
         self.db.credit().check_credit(customer_id, order_amount)
@@ -187,36 +181,30 @@ impl Credit {
     /// Reduces available credit until the order is invoiced or cancelled.
     pub fn reserve_credit(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        self.db
-            .credit()
-            .reserve_credit(customer_id, order_id, amount)
+        self.db.credit().reserve_credit(customer_id, order_id, amount)
     }
 
     /// Release a credit reservation (e.g., order cancelled).
     pub fn release_credit_reservation(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
     ) -> Result<CreditAccount> {
-        self.db
-            .credit()
-            .release_credit_reservation(customer_id, order_id)
+        self.db.credit().release_credit_reservation(customer_id, order_id)
     }
 
     /// Charge credit (convert reservation to balance when order is invoiced).
     pub fn charge_credit(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        self.db
-            .credit()
-            .charge_credit(customer_id, order_id, amount)
+        self.db.credit().charge_credit(customer_id, order_id, amount)
     }
 
     // ========================================================================
@@ -228,15 +216,14 @@ impl Credit {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, PlaceCreditHold, CreditHoldType};
+    /// use stateset_embedded::{Commerce, PlaceCreditHold, CreditHoldType, CustomerId, OrderId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let hold = commerce.credit().place_hold(PlaceCreditHold {
-    ///     customer_id: Uuid::new_v4(),
-    ///     order_id: Some(Uuid::new_v4()),
+    ///     customer_id: CustomerId::new(),
+    ///     order_id: Some(OrderId::new()),
     ///     hold_type: CreditHoldType::OverLimit,
     ///     hold_amount: dec!(2500.00),
     ///     reason: "Order exceeds available credit".into(),
@@ -266,12 +253,12 @@ impl Credit {
     }
 
     /// Get all active holds for a customer.
-    pub fn get_active_holds(&self, customer_id: Uuid) -> Result<Vec<CreditHold>> {
+    pub fn get_active_holds(&self, customer_id: CustomerId) -> Result<Vec<CreditHold>> {
         self.db.credit().get_active_holds(customer_id)
     }
 
     /// Get all holds for an order.
-    pub fn get_holds_for_order(&self, order_id: Uuid) -> Result<Vec<CreditHold>> {
+    pub fn get_holds_for_order(&self, order_id: OrderId) -> Result<Vec<CreditHold>> {
         self.db.credit().get_holds_for_order(order_id)
     }
 
@@ -284,14 +271,13 @@ impl Credit {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, SubmitCreditApplication};
+    /// use stateset_embedded::{Commerce, CustomerId, SubmitCreditApplication};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let app = commerce.credit().submit_application(SubmitCreditApplication {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: CustomerId::new(),
     ///     requested_limit: dec!(50000.00),
     ///     business_name: Some("Acme Corp".into()),
     ///     years_in_business: Some(10),
@@ -350,13 +336,11 @@ impl Credit {
     /// Apply a payment to reduce customer balance.
     pub fn apply_payment(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         amount: Decimal,
         reference_id: Option<Uuid>,
     ) -> Result<CreditAccount> {
-        self.db
-            .credit()
-            .apply_payment(customer_id, amount, reference_id)
+        self.db.credit().apply_payment(customer_id, amount, reference_id)
     }
 
     // ========================================================================
@@ -364,12 +348,12 @@ impl Credit {
     // ========================================================================
 
     /// Get credit summary for a customer.
-    pub fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerCreditSummary>> {
+    pub fn get_customer_summary(&self, customer_id: CustomerId) -> Result<Option<CustomerCreditSummary>> {
         self.db.credit().get_customer_summary(customer_id)
     }
 
     /// Get credit aging report.
-    pub fn get_aging_report(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>> {
+    pub fn get_aging_report(&self) -> Result<Vec<(CustomerId, CreditAgingBucket)>> {
         self.db.credit().get_aging_report()
     }
 

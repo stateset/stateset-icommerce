@@ -8,9 +8,9 @@ use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
-    validate_batch_size, AddShipmentEvent, BatchResult, CommerceError, CreateShipment,
-    CreateShipmentItem, Result, Shipment, ShipmentEvent, ShipmentFilter, ShipmentItem,
-    ShipmentRepository, ShipmentStatus, ShippingCarrier, UpdateShipment,
+    AddShipmentEvent, BatchResult, CommerceError, CreateShipment, CreateShipmentItem, OrderId,
+    ProductId, Result, Shipment, ShipmentEvent, ShipmentFilter, ShipmentId, ShipmentItem,
+    ShipmentRepository, ShipmentStatus, ShippingCarrier, UpdateShipment, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -24,11 +24,8 @@ impl SqliteShipmentRepository {
         Self { pool }
     }
 
-    fn load_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn load_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -41,11 +38,11 @@ impl SqliteShipmentRepository {
             .query_map([shipment_id.to_string()], |row| {
                 Ok(ShipmentItem {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "shipment_item", "id")?,
-                    shipment_id: parse_uuid_row(
+                    shipment_id: ShipmentId::from(parse_uuid_row(
                         &row.get::<_, String>(1)?,
                         "shipment_item",
                         "shipment_id",
-                    )?,
+                    )?),
                     order_item_id: row
                         .get::<_, Option<String>>(2)?
                         .map(|s| parse_uuid_row(&s, "shipment_item", "order_item_id"))
@@ -53,7 +50,8 @@ impl SqliteShipmentRepository {
                     product_id: row
                         .get::<_, Option<String>>(3)?
                         .map(|s| parse_uuid_row(&s, "shipment_item", "product_id"))
-                        .transpose()?,
+                        .transpose()?
+                        .map(ProductId::from),
                     sku: row.get(4)?,
                     name: row.get(5)?,
                     quantity: row.get(6)?,
@@ -79,11 +77,8 @@ impl SqliteShipmentRepository {
         Ok(items)
     }
 
-    fn load_events(&self, shipment_id: Uuid) -> Result<Vec<ShipmentEvent>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn load_events(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentEvent>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -96,11 +91,11 @@ impl SqliteShipmentRepository {
             .query_map([shipment_id.to_string()], |row| {
                 Ok(ShipmentEvent {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "shipment_event", "id")?,
-                    shipment_id: parse_uuid_row(
+                    shipment_id: ShipmentId::from(parse_uuid_row(
                         &row.get::<_, String>(1)?,
                         "shipment_event",
                         "shipment_id",
-                    )?,
+                    )?),
                     event_type: row.get(2)?,
                     location: row.get(3)?,
                     description: row.get(4)?,
@@ -126,14 +121,11 @@ impl SqliteShipmentRepository {
         Ok(events)
     }
 
-    fn update_status(&self, id: Uuid, status: ShipmentStatus) -> Result<Shipment> {
+    fn update_status(&self, id: ShipmentId, status: ShipmentStatus) -> Result<Shipment> {
         let now = Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE shipments SET status = ?, updated_at = ? WHERE id = ?",
@@ -153,20 +145,13 @@ impl ShipmentRepository for SqliteShipmentRepository {
         let now = Utc::now();
         let carrier = input.carrier.unwrap_or_default();
         let method = input.shipping_method.unwrap_or_default();
-        let tracking_url = input
-            .tracking_number
-            .as_ref()
-            .and_then(|tn| carrier.tracking_url(tn));
+        let tracking_url = input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
 
         let mut items = Vec::new();
         {
-            let mut conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let tx = conn
-                .transaction()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = conn.transaction().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             tx.execute(
                 "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
@@ -222,7 +207,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
 
                     items.push(ShipmentItem {
                         id: item_id,
-                        shipment_id: id,
+                        shipment_id: ShipmentId::from(id),
                         order_item_id: item_input.order_item_id,
                         product_id: item_input.product_id,
                         sku: item_input.sku.clone(),
@@ -234,12 +219,11 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 }
             }
 
-            tx.commit()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         }
 
         Ok(Shipment {
-            id,
+            id: ShipmentId::from(id),
             shipment_number,
             order_id: input.order_id,
             status: ShipmentStatus::Pending,
@@ -268,12 +252,9 @@ impl ShipmentRepository for SqliteShipmentRepository {
         })
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Shipment>> {
+    fn get(&self, id: ShipmentId) -> Result<Option<Shipment>> {
         let shipment_data = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let result = conn.query_row(
                 "SELECT id, shipment_number, order_id, status, carrier, shipping_method,
@@ -345,14 +326,14 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 created_at,
                 updated_at,
             )) => {
-                let shipment_id = parse_uuid(&id_str, "shipment", "id")?;
+                let shipment_id = ShipmentId::from(parse_uuid(&id_str, "shipment", "id")?);
                 let items = self.load_items(shipment_id)?;
                 let events = self.load_events(shipment_id)?;
 
                 Ok(Some(Shipment {
                     id: shipment_id,
                     shipment_number,
-                    order_id: parse_uuid(&order_id, "shipment", "order_id")?,
+                    order_id: OrderId::from(parse_uuid(&order_id, "shipment", "order_id")?),
                     status: parse_enum(&status, "shipment", "status")?,
                     carrier: parse_enum(&carrier, "shipment", "carrier")?,
                     shipping_method: parse_enum(&shipping_method, "shipment", "shipping_method")?,
@@ -392,10 +373,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
 
     fn get_by_number(&self, shipment_number: &str) -> Result<Option<Shipment>> {
         let id_result = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let result = conn.query_row(
                 "SELECT id FROM shipments WHERE shipment_number = ?",
@@ -404,7 +382,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             );
 
             match result {
-                Ok(id_str) => Some(parse_uuid(&id_str, "shipment", "id")?),
+                Ok(id_str) => Some(ShipmentId::from(parse_uuid(&id_str, "shipment", "id")?)),
                 Err(rusqlite::Error::QueryReturnedNoRows) => None,
                 Err(e) => return Err(CommerceError::DatabaseError(e.to_string())),
             }
@@ -418,10 +396,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
 
     fn get_by_tracking(&self, tracking_number: &str) -> Result<Option<Shipment>> {
         let id_result = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let result = conn.query_row(
                 "SELECT id FROM shipments WHERE tracking_number = ?",
@@ -430,7 +405,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             );
 
             match result {
-                Ok(id_str) => Some(parse_uuid(&id_str, "shipment", "id")?),
+                Ok(id_str) => Some(ShipmentId::from(parse_uuid(&id_str, "shipment", "id")?)),
                 Err(rusqlite::Error::QueryReturnedNoRows) => None,
                 Err(e) => return Err(CommerceError::DatabaseError(e.to_string())),
             }
@@ -442,16 +417,14 @@ impl ShipmentRepository for SqliteShipmentRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdateShipment) -> Result<Shipment> {
+    fn update(&self, id: ShipmentId, input: UpdateShipment) -> Result<Shipment> {
         let existing = self.get(id)?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
         let new_status = input.status.unwrap_or(existing.status);
         let new_carrier = input.carrier.unwrap_or(existing.carrier);
         let new_tracking = input.tracking_number.or(existing.tracking_number);
-        let new_tracking_url = new_tracking
-            .as_ref()
-            .and_then(|tn| new_carrier.tracking_url(tn));
+        let new_tracking_url = new_tracking.as_ref().and_then(|tn| new_carrier.tracking_url(tn));
         let new_recipient_name = input.recipient_name.unwrap_or(existing.recipient_name);
         let new_recipient_email = input.recipient_email.or(existing.recipient_email);
         let new_recipient_phone = input.recipient_phone.or(existing.recipient_phone);
@@ -463,10 +436,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
         let new_notes = input.notes.or(existing.notes);
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE shipments SET status = ?, carrier = ?, tracking_number = ?, tracking_url = ?,
@@ -499,10 +469,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
 
     fn list(&self, filter: ShipmentFilter) -> Result<Vec<Shipment>> {
         let ids = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let limit = filter.limit.unwrap_or(100) as i64;
             let offset = filter.offset.unwrap_or(0) as i64;
@@ -534,9 +501,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
             params.push(Box::new(limit));
             params.push(Box::new(offset));
 
-            let mut stmt = conn
-                .prepare(&sql)
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut stmt =
+                conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
@@ -547,7 +513,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let mut id_list = Vec::new();
             for row in rows {
                 let id_str = row.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                id_list.push(parse_uuid(&id_str, "shipment", "id")?);
+                id_list.push(ShipmentId::from(parse_uuid(&id_str, "shipment", "id")?));
             }
             id_list
         };
@@ -562,18 +528,12 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(shipments)
     }
 
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Shipment>> {
-        self.list(ShipmentFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Shipment>> {
+        self.list(ShipmentFilter { order_id: Some(order_id), ..Default::default() })
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn delete(&self, id: ShipmentId) -> Result<()> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "UPDATE shipments SET status = 'cancelled', updated_at = ? WHERE id = ?",
@@ -584,27 +544,23 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(())
     }
 
-    fn mark_processing(&self, id: Uuid) -> Result<Shipment> {
+    fn mark_processing(&self, id: ShipmentId) -> Result<Shipment> {
         self.update_status(id, ShipmentStatus::Processing)
     }
 
-    fn mark_ready(&self, id: Uuid) -> Result<Shipment> {
+    fn mark_ready(&self, id: ShipmentId) -> Result<Shipment> {
         self.update_status(id, ShipmentStatus::ReadyToShip)
     }
 
-    fn ship(&self, id: Uuid, tracking_number: Option<String>) -> Result<Shipment> {
+    fn ship(&self, id: ShipmentId, tracking_number: Option<String>) -> Result<Shipment> {
         let existing = self.get(id)?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
-        let tracking_url = tracking_number
-            .as_ref()
-            .and_then(|tn| existing.carrier.tracking_url(tn));
+        let tracking_url =
+            tracking_number.as_ref().and_then(|tn| existing.carrier.tracking_url(tn));
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE shipments SET status = 'shipped', tracking_number = COALESCE(?, tracking_number),
@@ -623,22 +579,19 @@ impl ShipmentRepository for SqliteShipmentRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn mark_in_transit(&self, id: Uuid) -> Result<Shipment> {
+    fn mark_in_transit(&self, id: ShipmentId) -> Result<Shipment> {
         self.update_status(id, ShipmentStatus::InTransit)
     }
 
-    fn mark_out_for_delivery(&self, id: Uuid) -> Result<Shipment> {
+    fn mark_out_for_delivery(&self, id: ShipmentId) -> Result<Shipment> {
         self.update_status(id, ShipmentStatus::OutForDelivery)
     }
 
-    fn mark_delivered(&self, id: Uuid) -> Result<Shipment> {
+    fn mark_delivered(&self, id: ShipmentId) -> Result<Shipment> {
         let now = Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE shipments SET status = 'delivered', delivered_at = ?, updated_at = ? WHERE id = ?",
@@ -650,23 +603,20 @@ impl ShipmentRepository for SqliteShipmentRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn mark_failed(&self, id: Uuid) -> Result<Shipment> {
+    fn mark_failed(&self, id: ShipmentId) -> Result<Shipment> {
         self.update_status(id, ShipmentStatus::Failed)
     }
 
-    fn hold(&self, id: Uuid) -> Result<Shipment> {
+    fn hold(&self, id: ShipmentId) -> Result<Shipment> {
         self.update_status(id, ShipmentStatus::OnHold)
     }
 
-    fn cancel(&self, id: Uuid) -> Result<Shipment> {
+    fn cancel(&self, id: ShipmentId) -> Result<Shipment> {
         self.update_status(id, ShipmentStatus::Cancelled)
     }
 
-    fn add_item(&self, shipment_id: Uuid, item: CreateShipmentItem) -> Result<ShipmentItem> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn add_item(&self, shipment_id: ShipmentId, item: CreateShipmentItem) -> Result<ShipmentItem> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -702,29 +652,20 @@ impl ShipmentRepository for SqliteShipmentRepository {
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        conn.execute(
-            "DELETE FROM shipment_items WHERE id = ?",
-            [item_id.to_string()],
-        )
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        conn.execute("DELETE FROM shipment_items WHERE id = ?", [item_id.to_string()])
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
 
-    fn get_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
+    fn get_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>> {
         self.load_items(shipment_id)
     }
 
-    fn add_event(&self, shipment_id: Uuid, event: AddShipmentEvent) -> Result<ShipmentEvent> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn add_event(&self, shipment_id: ShipmentId, event: AddShipmentEvent) -> Result<ShipmentEvent> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -756,15 +697,12 @@ impl ShipmentRepository for SqliteShipmentRepository {
         })
     }
 
-    fn get_events(&self, shipment_id: Uuid) -> Result<Vec<ShipmentEvent>> {
+    fn get_events(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentEvent>> {
         self.load_events(shipment_id)
     }
 
     fn count(&self, filter: ShipmentFilter) -> Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT COUNT(*) FROM shipments WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -815,10 +753,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             return Ok(vec![]);
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
@@ -828,10 +763,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let now = Utc::now();
             let carrier = input.carrier.unwrap_or_default();
             let method = input.shipping_method.unwrap_or_default();
-            let tracking_url = input
-                .tracking_number
-                .as_ref()
-                .and_then(|tn| carrier.tracking_url(tn));
+            let tracking_url =
+                input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
 
             tx.execute(
                 "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
@@ -888,7 +821,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
 
                     items.push(ShipmentItem {
                         id: item_id,
-                        shipment_id: id,
+                        shipment_id: ShipmentId::from(id),
                         order_item_id: item_input.order_item_id,
                         product_id: item_input.product_id,
                         sku: item_input.sku.clone(),
@@ -901,7 +834,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             }
 
             results.push(Shipment {
-                id,
+                id: ShipmentId::from(id),
                 shipment_number,
                 order_id: input.order_id,
                 status: ShipmentStatus::Pending,
@@ -934,7 +867,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
+    fn update_batch(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -948,16 +881,13 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<Vec<Shipment>> {
+    fn update_batch_atomic(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<Vec<Shipment>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let mut updated_ids = Vec::with_capacity(updates.len());
 
@@ -1005,9 +935,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let new_status = input.status.map(|s| s.to_string());
             let new_carrier = input.carrier.unwrap_or(existing_carrier);
             let new_tracking = input.tracking_number.or(existing_data.2);
-            let new_tracking_url = new_tracking
-                .as_ref()
-                .and_then(|tn| new_carrier.tracking_url(tn));
+            let new_tracking_url =
+                new_tracking.as_ref().and_then(|tn| new_carrier.tracking_url(tn));
             let new_recipient_name = input.recipient_name.unwrap_or(existing_data.3);
             let new_recipient_email = input.recipient_email.or(existing_data.4);
             let new_recipient_phone = input.recipient_phone.or(existing_data.5);
@@ -1058,15 +987,11 @@ impl ShipmentRepository for SqliteShipmentRepository {
 
             params.push(Box::new(id.to_string()));
 
-            let sql = format!(
-                "UPDATE shipments SET {} WHERE id = ?",
-                update_parts.join(", ")
-            );
+            let sql = format!("UPDATE shipments SET {} WHERE id = ?", update_parts.join(", "));
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
                 params.iter().map(|p| p.as_ref()).collect();
-            tx.execute(&sql, params_refs.as_slice())
-                .map_err(map_db_error)?;
+            tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
             updated_ids.push(id);
         }
@@ -1084,13 +1009,14 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<ShipmentId>) -> Result<BatchResult<Uuid>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
         for (index, id) in ids.into_iter().enumerate() {
+            let raw_id: Uuid = id.into();
             match self.delete(id) {
-                Ok(()) => result.record_success(id),
+                Ok(()) => result.record_success(raw_id),
                 Err(e) => result.record_failure(index, Some(id.to_string()), &e),
             }
         }
@@ -1098,37 +1024,27 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<ShipmentId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
         let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         // Delete shipment events first
-        let sql = format!(
-            "DELETE FROM shipment_events WHERE shipment_id IN ({})",
-            placeholders
-        );
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let sql = format!("DELETE FROM shipment_events WHERE shipment_id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete shipment items
-        let sql = format!(
-            "DELETE FROM shipment_items WHERE shipment_id IN ({})",
-            placeholders
-        );
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let sql = format!("DELETE FROM shipment_items WHERE shipment_id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete shipments (mark as cancelled)
         let now = Utc::now().to_rfc3339();
@@ -1144,16 +1060,13 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Shipment>> {
+    fn get_batch(&self, ids: Vec<ShipmentId>) -> Result<Vec<Shipment>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
         }
 
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let placeholders = build_in_clause(ids.len());
         let sql = format!(
@@ -1166,7 +1079,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
             placeholders
         );
 
-        let params = uuid_params(&ids);
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -1228,14 +1142,14 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 updated_at,
             ) = row.map_err(map_db_error)?;
 
-            let shipment_id = parse_uuid(&id_str, "shipment", "id")?;
+            let shipment_id = ShipmentId::from(parse_uuid(&id_str, "shipment", "id")?);
             let items = self.load_items(shipment_id)?;
             let events = self.load_events(shipment_id)?;
 
             shipments.push(Shipment {
                 id: shipment_id,
                 shipment_number,
-                order_id: parse_uuid(&order_id, "shipment", "order_id")?,
+                order_id: OrderId::from(parse_uuid(&order_id, "shipment", "order_id")?),
                 status: parse_enum(&status, "shipment", "status")?,
                 carrier: parse_enum(&carrier, "shipment", "carrier")?,
                 shipping_method: parse_enum(&shipping_method, "shipment", "shipping_method")?,

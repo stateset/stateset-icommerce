@@ -8,12 +8,13 @@ use super::{
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, Row};
+use rusqlite::{Row, params};
 use rust_decimal::Decimal;
 use stateset_core::{
-    generate_invoice_number, validate_batch_size, BatchResult, CommerceError, CreateInvoice,
-    CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem, InvoiceRepository, InvoiceStatus,
-    RecordInvoicePayment, Result, UpdateInvoice,
+    BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, CustomerId, Invoice,
+    InvoiceFilter, InvoiceId, InvoiceItem, InvoiceRepository, InvoiceStatus, OrderId, OrderItemId,
+    ProductId, RecordInvoicePayment, Result, UpdateInvoice, generate_invoice_number,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -27,25 +28,24 @@ impl SqliteInvoiceRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_invoice(row: &Row) -> rusqlite::Result<Invoice> {
+    fn row_to_invoice(row: &Row<'_>) -> rusqlite::Result<Invoice> {
         Ok(Invoice {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "invoice", "id")?,
+            id: InvoiceId::from(parse_uuid_row(&row.get::<_, String>("id")?, "invoice", "id")?),
             invoice_number: row.get("invoice_number")?,
-            customer_id: parse_uuid_row(
+            customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "invoice",
                 "customer_id",
-            )?,
+            )?),
             order_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("order_id")?,
                 "invoice",
                 "order_id",
-            )?,
+            )?
+            .map(OrderId::from),
             status: parse_enum_row(&row.get::<_, String>("status")?, "invoice", "status")?,
             invoice_type: parse_enum_row(
                 &row.get::<_, String>("invoice_type")?,
@@ -146,24 +146,26 @@ impl SqliteInvoiceRepository {
         })
     }
 
-    fn row_to_invoice_item(row: &Row) -> rusqlite::Result<InvoiceItem> {
+    fn row_to_invoice_item(row: &Row<'_>) -> rusqlite::Result<InvoiceItem> {
         Ok(InvoiceItem {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "invoice_item", "id")?,
-            invoice_id: parse_uuid_row(
+            invoice_id: InvoiceId::from(parse_uuid_row(
                 &row.get::<_, String>("invoice_id")?,
                 "invoice_item",
                 "invoice_id",
-            )?,
+            )?),
             order_item_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("order_item_id")?,
                 "invoice_item",
                 "order_item_id",
-            )?,
+            )?
+            .map(OrderItemId::from),
             product_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("product_id")?,
                 "invoice_item",
                 "product_id",
-            )?,
+            )?
+            .map(ProductId::from),
             sku: row.get("sku")?,
             description: row.get("description")?,
             quantity: parse_decimal_row(
@@ -208,7 +210,7 @@ impl SqliteInvoiceRepository {
 
     fn get_invoice_items_with_conn(
         conn: &rusqlite::Connection,
-        invoice_id: Uuid,
+        invoice_id: InvoiceId,
     ) -> Result<Vec<InvoiceItem>> {
         let mut stmt = conn
             .prepare("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order")
@@ -224,7 +226,7 @@ impl SqliteInvoiceRepository {
         Ok(items)
     }
 
-    fn get_invoice_with_conn(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<Invoice>> {
+    fn get_invoice_with_conn(conn: &rusqlite::Connection, id: InvoiceId) -> Result<Option<Invoice>> {
         let result = conn.query_row(
             "SELECT * FROM invoices WHERE id = ?",
             [id.to_string()],
@@ -241,7 +243,7 @@ impl SqliteInvoiceRepository {
         }
     }
 
-    fn recalculate_with_conn(conn: &rusqlite::Connection, id: Uuid) -> Result<()> {
+    fn recalculate_with_conn(conn: &rusqlite::Connection, id: InvoiceId) -> Result<()> {
         // Calculate subtotal from items
         let invoice_id_param = id.to_string();
         let invoice_params: [&dyn rusqlite::ToSql; 1] = [&invoice_id_param];
@@ -283,7 +285,7 @@ impl SqliteInvoiceRepository {
         Ok(())
     }
 
-    fn get_invoice_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
+    fn get_invoice_items(&self, invoice_id: InvoiceId) -> Result<Vec<InvoiceItem>> {
         let conn = self.conn()?;
         Self::get_invoice_items_with_conn(&conn, invoice_id)
     }
@@ -293,7 +295,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     fn create(&self, input: CreateInvoice) -> Result<Invoice> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
-        let id = Uuid::new_v4();
+        let id = InvoiceId::new();
         let now = chrono::Utc::now();
         let invoice_number = generate_invoice_number();
         let invoice_date = input.invoice_date.unwrap_or(now);
@@ -390,7 +392,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Invoice>> {
+    fn get(&self, id: InvoiceId) -> Result<Option<Invoice>> {
         let conn = self.conn()?;
         Self::get_invoice_with_conn(&conn, id)
     }
@@ -413,7 +415,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
+    fn update(&self, id: InvoiceId, input: UpdateInvoice) -> Result<Invoice> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
@@ -495,9 +497,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::row_to_invoice)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map(params_refs.as_slice(), Self::row_to_invoice).map_err(map_db_error)?;
 
         let mut invoices = Vec::new();
         for row in rows {
@@ -508,30 +509,22 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(invoices)
     }
 
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Invoice>> {
-        self.list(InvoiceFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Invoice>> {
+        self.list(InvoiceFilter { customer_id: Some(customer_id), ..Default::default() })
     }
 
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Invoice>> {
-        self.list(InvoiceFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Invoice>> {
+        self.list(InvoiceFilter { order_id: Some(order_id), ..Default::default() })
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: InvoiceId) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let status: String = tx
-            .query_row(
-                "SELECT status FROM invoices WHERE id = ?",
-                [id.to_string()],
-                |row| row.get(0),
-            )
+            .query_row("SELECT status FROM invoices WHERE id = ?", [id.to_string()], |row| {
+                row.get(0)
+            })
             .map_err(map_db_error)?;
 
         if parse_enum::<InvoiceStatus>(&status, "invoice", "status")? != InvoiceStatus::Draft {
@@ -540,18 +533,14 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             ));
         }
 
-        tx.execute(
-            "DELETE FROM invoice_items WHERE invoice_id = ?",
-            [id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        tx.execute("DELETE FROM invoices WHERE id = ?", [id.to_string()])
+        tx.execute("DELETE FROM invoice_items WHERE invoice_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
+        tx.execute("DELETE FROM invoices WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn send(&self, id: Uuid) -> Result<Invoice> {
+    fn send(&self, id: InvoiceId) -> Result<Invoice> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
 
@@ -569,7 +558,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn mark_viewed(&self, id: Uuid) -> Result<Invoice> {
+    fn mark_viewed(&self, id: InvoiceId) -> Result<Invoice> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
 
@@ -583,7 +572,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn record_payment(&self, id: Uuid, payment: RecordInvoicePayment) -> Result<Invoice> {
+    fn record_payment(&self, id: InvoiceId, payment: RecordInvoicePayment) -> Result<Invoice> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
@@ -608,11 +597,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             InvoiceStatus::PartiallyPaid
         };
 
-        let paid_at = if new_status == InvoiceStatus::Paid {
-            Some(now)
-        } else {
-            None
-        };
+        let paid_at = if new_status == InvoiceStatus::Paid { Some(now) } else { None };
 
         tx.execute(
             "UPDATE invoices SET amount_paid = ?, balance_due = ?, status = ?,
@@ -633,7 +618,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn void(&self, id: Uuid) -> Result<Invoice> {
+    fn void(&self, id: InvoiceId) -> Result<Invoice> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
 
@@ -651,45 +636,34 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn write_off(&self, id: Uuid) -> Result<Invoice> {
+    fn write_off(&self, id: InvoiceId) -> Result<Invoice> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
 
         conn.execute(
             "UPDATE invoices SET status = ?, updated_at = ? WHERE id = ?",
-            params![
-                InvoiceStatus::WrittenOff.to_string(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
+            params![InvoiceStatus::WrittenOff.to_string(), now.to_rfc3339(), id.to_string()],
         )
         .map_err(map_db_error)?;
 
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn dispute(&self, id: Uuid) -> Result<Invoice> {
+    fn dispute(&self, id: InvoiceId) -> Result<Invoice> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
 
         conn.execute(
             "UPDATE invoices SET status = ?, updated_at = ? WHERE id = ?",
-            params![
-                InvoiceStatus::Disputed.to_string(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
+            params![InvoiceStatus::Disputed.to_string(), now.to_rfc3339(), id.to_string()],
         )
         .map_err(map_db_error)?;
 
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn add_item(&self, invoice_id: InvoiceId, item: CreateInvoiceItem) -> Result<InvoiceItem> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
@@ -719,18 +693,13 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             ],
         ).map_err(map_db_error)?;
 
-        let mut stmt = conn
-            .prepare("SELECT * FROM invoice_items WHERE id = ?")
-            .map_err(map_db_error)?;
-        stmt.query_row([id.to_string()], Self::row_to_invoice_item)
-            .map_err(map_db_error)
+        let mut stmt =
+            conn.prepare("SELECT * FROM invoice_items WHERE id = ?").map_err(map_db_error)?;
+        stmt.query_row([id.to_string()], Self::row_to_invoice_item).map_err(map_db_error)
     }
 
     fn update_item(&self, item_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
         let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
             + item.tax_amount.unwrap_or_default();
@@ -755,31 +724,23 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         )
         .map_err(map_db_error)?;
 
-        let mut stmt = conn
-            .prepare("SELECT * FROM invoice_items WHERE id = ?")
-            .map_err(map_db_error)?;
-        stmt.query_row([item_id.to_string()], Self::row_to_invoice_item)
-            .map_err(map_db_error)
+        let mut stmt =
+            conn.prepare("SELECT * FROM invoice_items WHERE id = ?").map_err(map_db_error)?;
+        stmt.query_row([item_id.to_string()], Self::row_to_invoice_item).map_err(map_db_error)
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        conn.execute(
-            "DELETE FROM invoice_items WHERE id = ?",
-            [item_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        conn.execute("DELETE FROM invoice_items WHERE id = ?", [item_id.to_string()])
+            .map_err(map_db_error)?;
         Ok(())
     }
 
-    fn get_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
+    fn get_items(&self, invoice_id: InvoiceId) -> Result<Vec<InvoiceItem>> {
         self.get_invoice_items(invoice_id)
     }
 
-    fn recalculate(&self, id: Uuid) -> Result<Invoice> {
+    fn recalculate(&self, id: InvoiceId) -> Result<Invoice> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
@@ -790,17 +751,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn get_overdue(&self) -> Result<Vec<Invoice>> {
-        self.list(InvoiceFilter {
-            overdue_only: Some(true),
-            ..Default::default()
-        })
+        self.list(InvoiceFilter { overdue_only: Some(true), ..Default::default() })
     }
 
     fn count(&self, filter: InvoiceFilter) -> Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT COUNT(*) FROM invoices WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -819,9 +774,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -852,7 +806,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
-            let id = Uuid::new_v4();
+            let id = InvoiceId::new();
             let now = chrono::Utc::now();
             let invoice_number = generate_invoice_number();
             let invoice_date = input.invoice_date.unwrap_or(now);
@@ -1017,7 +971,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<BatchResult<Invoice>> {
+    fn update_batch(&self, updates: Vec<(InvoiceId, UpdateInvoice)>) -> Result<BatchResult<Invoice>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -1031,7 +985,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<Vec<Invoice>> {
+    fn update_batch_atomic(&self, updates: Vec<(InvoiceId, UpdateInvoice)>) -> Result<Vec<Invoice>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -1105,13 +1059,13 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<InvoiceId>) -> Result<BatchResult<Uuid>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
         for (index, id) in ids.into_iter().enumerate() {
             match self.delete(id) {
-                Ok(()) => result.record_success(id),
+                Ok(()) => result.record_success(id.into_uuid()),
                 Err(e) => result.record_failure(index, Some(id.to_string()), &e),
             }
         }
@@ -1119,7 +1073,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<InvoiceId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -1130,14 +1084,12 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         // Check that all invoices are in Draft status before deleting
         let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&ids);
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         {
-            let sql = format!(
-                "SELECT id, status FROM invoices WHERE id IN ({})",
-                placeholders
-            );
+            let sql = format!("SELECT id, status FROM invoices WHERE id IN ({})", placeholders);
             let mut stmt = tx.prepare(&sql).map_err(map_db_error)?;
             let rows = stmt
                 .query_map(params_refs.as_slice(), |row| {
@@ -1159,23 +1111,18 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         }
 
         // Delete invoice items first
-        let sql = format!(
-            "DELETE FROM invoice_items WHERE invoice_id IN ({})",
-            placeholders
-        );
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let sql = format!("DELETE FROM invoice_items WHERE invoice_id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete invoices
         let sql = format!("DELETE FROM invoices WHERE id IN ({})", placeholders);
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Invoice>> {
+    fn get_batch(&self, ids: Vec<InvoiceId>) -> Result<Vec<Invoice>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
@@ -1185,7 +1132,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM invoices WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;

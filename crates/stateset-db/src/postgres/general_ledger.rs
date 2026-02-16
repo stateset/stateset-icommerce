@@ -6,13 +6,13 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    create_default_chart_of_accounts, generate_journal_entry_number, AccountStatus, AccountSubType,
-    AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine, BalanceSide, BatchResult,
-    CommerceError, CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod, CreateJournalEntry,
-    CreateJournalEntryLine, GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod,
-    GlPeriodFilter, IncomeStatement, IncomeStatementLine, JournalEntry, JournalEntryFilter,
-    JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType, PeriodStatus,
-    Result, TrialBalance, TrialBalanceLine,
+    AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine,
+    BalanceSide, BatchResult, CommerceError, CreateAutoPostingConfig, CreateGlAccount,
+    CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, GeneralLedgerRepository, GlAccount,
+    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, IncomeStatementLine, JournalEntry,
+    JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType,
+    PeriodStatus, Result, TrialBalance, TrialBalanceLine, create_default_chart_of_accounts,
+    generate_journal_entry_number,
 };
 use uuid::Uuid;
 
@@ -389,9 +389,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_account_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_account_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_account_async(&self, id: Uuid) -> Result<Option<GlAccount>> {
@@ -451,9 +449,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_account_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_account_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_accounts_async(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>> {
@@ -465,19 +461,13 @@ impl PgGeneralLedgerRepository {
         );
 
         if let Some(account_type) = filter.account_type {
-            builder
-                .push(" AND account_type = ")
-                .push_bind(account_type.to_string());
+            builder.push(" AND account_type = ").push_bind(account_type.to_string());
         }
         if let Some(account_sub_type) = filter.account_sub_type {
-            builder
-                .push(" AND account_sub_type = ")
-                .push_bind(account_sub_type.to_string());
+            builder.push(" AND account_sub_type = ").push_bind(account_sub_type.to_string());
         }
         if let Some(parent_account_id) = filter.parent_account_id {
-            builder
-                .push(" AND parent_account_id = ")
-                .push_bind(parent_account_id);
+            builder.push(" AND parent_account_id = ").push_bind(parent_account_id);
         }
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
@@ -513,9 +503,7 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_account)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_account).collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_account_hierarchy_async(&self) -> Result<Vec<GlAccount>> {
@@ -550,11 +538,7 @@ impl PgGeneralLedgerRepository {
         let mut accounts = Vec::new();
 
         for input in defaults {
-            if self
-                .get_account_by_number_async(&input.account_number)
-                .await?
-                .is_none()
-            {
+            if self.get_account_by_number_async(&input.account_number).await?.is_none() {
                 accounts.push(self.create_account_async(input).await?);
             }
         }
@@ -584,9 +568,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_period_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_period_async(&self, id: Uuid) -> Result<Option<GlPeriod>> {
@@ -659,9 +641,7 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_period)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_period).collect::<Result<Vec<_>>>()
     }
 
     pub async fn open_period_async(&self, id: Uuid) -> Result<GlPeriod> {
@@ -671,9 +651,7 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_period_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn close_period_async(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
@@ -689,9 +667,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_period_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn lock_period_async(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
@@ -707,9 +683,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_period_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn reopen_period_async(&self, id: Uuid) -> Result<GlPeriod> {
@@ -722,9 +696,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_period_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn create_journal_entry_async(
@@ -735,15 +707,9 @@ impl PgGeneralLedgerRepository {
         let now = Utc::now();
         let entry_number = generate_journal_entry_number();
 
-        let period = self
-            .get_period_for_date_async(input.entry_date)
-            .await?
-            .ok_or_else(|| {
-                CommerceError::ValidationError(format!(
-                    "No period found for date {}",
-                    input.entry_date
-                ))
-            })?;
+        let period = self.get_period_for_date_async(input.entry_date).await?.ok_or_else(|| {
+            CommerceError::ValidationError(format!("No period found for date {}", input.entry_date))
+        })?;
 
         if !period.can_post() {
             return Err(CommerceError::ValidationError(
@@ -767,12 +733,7 @@ impl PgGeneralLedgerRepository {
         .bind(&entry_number)
         .bind(input.entry_date)
         .bind(period.id)
-        .bind(
-            input
-                .entry_type
-                .unwrap_or(JournalEntryType::Standard)
-                .to_string(),
-        )
+        .bind(input.entry_type.unwrap_or(JournalEntryType::Standard).to_string())
         .bind(JournalEntrySource::Manual.to_string())
         .bind(input.source_document_type.clone())
         .bind(input.source_document_id)
@@ -789,10 +750,8 @@ impl PgGeneralLedgerRepository {
 
         for (line_num, line) in input.lines.iter().enumerate() {
             let line_id = Uuid::new_v4();
-            let account = self
-                .get_account_async(line.account_id)
-                .await?
-                .ok_or(CommerceError::NotFound)?;
+            let account =
+                self.get_account_async(line.account_id).await?.ok_or(CommerceError::NotFound)?;
 
             sqlx::query(
                 "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number, account_id,
@@ -824,9 +783,7 @@ impl PgGeneralLedgerRepository {
             return self.post_journal_entry_async(id, "system").await;
         }
 
-        self.get_journal_entry_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_journal_entry_async(&self, id: Uuid) -> Result<Option<JournalEntry>> {
@@ -874,8 +831,7 @@ impl PgGeneralLedgerRepository {
         &self,
         filter: JournalEntryFilter,
     ) -> Result<Vec<JournalEntry>> {
-        let columns =
-            "je.id, je.entry_number, je.entry_date, je.period_id, je.entry_type, je.source,\
+        let columns = "je.id, je.entry_number, je.entry_date, je.period_id, je.entry_type, je.source,\
             je.source_document_type, je.source_document_id, je.description, je.total_debits,\
             je.total_credits, je.is_balanced, je.status, je.posted_at, je.posted_by,\
             je.reversed_entry_id, je.reversing_entry_id, je.created_at, je.updated_at";
@@ -892,19 +848,13 @@ impl PgGeneralLedgerRepository {
             builder.push(" AND je.period_id = ").push_bind(period_id);
         }
         if let Some(entry_type) = filter.entry_type {
-            builder
-                .push(" AND je.entry_type = ")
-                .push_bind(entry_type.to_string());
+            builder.push(" AND je.entry_type = ").push_bind(entry_type.to_string());
         }
         if let Some(source) = filter.source {
-            builder
-                .push(" AND je.source = ")
-                .push_bind(source.to_string());
+            builder.push(" AND je.source = ").push_bind(source.to_string());
         }
         if let Some(status) = filter.status {
-            builder
-                .push(" AND je.status = ")
-                .push_bind(status.to_string());
+            builder.push(" AND je.status = ").push_bind(status.to_string());
         }
         if let Some(account_id) = filter.account_id {
             builder.push(" AND l.account_id = ").push_bind(account_id);
@@ -916,14 +866,10 @@ impl PgGeneralLedgerRepository {
             builder.push(" AND je.entry_date <= ").push_bind(to_date);
         }
         if let Some(source_doc_type) = filter.source_document_type {
-            builder
-                .push(" AND je.source_document_type = ")
-                .push_bind(source_doc_type);
+            builder.push(" AND je.source_document_type = ").push_bind(source_doc_type);
         }
         if let Some(source_doc_id) = filter.source_document_id {
-            builder
-                .push(" AND je.source_document_id = ")
-                .push_bind(source_doc_id);
+            builder.push(" AND je.source_document_id = ").push_bind(source_doc_id);
         }
         if let Some(search) = filter.search {
             let term = format!("%{}%", search);
@@ -965,10 +911,7 @@ impl PgGeneralLedgerRepository {
         id: Uuid,
         posted_by: &str,
     ) -> Result<JournalEntry> {
-        let entry = self
-            .get_journal_entry_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let entry = self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if !entry.can_post() {
             return Err(CommerceError::ValidationError(
@@ -1001,16 +944,11 @@ impl PgGeneralLedgerRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_journal_entry_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn void_journal_entry_async(&self, id: Uuid) -> Result<JournalEntry> {
-        let entry = self
-            .get_journal_entry_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let entry = self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if !entry.can_void() {
             return Err(CommerceError::ValidationError(
@@ -1038,9 +976,7 @@ impl PgGeneralLedgerRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_journal_entry_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn reverse_journal_entry_async(
@@ -1048,10 +984,7 @@ impl PgGeneralLedgerRepository {
         id: Uuid,
         reversal_date: NaiveDate,
     ) -> Result<JournalEntry> {
-        let entry = self
-            .get_journal_entry_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let entry = self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if entry.status != JournalEntryStatus::Posted {
             return Err(CommerceError::ValidationError(
@@ -1100,9 +1033,7 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_journal_entry_async(reversing_entry.id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_journal_entry_async(reversing_entry.id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_journal_entry_lines_async(
@@ -1120,10 +1051,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
-            .map(Self::row_to_journal_entry_line)
-            .collect())
+        Ok(rows.into_iter().map(Self::row_to_journal_entry_line).collect())
     }
 
     pub async fn get_auto_posting_config_async(&self) -> Result<Option<AutoPostingConfig>> {
@@ -1173,9 +1101,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_auto_posting_config_async()
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_auto_posting_config_async().await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn auto_post_invoice_async(&self, invoice_id: Uuid) -> Result<JournalEntry> {
@@ -1542,19 +1468,9 @@ impl PgGeneralLedgerRepository {
         start_date: NaiveDate,
         end_date: NaiveDate,
     ) -> Result<IncomeStatement> {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                Uuid,
-                String,
-                String,
-                String,
-                Option<String>,
-                Decimal,
-                Decimal,
-            ),
-        >(
-            "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
+        let rows =
+            sqlx::query_as::<_, (Uuid, String, String, String, Option<String>, Decimal, Decimal)>(
+                "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
                     COALESCE(SUM(l.debit_amount), 0) AS total_debits,
                     COALESCE(SUM(l.credit_amount), 0) AS total_credits
              FROM gl_accounts a
@@ -1566,12 +1482,12 @@ impl PgGeneralLedgerRepository {
                AND (je.entry_date >= $1 AND je.entry_date <= $2 OR je.id IS NULL)
              GROUP BY a.id
              ORDER BY a.account_number",
-        )
-        .bind(start_date)
-        .bind(end_date)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+            )
+            .bind(start_date)
+            .bind(end_date)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         let mut revenue_lines = Vec::new();
         let mut expense_lines = Vec::new();
@@ -1644,10 +1560,7 @@ impl PgGeneralLedgerRepository {
         account_id: Uuid,
         _as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
-        Ok(self
-            .get_account_async(account_id)
-            .await?
-            .map(|account| account.current_balance))
+        Ok(self.get_account_async(account_id).await?.map(|account| account.current_balance))
     }
 
     pub async fn get_account_transactions_async(
@@ -1666,9 +1579,7 @@ impl PgGeneralLedgerRepository {
         builder.push_bind(account_id);
 
         if let Some(status) = filter.status {
-            builder
-                .push(" AND je.status = ")
-                .push_bind(status.to_string());
+            builder.push(" AND je.status = ").push_bind(status.to_string());
         }
         if let Some(from_date) = filter.from_date {
             builder.push(" AND je.entry_date >= ").push_bind(from_date);
@@ -1689,10 +1600,7 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
-            .map(Self::row_to_journal_entry_line)
-            .collect())
+        Ok(rows.into_iter().map(Self::row_to_journal_entry_line).collect())
     }
 
     pub async fn run_period_close_async(
@@ -1700,25 +1608,17 @@ impl PgGeneralLedgerRepository {
         period_id: Uuid,
         closed_by: &str,
     ) -> Result<JournalEntry> {
-        let period = self
-            .get_period_async(period_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let period = self.get_period_async(period_id).await?.ok_or(CommerceError::NotFound)?;
 
         if period.status != PeriodStatus::Open {
-            return Err(CommerceError::ValidationError(
-                "Period must be open to close".to_string(),
-            ));
+            return Err(CommerceError::ValidationError("Period must be open to close".to_string()));
         }
 
-        let income_statement = self
-            .get_income_statement_async(period.start_date, period.end_date)
-            .await?;
+        let income_statement =
+            self.get_income_statement_async(period.start_date, period.end_date).await?;
 
         if income_statement.net_income == Decimal::ZERO {
-            return Err(CommerceError::ValidationError(
-                "No net income to close".to_string(),
-            ));
+            return Err(CommerceError::ValidationError("No net income to close".to_string()));
         }
 
         let retained_earnings = self

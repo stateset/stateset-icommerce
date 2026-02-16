@@ -1,14 +1,38 @@
-//! Domain events for commerce operations
+//! Domain events for commerce operations.
 //!
-//! Events are emitted when significant state changes occur.
-//! They can be used for:
-//! - Audit logging
-//! - Sync with remote services
-//! - Triggering side effects (email, webhooks, etc.)
+//! Events are emitted when significant state changes occur in the commerce
+//! system. They follow an append-only event-sourcing pattern and can be used
+//! for:
+//!
+//! - **Audit logging** — immutable record of all state transitions
+//! - **Sync with remote services** — replicate changes to external systems
+//! - **Triggering side effects** — email, webhooks, analytics, etc.
+//!
+//! All events are serializable via [`serde`] using tagged JSON (`"type": "snake_case"`)
+//! for easy consumption by downstream event processors.
+//!
+//! # Example
+//!
+//! ```rust
+//! use stateset_core::events::CommerceEvent;
+//! use stateset_core::{OrderId, CustomerId};
+//!
+//! let event = CommerceEvent::OrderCreated {
+//!     order_id: OrderId::new(),
+//!     customer_id: CustomerId::new(),
+//!     total_amount: rust_decimal::Decimal::new(9999, 2),
+//!     item_count: 3,
+//!     timestamp: chrono::Utc::now(),
+//! };
+//!
+//! let json = serde_json::to_string(&event).unwrap();
+//! assert!(json.contains("\"type\":\"order_created\""));
+//! ```
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CartId, CustomerId, OrderId, OrderItemId, PaymentId, ProductId, ReturnId, ShipmentId};
 use uuid::Uuid;
 
 use crate::models::{
@@ -22,45 +46,45 @@ use crate::models::{
 pub enum CommerceEvent {
     // Order events
     OrderCreated {
-        order_id: Uuid,
-        customer_id: Uuid,
+        order_id: OrderId,
+        customer_id: CustomerId,
         total_amount: Decimal,
         item_count: usize,
         timestamp: DateTime<Utc>,
     },
     OrderStatusChanged {
-        order_id: Uuid,
+        order_id: OrderId,
         from_status: OrderStatus,
         to_status: OrderStatus,
         timestamp: DateTime<Utc>,
     },
     OrderPaymentStatusChanged {
-        order_id: Uuid,
+        order_id: OrderId,
         from_status: PaymentStatus,
         to_status: PaymentStatus,
         timestamp: DateTime<Utc>,
     },
     OrderFulfillmentStatusChanged {
-        order_id: Uuid,
+        order_id: OrderId,
         from_status: FulfillmentStatus,
         to_status: FulfillmentStatus,
         timestamp: DateTime<Utc>,
     },
     OrderCancelled {
-        order_id: Uuid,
+        order_id: OrderId,
         reason: Option<String>,
         timestamp: DateTime<Utc>,
     },
     OrderItemAdded {
-        order_id: Uuid,
-        item_id: Uuid,
+        order_id: OrderId,
+        item_id: OrderItemId,
         sku: String,
         quantity: i32,
         timestamp: DateTime<Utc>,
     },
     OrderItemRemoved {
-        order_id: Uuid,
-        item_id: Uuid,
+        order_id: OrderId,
+        item_id: OrderItemId,
         timestamp: DateTime<Utc>,
     },
 
@@ -110,47 +134,47 @@ pub enum CommerceEvent {
 
     // Customer events
     CustomerCreated {
-        customer_id: Uuid,
+        customer_id: CustomerId,
         email: String,
         timestamp: DateTime<Utc>,
     },
     CustomerUpdated {
-        customer_id: Uuid,
+        customer_id: CustomerId,
         fields_changed: Vec<String>,
         timestamp: DateTime<Utc>,
     },
     CustomerStatusChanged {
-        customer_id: Uuid,
+        customer_id: CustomerId,
         from_status: CustomerStatus,
         to_status: CustomerStatus,
         timestamp: DateTime<Utc>,
     },
     CustomerAddressAdded {
-        customer_id: Uuid,
+        customer_id: CustomerId,
         address_id: Uuid,
         timestamp: DateTime<Utc>,
     },
 
     // Product events
     ProductCreated {
-        product_id: Uuid,
+        product_id: ProductId,
         name: String,
         slug: String,
         timestamp: DateTime<Utc>,
     },
     ProductUpdated {
-        product_id: Uuid,
+        product_id: ProductId,
         fields_changed: Vec<String>,
         timestamp: DateTime<Utc>,
     },
     ProductStatusChanged {
-        product_id: Uuid,
+        product_id: ProductId,
         from_status: String,
         to_status: String,
         timestamp: DateTime<Utc>,
     },
     ProductVariantAdded {
-        product_id: Uuid,
+        product_id: ProductId,
         variant_id: Uuid,
         sku: String,
         timestamp: DateTime<Utc>,
@@ -199,39 +223,39 @@ pub enum CommerceEvent {
 
     // Return events
     ReturnRequested {
-        return_id: Uuid,
-        order_id: Uuid,
-        customer_id: Uuid,
+        return_id: ReturnId,
+        order_id: OrderId,
+        customer_id: CustomerId,
         reason: ReturnReason,
         item_count: usize,
         timestamp: DateTime<Utc>,
     },
     ReturnStatusChanged {
-        return_id: Uuid,
+        return_id: ReturnId,
         from_status: ReturnStatus,
         to_status: ReturnStatus,
         timestamp: DateTime<Utc>,
     },
     ReturnApproved {
-        return_id: Uuid,
-        order_id: Uuid,
+        return_id: ReturnId,
+        order_id: OrderId,
         timestamp: DateTime<Utc>,
     },
     ReturnRejected {
-        return_id: Uuid,
-        order_id: Uuid,
+        return_id: ReturnId,
+        order_id: OrderId,
         reason: String,
         timestamp: DateTime<Utc>,
     },
     ReturnCompleted {
-        return_id: Uuid,
-        order_id: Uuid,
+        return_id: ReturnId,
+        order_id: OrderId,
         refund_amount: Decimal,
         timestamp: DateTime<Utc>,
     },
     RefundIssued {
-        return_id: Uuid,
-        order_id: Uuid,
+        return_id: ReturnId,
+        order_id: OrderId,
         amount: Decimal,
         method: String,
         timestamp: DateTime<Utc>,
@@ -240,7 +264,7 @@ pub enum CommerceEvent {
     // x402 Payment Intent events
     X402IntentCreated {
         intent_id: Uuid,
-        cart_id: Option<Uuid>,
+        cart_id: Option<CartId>,
         payer_address: String,
         payee_address: String,
         amount: u64,
@@ -338,7 +362,7 @@ pub enum CommerceEvent {
     },
     A2ADeliveryConfirmed {
         purchase_id: Uuid,
-        order_id: Option<Uuid>,
+        order_id: Option<OrderId>,
         buyer_agent_id: Uuid,
         seller_agent_id: Uuid,
         rating: Option<u8>,

@@ -11,6 +11,8 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CustomerId, OrderId, ProductId, SubscriptionId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 use super::Address;
@@ -20,23 +22,29 @@ use super::Address;
 // ============================================================================
 
 /// Billing interval for subscriptions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum BillingInterval {
     /// Weekly billing
     Weekly,
     /// Every two weeks
+    #[strum(serialize = "biweekly", serialize = "bi_weekly", serialize = "bi-weekly")]
     Biweekly,
     /// Monthly billing
     #[default]
     Monthly,
     /// Every two months
+    #[strum(serialize = "bimonthly", serialize = "bi_monthly", serialize = "bi-monthly")]
     Bimonthly,
     /// Quarterly (every 3 months)
     Quarterly,
     /// Every 6 months
+    #[strum(serialize = "semiannual", serialize = "semi_annual", serialize = "semi-annual")]
     Semiannual,
     /// Annual billing
+    #[strum(serialize = "annual", serialize = "yearly")]
     Annual,
     /// Custom interval in days
     Custom,
@@ -58,42 +66,12 @@ impl BillingInterval {
     }
 }
 
-impl std::fmt::Display for BillingInterval {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Weekly => write!(f, "weekly"),
-            Self::Biweekly => write!(f, "biweekly"),
-            Self::Monthly => write!(f, "monthly"),
-            Self::Bimonthly => write!(f, "bimonthly"),
-            Self::Quarterly => write!(f, "quarterly"),
-            Self::Semiannual => write!(f, "semiannual"),
-            Self::Annual => write!(f, "annual"),
-            Self::Custom => write!(f, "custom"),
-        }
-    }
-}
-
-impl std::str::FromStr for BillingInterval {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "weekly" => Ok(Self::Weekly),
-            "biweekly" | "bi_weekly" | "bi-weekly" => Ok(Self::Biweekly),
-            "monthly" => Ok(Self::Monthly),
-            "bimonthly" | "bi_monthly" | "bi-monthly" => Ok(Self::Bimonthly),
-            "quarterly" => Ok(Self::Quarterly),
-            "semiannual" | "semi_annual" | "semi-annual" => Ok(Self::Semiannual),
-            "annual" | "yearly" => Ok(Self::Annual),
-            "custom" => Ok(Self::Custom),
-            _ => Err(format!("Unknown billing interval: {}", s)),
-        }
-    }
-}
 
 /// Status of a subscription
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum SubscriptionStatus {
     /// Trial period (no charge yet)
     Trial,
@@ -103,8 +81,10 @@ pub enum SubscriptionStatus {
     /// Paused by customer (no billing, can resume)
     Paused,
     /// Past due - payment failed, in retry period
+    #[strum(serialize = "past_due", serialize = "pastdue")]
     PastDue,
     /// Cancelled - will end at period end
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     /// Expired - subscription has ended
     Expired,
@@ -112,40 +92,11 @@ pub enum SubscriptionStatus {
     Pending,
 }
 
-impl std::fmt::Display for SubscriptionStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Trial => write!(f, "trial"),
-            Self::Active => write!(f, "active"),
-            Self::Paused => write!(f, "paused"),
-            Self::PastDue => write!(f, "past_due"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::Expired => write!(f, "expired"),
-            Self::Pending => write!(f, "pending"),
-        }
-    }
-}
-
-impl std::str::FromStr for SubscriptionStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "trial" => Ok(Self::Trial),
-            "active" => Ok(Self::Active),
-            "paused" => Ok(Self::Paused),
-            "past_due" | "pastdue" => Ok(Self::PastDue),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            "expired" => Ok(Self::Expired),
-            "pending" => Ok(Self::Pending),
-            _ => Err(format!("Unknown subscription status: {}", s)),
-        }
-    }
-}
-
 /// Status of a subscription plan
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum PlanStatus {
     /// Draft - not yet available
     Draft,
@@ -156,32 +107,11 @@ pub enum PlanStatus {
     Archived,
 }
 
-impl std::fmt::Display for PlanStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Draft => write!(f, "draft"),
-            Self::Active => write!(f, "active"),
-            Self::Archived => write!(f, "archived"),
-        }
-    }
-}
-
-impl std::str::FromStr for PlanStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "draft" => Ok(Self::Draft),
-            "active" => Ok(Self::Active),
-            "archived" => Ok(Self::Archived),
-            _ => Err(format!("Unknown plan status: {}", s)),
-        }
-    }
-}
-
 /// Status of a billing cycle
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum BillingCycleStatus {
     /// Scheduled for future billing
     #[default]
@@ -200,54 +130,29 @@ pub enum BillingCycleStatus {
     Voided,
 }
 
-impl std::fmt::Display for BillingCycleStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Scheduled => write!(f, "scheduled"),
-            Self::Processing => write!(f, "processing"),
-            Self::Paid => write!(f, "paid"),
-            Self::Failed => write!(f, "failed"),
-            Self::Skipped => write!(f, "skipped"),
-            Self::Refunded => write!(f, "refunded"),
-            Self::Voided => write!(f, "voided"),
-        }
-    }
-}
-
-impl std::str::FromStr for BillingCycleStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "scheduled" => Ok(Self::Scheduled),
-            "processing" => Ok(Self::Processing),
-            "paid" => Ok(Self::Paid),
-            "failed" => Ok(Self::Failed),
-            "skipped" => Ok(Self::Skipped),
-            "refunded" => Ok(Self::Refunded),
-            "voided" => Ok(Self::Voided),
-            _ => Err(format!("Unknown billing cycle status: {}", s)),
-        }
-    }
-}
-
 /// Type of subscription event
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum SubscriptionEventType {
     /// Subscription created
     Created,
     /// Subscription activated
     Activated,
     /// Trial started
+    #[strum(serialize = "trial_started", serialize = "trialstarted")]
     TrialStarted,
     /// Trial ended
+    #[strum(serialize = "trial_ended", serialize = "trialended")]
     TrialEnded,
     /// Successfully renewed/billed
     Renewed,
     /// Payment failed
+    #[strum(serialize = "payment_failed", serialize = "paymentfailed")]
     PaymentFailed,
     /// Payment retry succeeded
+    #[strum(serialize = "payment_retry_succeeded", serialize = "paymentretrysucceeded")]
     PaymentRetrySucceeded,
     /// Subscription paused
     Paused,
@@ -256,82 +161,33 @@ pub enum SubscriptionEventType {
     /// Upcoming renewal skipped
     Skipped,
     /// Subscription cancelled
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     /// Subscription expired
     Expired,
     /// Plan changed
+    #[strum(serialize = "plan_changed", serialize = "planchanged")]
     PlanChanged,
     /// Items modified
+    #[strum(serialize = "items_modified", serialize = "itemsmodified")]
     ItemsModified,
     /// Quantity changed
+    #[strum(serialize = "quantity_changed", serialize = "quantitychanged")]
     QuantityChanged,
     /// Address updated
+    #[strum(serialize = "address_updated", serialize = "addressupdated")]
     AddressUpdated,
     /// Payment method updated
+    #[strum(serialize = "payment_method_updated", serialize = "paymentmethodupdated")]
     PaymentMethodUpdated,
     /// Discount applied
+    #[strum(serialize = "discount_applied", serialize = "discountapplied")]
     DiscountApplied,
     /// Discount removed
+    #[strum(serialize = "discount_removed", serialize = "discountremoved")]
     DiscountRemoved,
     /// Refund issued
     Refunded,
-}
-
-impl std::fmt::Display for SubscriptionEventType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Created => write!(f, "created"),
-            Self::Activated => write!(f, "activated"),
-            Self::TrialStarted => write!(f, "trial_started"),
-            Self::TrialEnded => write!(f, "trial_ended"),
-            Self::Renewed => write!(f, "renewed"),
-            Self::PaymentFailed => write!(f, "payment_failed"),
-            Self::PaymentRetrySucceeded => write!(f, "payment_retry_succeeded"),
-            Self::Paused => write!(f, "paused"),
-            Self::Resumed => write!(f, "resumed"),
-            Self::Skipped => write!(f, "skipped"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::Expired => write!(f, "expired"),
-            Self::PlanChanged => write!(f, "plan_changed"),
-            Self::ItemsModified => write!(f, "items_modified"),
-            Self::QuantityChanged => write!(f, "quantity_changed"),
-            Self::AddressUpdated => write!(f, "address_updated"),
-            Self::PaymentMethodUpdated => write!(f, "payment_method_updated"),
-            Self::DiscountApplied => write!(f, "discount_applied"),
-            Self::DiscountRemoved => write!(f, "discount_removed"),
-            Self::Refunded => write!(f, "refunded"),
-        }
-    }
-}
-
-impl std::str::FromStr for SubscriptionEventType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "created" => Ok(Self::Created),
-            "activated" => Ok(Self::Activated),
-            "trial_started" | "trialstarted" => Ok(Self::TrialStarted),
-            "trial_ended" | "trialended" => Ok(Self::TrialEnded),
-            "renewed" => Ok(Self::Renewed),
-            "payment_failed" | "paymentfailed" => Ok(Self::PaymentFailed),
-            "payment_retry_succeeded" | "paymentretrysucceeded" => Ok(Self::PaymentRetrySucceeded),
-            "paused" => Ok(Self::Paused),
-            "resumed" => Ok(Self::Resumed),
-            "skipped" => Ok(Self::Skipped),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            "expired" => Ok(Self::Expired),
-            "plan_changed" | "planchanged" => Ok(Self::PlanChanged),
-            "items_modified" | "itemsmodified" => Ok(Self::ItemsModified),
-            "quantity_changed" | "quantitychanged" => Ok(Self::QuantityChanged),
-            "address_updated" | "addressupdated" => Ok(Self::AddressUpdated),
-            "payment_method_updated" | "paymentmethodupdated" => Ok(Self::PaymentMethodUpdated),
-            "discount_applied" | "discountapplied" => Ok(Self::DiscountApplied),
-            "discount_removed" | "discountremoved" => Ok(Self::DiscountRemoved),
-            "refunded" => Ok(Self::Refunded),
-            _ => Err(format!("Unknown subscription event type: {}", s)),
-        }
-    }
 }
 
 // ============================================================================
@@ -392,7 +248,7 @@ pub struct SubscriptionPlan {
 pub struct SubscriptionPlanItem {
     pub id: Uuid,
     pub plan_id: Uuid,
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
@@ -415,10 +271,10 @@ pub struct SubscriptionPlanItem {
 /// A customer's subscription
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subscription {
-    pub id: Uuid,
+    pub id: SubscriptionId,
     /// Human-readable subscription number
     pub subscription_number: String,
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub plan_id: Uuid,
     /// Snapshot of plan name at time of subscription
     pub plan_name: String,
@@ -482,8 +338,8 @@ pub struct Subscription {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionItem {
     pub id: Uuid,
-    pub subscription_id: Uuid,
-    pub product_id: Uuid,
+    pub subscription_id: SubscriptionId,
+    pub product_id: ProductId,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
@@ -502,7 +358,7 @@ pub struct SubscriptionItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillingCycle {
     pub id: Uuid,
-    pub subscription_id: Uuid,
+    pub subscription_id: SubscriptionId,
     /// Cycle number (1, 2, 3, ...)
     pub cycle_number: i32,
     pub status: BillingCycleStatus,
@@ -524,7 +380,7 @@ pub struct BillingCycle {
     /// Payment ID from payment provider
     pub payment_id: Option<String>,
     /// Order ID if an order was created
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Invoice ID if an invoice was created
     pub invoice_id: Option<Uuid>,
 
@@ -545,7 +401,7 @@ pub struct BillingCycle {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionEvent {
     pub id: Uuid,
-    pub subscription_id: Uuid,
+    pub subscription_id: SubscriptionId,
     pub event_type: SubscriptionEventType,
     /// Human-readable description
     pub description: String,
@@ -584,7 +440,7 @@ pub struct CreateSubscriptionPlan {
 /// Item definition for creating a subscription plan
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSubscriptionPlanItem {
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
@@ -615,7 +471,7 @@ pub struct UpdateSubscriptionPlan {
 /// Create a new subscription
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSubscription {
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub plan_id: Uuid,
     /// Override plan items with custom items
     pub items: Option<Vec<CreateSubscriptionItem>>,
@@ -636,7 +492,7 @@ pub struct CreateSubscription {
 impl Default for CreateSubscription {
     fn default() -> Self {
         Self {
-            customer_id: Uuid::nil(),
+            customer_id: CustomerId::nil(),
             plan_id: Uuid::nil(),
             items: None,
             price: None,
@@ -654,7 +510,7 @@ impl Default for CreateSubscription {
 /// Item override when creating a subscription
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSubscriptionItem {
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
@@ -704,7 +560,7 @@ pub struct SkipBillingCycle {
 /// Create a billing cycle for a subscription.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateBillingCycle {
-    pub subscription_id: Uuid,
+    pub subscription_id: SubscriptionId,
     pub cycle_number: i32,
     pub period_start: DateTime<Utc>,
     pub period_end: DateTime<Utc>,
@@ -755,7 +611,7 @@ pub struct SubscriptionPlanFilter {
 /// Filter for listing subscriptions
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SubscriptionFilter {
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub plan_id: Option<Uuid>,
     pub status: Option<SubscriptionStatus>,
     pub from_date: Option<DateTime<Utc>>,
@@ -772,26 +628,14 @@ mod tests {
 
     #[test]
     fn test_billing_interval_from_str() {
-        assert_eq!(
-            BillingInterval::from_str("biweekly").unwrap(),
-            BillingInterval::Biweekly
-        );
-        assert_eq!(
-            BillingInterval::from_str("semi-annual").unwrap(),
-            BillingInterval::Semiannual
-        );
+        assert_eq!(BillingInterval::from_str("biweekly").unwrap(), BillingInterval::Biweekly);
+        assert_eq!(BillingInterval::from_str("semi-annual").unwrap(), BillingInterval::Semiannual);
     }
 
     #[test]
     fn test_subscription_status_from_str() {
-        assert_eq!(
-            SubscriptionStatus::from_str("past_due").unwrap(),
-            SubscriptionStatus::PastDue
-        );
-        assert_eq!(
-            SubscriptionStatus::from_str("pastdue").unwrap(),
-            SubscriptionStatus::PastDue
-        );
+        assert_eq!(SubscriptionStatus::from_str("past_due").unwrap(), SubscriptionStatus::PastDue);
+        assert_eq!(SubscriptionStatus::from_str("pastdue").unwrap(), SubscriptionStatus::PastDue);
         assert_eq!(
             SubscriptionStatus::from_str("canceled").unwrap(),
             SubscriptionStatus::Cancelled
@@ -801,10 +645,7 @@ mod tests {
     #[test]
     fn test_plan_status_from_str() {
         assert_eq!(PlanStatus::from_str("draft").unwrap(), PlanStatus::Draft);
-        assert_eq!(
-            PlanStatus::from_str("archived").unwrap(),
-            PlanStatus::Archived
-        );
+        assert_eq!(PlanStatus::from_str("archived").unwrap(), PlanStatus::Archived);
     }
 
     #[test]
@@ -813,10 +654,7 @@ mod tests {
             BillingCycleStatus::from_str("processing").unwrap(),
             BillingCycleStatus::Processing
         );
-        assert_eq!(
-            BillingCycleStatus::from_str("voided").unwrap(),
-            BillingCycleStatus::Voided
-        );
+        assert_eq!(BillingCycleStatus::from_str("voided").unwrap(), BillingCycleStatus::Voided);
     }
 
     #[test]
@@ -839,7 +677,7 @@ mod tests {
 /// Filter for listing billing cycles
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BillingCycleFilter {
-    pub subscription_id: Option<Uuid>,
+    pub subscription_id: Option<SubscriptionId>,
     pub status: Option<BillingCycleStatus>,
     pub from_date: Option<DateTime<Utc>>,
     pub to_date: Option<DateTime<Utc>>,
@@ -874,28 +712,18 @@ pub fn generate_plan_code(name: &str) -> String {
     let bytes = id.as_bytes();
     let random = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % 10000;
 
-    if slug.is_empty() {
-        format!("PLAN-{:04}", random)
-    } else {
-        format!("{}-{:04}", slug, random)
-    }
+    if slug.is_empty() { format!("PLAN-{:04}", random) } else { format!("{}-{:04}", slug, random) }
 }
 
 impl Subscription {
     /// Check if subscription is in an active billing state
     pub fn is_active(&self) -> bool {
-        matches!(
-            self.status,
-            SubscriptionStatus::Active | SubscriptionStatus::Trial
-        )
+        matches!(self.status, SubscriptionStatus::Active | SubscriptionStatus::Trial)
     }
 
     /// Check if subscription can be paused
     pub fn can_pause(&self) -> bool {
-        matches!(
-            self.status,
-            SubscriptionStatus::Active | SubscriptionStatus::Trial
-        )
+        matches!(self.status, SubscriptionStatus::Active | SubscriptionStatus::Trial)
     }
 
     /// Check if subscription can be resumed
@@ -905,10 +733,7 @@ impl Subscription {
 
     /// Check if subscription can be cancelled
     pub fn can_cancel(&self) -> bool {
-        !matches!(
-            self.status,
-            SubscriptionStatus::Cancelled | SubscriptionStatus::Expired
-        )
+        !matches!(self.status, SubscriptionStatus::Cancelled | SubscriptionStatus::Expired)
     }
 
     /// Check if subscription is in trial period
@@ -932,11 +757,7 @@ impl Subscription {
 
         self.trial_ends_at.map(|ends| {
             let now = Utc::now();
-            if ends > now {
-                (ends - now).num_days()
-            } else {
-                0
-            }
+            if ends > now { (ends - now).num_days() } else { 0 }
         })
     }
 
@@ -957,11 +778,7 @@ impl Subscription {
             total -= amt;
         }
 
-        if total < Decimal::ZERO {
-            Decimal::ZERO
-        } else {
-            total
-        }
+        if total < Decimal::ZERO { Decimal::ZERO } else { total }
     }
 }
 

@@ -45,6 +45,7 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
         })
         .expect("Failed to create customer")
         .id
+        .into_uuid()
 }
 
 // ============================================================================
@@ -87,11 +88,7 @@ fn test_concurrent_reservations_same_quantity() {
         .filter(|r| r.is_ok())
         .collect();
 
-    assert_eq!(
-        successful.len(),
-        10,
-        "All 10 reservations should succeed (10 items total)"
-    );
+    assert_eq!(successful.len(), 10, "All 10 reservations should succeed (10 items total)");
 }
 
 #[test]
@@ -124,10 +121,7 @@ fn test_concurrent_reservations_exceed_stock() {
         handles.push(handle);
     }
 
-    let results: Vec<_> = handles
-        .into_iter()
-        .map(|h| h.join().expect("Thread panicked"))
-        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
     let successful = results.iter().filter(|r| r.is_ok()).count();
     let failed = results.iter().filter(|r| r.is_err()).count();
 
@@ -149,23 +143,16 @@ fn test_reservation_expiration_race() {
 
     // Try to reserve again immediately (should fail)
     let reference_id = Uuid::new_v4().to_string();
-    let result = commerce
-        .inventory()
-        .reserve(&sku, dec!(1), "order", &reference_id, None);
+    let result = commerce.inventory().reserve(&sku, dec!(1), "order", &reference_id, None);
 
-    assert!(
-        result.is_err(),
-        "Reservation should fail while others are reserved"
-    );
+    assert!(result.is_err(), "Reservation should fail while others are reserved");
 
     // Wait for expiry
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     // Now it should succeed
     let reference_id = Uuid::new_v4().to_string();
-    let result = commerce
-        .inventory()
-        .reserve(&sku, dec!(1), "order", &reference_id, None);
+    let result = commerce.inventory().reserve(&sku, dec!(1), "order", &reference_id, None);
 
     assert!(result.is_ok(), "Reservation should succeed after expiry");
 }
@@ -204,10 +191,8 @@ fn test_concurrent_reservation_confirm() {
         handles.push(handle);
     }
 
-    let reservations: Vec<_> = handles
-        .into_iter()
-        .map(|h| h.join().expect("Thread panicked"))
-        .collect();
+    let reservations: Vec<_> =
+        handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
 
     assert_eq!(reservations.len(), 5);
 
@@ -222,23 +207,16 @@ fn test_concurrent_reservation_confirm() {
         let handle = thread::spawn(move || {
             barrier_clone2.wait();
 
-            commerce_clone
-                .inventory()
-                .confirm_reservation(reservation.id)
+            commerce_clone.inventory().confirm_reservation(reservation.id)
         });
 
         confirm_handles.push(handle);
     }
 
-    let results: Vec<_> = confirm_handles
-        .into_iter()
-        .map(|h| h.join().expect("Thread panicked"))
-        .collect();
+    let results: Vec<_> =
+        confirm_handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
 
-    assert!(
-        results.iter().all(|r| r.is_ok()),
-        "All confirmations should succeed"
-    );
+    assert!(results.iter().all(|r| r.is_ok()), "All confirmations should succeed");
 }
 
 // ============================================================================
@@ -264,9 +242,9 @@ fn test_concurrent_order_creation_same_inventory() {
             let customer_id = create_test_customer(&commerce_clone);
 
             commerce_clone.orders().create(CreateOrder {
-                customer_id,
+                customer_id: customer_id.into(),
                 items: vec![CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "CONCURRENT-SKU-001".into(),
                     name: "Concurrent Test Item".into(),
                     quantity: 4,
@@ -280,10 +258,7 @@ fn test_concurrent_order_creation_same_inventory() {
         handles.push(handle);
     }
 
-    let results: Vec<_> = handles
-        .into_iter()
-        .map(|h| h.join().expect("Thread panicked"))
-        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
 
     let successful: Vec<_> = results.into_iter().filter_map(|r| r.ok()).collect();
 
@@ -301,17 +276,14 @@ fn test_concurrent_order_creation_same_inventory() {
             .inventory()
             .list_reservations_by_reference("order", &order.id.to_string())
             .expect("Failed to load reservations");
-        let reserved = reservations
-            .iter()
-            .fold(Decimal::ZERO, |acc, r| acc + r.quantity);
+        let reserved = reservations.iter().fold(Decimal::ZERO, |acc, r| acc + r.quantity);
 
         let backorders = commerce
             .backorder()
-            .get_backorders_for_order(order.id)
+            .get_backorders_for_order(order.id.into())
             .expect("Failed to load backorders");
-        let backordered = backorders
-            .iter()
-            .fold(Decimal::ZERO, |acc, b| acc + b.quantity_remaining);
+        let backordered =
+            backorders.iter().fold(Decimal::ZERO, |acc, b| acc + b.quantity_remaining);
 
         assert_eq!(
             reserved + backordered,
@@ -323,10 +295,7 @@ fn test_concurrent_order_creation_same_inventory() {
         total_backordered += backordered;
     }
 
-    assert!(
-        total_reserved <= dec!(10),
-        "Reservations must not exceed inventory"
-    );
+    assert!(total_reserved <= dec!(10), "Reservations must not exceed inventory");
     assert_eq!(
         total_reserved + total_backordered,
         dec!(12),
@@ -463,10 +432,7 @@ fn test_transaction_isolation() {
     handle1.join().expect("Thread panicked");
 
     // Verify the adjustment is applied atomically
-    let stock = commerce
-        .inventory()
-        .get_stock(sku)
-        .expect("Failed to get stock");
+    let stock = commerce.inventory().get_stock(sku).expect("Failed to get stock");
     assert_eq!(
         stock.expect("Stock missing").total_on_hand,
         dec!(5),
@@ -506,9 +472,7 @@ fn test_high_concurrency_reservation() {
             barrier_clone.wait();
 
             let reference_id = Uuid::new_v4().to_string();
-            commerce_clone
-                .inventory()
-                .reserve(&sku_clone, dec!(1), "order", &reference_id, None)
+            commerce_clone.inventory().reserve(&sku_clone, dec!(1), "order", &reference_id, None)
         });
 
         handles.push(handle);
@@ -520,11 +484,7 @@ fn test_high_concurrency_reservation() {
         .filter(|r| r.is_ok())
         .collect();
 
-    assert_eq!(
-        successful.len(),
-        100,
-        "All 100 reservations should succeed with 100 item stock"
-    );
+    assert_eq!(successful.len(), 100, "All 100 reservations should succeed with 100 item stock");
 }
 
 #[test]
@@ -550,14 +510,9 @@ fn test_reservation_release_and_reuse() {
 
     // Try to reserve again (should fail)
     let result =
-        commerce
-            .inventory()
-            .reserve(sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
+        commerce.inventory().reserve(sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
 
-    assert!(
-        result.is_err(),
-        "Reservation should fail when all items are reserved"
-    );
+    assert!(result.is_err(), "Reservation should fail when all items are reserved");
 
     // Release the reservation
     commerce
@@ -567,9 +522,7 @@ fn test_reservation_release_and_reuse() {
 
     // Now reservation should succeed
     let result =
-        commerce
-            .inventory()
-            .reserve(sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
+        commerce.inventory().reserve(sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
 
     assert!(result.is_ok(), "Reservation should succeed after release");
 }

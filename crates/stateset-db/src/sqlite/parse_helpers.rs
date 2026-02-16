@@ -9,7 +9,7 @@
 //! ```rust,ignore
 //! use crate::sqlite::parse_helpers::*;
 //!
-//! fn row_to_order(row: &rusqlite::Row) -> Result<Order, CommerceError> {
+//! fn row_to_order(row: &rusqlite::Row<'_>) -> Result<Order, CommerceError> {
 //!     Ok(Order {
 //!         id: parse_uuid(&row.get::<_, String>("id")?, "order", "id")?,
 //!         order_date: parse_datetime(&row.get::<_, String>("order_date")?, "order", "order_date")?,
@@ -36,7 +36,7 @@ use uuid::Uuid;
 /// * `s` - The string to parse
 /// * `entity` - The entity name (e.g., "order", "customer")
 /// * `field` - The field name (e.g., "id", "customer_id")
-pub fn parse_uuid(s: &str, entity: &str, field: &str) -> Result<Uuid> {
+pub(crate) fn parse_uuid(s: &str, entity: &str, field: &str) -> Result<Uuid> {
     Uuid::parse_str(s).map_err(|e| {
         CommerceError::DatabaseError(format!(
             "Invalid UUID for {}.{}: '{}' - {}",
@@ -48,7 +48,7 @@ pub fn parse_uuid(s: &str, entity: &str, field: &str) -> Result<Uuid> {
 /// Parse an optional UUID from an Option<String>.
 ///
 /// Returns Ok(None) if the input is None or empty.
-pub fn parse_uuid_opt(s: Option<String>, entity: &str, field: &str) -> Result<Option<Uuid>> {
+pub(crate) fn parse_uuid_opt(s: Option<String>, entity: &str, field: &str) -> Result<Option<Uuid>> {
     match s {
         Some(ref val) if !val.is_empty() => Ok(Some(parse_uuid(val, entity, field)?)),
         _ => Ok(None),
@@ -62,7 +62,7 @@ pub fn parse_uuid_opt(s: Option<String>, entity: &str, field: &str) -> Result<Op
 /// Parse a required DateTime<Utc> from RFC3339 or SQLite datetime strings.
 ///
 /// Returns an error with context if parsing fails.
-pub fn parse_datetime(s: &str, entity: &str, field: &str) -> Result<DateTime<Utc>> {
+pub(crate) fn parse_datetime(s: &str, entity: &str, field: &str) -> Result<DateTime<Utc>> {
     parse_datetime_any(s).ok_or_else(|| {
         CommerceError::DatabaseError(format!(
             "Invalid datetime for {}.{}: '{}' - expected RFC3339 or SQLite datetime",
@@ -74,7 +74,7 @@ pub fn parse_datetime(s: &str, entity: &str, field: &str) -> Result<DateTime<Utc
 /// Parse an optional DateTime from an Option<String>.
 ///
 /// Returns Ok(None) if the input is None or empty.
-pub fn parse_datetime_opt(
+pub(crate) fn parse_datetime_opt(
     s: Option<String>,
     entity: &str,
     field: &str,
@@ -87,7 +87,7 @@ pub fn parse_datetime_opt(
 
 /// Parse a required NaiveDate from a string (YYYY-MM-DD format).
 #[allow(dead_code)]
-pub fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
+pub(crate) fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
         CommerceError::DatabaseError(format!(
             "Invalid date for {}.{}: '{}' - {}",
@@ -98,7 +98,11 @@ pub fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
 
 /// Parse an optional NaiveDate from an Option<String>.
 #[allow(dead_code)]
-pub fn parse_date_opt(s: Option<String>, entity: &str, field: &str) -> Result<Option<NaiveDate>> {
+pub(crate) fn parse_date_opt(
+    s: Option<String>,
+    entity: &str,
+    field: &str,
+) -> Result<Option<NaiveDate>> {
     match s {
         Some(ref val) if !val.is_empty() => Ok(Some(parse_date(val, entity, field)?)),
         _ => Ok(None),
@@ -113,7 +117,7 @@ pub fn parse_date_opt(s: Option<String>, entity: &str, field: &str) -> Result<Op
 ///
 /// This is critical for financial data - parsing failures must not be silently
 /// converted to zero as that can cause incorrect calculations.
-pub fn parse_decimal(s: &str, entity: &str, field: &str) -> Result<Decimal> {
+pub(crate) fn parse_decimal(s: &str, entity: &str, field: &str) -> Result<Decimal> {
     s.parse::<Decimal>().map_err(|e| {
         CommerceError::DatabaseError(format!(
             "Invalid decimal for {}.{}: '{}' - {}",
@@ -125,7 +129,11 @@ pub fn parse_decimal(s: &str, entity: &str, field: &str) -> Result<Decimal> {
 /// Parse an optional Decimal from an Option<String>.
 ///
 /// Returns Ok(None) if the input is None or empty.
-pub fn parse_decimal_opt(s: Option<String>, entity: &str, field: &str) -> Result<Option<Decimal>> {
+pub(crate) fn parse_decimal_opt(
+    s: Option<String>,
+    entity: &str,
+    field: &str,
+) -> Result<Option<Decimal>> {
     match s {
         Some(ref val) if !val.is_empty() => Ok(Some(parse_decimal(val, entity, field)?)),
         _ => Ok(None),
@@ -140,7 +148,7 @@ pub fn parse_decimal_opt(s: Option<String>, entity: &str, field: &str) -> Result
 ///
 /// Returns an error with context if parsing fails.
 #[allow(dead_code)]
-pub fn parse_json<T: DeserializeOwned>(s: &str, entity: &str, field: &str) -> Result<T> {
+pub(crate) fn parse_json<T: DeserializeOwned>(s: &str, entity: &str, field: &str) -> Result<T> {
     serde_json::from_str(s).map_err(|e| {
         // Truncate long JSON strings in error messages
         let preview = if s.len() > 50 { &s[..50] } else { s };
@@ -155,7 +163,7 @@ pub fn parse_json<T: DeserializeOwned>(s: &str, entity: &str, field: &str) -> Re
 ///
 /// Returns Ok(None) if the input is None or empty.
 #[allow(dead_code)]
-pub fn parse_json_opt<T: DeserializeOwned>(
+pub(crate) fn parse_json_opt<T: DeserializeOwned>(
     s: Option<String>,
     entity: &str,
     field: &str,
@@ -171,7 +179,7 @@ pub fn parse_json_opt<T: DeserializeOwned>(
 /// This should only be used for non-critical fields where an empty default is acceptable.
 /// For critical data, use `parse_json` instead.
 #[allow(dead_code)]
-pub fn parse_json_or_default<T: DeserializeOwned + Default>(s: &str) -> T {
+pub(crate) fn parse_json_or_default<T: DeserializeOwned + Default>(s: &str) -> T {
     if s.is_empty() {
         return T::default();
     }
@@ -185,7 +193,7 @@ pub fn parse_json_or_default<T: DeserializeOwned + Default>(s: &str) -> T {
 /// Parse a required enum from a string using FromStr.
 ///
 /// The enum type must implement `std::str::FromStr`.
-pub fn parse_enum<T>(s: &str, entity: &str, field: &str) -> Result<T>
+pub(crate) fn parse_enum<T>(s: &str, entity: &str, field: &str) -> Result<T>
 where
     T: std::str::FromStr,
     T::Err: std::fmt::Display,
@@ -204,7 +212,7 @@ where
 
 /// Parse an optional enum from an Option<String>.
 #[allow(dead_code)]
-pub fn parse_enum_opt<T>(s: Option<String>, entity: &str, field: &str) -> Result<Option<T>>
+pub(crate) fn parse_enum_opt<T>(s: Option<String>, entity: &str, field: &str) -> Result<Option<T>>
 where
     T: std::str::FromStr,
     T::Err: std::fmt::Display,
@@ -216,7 +224,7 @@ where
 }
 
 /// Parse a required enum within a rusqlite row mapping context.
-pub fn parse_enum_row<T>(
+pub(crate) fn parse_enum_row<T>(
     s: &str,
     entity: &str,
     field: &str,
@@ -250,7 +258,7 @@ where
 
 /// Parse a required i32 from a string.
 #[allow(dead_code)]
-pub fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
+pub(crate) fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
     s.parse::<i32>().map_err(|e| {
         CommerceError::DatabaseError(format!(
             "Invalid i32 for {}.{}: '{}' - {}",
@@ -261,7 +269,7 @@ pub fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
 
 /// Parse a required i64 from a string.
 #[allow(dead_code)]
-pub fn parse_i64(s: &str, entity: &str, field: &str) -> Result<i64> {
+pub(crate) fn parse_i64(s: &str, entity: &str, field: &str) -> Result<i64> {
     s.parse::<i64>().map_err(|e| {
         CommerceError::DatabaseError(format!(
             "Invalid i64 for {}.{}: '{}' - {}",
@@ -290,7 +298,7 @@ macro_rules! parse_ctx {
 
 /// Parse a UUID within a rusqlite row mapping context.
 /// Returns rusqlite::Error for compatibility with query_map closures.
-pub fn parse_uuid_row(
+pub(crate) fn parse_uuid_row(
     s: &str,
     entity: &str,
     field: &str,
@@ -308,7 +316,7 @@ pub fn parse_uuid_row(
 }
 
 /// Parse an optional UUID within a rusqlite row mapping context.
-pub fn parse_uuid_opt_row(
+pub(crate) fn parse_uuid_opt_row(
     s: Option<String>,
     entity: &str,
     field: &str,
@@ -320,7 +328,7 @@ pub fn parse_uuid_opt_row(
 }
 
 /// Parse a DateTime within a rusqlite row mapping context.
-pub fn parse_datetime_row(
+pub(crate) fn parse_datetime_row(
     s: &str,
     entity: &str,
     field: &str,
@@ -341,7 +349,7 @@ pub fn parse_datetime_row(
 }
 
 /// Parse an optional DateTime within a rusqlite row mapping context.
-pub fn parse_datetime_opt_row(
+pub(crate) fn parse_datetime_opt_row(
     s: Option<String>,
     entity: &str,
     field: &str,
@@ -353,7 +361,7 @@ pub fn parse_datetime_opt_row(
 }
 
 /// Parse a Decimal within a rusqlite row mapping context.
-pub fn parse_decimal_row(
+pub(crate) fn parse_decimal_row(
     s: &str,
     entity: &str,
     field: &str,
@@ -371,7 +379,7 @@ pub fn parse_decimal_row(
 }
 
 /// Parse optional Decimal within a rusqlite row mapping context.
-pub fn parse_decimal_opt_row(
+pub(crate) fn parse_decimal_opt_row(
     s: Option<String>,
     entity: &str,
     field: &str,
@@ -383,7 +391,7 @@ pub fn parse_decimal_opt_row(
 }
 
 /// Parse JSON within a rusqlite row mapping context.
-pub fn parse_json_row<T: DeserializeOwned>(
+pub(crate) fn parse_json_row<T: DeserializeOwned>(
     s: &str,
     entity: &str,
     field: &str,
@@ -395,17 +403,14 @@ pub fn parse_json_row<T: DeserializeOwned>(
             rusqlite::types::Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "Invalid JSON for {}.{}: '{}...' - {}",
-                    entity, field, preview, e
-                ),
+                format!("Invalid JSON for {}.{}: '{}...' - {}", entity, field, preview, e),
             )),
         )
     })
 }
 
 /// Parse optional JSON within a rusqlite row mapping context.
-pub fn parse_json_opt_row<T: DeserializeOwned>(
+pub(crate) fn parse_json_opt_row<T: DeserializeOwned>(
     s: Option<String>,
     entity: &str,
     field: &str,
@@ -417,7 +422,7 @@ pub fn parse_json_opt_row<T: DeserializeOwned>(
 }
 
 /// Parse NaiveDate within a rusqlite row mapping context.
-pub fn parse_date_row(
+pub(crate) fn parse_date_row(
     s: &str,
     entity: &str,
     field: &str,

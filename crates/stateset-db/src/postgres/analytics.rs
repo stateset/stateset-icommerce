@@ -7,10 +7,11 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use stateset_core::{
-    validate_batch_size, AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast,
-    FulfillmentMetrics, InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown,
-    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast,
-    SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
+    AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast, FulfillmentMetrics,
+    InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductPerformance,
+    Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast, SalesSummary,
+    TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -76,10 +77,7 @@ impl PgAnalyticsRepository {
                 let this_month_start = Self::first_day_of_month(now.date_naive());
                 let last_month_end = this_month_start - Duration::days(1);
                 let last_month_start = Self::first_day_of_month(last_month_end);
-                (
-                    Self::start_of_day(last_month_start),
-                    Self::end_of_day(last_month_end),
-                )
+                (Self::start_of_day(last_month_start), Self::end_of_day(last_month_end))
             }
             TimePeriod::ThisQuarter | TimePeriod::LastQuarter => (now - Duration::days(90), now),
             TimePeriod::ThisYear => {
@@ -90,10 +88,7 @@ impl PgAnalyticsRepository {
             TimePeriod::AllTime => (Self::all_time_start(), now),
             TimePeriod::Custom => {
                 if let Some(ref range) = query.date_range {
-                    (
-                        range.start.unwrap_or(now - Duration::days(30)),
-                        range.end.unwrap_or(now),
-                    )
+                    (range.start.unwrap_or(now - Duration::days(30)), range.end.unwrap_or(now))
                 } else {
                     (now - Duration::days(30), now)
                 }
@@ -237,14 +232,12 @@ impl PgAnalyticsRepository {
 
         Ok(rows
             .into_iter()
-            .map(
-                |(period, revenue, order_count, period_start)| RevenueByPeriod {
-                    period,
-                    revenue,
-                    order_count: order_count as u64,
-                    period_start,
-                },
-            )
+            .map(|(period, revenue, order_count, period_start)| RevenueByPeriod {
+                period,
+                revenue,
+                order_count: order_count as u64,
+                period_start,
+            })
             .collect())
     }
 
@@ -281,8 +274,8 @@ impl PgAnalyticsRepository {
 
         Ok(rows
             .into_iter()
-            .map(
-                |(product_id, sku, name, units_sold, revenue, order_count, avg_price)| TopProduct {
+            .map(|(product_id, sku, name, units_sold, revenue, order_count, avg_price)| {
+                TopProduct {
                     product_id,
                     sku,
                     name,
@@ -290,8 +283,8 @@ impl PgAnalyticsRepository {
                     revenue,
                     order_count: order_count as u64,
                     average_price: avg_price,
-                },
-            )
+                }
+            })
             .collect())
     }
 
@@ -524,18 +517,16 @@ impl PgAnalyticsRepository {
 
         Ok(rows
             .into_iter()
-            .map(
-                |(sku, name, on_hand, allocated, available, reorder_point)| LowStockItem {
-                    sku,
-                    name,
-                    on_hand,
-                    allocated,
-                    available,
-                    reorder_point,
-                    average_daily_sales: None,
-                    days_of_stock: None,
-                },
-            )
+            .map(|(sku, name, on_hand, allocated, available, reorder_point)| LowStockItem {
+                sku,
+                name,
+                on_hand,
+                allocated,
+                available,
+                reorder_point,
+                average_daily_sales: None,
+                days_of_stock: None,
+            })
             .collect())
     }
 
@@ -572,17 +563,15 @@ impl PgAnalyticsRepository {
 
         Ok(rows
             .into_iter()
-            .map(
-                |(sku, name, sold, received, returned, adjusted, net_change)| InventoryMovement {
-                    sku,
-                    name,
-                    units_sold: sold as u64,
-                    units_received: received as u64,
-                    units_returned: returned as u64,
-                    units_adjusted: adjusted,
-                    net_change,
-                },
-            )
+            .map(|(sku, name, sold, received, returned, adjusted, net_change)| InventoryMovement {
+                sku,
+                name,
+                units_sold: sold as u64,
+                units_received: received as u64,
+                units_returned: returned as u64,
+                units_adjusted: adjusted,
+                net_change,
+            })
             .collect())
     }
 
@@ -715,11 +704,7 @@ impl PgAnalyticsRepository {
                 } else {
                     Decimal::ZERO
                 };
-                ReturnReasonCount {
-                    reason,
-                    count: count as u64,
-                    percentage,
-                }
+                ReturnReasonCount { reason, count: count as u64, percentage }
             })
             .collect();
 
@@ -830,11 +815,8 @@ impl PgAnalyticsRepository {
                     Decimal::from_f64_retain(current_stock).unwrap_or(Decimal::ZERO);
                 let forecasted = avg_daily_dec * Decimal::from(days_ahead);
 
-                let days_until_stockout = if avg_daily > 0.0 {
-                    Some((current_stock / avg_daily) as i32)
-                } else {
-                    None
-                };
+                let days_until_stockout =
+                    if avg_daily > 0.0 { Some((current_stock / avg_daily) as i32) } else { None };
 
                 let trend = if avg_daily > 1.0 {
                     Trend::Rising
@@ -898,11 +880,8 @@ impl PgAnalyticsRepository {
             date_format
         );
 
-        let avg_revenue: Option<Decimal> = sqlx::query_scalar(&sql)
-            .bind(start)
-            .fetch_one(&self.pool)
-            .await
-            .ok();
+        let avg_revenue: Option<Decimal> =
+            sqlx::query_scalar(&sql).bind(start).fetch_one(&self.pool).await.ok();
 
         let avg_revenue_dec = avg_revenue.unwrap_or(Decimal::ZERO);
         let variance = Decimal::new(15, 2);

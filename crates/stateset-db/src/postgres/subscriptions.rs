@@ -3,16 +3,16 @@
 use super::map_db_error;
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
-    generate_plan_code, generate_subscription_number, BillingCycle, BillingCycleFilter,
-    BillingCycleStatus, BillingInterval, CancelSubscription, CommerceError, CreateBillingCycle,
-    CreateSubscription, CreateSubscriptionItem, CreateSubscriptionPlan, PauseSubscription,
-    PlanStatus, Result, SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType,
-    SubscriptionFilter, SubscriptionItem, SubscriptionPlan, SubscriptionPlanFilter,
+    BillingCycle, BillingCycleFilter, BillingCycleStatus, BillingInterval, CancelSubscription,
+    CommerceError, CreateBillingCycle, CreateSubscription, CreateSubscriptionItem,
+    CreateSubscriptionPlan, CustomerId, OrderId, PauseSubscription, PlanStatus, Result,
+    SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType, SubscriptionFilter,
+    SubscriptionId, SubscriptionItem, SubscriptionPlan, SubscriptionPlanFilter,
     SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus, UpdateSubscription,
-    UpdateSubscriptionPlan,
+    UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
 };
 use uuid::Uuid;
 
@@ -212,7 +212,7 @@ impl PgSubscriptionRepository {
         SubscriptionPlanItem {
             id: row.id,
             plan_id: row.plan_id,
-            product_id: row.product_id,
+            product_id: row.product_id.into(),
             variant_id: row.variant_id,
             sku: row.sku,
             name: row.name,
@@ -275,19 +275,15 @@ impl PgSubscriptionRepository {
                 e
             ))
         })?;
-        let shipping_address = shipping_address
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
+        let shipping_address =
+            shipping_address.map(serde_json::from_value).transpose().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for subscription.shipping_address: {}",
                     e
                 ))
             })?;
-        let billing_address = billing_address
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
+        let billing_address =
+            billing_address.map(serde_json::from_value).transpose().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for subscription.billing_address: {}",
                     e
@@ -295,9 +291,9 @@ impl PgSubscriptionRepository {
             })?;
 
         Ok(Subscription {
-            id,
+            id: SubscriptionId::from(id),
             subscription_number,
-            customer_id,
+            customer_id: CustomerId::from(customer_id),
             plan_id,
             plan_name,
             status,
@@ -332,8 +328,8 @@ impl PgSubscriptionRepository {
     fn row_to_subscription_item(row: SubscriptionItemRow) -> SubscriptionItem {
         SubscriptionItem {
             id: row.id,
-            subscription_id: row.subscription_id,
-            product_id: row.product_id,
+            subscription_id: SubscriptionId::from(row.subscription_id),
+            product_id: row.product_id.into(),
             variant_id: row.variant_id,
             sku: row.sku,
             name: row.name,
@@ -378,7 +374,7 @@ impl PgSubscriptionRepository {
 
         Ok(BillingCycle {
             id,
-            subscription_id,
+            subscription_id: SubscriptionId::from(subscription_id),
             cycle_number,
             status,
             period_start,
@@ -390,7 +386,7 @@ impl PgSubscriptionRepository {
             total,
             currency,
             payment_id,
-            order_id,
+            order_id: order_id.map(OrderId::from),
             invoice_id,
             failure_reason,
             retry_count,
@@ -421,7 +417,7 @@ impl PgSubscriptionRepository {
 
         Ok(SubscriptionEvent {
             id,
-            subscription_id,
+            subscription_id: SubscriptionId::from(subscription_id),
             event_type,
             description,
             data,
@@ -445,34 +441,30 @@ impl PgSubscriptionRepository {
 
     async fn get_subscription_items_async(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
     ) -> Result<Vec<SubscriptionItem>> {
         let rows = sqlx::query_as::<_, SubscriptionItemRow>(
             "SELECT id, subscription_id, product_id, variant_id, sku, name, quantity, unit_price, line_total
              FROM subscription_items WHERE subscription_id = $1",
         )
-        .bind(subscription_id)
+        .bind(subscription_id.into_uuid())
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
-            .map(Self::row_to_subscription_item)
-            .collect())
+        Ok(rows.into_iter().map(Self::row_to_subscription_item).collect())
     }
 
     async fn create_subscription_item_async(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         input: CreateSubscriptionItem,
         plan: &SubscriptionPlan,
     ) -> Result<SubscriptionItem> {
         let id = Uuid::new_v4();
-        let unit_price = input
-            .unit_price
-            .unwrap_or_else(|| plan.price / Decimal::from(plan.items.len().max(1)));
+        let unit_price =
+            input.unit_price.unwrap_or_else(|| plan.price / Decimal::from(plan.items.len().max(1)));
         let line_total = unit_price * Decimal::from(input.quantity);
 
         sqlx::query(
@@ -480,8 +472,8 @@ impl PgSubscriptionRepository {
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         )
         .bind(id)
-        .bind(subscription_id)
-        .bind(input.product_id)
+        .bind(subscription_id.into_uuid())
+        .bind(input.product_id.into_uuid())
         .bind(input.variant_id)
         .bind(&input.sku)
         .bind(&input.name)
@@ -507,7 +499,7 @@ impl PgSubscriptionRepository {
 
     pub async fn record_event_async(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         description: &str,
         data: Option<serde_json::Value>,
@@ -522,7 +514,7 @@ impl PgSubscriptionRepository {
              VALUES ($1,$2,$3,$4,$5,$6,$7)",
         )
         .bind(id)
-        .bind(subscription_id)
+        .bind(subscription_id.into_uuid())
         .bind(event_type_str(event_type))
         .bind(description)
         .bind(data)
@@ -546,7 +538,7 @@ impl PgSubscriptionRepository {
     async fn record_event_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         description: &str,
         data: Option<serde_json::Value>,
@@ -561,7 +553,7 @@ impl PgSubscriptionRepository {
              VALUES ($1,$2,$3,$4,$5,$6,$7)",
         )
         .bind(id)
-        .bind(subscription_id)
+        .bind(subscription_id.into_uuid())
         .bind(event_type_str(event_type))
         .bind(description)
         .bind(data)
@@ -591,10 +583,7 @@ impl PgSubscriptionRepository {
         input: CreateSubscriptionPlan,
     ) -> Result<SubscriptionPlan> {
         let id = Uuid::new_v4();
-        let code = input
-            .code
-            .clone()
-            .unwrap_or_else(|| generate_plan_code(&input.name));
+        let code = input.code.clone().unwrap_or_else(|| generate_plan_code(&input.name));
         let now = Utc::now();
         let items = input.items.clone();
 
@@ -633,14 +622,7 @@ impl PgSubscriptionRepository {
         .bind(input.max_cycles)
         .bind(input.discount_percent)
         .bind(input.discount_amount)
-        .bind(
-            input
-                .metadata
-                .as_ref()
-                .map(serde_json::to_value)
-                .transpose()
-                .unwrap_or_default(),
-        )
+        .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -656,7 +638,7 @@ impl PgSubscriptionRepository {
                 )
                 .bind(item_id)
                 .bind(id)
-                .bind(item.product_id)
+                .bind(item.product_id.into_uuid())
                 .bind(item.variant_id)
                 .bind(item.sku)
                 .bind(item.name)
@@ -817,32 +799,20 @@ impl PgSubscriptionRepository {
         .bind(input.max_cycles)
         .bind(input.discount_percent)
         .bind(input.discount_amount)
-        .bind(
-            input
-                .metadata
-                .as_ref()
-                .map(serde_json::to_value)
-                .transpose()
-                .unwrap_or_default(),
-        )
+        .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
         .bind(id)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        self.get_plan_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_plan_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn activate_plan_async(&self, id: Uuid) -> Result<SubscriptionPlan> {
         self.update_plan_async(
             id,
-            UpdateSubscriptionPlan {
-                status: Some(PlanStatus::Active),
-                ..Default::default()
-            },
+            UpdateSubscriptionPlan { status: Some(PlanStatus::Active), ..Default::default() },
         )
         .await
     }
@@ -850,10 +820,7 @@ impl PgSubscriptionRepository {
     pub async fn archive_plan_async(&self, id: Uuid) -> Result<SubscriptionPlan> {
         self.update_plan_async(
             id,
-            UpdateSubscriptionPlan {
-                status: Some(PlanStatus::Archived),
-                ..Default::default()
-            },
+            UpdateSubscriptionPlan { status: Some(PlanStatus::Archived), ..Default::default() },
         )
         .await
     }
@@ -866,16 +833,13 @@ impl PgSubscriptionRepository {
         &self,
         input: CreateSubscription,
     ) -> Result<Subscription> {
-        let plan = self
-            .get_plan_async(input.plan_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let plan = self.get_plan_async(input.plan_id).await?.ok_or(CommerceError::NotFound)?;
 
         if plan.status != PlanStatus::Active {
             return Err(CommerceError::ValidationError("Plan is not active".into()));
         }
 
-        let id = Uuid::new_v4();
+        let id = SubscriptionId::new();
         let subscription_number = generate_subscription_number();
         let now = input.start_date.unwrap_or_else(Utc::now);
 
@@ -898,11 +862,8 @@ impl PgSubscriptionRepository {
             now + Duration::days(interval_days)
         };
 
-        let next_billing_date = if trial_ends_at.is_some() {
-            trial_ends_at
-        } else {
-            Some(current_period_end)
-        };
+        let next_billing_date =
+            if trial_ends_at.is_some() { trial_ends_at } else { Some(current_period_end) };
 
         let status = if trial_ends_at.is_some() {
             SubscriptionStatus::Trial
@@ -965,9 +926,9 @@ impl PgSubscriptionRepository {
             )
             "#,
         )
-        .bind(id)
+        .bind(id.into_uuid())
         .bind(subscription_number)
-        .bind(input.customer_id)
+        .bind(input.customer_id.into_uuid())
         .bind(input.plan_id)
         .bind(&plan.name)
         .bind(subscription_status_str(status))
@@ -994,8 +955,7 @@ impl PgSubscriptionRepository {
         .map_err(map_db_error)?;
 
         for item in items_to_create {
-            self.create_subscription_item_async(&mut tx, id, item, &plan)
-                .await?;
+            self.create_subscription_item_async(&mut tx, id, item, &plan).await?;
         }
 
         self.record_event_tx(
@@ -1038,7 +998,7 @@ impl PgSubscriptionRepository {
         })
     }
 
-    pub async fn get_subscription_async(&self, id: Uuid) -> Result<Option<Subscription>> {
+    pub async fn get_subscription_async(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
         let row = sqlx::query_as::<_, SubscriptionRow>(
             "SELECT id, subscription_number, customer_id, plan_id, plan_name, status, billing_interval,
                     custom_interval_days, price, currency, payment_method_id, started_at, current_period_start,
@@ -1047,13 +1007,13 @@ impl PgSubscriptionRepository {
                     discount_percent, discount_amount, coupon_code, metadata, created_at, updated_at
              FROM subscriptions WHERE id = $1",
         )
-        .bind(id)
+        .bind(id.into_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(map_db_error)?;
 
         if let Some(row) = row {
-            let items = self.get_subscription_items_async(row.id).await?;
+            let items = self.get_subscription_items_async(SubscriptionId::from(row.id)).await?;
             Ok(Some(Self::row_to_subscription(row, items)?))
         } else {
             Ok(None)
@@ -1078,7 +1038,7 @@ impl PgSubscriptionRepository {
         .map_err(map_db_error)?;
 
         if let Some(row) = row {
-            let items = self.get_subscription_items_async(row.id).await?;
+            let items = self.get_subscription_items_async(SubscriptionId::from(row.id)).await?;
             Ok(Some(Self::row_to_subscription(row, items)?))
         } else {
             Ok(None)
@@ -1136,7 +1096,7 @@ impl PgSubscriptionRepository {
         let mut q = sqlx::query_as::<_, SubscriptionRow>(&sql);
 
         if let Some(customer_id) = filter.customer_id {
-            q = q.bind(customer_id);
+            q = q.bind(customer_id.into_uuid());
         }
         if let Some(plan_id) = filter.plan_id {
             q = q.bind(plan_id);
@@ -1157,7 +1117,7 @@ impl PgSubscriptionRepository {
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
         let mut subs = Vec::new();
         for row in rows {
-            let items = self.get_subscription_items_async(row.id).await?;
+            let items = self.get_subscription_items_async(SubscriptionId::from(row.id)).await?;
             subs.push(Self::row_to_subscription(row, items)?);
         }
 
@@ -1166,7 +1126,7 @@ impl PgSubscriptionRepository {
 
     pub async fn update_subscription_async(
         &self,
-        id: Uuid,
+        id: SubscriptionId,
         input: UpdateSubscription,
     ) -> Result<Subscription> {
         let now = Utc::now();
@@ -1210,33 +1170,22 @@ impl PgSubscriptionRepository {
         .bind(input.discount_percent)
         .bind(input.discount_amount)
         .bind(input.coupon_code)
-        .bind(
-            input
-                .metadata
-                .map(serde_json::to_value)
-                .transpose()
-                .unwrap_or_default(),
-        )
+        .bind(input.metadata.map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
-        .bind(id)
+        .bind(id.into_uuid())
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        self.get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn cancel_subscription_async(
         &self,
-        id: Uuid,
+        id: SubscriptionId,
         input: CancelSubscription,
     ) -> Result<Subscription> {
-        let sub = self
-            .get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if !sub.can_cancel() {
             return Err(CommerceError::ValidationError(format!(
@@ -1245,22 +1194,13 @@ impl PgSubscriptionRepository {
             )));
         }
 
-        let reason = input
-            .reason
-            .clone()
-            .unwrap_or_else(|| "Cancelled by customer".to_string());
-        let data = input
-            .feedback
-            .clone()
-            .map(|f| serde_json::json!({"feedback": f}));
+        let reason = input.reason.clone().unwrap_or_else(|| "Cancelled by customer".to_string());
+        let data = input.feedback.clone().map(|f| serde_json::json!({"feedback": f}));
 
         let now = Utc::now();
         let immediate = input.immediate.unwrap_or(false);
-        let (new_status, ends_at) = if immediate {
-            ("expired", now)
-        } else {
-            ("cancelled", sub.current_period_end)
-        };
+        let (new_status, ends_at) =
+            if immediate { ("expired", now) } else { ("cancelled", sub.current_period_end) };
 
         sqlx::query(
             "UPDATE subscriptions SET status = $1, cancelled_at = $2, ends_at = $3, next_billing_date = NULL, updated_at = $4 WHERE id = $5",
@@ -1269,28 +1209,22 @@ impl PgSubscriptionRepository {
         .bind(now)
         .bind(ends_at)
         .bind(now)
-        .bind(id)
+        .bind(id.into_uuid())
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        self.record_event_async(id, SubscriptionEventType::Cancelled, &reason, data, None)
-            .await?;
+        self.record_event_async(id, SubscriptionEventType::Cancelled, &reason, data, None).await?;
 
-        self.get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn pause_subscription_async(
         &self,
-        id: Uuid,
+        id: SubscriptionId,
         input: PauseSubscription,
     ) -> Result<Subscription> {
-        let sub = self
-            .get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if !sub.can_pause() {
             return Err(CommerceError::ValidationError(format!(
@@ -1306,27 +1240,19 @@ impl PgSubscriptionRepository {
         .bind(now)
         .bind(input.resume_at)
         .bind(now)
-        .bind(id)
+        .bind(id.into_uuid())
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        let reason = input
-            .reason
-            .unwrap_or_else(|| "Subscription paused".to_string());
-        self.record_event_async(id, SubscriptionEventType::Paused, &reason, None, None)
-            .await?;
+        let reason = input.reason.unwrap_or_else(|| "Subscription paused".to_string());
+        self.record_event_async(id, SubscriptionEventType::Paused, &reason, None, None).await?;
 
-        self.get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn resume_subscription_async(&self, id: Uuid) -> Result<Subscription> {
-        let sub = self
-            .get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+    pub async fn resume_subscription_async(&self, id: SubscriptionId) -> Result<Subscription> {
+        let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if !sub.can_resume() {
             return Err(CommerceError::ValidationError(format!(
@@ -1350,7 +1276,7 @@ impl PgSubscriptionRepository {
         .bind(new_period_end)
         .bind(new_period_end)
         .bind(now)
-        .bind(id)
+        .bind(id.into_uuid())
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -1364,20 +1290,15 @@ impl PgSubscriptionRepository {
         )
         .await?;
 
-        self.get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn skip_billing_cycle_async(
         &self,
-        id: Uuid,
+        id: SubscriptionId,
         input: SkipBillingCycle,
     ) -> Result<Subscription> {
-        let sub = self
-            .get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let sub = self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if sub.status != SubscriptionStatus::Active {
             return Err(CommerceError::ValidationError(
@@ -1385,10 +1306,8 @@ impl PgSubscriptionRepository {
             ));
         }
 
-        let reason = input
-            .reason
-            .clone()
-            .unwrap_or_else(|| "Customer skipped billing cycle".to_string());
+        let reason =
+            input.reason.clone().unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
         let now = Utc::now();
         let interval_days = if sub.billing_interval == BillingInterval::Custom {
@@ -1406,17 +1325,14 @@ impl PgSubscriptionRepository {
         .bind(new_billing_date)
         .bind(new_billing_date)
         .bind(now)
-        .bind(id)
+        .bind(id.into_uuid())
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        self.record_event_async(id, SubscriptionEventType::Skipped, &reason, None, None)
-            .await?;
+        self.record_event_async(id, SubscriptionEventType::Skipped, &reason, None, None).await?;
 
-        self.get_subscription_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_subscription_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     // ========================================================================
@@ -1427,16 +1343,9 @@ impl PgSubscriptionRepository {
         &self,
         input: CreateBillingCycle,
     ) -> Result<BillingCycle> {
-        let CreateBillingCycle {
-            subscription_id,
-            cycle_number,
-            period_start,
-            period_end,
-        } = input;
-        let sub = self
-            .get_subscription_async(subscription_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let CreateBillingCycle { subscription_id, cycle_number, period_start, period_end } = input;
+        let sub =
+            self.get_subscription_async(subscription_id).await?.ok_or(CommerceError::NotFound)?;
 
         let id = Uuid::new_v4();
         let subtotal = sub.calculate_total();
@@ -1451,7 +1360,7 @@ impl PgSubscriptionRepository {
              VALUES ($1,$2,$3,'scheduled',$4,$5,$6,$7,0,$8,$9,$10,$11)",
         )
         .bind(id)
-        .bind(subscription_id)
+        .bind(subscription_id.into_uuid())
         .bind(cycle_number)
         .bind(period_start)
         .bind(period_end)
@@ -1465,9 +1374,7 @@ impl PgSubscriptionRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_billing_cycle_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_billing_cycle_async(&self, id: Uuid) -> Result<Option<BillingCycle>> {
@@ -1525,7 +1432,7 @@ impl PgSubscriptionRepository {
         let mut q = sqlx::query_as::<_, BillingCycleRow>(&sql);
 
         if let Some(subscription_id) = filter.subscription_id {
-            q = q.bind(subscription_id);
+            q = q.bind(subscription_id.into_uuid());
         }
         if let Some(status) = filter.status {
             q = q.bind(billing_cycle_status_str(status));
@@ -1558,9 +1465,7 @@ impl PgSubscriptionRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_billing_cycle_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn skip_billing_cycle_record_async(
@@ -1581,20 +1486,18 @@ impl PgSubscriptionRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_billing_cycle_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_subscription_events_async(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
     ) -> Result<Vec<SubscriptionEvent>> {
         let rows = sqlx::query_as::<_, EventRow>(
             "SELECT id, subscription_id, event_type, description, data, triggered_by, created_at
              FROM subscription_events WHERE subscription_id = $1 ORDER BY created_at DESC",
         )
-        .bind(subscription_id)
+        .bind(subscription_id.into_uuid())
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -1640,7 +1543,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         super::block_on(self.create_subscription_async(input))
     }
 
-    fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {
+    fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
         super::block_on(self.get_subscription_async(id))
     }
 
@@ -1652,19 +1555,19 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         super::block_on(self.list_subscriptions_async(filter))
     }
 
-    fn update_subscription(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription> {
+    fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription> {
         super::block_on(self.update_subscription_async(id, input))
     }
 
-    fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription> {
+    fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription> {
         super::block_on(self.cancel_subscription_async(id, input))
     }
 
-    fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription> {
+    fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription> {
         super::block_on(self.pause_subscription_async(id, input))
     }
 
-    fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
+    fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription> {
         super::block_on(self.resume_subscription_async(id))
     }
 
@@ -1688,13 +1591,13 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         super::block_on(self.update_billing_cycle_status_async(id, status))
     }
 
-    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
+    fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
         super::block_on(self.skip_billing_cycle_async(id, input))
     }
 
     fn record_event(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         notes: Option<String>,
     ) -> Result<SubscriptionEvent> {
@@ -1708,7 +1611,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         ))
     }
 
-    fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {
+    fn get_subscription_events(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionEvent>> {
         super::block_on(self.get_subscription_events_async(subscription_id))
     }
 }

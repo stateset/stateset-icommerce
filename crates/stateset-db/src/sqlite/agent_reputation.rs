@@ -25,12 +25,10 @@ impl SqliteAgentReputationRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_feedback(row: &rusqlite::Row) -> rusqlite::Result<AgentFeedback> {
+    fn row_to_feedback(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentFeedback> {
         let value_i64: i64 = row.get("value")?;
         Ok(AgentFeedback {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "agent_feedback", "id")?,
@@ -59,13 +57,9 @@ impl SqliteAgentReputationRepository {
         })
     }
 
-    fn row_to_response(row: &rusqlite::Row) -> rusqlite::Result<AgentFeedbackResponse> {
+    fn row_to_response(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentFeedbackResponse> {
         Ok(AgentFeedbackResponse {
-            id: parse_uuid_row(
-                &row.get::<_, String>("id")?,
-                "agent_feedback_response",
-                "id",
-            )?,
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "agent_feedback_response", "id")?,
             agent_registry: row.get("agent_registry")?,
             agent_id: row.get("agent_id")?,
             client_address: row.get("client_address")?,
@@ -214,12 +208,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
             .map_err(map_db_error)?;
 
         stmt.query_row(
-            rusqlite::params![
-                agent_registry,
-                agent_id,
-                client_address,
-                feedback_index as i64
-            ],
+            rusqlite::params![agent_registry, agent_id, client_address, feedback_index as i64],
             Self::row_to_feedback,
         )
         .optional()
@@ -275,10 +264,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
-            .query_map(
-                rusqlite::params_from_iter(param_refs),
-                Self::row_to_feedback,
-            )
+            .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_feedback)
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
@@ -304,10 +290,8 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
 
         let conn = self.conn()?;
         let mut conditions = vec!["agent_registry = ?".to_string(), "agent_id = ?".to_string()];
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![
-            Box::new(agent_registry.to_string()),
-            Box::new(agent_id.to_string()),
-        ];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(agent_registry.to_string()), Box::new(agent_id.to_string())];
 
         let placeholders = build_in_clause(client_addresses.len());
         conditions.push(format!("client_address IN ({})", placeholders));
@@ -333,9 +317,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
 
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(rusqlite::params_from_iter(param_refs))
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(param_refs)).map_err(map_db_error)?;
 
         let mut values: Vec<(i128, u8)> = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -345,11 +327,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
         }
 
         if values.is_empty() {
-            return Ok(FeedbackSummary {
-                count: 0,
-                summary_value: 0,
-                summary_value_decimals: 0,
-            });
+            return Ok(FeedbackSummary { count: 0, summary_value: 0, summary_value_decimals: 0 });
         }
 
         let max_decimals = values.iter().map(|(_, d)| *d).max().unwrap_or(0);
@@ -416,8 +394,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
             .prepare("SELECT * FROM agent_feedback_responses WHERE id = ?")
             .map_err(map_db_error)?;
 
-        stmt.query_row([id.to_string()], Self::row_to_response)
-            .map_err(map_db_error)
+        stmt.query_row([id.to_string()], Self::row_to_response).map_err(map_db_error)
     }
 
     fn get_response_count(
@@ -459,9 +436,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
 
         let param_refs = params_refs(&params);
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| {
-                row.get(0)
-            })
+            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| row.get(0))
             .map_err(map_db_error)?;
 
         Ok(count as u64)

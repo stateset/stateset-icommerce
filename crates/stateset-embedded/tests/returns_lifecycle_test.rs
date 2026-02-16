@@ -30,16 +30,17 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
         })
         .expect("Failed to create test customer")
         .id
+        .into_uuid()
 }
 
 fn create_delivered_order(commerce: &Commerce, customer_id: Uuid) -> stateset_embedded::Order {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id,
+            customer_id: customer_id.into(),
             items: vec![
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "RET-SKU-001".into(),
                     name: "Widget Alpha".into(),
                     quantity: 3,
@@ -47,7 +48,7 @@ fn create_delivered_order(commerce: &Commerce, customer_id: Uuid) -> stateset_em
                     ..Default::default()
                 },
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: "RET-SKU-002".into(),
                     name: "Widget Beta".into(),
                     quantity: 1,
@@ -68,20 +69,13 @@ fn create_delivered_order(commerce: &Commerce, customer_id: Uuid) -> stateset_em
         .orders()
         .update_status(order.id, OrderStatus::Processing)
         .expect("Failed to process order");
-    commerce
-        .orders()
-        .update_status(order.id, OrderStatus::Shipped)
-        .expect("Failed to ship order");
+    commerce.orders().update_status(order.id, OrderStatus::Shipped).expect("Failed to ship order");
     commerce
         .orders()
         .update_status(order.id, OrderStatus::Delivered)
         .expect("Failed to deliver order");
 
-    commerce
-        .orders()
-        .get(order.id)
-        .expect("Failed to get order")
-        .expect("Order not found")
+    commerce.orders().get(order.id).expect("Failed to get order").expect("Order not found")
 }
 
 fn create_test_return(commerce: &Commerce, order: &stateset_embedded::Order) -> Return {
@@ -90,7 +84,7 @@ fn create_test_return(commerce: &Commerce, order: &stateset_embedded::Order) -> 
         .iter()
         .take(1)
         .map(|item| CreateReturnItem {
-            order_item_id: item.id,
+            order_item_id: item.id.into(),
             quantity: 1,
             condition: Some(ItemCondition::Defective),
         })
@@ -99,7 +93,7 @@ fn create_test_return(commerce: &Commerce, order: &stateset_embedded::Order) -> 
     commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id,
+            order_id: order.id.into(),
             reason: ReturnReason::Defective,
             reason_details: Some("Product stopped working after 2 days".into()),
             items,
@@ -128,25 +122,17 @@ fn test_return_full_approve_complete_lifecycle() {
     assert!(!ret.items.is_empty());
 
     // 2. Approve
-    let ret = commerce
-        .returns()
-        .approve(ret.id)
-        .expect("Failed to approve");
+    let ret = commerce.returns().approve(ret.id).expect("Failed to approve");
     assert_eq!(ret.status, ReturnStatus::Approved);
 
     // 3. Add tracking and mark in-transit
-    let ret = commerce
-        .returns()
-        .add_tracking(ret.id, "RMA-TRACK-12345")
-        .expect("Failed to add tracking");
+    let ret =
+        commerce.returns().add_tracking(ret.id, "RMA-TRACK-12345").expect("Failed to add tracking");
     assert_eq!(ret.status, ReturnStatus::InTransit);
     assert_eq!(ret.tracking_number.as_deref(), Some("RMA-TRACK-12345"));
 
     // 4. Mark received
-    let ret = commerce
-        .returns()
-        .mark_received(ret.id)
-        .expect("Failed to mark received");
+    let ret = commerce.returns().mark_received(ret.id).expect("Failed to mark received");
     assert_eq!(ret.status, ReturnStatus::Received);
 
     // 5. Complete with refund info
@@ -198,10 +184,7 @@ fn test_return_cancel_workflow() {
     let order = create_delivered_order(&commerce, customer_id);
     let ret = create_test_return(&commerce, &order);
 
-    let ret = commerce
-        .returns()
-        .cancel(ret.id)
-        .expect("Failed to cancel return");
+    let ret = commerce.returns().cancel(ret.id).expect("Failed to cancel return");
     assert_eq!(ret.status, ReturnStatus::Cancelled);
 }
 
@@ -242,10 +225,7 @@ fn test_return_get_by_id() {
 #[test]
 fn test_return_get_nonexistent() {
     let commerce = Commerce::new(":memory:").expect("init");
-    let result = commerce
-        .returns()
-        .get(Uuid::new_v4())
-        .expect("Failed to query");
+    let result = commerce.returns().get(Uuid::new_v4().into()).expect("Failed to query");
     assert!(result.is_none());
 }
 
@@ -259,10 +239,7 @@ fn test_return_list_for_order() {
     create_test_return(&commerce, &order);
     create_test_return(&commerce, &order);
 
-    let returns = commerce
-        .returns()
-        .list_for_order(order.id)
-        .expect("Failed to list returns");
+    let returns = commerce.returns().list_for_order(order.id.into()).expect("Failed to list returns");
     assert_eq!(returns.len(), 2);
 }
 
@@ -276,10 +253,8 @@ fn test_return_list_for_customer() {
     create_test_return(&commerce, &order1);
     create_test_return(&commerce, &order2);
 
-    let returns = commerce
-        .returns()
-        .list_for_customer(customer_id)
-        .expect("Failed to list customer returns");
+    let returns =
+        commerce.returns().list_for_customer(customer_id.into()).expect("Failed to list customer returns");
     assert_eq!(returns.len(), 2);
 }
 
@@ -313,10 +288,7 @@ fn test_return_filter_by_status() {
 
     let approved = commerce
         .returns()
-        .list(ReturnFilter {
-            status: Some(ReturnStatus::Approved),
-            ..Default::default()
-        })
+        .list(ReturnFilter { status: Some(ReturnStatus::Approved), ..Default::default() })
         .expect("Failed to filter");
     assert_eq!(approved.len(), 1);
     assert_eq!(approved[0].id, ret1.id);
@@ -332,10 +304,10 @@ fn test_return_filter_by_reason() {
     commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id,
+            order_id: order.id.into(),
             reason: ReturnReason::ChangedMind,
             items: vec![CreateReturnItem {
-                order_item_id: order.items[0].id,
+                order_item_id: order.items[0].id.into(),
                 quantity: 1,
                 ..Default::default()
             }],
@@ -347,10 +319,7 @@ fn test_return_filter_by_reason() {
 
     let defective_returns = commerce
         .returns()
-        .list(ReturnFilter {
-            reason: Some(ReturnReason::Defective),
-            ..Default::default()
-        })
+        .list(ReturnFilter { reason: Some(ReturnReason::Defective), ..Default::default() })
         .expect("filter by reason");
     assert_eq!(defective_returns.len(), 1);
 }
@@ -365,10 +334,7 @@ fn test_return_count() {
     create_test_return(&commerce, &order);
     create_test_return(&commerce, &order);
 
-    let count = commerce
-        .returns()
-        .count(ReturnFilter::default())
-        .expect("count");
+    let count = commerce.returns().count(ReturnFilter::default()).expect("count");
     assert_eq!(count, 3);
 }
 
@@ -397,10 +363,10 @@ fn test_return_all_reasons() {
         let ret = commerce
             .returns()
             .create(CreateReturn {
-                order_id: order.id,
+                order_id: order.id.into(),
                 reason,
                 items: vec![CreateReturnItem {
-                    order_item_id: order.items[0].id,
+                    order_item_id: order.items[0].id.into(),
                     quantity: 1,
                     ..Default::default()
                 }],
@@ -423,10 +389,7 @@ fn test_return_add_tracking_sets_in_transit() {
     let ret = create_test_return(&commerce, &order);
 
     let ret = commerce.returns().approve(ret.id).expect("approve");
-    let ret = commerce
-        .returns()
-        .add_tracking(ret.id, "FEDEX-999888777")
-        .expect("add tracking");
+    let ret = commerce.returns().add_tracking(ret.id, "FEDEX-999888777").expect("add tracking");
 
     assert_eq!(ret.status, ReturnStatus::InTransit);
     assert_eq!(ret.tracking_number.as_deref(), Some("FEDEX-999888777"));
@@ -447,11 +410,11 @@ fn test_return_idempotency_key() {
     let ret1 = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id,
+            order_id: order.id.into(),
             reason: ReturnReason::Defective,
             idempotency_key: Some(key.clone()),
             items: vec![CreateReturnItem {
-                order_item_id: order.items[0].id,
+                order_item_id: order.items[0].id.into(),
                 quantity: 1,
                 ..Default::default()
             }],
@@ -462,11 +425,11 @@ fn test_return_idempotency_key() {
     let ret2 = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id,
+            order_id: order.id.into(),
             reason: ReturnReason::Defective,
             idempotency_key: Some(key),
             items: vec![CreateReturnItem {
-                order_item_id: order.items[0].id,
+                order_item_id: order.items[0].id.into(),
                 quantity: 1,
                 ..Default::default()
             }],
@@ -474,10 +437,7 @@ fn test_return_idempotency_key() {
         })
         .expect("second create");
 
-    assert_eq!(
-        ret1.id, ret2.id,
-        "Idempotent creates should return same return"
-    );
+    assert_eq!(ret1.id, ret2.id, "Idempotent creates should return same return");
 }
 
 // ============================================================================
@@ -502,10 +462,7 @@ fn test_return_update_notes() {
         )
         .expect("update notes");
 
-    assert_eq!(
-        ret.notes.as_deref(),
-        Some("Customer called, expedite this return")
-    );
+    assert_eq!(ret.notes.as_deref(), Some("Customer called, expedite this return"));
 }
 
 // ============================================================================
@@ -525,14 +482,8 @@ fn test_return_version_increments() {
     assert!(ret.version > v0, "Version should increment on approve");
 
     let v1 = ret.version;
-    let ret = commerce
-        .returns()
-        .mark_received(ret.id)
-        .expect("mark received");
-    assert!(
-        ret.version > v1,
-        "Version should increment on status change"
-    );
+    let ret = commerce.returns().mark_received(ret.id).expect("mark received");
+    assert!(ret.version > v1, "Version should increment on status change");
 }
 
 // ============================================================================
@@ -566,7 +517,7 @@ fn test_return_multiple_items() {
         .items
         .iter()
         .map(|item| CreateReturnItem {
-            order_item_id: item.id,
+            order_item_id: item.id.into(),
             quantity: 1,
             condition: Some(ItemCondition::Damaged),
         })
@@ -575,7 +526,7 @@ fn test_return_multiple_items() {
     let ret = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id,
+            order_id: order.id.into(),
             reason: ReturnReason::Damaged,
             items,
             ..Default::default()

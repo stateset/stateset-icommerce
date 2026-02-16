@@ -41,9 +41,9 @@
 use chrono::{DateTime, Utc};
 use stateset_core::{
     BillingCycle, BillingCycleFilter, BillingCycleStatus, CancelSubscription, CreateBillingCycle,
-    CreateSubscription, CreateSubscriptionPlan, PauseSubscription, Result, SkipBillingCycle,
-    Subscription, SubscriptionEvent, SubscriptionFilter, SubscriptionPlan, SubscriptionPlanFilter,
-    UpdateSubscription, UpdateSubscriptionPlan,
+    CreateSubscription, CreateSubscriptionPlan, CustomerId, PauseSubscription, Result,
+    SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionFilter, SubscriptionId,
+    SubscriptionPlan, SubscriptionPlanFilter, UpdateSubscription, UpdateSubscriptionPlan,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -159,13 +159,12 @@ impl Subscriptions {
     /// ```
     pub fn subscribe(&self, input: CreateSubscription) -> Result<Subscription> {
         let subscription = self.db.subscriptions().create_subscription(input)?;
-        self.metrics
-            .record_subscription_created(&subscription.id.to_string());
+        self.metrics.record_subscription_created(&subscription.id.to_string());
         Ok(subscription)
     }
 
     /// Get a subscription by ID.
-    pub fn get(&self, id: Uuid) -> Result<Option<Subscription>> {
+    pub fn get(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
         self.db.subscriptions().get_subscription(id)
     }
 
@@ -197,7 +196,7 @@ impl Subscriptions {
     }
 
     /// Update a subscription.
-    pub fn update(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription> {
+    pub fn update(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription> {
         self.db.subscriptions().update_subscription(id, input)
     }
 
@@ -226,14 +225,14 @@ impl Subscriptions {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn pause(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription> {
+    pub fn pause(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription> {
         self.db.subscriptions().pause_subscription(id, input)
     }
 
     /// Resume a paused subscription.
     ///
     /// This reactivates billing and creates a new billing period.
-    pub fn resume(&self, id: Uuid) -> Result<Subscription> {
+    pub fn resume(&self, id: SubscriptionId) -> Result<Subscription> {
         self.db.subscriptions().resume_subscription(id)
     }
 
@@ -264,7 +263,7 @@ impl Subscriptions {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn cancel(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription> {
+    pub fn cancel(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription> {
         self.db.subscriptions().cancel_subscription(id, input)
     }
 
@@ -286,7 +285,7 @@ impl Subscriptions {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn skip_next_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
+    pub fn skip_next_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
         self.db.subscriptions().skip_billing_cycle(id, input)
     }
 
@@ -300,19 +299,17 @@ impl Subscriptions {
     /// subscription renewals.
     pub fn create_billing_cycle(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         cycle_number: i32,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
     ) -> Result<BillingCycle> {
-        self.db
-            .subscriptions()
-            .create_billing_cycle(CreateBillingCycle {
-                subscription_id,
-                cycle_number,
-                period_start,
-                period_end,
-            })
+        self.db.subscriptions().create_billing_cycle(CreateBillingCycle {
+            subscription_id,
+            cycle_number,
+            period_start,
+            period_end,
+        })
     }
 
     /// Get a billing cycle by ID.
@@ -331,23 +328,17 @@ impl Subscriptions {
         id: Uuid,
         status: BillingCycleStatus,
     ) -> Result<BillingCycle> {
-        self.db
-            .subscriptions()
-            .update_billing_cycle_status(id, status)
+        self.db.subscriptions().update_billing_cycle_status(id, status)
     }
 
     /// Mark a billing cycle as paid.
     pub fn mark_cycle_paid(&self, id: Uuid) -> Result<BillingCycle> {
-        self.db
-            .subscriptions()
-            .update_billing_cycle_status(id, BillingCycleStatus::Paid)
+        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Paid)
     }
 
     /// Mark a billing cycle as failed.
     pub fn mark_cycle_failed(&self, id: Uuid) -> Result<BillingCycle> {
-        self.db
-            .subscriptions()
-            .update_billing_cycle_status(id, BillingCycleStatus::Failed)
+        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Failed)
     }
 
     // ========================================================================
@@ -370,10 +361,8 @@ impl Subscriptions {
     /// }
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn get_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {
-        self.db
-            .subscriptions()
-            .get_subscription_events(subscription_id)
+    pub fn get_events(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionEvent>> {
+        self.db.subscriptions().get_subscription_events(subscription_id)
     }
 
     // ========================================================================
@@ -389,17 +378,14 @@ impl Subscriptions {
     }
 
     /// Get all subscriptions for a customer.
-    pub fn get_customer_subscriptions(&self, customer_id: Uuid) -> Result<Vec<Subscription>> {
-        self.list(SubscriptionFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
+    pub fn get_customer_subscriptions(&self, customer_id: CustomerId) -> Result<Vec<Subscription>> {
+        self.list(SubscriptionFilter { customer_id: Some(customer_id), ..Default::default() })
     }
 
     /// Get active subscriptions for a customer.
     pub fn get_active_customer_subscriptions(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
     ) -> Result<Vec<Subscription>> {
         self.list(SubscriptionFilter {
             customer_id: Some(customer_id),
@@ -409,21 +395,13 @@ impl Subscriptions {
     }
 
     /// Check if a subscription is active.
-    pub fn is_active(&self, id: Uuid) -> Result<bool> {
-        if let Some(sub) = self.get(id)? {
-            Ok(sub.is_active())
-        } else {
-            Ok(false)
-        }
+    pub fn is_active(&self, id: SubscriptionId) -> Result<bool> {
+        if let Some(sub) = self.get(id)? { Ok(sub.is_active()) } else { Ok(false) }
     }
 
     /// Check if a subscription is in trial period.
-    pub fn is_in_trial(&self, id: Uuid) -> Result<bool> {
-        if let Some(sub) = self.get(id)? {
-            Ok(sub.is_in_trial())
-        } else {
-            Ok(false)
-        }
+    pub fn is_in_trial(&self, id: SubscriptionId) -> Result<bool> {
+        if let Some(sub) = self.get(id)? { Ok(sub.is_in_trial()) } else { Ok(false) }
     }
 
     /// Get subscriptions due for billing.
@@ -463,11 +441,7 @@ impl Subscriptions {
         Ok(subs
             .into_iter()
             .filter(|s| {
-                if let Some(trial_ends) = s.trial_ends_at {
-                    trial_ends <= cutoff
-                } else {
-                    false
-                }
+                if let Some(trial_ends) = s.trial_ends_at { trial_ends <= cutoff } else { false }
             })
             .collect())
     }

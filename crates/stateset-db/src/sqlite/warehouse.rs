@@ -31,13 +31,11 @@ impl SqliteWarehouseRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     // Helper to parse warehouse from row
-    fn row_to_warehouse(row: &rusqlite::Row) -> rusqlite::Result<Warehouse> {
+    fn row_to_warehouse(row: &rusqlite::Row<'_>) -> rusqlite::Result<Warehouse> {
         Ok(Warehouse {
             id: row.get("id")?,
             code: row.get("code")?,
@@ -68,7 +66,7 @@ impl SqliteWarehouseRepository {
     }
 
     // Helper to parse location from row
-    fn row_to_location(row: &rusqlite::Row) -> rusqlite::Result<Location> {
+    fn row_to_location(row: &rusqlite::Row<'_>) -> rusqlite::Result<Location> {
         Ok(Location {
             id: row.get("id")?,
             warehouse_id: row.get("warehouse_id")?,
@@ -120,7 +118,7 @@ impl SqliteWarehouseRepository {
     }
 
     // Helper to parse location inventory from row
-    fn row_to_location_inventory(row: &rusqlite::Row) -> rusqlite::Result<LocationInventory> {
+    fn row_to_location_inventory(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocationInventory> {
         let on_hand = parse_decimal_row(
             &row.get::<_, String>("quantity_on_hand")?,
             "location_inventory",
@@ -152,7 +150,7 @@ impl SqliteWarehouseRepository {
     }
 
     // Helper to parse inventory movement from row
-    fn row_to_movement(row: &rusqlite::Row) -> rusqlite::Result<LocationMovement> {
+    fn row_to_movement(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocationMovement> {
         Ok(LocationMovement {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "inventory_movement", "id")?,
             movement_type: parse_enum_row(
@@ -190,7 +188,7 @@ impl SqliteWarehouseRepository {
     }
 
     // Helper to parse zone from row
-    fn row_to_zone(row: &rusqlite::Row) -> rusqlite::Result<Zone> {
+    fn row_to_zone(row: &rusqlite::Row<'_>) -> rusqlite::Result<Zone> {
         Ok(Zone {
             id: row.get("id")?,
             warehouse_id: row.get("warehouse_id")?,
@@ -271,9 +269,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn get_warehouse(&self, id: i32) -> Result<Option<Warehouse>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM warehouses WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM warehouses WHERE id = ?1").map_err(map_db_error)?;
 
         let mut rows = stmt.query(params![id]).map_err(map_db_error)?;
 
@@ -286,9 +283,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn get_warehouse_by_code(&self, code: &str) -> Result<Option<Warehouse>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM warehouses WHERE code = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM warehouses WHERE code = ?1").map_err(map_db_error)?;
 
         let mut rows = stmt.query(params![code]).map_err(map_db_error)?;
 
@@ -303,9 +299,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let conn = self.conn()?;
 
         // Get existing warehouse using the same connection
-        let mut stmt = conn
-            .prepare("SELECT * FROM warehouses WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM warehouses WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id]).map_err(map_db_error)?;
         let existing = if let Some(row) = rows.next().map_err(map_db_error)? {
             Self::row_to_warehouse(row).map_err(map_db_error)?
@@ -409,8 +404,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             ));
         }
 
-        conn.execute("DELETE FROM warehouses WHERE id = ?1", params![id])
-            .map_err(map_db_error)?;
+        conn.execute("DELETE FROM warehouses WHERE id = ?1", params![id]).map_err(map_db_error)?;
 
         Ok(())
     }
@@ -433,9 +427,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
 
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
         Ok(count as u64)
     }
@@ -469,9 +462,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn get_zone(&self, id: i32) -> Result<Option<Zone>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM warehouse_zones WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM warehouse_zones WHERE id = ?1").map_err(map_db_error)?;
 
         let mut rows = stmt.query(params![id]).map_err(map_db_error)?;
 
@@ -532,10 +524,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     fn create_location(&self, input: CreateLocation) -> Result<Location> {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
-        let code = input
-            .code
-            .clone()
-            .unwrap_or_else(|| Self::generate_location_code(&input));
+        let code = input.code.clone().unwrap_or_else(|| Self::generate_location_code(&input));
 
         conn.execute(
             "INSERT INTO locations (warehouse_id, code, location_type, zone, aisle, rack, level, bin,
@@ -568,9 +557,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn get_location(&self, id: i32) -> Result<Option<Location>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM locations WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM locations WHERE id = ?1").map_err(map_db_error)?;
 
         let mut rows = stmt.query(params![id]).map_err(map_db_error)?;
 
@@ -587,9 +575,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             .prepare("SELECT * FROM locations WHERE warehouse_id = ?1 AND code = ?2")
             .map_err(map_db_error)?;
 
-        let mut rows = stmt
-            .query(params![warehouse_id, code])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![warehouse_id, code]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
             Ok(Some(Self::row_to_location(row).map_err(map_db_error)?))
@@ -722,8 +708,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             ));
         }
 
-        conn.execute("DELETE FROM locations WHERE id = ?1", params![id])
-            .map_err(map_db_error)?;
+        conn.execute("DELETE FROM locations WHERE id = ?1", params![id]).map_err(map_db_error)?;
 
         Ok(())
     }
@@ -751,9 +736,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
 
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
         Ok(count as u64)
     }
@@ -778,9 +762,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             )
             .map_err(map_db_error)?;
 
-        let mut rows = stmt
-            .query(params![warehouse_id, sku])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![warehouse_id, sku]).map_err(map_db_error)?;
 
         let mut locations = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -836,9 +818,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             )
             .map_err(map_db_error)?;
 
-        let mut rows = stmt
-            .query(params![warehouse_id, sku])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![warehouse_id, sku]).map_err(map_db_error)?;
 
         let mut inventory = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -880,13 +860,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             conn.execute(
                 "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
                  WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-                params![
-                    new_qty.to_string(),
-                    now_str,
-                    input.location_id,
-                    input.sku,
-                    lot_key
-                ],
+                params![new_qty.to_string(), now_str, input.location_id, input.sku, lot_key],
             )
             .map_err(map_db_error)?;
 
@@ -1232,9 +1206,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
 
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
         Ok(count as u64)
     }

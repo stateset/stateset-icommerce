@@ -1,4 +1,11 @@
 #![deny(unsafe_code)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/stateset/stateset-icommerce/main/assets/stateset.png",
+    html_favicon_url = "https://raw.githubusercontent.com/stateset/stateset-icommerce/main/assets/favicon.ico",
+    issue_tracker_base_url = "https://github.com/stateset/stateset-icommerce/issues/"
+)]
 
 //! # StateSet Core
 //!
@@ -100,7 +107,7 @@
 //!
 //! // Create an order input
 //! let order = CreateOrder {
-//!     customer_id: uuid::Uuid::new_v4(),
+//!     customer_id: CustomerId::new(),
 //!     items: vec![CreateOrderItem {
 //!         sku: "SKU-001".to_string(),
 //!         name: "Widget".to_string(),
@@ -143,6 +150,14 @@ pub use validation::*;
 #[cfg(feature = "embeddings")]
 pub use services::*;
 
+// Re-export strongly-typed primitives so downstream crates can import from
+// `stateset_core` directly without depending on `stateset-primitives`.
+pub use stateset_primitives::{
+    AgentId, CartId, CreditId, CurrencyCode, CustomerId, FulfillmentId, InventoryItemId,
+    InvoiceId, Money, OrderId, OrderItemId, PaymentId, ProductId, PromotionId, PurchaseOrderId,
+    ReturnId, ShipmentId, Sku, SubscriptionId, WarehouseId, WarrantyId,
+};
+
 /// Re-export common types for convenience
 pub mod prelude {
     pub use crate::errors::*;
@@ -150,4 +165,11 @@ pub mod prelude {
     pub use crate::models::*;
     pub use crate::traits::*;
     pub use crate::validation::*;
+
+    // Typed IDs and value types
+    pub use stateset_primitives::{
+        AgentId, CartId, CreditId, CurrencyCode, CustomerId, FulfillmentId, InventoryItemId,
+        InvoiceId, Money, OrderId, OrderItemId, PaymentId, ProductId, PromotionId, PurchaseOrderId,
+        ReturnId, ShipmentId, Sku, SubscriptionId, WarehouseId, WarrantyId,
+    };
 }

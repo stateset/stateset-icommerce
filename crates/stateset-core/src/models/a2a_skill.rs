@@ -168,6 +168,7 @@ pub struct QuotedItem {
 /// Quote status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum QuoteStatus {
     /// Quote is pending seller response
     #[default]
@@ -200,6 +201,7 @@ impl std::fmt::Display for QuoteStatus {
 /// Item availability status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ItemAvailability {
     /// Item is in stock and ready to ship
     #[default]
@@ -271,6 +273,7 @@ pub struct InitiatePurchaseOutput {
 /// Purchase status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PurchaseStatus {
     /// Purchase initiated, awaiting payment
     #[default]

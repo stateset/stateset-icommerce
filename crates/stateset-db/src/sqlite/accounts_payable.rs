@@ -8,16 +8,16 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use stateset_core::{
-    generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
     AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem,
     BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem,
     CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentRun, PaymentRunFilter,
     PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary, UpdateBill,
+    generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
 };
 
 pub struct SqliteAccountsPayableRepository {
@@ -30,12 +30,10 @@ impl SqliteAccountsPayableRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_bill(row: &rusqlite::Row) -> rusqlite::Result<Bill> {
+    fn row_to_bill(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bill> {
         Ok(Bill {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "bill", "id")?,
             bill_number: row.get("bill_number")?,
@@ -105,7 +103,7 @@ impl SqliteAccountsPayableRepository {
         })
     }
 
-    fn row_to_bill_item(row: &rusqlite::Row) -> rusqlite::Result<BillItem> {
+    fn row_to_bill_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<BillItem> {
         Ok(BillItem {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "bill_item", "id")?,
             bill_id: parse_uuid_row(&row.get::<_, String>("bill_id")?, "bill_item", "bill_id")?,
@@ -138,7 +136,7 @@ impl SqliteAccountsPayableRepository {
         })
     }
 
-    fn row_to_payment(row: &rusqlite::Row) -> rusqlite::Result<BillPayment> {
+    fn row_to_payment(row: &rusqlite::Row<'_>) -> rusqlite::Result<BillPayment> {
         Ok(BillPayment {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "bill_payment", "id")?,
             payment_number: row.get("payment_number")?,
@@ -177,7 +175,7 @@ impl SqliteAccountsPayableRepository {
         })
     }
 
-    fn row_to_payment_run(row: &rusqlite::Row) -> rusqlite::Result<PaymentRun> {
+    fn row_to_payment_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<PaymentRun> {
         Ok(PaymentRun {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "payment_run", "id")?,
             run_number: row.get("run_number")?,
@@ -325,9 +323,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn get_bill(&self, id: Uuid) -> Result<Option<Bill>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM ap_bills WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM ap_bills WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -339,9 +336,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn get_bill_by_number(&self, number: &str) -> Result<Option<Bill>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM ap_bills WHERE bill_number = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM ap_bills WHERE bill_number = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![number]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -410,16 +406,11 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         let bill = self.get_bill(id)?.ok_or(CommerceError::NotFound)?;
 
         if bill.status != BillStatus::Draft {
-            return Err(CommerceError::ValidationError(
-                "Can only delete draft bills".into(),
-            ));
+            return Err(CommerceError::ValidationError("Can only delete draft bills".into()));
         }
 
-        conn.execute(
-            "DELETE FROM ap_bills WHERE id = ?1",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        conn.execute("DELETE FROM ap_bills WHERE id = ?1", params![id.to_string()])
+            .map_err(map_db_error)?;
         Ok(())
     }
 
@@ -464,9 +455,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         let mut stmt = conn
             .prepare("SELECT * FROM ap_bill_items WHERE bill_id = ?1 ORDER BY line_number")
             .map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(params![bill_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![bill_id.to_string()]).map_err(map_db_error)?;
 
         let mut items = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -487,10 +476,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             ).map_err(map_db_error)?;
 
             let amount = item.quantity * item.unit_price;
-            let tax_amount = item
-                .tax_rate
-                .map(|r| amount * r / Decimal::from(100))
-                .unwrap_or(Decimal::ZERO);
+            let tax_amount =
+                item.tax_rate.map(|r| amount * r / Decimal::from(100)).unwrap_or(Decimal::ZERO);
 
             conn.execute(
                 "INSERT INTO ap_bill_items (id, bill_id, line_number, description, account_code, quantity, unit_price, amount, tax_rate, tax_amount, po_line_id, created_at)
@@ -511,17 +498,14 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 ],
             ).map_err(map_db_error)?;
 
-            let mut stmt = conn
-                .prepare("SELECT * FROM ap_bill_items WHERE id = ?1")
-                .map_err(map_db_error)?;
+            let mut stmt =
+                conn.prepare("SELECT * FROM ap_bill_items WHERE id = ?1").map_err(map_db_error)?;
             let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
             if let Some(row) = rows.next().map_err(map_db_error)? {
                 Self::row_to_bill_item(row).map_err(map_db_error)?
             } else {
-                return Err(CommerceError::DatabaseError(
-                    "Failed to create bill item".into(),
-                ));
+                return Err(CommerceError::DatabaseError("Failed to create bill item".into()));
             }
         };
 
@@ -540,11 +524,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 )
                 .map_err(map_db_error)?;
 
-            conn.execute(
-                "DELETE FROM ap_bill_items WHERE id = ?1",
-                params![item_id.to_string()],
-            )
-            .map_err(map_db_error)?;
+            conn.execute("DELETE FROM ap_bill_items WHERE id = ?1", params![item_id.to_string()])
+                .map_err(map_db_error)?;
             bill_id
         };
 
@@ -564,17 +545,13 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
     fn get_overdue_bills(&self) -> Result<Vec<Bill>> {
-        self.list_bills(BillFilter {
-            overdue_only: Some(true),
-            ..Default::default()
-        })
+        self.list_bills(BillFilter { overdue_only: Some(true), ..Default::default() })
     }
 
     fn get_bills_due_soon(&self, days: i32) -> Result<Vec<Bill>> {
@@ -636,9 +613,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             // Update bill amount_paid and status
             self.recalculate_bill(alloc.bill_id)?;
 
-            let bill = self
-                .get_bill(alloc.bill_id)?
-                .ok_or(CommerceError::NotFound)?;
+            let bill = self.get_bill(alloc.bill_id)?.ok_or(CommerceError::NotFound)?;
             let new_status = if bill.amount_due <= Decimal::ZERO {
                 BillStatus::Paid
             } else if bill.amount_paid > Decimal::ZERO {
@@ -660,9 +635,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM ap_payments WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM ap_payments WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -764,9 +738,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         let mut stmt = conn
             .prepare("SELECT * FROM ap_payment_allocations WHERE payment_id = ?1")
             .map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(params![payment_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![payment_id.to_string()]).map_err(map_db_error)?;
 
         let mut allocations = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -797,9 +769,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             )
             .map_err(map_db_error)?;
 
-        let mut rows = stmt
-            .query(params![bill_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![bill_id.to_string()]).map_err(map_db_error)?;
         let mut payments = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
             payments.push(Self::row_to_payment(row).map_err(map_db_error)?);
@@ -861,9 +831,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM ap_payment_runs WHERE id = ?1")
-            .map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM ap_payment_runs WHERE id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
@@ -933,9 +902,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             "SELECT b.* FROM ap_bills b JOIN ap_payment_run_bills rb ON b.id = rb.bill_id WHERE rb.run_id = ?1"
         ).map_err(map_db_error)?;
 
-        let mut rows = stmt
-            .query(params![run_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![run_id.to_string()]).map_err(map_db_error)?;
         let mut bills = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
             bills.push(Self::row_to_bill(row).map_err(map_db_error)?);
@@ -982,14 +949,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
         let total = current + days_1_30 + days_31_60 + days_61_90 + days_over_90;
 
-        Ok(ApAgingSummary {
-            current,
-            days_1_30,
-            days_31_60,
-            days_61_90,
-            days_over_90,
-            total,
-        })
+        Ok(ApAgingSummary { current, days_1_30, days_31_60, days_61_90, days_over_90, total })
     }
 
     fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
@@ -1013,9 +973,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         let mut stmt = conn.prepare(
             "SELECT due_date, amount_due FROM ap_bills WHERE supplier_id = ?1 AND status NOT IN ('paid', 'cancelled')",
         ).map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(params![&supplier_id_param])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![&supplier_id_param]).map_err(map_db_error)?;
         let mut outstanding = Decimal::ZERO;
         let mut overdue = Decimal::ZERO;
         let mut count: i32 = 0;

@@ -17,6 +17,7 @@ use uuid::Uuid;
 /// Type of warehouse
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum WarehouseType {
     /// Main distribution center
     #[default]
@@ -57,10 +58,9 @@ impl std::str::FromStr for WarehouseType {
             "third_party" | "thirdparty" => Ok(Self::ThirdParty),
             "consignment" => Ok(Self::Consignment),
             "returns" => Ok(Self::Returns),
-            _ => Err(crate::CommerceError::ValidationError(format!(
-                "Invalid warehouse type: {}",
-                s
-            ))),
+            _ => {
+                Err(crate::CommerceError::ValidationError(format!("Invalid warehouse type: {}", s)))
+            }
         }
     }
 }
@@ -68,6 +68,7 @@ impl std::str::FromStr for WarehouseType {
 /// Type of location within a warehouse
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum LocationType {
     /// Bulk storage location
     #[default]
@@ -124,10 +125,9 @@ impl std::str::FromStr for LocationType {
             "production" => Ok(Self::Production),
             "packing" => Ok(Self::Packing),
             "cross_dock" | "crossdock" => Ok(Self::CrossDock),
-            _ => Err(crate::CommerceError::ValidationError(format!(
-                "Invalid location type: {}",
-                s
-            ))),
+            _ => {
+                Err(crate::CommerceError::ValidationError(format!("Invalid location type: {}", s)))
+            }
         }
     }
 }
@@ -361,6 +361,7 @@ pub struct LocationMovement {
 /// Type of inventory movement
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MovementType {
     /// Received into warehouse
     Receipt,
@@ -400,10 +401,9 @@ impl std::str::FromStr for MovementType {
             "adjustment" => Ok(Self::Adjustment),
             "shipment" => Ok(Self::Shipment),
             "return" => Ok(Self::Return),
-            _ => Err(crate::CommerceError::ValidationError(format!(
-                "Invalid movement type: {}",
-                s
-            ))),
+            _ => {
+                Err(crate::CommerceError::ValidationError(format!("Invalid movement type: {}", s)))
+            }
         }
     }
 }

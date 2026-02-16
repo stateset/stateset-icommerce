@@ -144,7 +144,7 @@ fn test_tax_exempt_product() {
 
     // Exempt products should have zero tax
     assert_eq!(result.subtotal, dec!(17.97)); // 3 * 5.99
-                                              // Note: Tax may still be non-zero if exempt category isn't configured
+    // Note: Tax may still be non-zero if exempt category isn't configured
 }
 
 #[test]
@@ -155,11 +155,7 @@ fn test_effective_rate_lookup() {
     let rate = commerce
         .tax()
         .get_effective_rate(
-            &TaxAddress {
-                country: "US".into(),
-                state: Some("TX".into()),
-                ..Default::default()
-            },
+            &TaxAddress { country: "US".into(), state: Some("TX".into()), ..Default::default() },
             ProductTaxCategory::Standard,
         )
         .expect("Failed to get effective rate");
@@ -188,10 +184,7 @@ fn test_rate_listing() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // List all tax rates
-    let rates = commerce
-        .tax()
-        .list_rates(Default::default())
-        .expect("Failed to list rates");
+    let rates = commerce.tax().list_rates(Default::default()).expect("Failed to list rates");
 
     // Should return successfully (may be empty if not seeded)
     let _ = rates.len();
@@ -383,11 +376,8 @@ fn test_tax_thresholds_and_caps() {
         })
         .expect("Failed to create tax rate");
 
-    let address = TaxAddress {
-        country: "US".into(),
-        state: Some("TS".into()),
-        ..Default::default()
-    };
+    let address =
+        TaxAddress { country: "US".into(), state: Some("TS".into()), ..Default::default() };
 
     let result_low = commerce
         .tax()

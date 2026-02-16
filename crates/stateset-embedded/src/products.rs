@@ -1,8 +1,8 @@
 //! Product operations
 
 use stateset_core::{
-    CreateProduct, CreateProductVariant, Product, ProductFilter, ProductStatus, ProductVariant,
-    Result, UpdateProduct,
+    CreateProduct, CreateProductVariant, Product, ProductFilter, ProductId, ProductStatus,
+    ProductVariant, Result, UpdateProduct,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;
@@ -29,11 +29,7 @@ impl Products {
         event_system: Arc<EventSystem>,
         metrics: Metrics,
     ) -> Self {
-        Self {
-            db,
-            metrics,
-            event_system,
-        }
+        Self { db, metrics, event_system }
     }
 
     #[cfg(not(feature = "events"))]
@@ -106,7 +102,7 @@ impl Products {
     }
 
     /// Get a product by ID.
-    pub fn get(&self, id: Uuid) -> Result<Option<Product>> {
+    pub fn get(&self, id: ProductId) -> Result<Option<Product>> {
         self.db.products().get(id)
     }
 
@@ -116,7 +112,7 @@ impl Products {
     }
 
     /// Update a product.
-    pub fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
+    pub fn update(&self, id: ProductId, input: UpdateProduct) -> Result<Product> {
         #[cfg(feature = "events")]
         let previous = self.db.products().get(id)?;
         #[cfg(feature = "events")]
@@ -156,21 +152,20 @@ impl Products {
 
     /// List active products.
     pub fn list_active(&self) -> Result<Vec<Product>> {
-        self.db.products().list(ProductFilter {
-            status: Some(ProductStatus::Active),
-            ..Default::default()
-        })
+        self.db
+            .products()
+            .list(ProductFilter { status: Some(ProductStatus::Active), ..Default::default() })
     }
 
     /// Delete a product (archives it).
-    pub fn delete(&self, id: Uuid) -> Result<()> {
+    pub fn delete(&self, id: ProductId) -> Result<()> {
         self.db.products().delete(id)
     }
 
     /// Add a variant to a product.
     pub fn add_variant(
         &self,
-        product_id: Uuid,
+        product_id: ProductId,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
         let variant = self.db.products().add_variant(product_id, variant)?;
@@ -220,7 +215,7 @@ impl Products {
     }
 
     /// Get all variants for a product.
-    pub fn get_variants(&self, product_id: Uuid) -> Result<Vec<ProductVariant>> {
+    pub fn get_variants(&self, product_id: ProductId) -> Result<Vec<ProductVariant>> {
         self.db.products().get_variants(product_id)
     }
 
@@ -230,24 +225,15 @@ impl Products {
     }
 
     /// Activate a product (make it available for purchase).
-    pub fn activate(&self, id: Uuid) -> Result<Product> {
-        self.update(
-            id,
-            UpdateProduct {
-                status: Some(ProductStatus::Active),
-                ..Default::default()
-            },
-        )
+    pub fn activate(&self, id: ProductId) -> Result<Product> {
+        self.update(id, UpdateProduct { status: Some(ProductStatus::Active), ..Default::default() })
     }
 
     /// Archive a product.
-    pub fn archive(&self, id: Uuid) -> Result<Product> {
+    pub fn archive(&self, id: ProductId) -> Result<Product> {
         self.update(
             id,
-            UpdateProduct {
-                status: Some(ProductStatus::Archived),
-                ..Default::default()
-            },
+            UpdateProduct { status: Some(ProductStatus::Archived), ..Default::default() },
         )
     }
 

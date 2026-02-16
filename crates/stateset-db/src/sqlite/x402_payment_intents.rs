@@ -10,9 +10,9 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{OptionalExtension, TransactionBehavior};
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateX402PaymentIntent, Result,
-    SignX402PaymentIntent, X402IntentStatus, X402PaymentIntent, X402PaymentIntentFilter,
-    X402PaymentIntentRepository, X402_DEFAULT_VALIDITY_SECONDS,
+    BatchResult, CommerceError, CreateX402PaymentIntent, Result, SignX402PaymentIntent,
+    X402_DEFAULT_VALIDITY_SECONDS, X402IntentStatus, X402PaymentIntent, X402PaymentIntentFilter,
+    X402PaymentIntentRepository, validate_batch_size,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -28,9 +28,7 @@ impl SqliteX402PaymentIntentRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn parse_inclusion_proof(value: Option<String>) -> rusqlite::Result<Option<Vec<String>>> {
@@ -50,7 +48,7 @@ impl SqliteX402PaymentIntentRepository {
             .transpose()
     }
 
-    fn row_to_intent(row: &rusqlite::Row) -> rusqlite::Result<X402PaymentIntent> {
+    fn row_to_intent(row: &rusqlite::Row<'_>) -> rusqlite::Result<X402PaymentIntent> {
         let inclusion_proof: Option<Vec<String>> =
             Self::parse_inclusion_proof(row.get("inclusion_proof")?)?;
 
@@ -101,9 +99,7 @@ impl SqliteX402PaymentIntentRepository {
             payer_signature: row.get("payer_signature")?,
             payer_public_key: row.get("payer_public_key")?,
 
-            sequence_number: row
-                .get::<_, Option<i64>>("sequence_number")?
-                .map(|n| n as u64),
+            sequence_number: row.get::<_, Option<i64>>("sequence_number")?.map(|n| n as u64),
             sequenced_at: parse_datetime_opt_row(
                 row.get::<_, Option<String>>("sequenced_at")?,
                 "x402_intent",
@@ -156,9 +152,8 @@ impl SqliteX402PaymentIntentRepository {
 impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     fn create(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
         let mut conn = self.conn()?;
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(map_db_error)?;
+        let tx =
+            conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_db_error)?;
         let now = Utc::now();
         let now_unix = now.timestamp() as u64;
         let id = Uuid::new_v4();
@@ -166,9 +161,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             Some(n) => n,
             None => Self::get_next_nonce_in_tx(&tx, &input.payer_address)?,
         };
-        let validity_seconds = input
-            .validity_seconds
-            .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+        let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
         let valid_until = now_unix + validity_seconds;
 
         let asset = input.asset;
@@ -228,9 +221,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             .prepare("SELECT * FROM x402_payment_intents WHERE id = ?")
             .map_err(map_db_error)?;
 
-        stmt.query_row([id.to_string()], Self::row_to_intent)
-            .optional()
-            .map_err(map_db_error)
+        stmt.query_row([id.to_string()], Self::row_to_intent).optional().map_err(map_db_error)
     }
 
     fn get_by_idempotency_key(&self, key: &str) -> Result<Option<X402PaymentIntent>> {
@@ -239,9 +230,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             .prepare("SELECT * FROM x402_payment_intents WHERE idempotency_key = ?")
             .map_err(map_db_error)?;
 
-        stmt.query_row([key], Self::row_to_intent)
-            .optional()
-            .map_err(map_db_error)
+        stmt.query_row([key], Self::row_to_intent).optional().map_err(map_db_error)
     }
 
     fn sign(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
@@ -265,20 +254,13 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         // Check if expired
         let now_unix = Utc::now().timestamp() as u64;
         if now_unix > intent.valid_until {
-            return Err(CommerceError::ValidationError(
-                "Payment intent has expired".to_string(),
-            ));
+            return Err(CommerceError::ValidationError("Payment intent has expired".to_string()));
         }
 
         // Compute signing hash and store signature
         let hash_bytes = intent.sequencer_signing_hash();
-        let signing_hash = format!(
-            "0x{}",
-            hash_bytes
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<String>()
-        );
+        let signing_hash =
+            format!("0x{}", hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>());
 
         // Validate signature/public key pair against the intent hash before persisting.
         let mut signed_intent = intent.clone();
@@ -410,10 +392,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let conn = self.conn()?;
 
         let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        if !matches!(
-            intent.status,
-            X402IntentStatus::Created | X402IntentStatus::Signed
-        ) {
+        if !matches!(intent.status, X402IntentStatus::Created | X402IntentStatus::Signed) {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot cancel intent in {} status",
                 intent.status
@@ -441,9 +420,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             )
             .map_err(map_db_error)?;
 
-        let rows = stmt
-            .query_map([cart_id.to_string()], Self::row_to_intent)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map([cart_id.to_string()], Self::row_to_intent).map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row.map_err(map_db_error)?);
@@ -459,9 +437,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             )
             .map_err(map_db_error)?;
 
-        let rows = stmt
-            .query_map([order_id.to_string()], Self::row_to_intent)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map([order_id.to_string()], Self::row_to_intent).map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row.map_err(map_db_error)?);
@@ -573,16 +550,12 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             params.push(Box::new(asset.to_string().to_lowercase()));
         }
 
-        let sql = format!(
-            "SELECT COUNT(*) FROM x402_payment_intents WHERE {}",
-            conditions.join(" AND ")
-        );
+        let sql =
+            format!("SELECT COUNT(*) FROM x402_payment_intents WHERE {}", conditions.join(" AND "));
 
         let param_refs = params_refs(&params);
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| {
-                row.get(0)
-            })
+            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| row.get(0))
             .map_err(map_db_error)?;
 
         Ok(count as u64)
@@ -636,9 +609,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(map_db_error)?;
+        let tx =
+            conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_db_error)?;
         let mut ids = Vec::with_capacity(inputs.len());
         let mut next_nonce_by_payer: HashMap<String, u64> = HashMap::new();
 
@@ -646,9 +618,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             let now = Utc::now();
             let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
-            let validity_seconds = input
-                .validity_seconds
-                .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+            let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
             let valid_until = now_unix + validity_seconds;
 
             let asset = input.asset;
@@ -715,9 +685,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
 
         tx.commit().map_err(map_db_error)?;
 
-        ids.into_iter()
-            .map(|id| self.get(id)?.ok_or(CommerceError::NotFound))
-            .collect()
+        ids.into_iter().map(|id| self.get(id)?.ok_or(CommerceError::NotFound)).collect()
     }
 
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<X402PaymentIntent>> {
@@ -728,10 +696,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!(
-            "SELECT * FROM x402_payment_intents WHERE id IN ({})",
-            placeholders
-        );
+        let sql = format!("SELECT * FROM x402_payment_intents WHERE id IN ({})", placeholders);
 
         let params = uuid_params(&ids);
         let param_refs = params_refs(&params);

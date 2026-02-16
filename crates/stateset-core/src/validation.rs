@@ -119,11 +119,7 @@ impl ValidationBuilder {
             && !value.contains(char::is_whitespace)
             && value.contains('@')
             && value.split('@').count() == 2
-            && value
-                .split('@')
-                .next_back()
-                .map(|d| d.contains('.'))
-                .unwrap_or(false);
+            && value.split('@').next_back().map(|d| d.contains('.')).unwrap_or(false);
         self.check(field, is_valid, "must be a valid email address")
     }
 
@@ -137,26 +133,17 @@ impl ValidationBuilder {
 
     /// Validate string maximum length
     pub fn max_length(self, field: &str, value: &str, max: usize) -> Self {
-        self.check(
-            field,
-            value.len() <= max,
-            &format!("cannot exceed {} characters", max),
-        )
+        self.check(field, value.len() <= max, &format!("cannot exceed {} characters", max))
     }
 
     /// Validate string minimum length
     pub fn min_length(self, field: &str, value: &str, min: usize) -> Self {
-        self.check(
-            field,
-            value.len() >= min,
-            &format!("must be at least {} characters", min),
-        )
+        self.check(field, value.len() >= min, &format!("must be at least {} characters", min))
     }
 
     /// Validate string length range
     pub fn length_range(self, field: &str, value: &str, min: usize, max: usize) -> Self {
-        self.min_length(field, value, min)
-            .max_length(field, value, max)
+        self.min_length(field, value, min).max_length(field, value, max)
     }
 
     /// Validate a positive decimal value (> 0)
@@ -205,54 +192,34 @@ impl ValidationBuilder {
 
     /// Validate a list has at most N items
     pub fn max_items<T>(self, field: &str, value: &[T], max: usize) -> Self {
-        self.check(
-            field,
-            value.len() <= max,
-            &format!("cannot have more than {} items", max),
-        )
+        self.check(field, value.len() <= max, &format!("cannot have more than {} items", max))
     }
 
     /// Validate a SKU format (alphanumeric, hyphens, underscores)
     pub fn sku(self, field: &str, value: &str) -> Self {
         let is_valid = !value.is_empty()
             && value.len() <= 100
-            && value
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '-' || c == '_');
-        self.check(
-            field,
-            is_valid,
-            "must be a valid SKU (alphanumeric, hyphens, underscores)",
-        )
+            && value.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_');
+        self.check(field, is_valid, "must be a valid SKU (alphanumeric, hyphens, underscores)")
     }
 
     /// Validate a currency code (3 uppercase letters)
     pub fn currency_code(self, field: &str, value: &str) -> Self {
         let is_valid = value.len() == 3 && value.chars().all(|c| c.is_ascii_uppercase());
-        self.check(
-            field,
-            is_valid,
-            "must be a 3-letter uppercase currency code",
-        )
+        self.check(field, is_valid, "must be a 3-letter uppercase currency code")
     }
 
     /// Validate a phone number (basic validation)
     pub fn phone(self, field: &str, value: &str) -> Self {
         let digits: String = value.chars().filter(|c| c.is_ascii_digit()).collect();
-        self.check(
-            field,
-            digits.len() >= 7 && digits.len() <= 15,
-            "must have 7-15 digits",
-        )
+        self.check(field, digits.len() >= 7 && digits.len() <= 15, "must have 7-15 digits")
     }
 
     /// Validate a postal code (basic validation)
     pub fn postal_code(self, field: &str, value: &str) -> Self {
         let is_valid = value.len() >= 3
             && value.len() <= 10
-            && value
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == ' ' || c == '-');
+            && value.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-');
         self.check(field, is_valid, "must be a valid postal code")
     }
 
@@ -282,11 +249,8 @@ impl ValidationBuilder {
         if self.errors.is_empty() {
             Ok(())
         } else {
-            let messages: Vec<String> = self
-                .errors
-                .iter()
-                .map(|(field, msg)| format!("{}: {}", field, msg))
-                .collect();
+            let messages: Vec<String> =
+                self.errors.iter().map(|(field, msg)| format!("{}: {}", field, msg)).collect();
             Err(CommerceError::ValidationError(messages.join("; ")))
         }
     }
@@ -326,18 +290,14 @@ mod tests {
 
     #[test]
     fn test_validation_builder_email_fails() {
-        let result = ValidationBuilder::new()
-            .email("email", "not-an-email")
-            .build();
+        let result = ValidationBuilder::new().email("email", "not-an-email").build();
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_validation_builder_positive_fails() {
-        let result = ValidationBuilder::new()
-            .positive("price", dec!(-5.00))
-            .build();
+        let result = ValidationBuilder::new().positive("price", dec!(-5.00)).build();
 
         assert!(result.is_err());
         if let Err(CommerceError::InvalidInput { field, .. }) = result {
@@ -349,9 +309,7 @@ mod tests {
 
     #[test]
     fn test_validation_builder_max_length() {
-        let result = ValidationBuilder::new()
-            .max_length("code", "ABC123", 3)
-            .build();
+        let result = ValidationBuilder::new().max_length("code", "ABC123", 3).build();
 
         assert!(result.is_err());
     }
@@ -359,21 +317,12 @@ mod tests {
     #[test]
     fn test_validation_builder_sku() {
         // Valid SKUs
-        assert!(ValidationBuilder::new()
-            .sku("sku", "SKU-001")
-            .build()
-            .is_ok());
-        assert!(ValidationBuilder::new()
-            .sku("sku", "WIDGET_BLUE_XL")
-            .build()
-            .is_ok());
+        assert!(ValidationBuilder::new().sku("sku", "SKU-001").build().is_ok());
+        assert!(ValidationBuilder::new().sku("sku", "WIDGET_BLUE_XL").build().is_ok());
 
         // Invalid SKUs
         assert!(ValidationBuilder::new().sku("sku", "").build().is_err());
-        assert!(ValidationBuilder::new()
-            .sku("sku", "SKU 001")
-            .build()
-            .is_err());
+        assert!(ValidationBuilder::new().sku("sku", "SKU 001").build().is_err());
     }
 
     #[test]
@@ -410,27 +359,18 @@ mod tests {
 
     #[test]
     fn test_validate_trait() {
-        let valid = TestModel {
-            name: "Widget".to_string(),
-            price: dec!(10.00),
-        };
+        let valid = TestModel { name: "Widget".to_string(), price: dec!(10.00) };
         assert!(valid.validate().is_ok());
         assert!(valid.is_valid());
 
-        let invalid = TestModel {
-            name: "".to_string(),
-            price: dec!(10.00),
-        };
+        let invalid = TestModel { name: "".to_string(), price: dec!(10.00) };
         assert!(invalid.validate().is_err());
         assert!(!invalid.is_valid());
     }
 
     #[test]
     fn test_validated_method() {
-        let model = TestModel {
-            name: "Widget".to_string(),
-            price: dec!(10.00),
-        };
+        let model = TestModel { name: "Widget".to_string(), price: dec!(10.00) };
 
         let result = model.validated();
         assert!(result.is_ok());

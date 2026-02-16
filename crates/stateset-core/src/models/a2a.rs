@@ -11,14 +11,18 @@
 //!
 //! ## Example
 //!
-//! ```rust,ignore
-//! use stateset_core::a2a::{A2APayment, A2AQuote, PaymentRequest};
+//! ```rust
+//! use stateset_core::models::a2a::A2APayment;
+//! use stateset_core::models::x402::X402Asset;
 //!
-//! // Direct payment
-//! let payment = A2APayment::new(sender_wallet, recipient_wallet, 1_000_000, X402Asset::Usdc);
-//!
-//! // Quote flow
-//! let quote = A2AQuote::new(seller_agent_id, vec![item], X402Asset::Usdc);
+//! // Direct payment between two agent wallets
+//! let payment = A2APayment::new(
+//!     "0x1234abcd1234abcd1234abcd1234abcd1234abcd",
+//!     "0x5678efab5678efab5678efab5678efab5678efab",
+//!     1_000_000, // 1 USDC (6 decimals)
+//!     X402Asset::Usdc,
+//! );
+//! assert_eq!(payment.amount, 1_000_000);
 //! ```
 
 use chrono::{DateTime, Duration, Utc};
@@ -26,7 +30,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::x402::{X402Asset, X402Network, X402PaymentIntent};
+use super::x402::{X402Asset, X402Network};
 
 // =============================================================================
 // A2A Payment (Direct Agent-to-Agent Transfer)
@@ -35,6 +39,7 @@ use super::x402::{X402Asset, X402Network, X402PaymentIntent};
 /// Status of an A2A payment
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum A2APaymentStatus {
     /// Payment created, pending signature
     #[default]
@@ -216,6 +221,7 @@ impl A2APayment {
 /// Reference type for A2A payments
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum A2AReferenceType {
     /// Payment for a quote
     Quote,
@@ -242,6 +248,7 @@ pub enum A2AReferenceType {
 /// Status of a payment request
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PaymentRequestStatus {
     /// Request created, awaiting payment
     #[default]
@@ -461,6 +468,7 @@ impl PaymentRequest {
 /// Status of a quote
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum A2AQuoteStatus {
     /// Quote requested, awaiting response
     #[default]
@@ -705,13 +713,7 @@ pub struct A2AQuoteItem {
 impl A2AQuoteItem {
     /// Create a new quote item
     pub fn new(description: impl Into<String>, quantity: u32, unit_price: u64) -> Self {
-        Self {
-            description: description.into(),
-            sku: None,
-            quantity,
-            unit_price,
-            metadata: None,
-        }
+        Self { description: description.into(), sku: None, quantity, unit_price, metadata: None }
     }
 
     /// Calculate total for this line item
@@ -779,6 +781,7 @@ pub struct A2AService {
 /// Service categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum A2AServiceCategory {
     /// Data/information services
     Data,
@@ -803,31 +806,15 @@ pub enum A2AServiceCategory {
 #[serde(tag = "model", rename_all = "snake_case")]
 pub enum A2APricing {
     /// Fixed price per unit/call
-    Fixed {
-        amount: u64,
-        asset: X402Asset,
-        unit: String,
-    },
+    Fixed { amount: u64, asset: X402Asset, unit: String },
     /// Price per token/byte/etc.
-    PerUnit {
-        amount_per_unit: u64,
-        asset: X402Asset,
-        unit: String,
-    },
+    PerUnit { amount_per_unit: u64, asset: X402Asset, unit: String },
     /// Tiered pricing
-    Tiered {
-        tiers: Vec<PricingTier>,
-        asset: X402Asset,
-    },
+    Tiered { tiers: Vec<PricingTier>, asset: X402Asset },
     /// Custom/quote required
     Quote,
     /// Free tier available
-    Freemium {
-        free_quota: u64,
-        unit: String,
-        overage_price: u64,
-        asset: X402Asset,
-    },
+    Freemium { free_quota: u64, unit: String, overage_price: u64, asset: X402Asset },
 }
 
 /// Pricing tier for tiered pricing

@@ -110,6 +110,7 @@ pub struct PaymentRun {
 /// Status of a bill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum BillStatus {
     #[default]
     Draft,
@@ -157,6 +158,7 @@ impl FromStr for BillStatus {
 /// AP payment method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PaymentMethodAP {
     #[default]
     Check,
@@ -198,6 +200,7 @@ impl FromStr for PaymentMethodAP {
 /// AP payment status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PaymentStatusAP {
     #[default]
     Pending,
@@ -236,6 +239,7 @@ impl FromStr for PaymentStatusAP {
 /// Payment run status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PaymentRunStatus {
     #[default]
     Draft,
@@ -281,36 +285,21 @@ mod tests {
 
     #[test]
     fn bill_status_from_str() {
-        assert_eq!(
-            BillStatus::from_str("partiallypaid").unwrap(),
-            BillStatus::PartiallyPaid
-        );
-        assert_eq!(
-            BillStatus::from_str("canceled").unwrap(),
-            BillStatus::Cancelled
-        );
+        assert_eq!(BillStatus::from_str("partiallypaid").unwrap(), BillStatus::PartiallyPaid);
+        assert_eq!(BillStatus::from_str("canceled").unwrap(), BillStatus::Cancelled);
         assert!(BillStatus::from_str("unknown").is_err());
     }
 
     #[test]
     fn payment_method_from_str() {
-        assert_eq!(
-            PaymentMethodAP::from_str("creditcard").unwrap(),
-            PaymentMethodAP::CreditCard
-        );
-        assert_eq!(
-            PaymentMethodAP::from_str("other").unwrap(),
-            PaymentMethodAP::Other
-        );
+        assert_eq!(PaymentMethodAP::from_str("creditcard").unwrap(), PaymentMethodAP::CreditCard);
+        assert_eq!(PaymentMethodAP::from_str("other").unwrap(), PaymentMethodAP::Other);
         assert!(PaymentMethodAP::from_str("wire_transfer").is_err());
     }
 
     #[test]
     fn payment_status_from_str() {
-        assert_eq!(
-            PaymentStatusAP::from_str("processed").unwrap(),
-            PaymentStatusAP::Processed
-        );
+        assert_eq!(PaymentStatusAP::from_str("processed").unwrap(), PaymentStatusAP::Processed);
         assert!(PaymentStatusAP::from_str("unknown").is_err());
     }
 
@@ -320,10 +309,7 @@ mod tests {
             PaymentRunStatus::from_str("in_progress").unwrap(),
             PaymentRunStatus::Processing
         );
-        assert_eq!(
-            PaymentRunStatus::from_str("cancelled").unwrap(),
-            PaymentRunStatus::Cancelled
-        );
+        assert_eq!(PaymentRunStatus::from_str("cancelled").unwrap(), PaymentRunStatus::Cancelled);
         assert!(PaymentRunStatus::from_str("unknown").is_err());
     }
 }

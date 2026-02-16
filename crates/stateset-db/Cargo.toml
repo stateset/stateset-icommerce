@@ -38,6 +38,9 @@ insta = "1.46"
 name = "db_benchmarks"
 harness = false
 
+[lints]
+workspace = true
+
 [features]
 default = ["sqlite"]
 sqlite = ["dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite"]

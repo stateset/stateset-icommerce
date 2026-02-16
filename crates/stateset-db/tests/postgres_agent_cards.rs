@@ -11,9 +11,7 @@ use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL")
-        .ok()
-        .or_else(|| env::var("DATABASE_URL").ok())
+    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
 }
 
 #[cfg(feature = "postgres")]
@@ -27,9 +25,7 @@ async fn postgres_agent_cards_smoke() {
         }
     };
 
-    let db = PostgresDatabase::connect(&url)
-        .await
-        .expect("connect to postgres and run migrations");
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
 
     let repo = db.agent_cards();
     let wallet = format!("0xwallet{}", Uuid::new_v4().to_string().replace('-', ""));
@@ -93,22 +89,14 @@ async fn postgres_agent_cards_smoke() {
         .expect("count agent cards");
     assert!(count >= 1);
 
-    let verified = repo
-        .verify_async(card.id, TrustLevel::Verified, "test")
-        .await
-        .expect("verify agent card");
+    let verified =
+        repo.verify_async(card.id, TrustLevel::Verified, "test").await.expect("verify agent card");
     assert_eq!(verified.trust_level, TrustLevel::Verified);
     assert!(verified.verified_at.is_some());
 
-    let suspended = repo
-        .suspend_async(card.id, "test")
-        .await
-        .expect("suspend agent card");
+    let suspended = repo.suspend_async(card.id, "test").await.expect("suspend agent card");
     assert!(!suspended.active);
 
-    let reactivated = repo
-        .reactivate_async(card.id)
-        .await
-        .expect("reactivate agent card");
+    let reactivated = repo.reactivate_async(card.id).await.expect("reactivate agent card");
     assert!(reactivated.active);
 }

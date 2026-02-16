@@ -3,12 +3,12 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
-    validate_batch_size, BatchError, BatchErrorCode, BatchResult, CommerceError, ConversionResult,
-    ConvertCurrency, Currency, CurrencyRepository, ExchangeRate, ExchangeRateFilter, Result,
-    RoundingMode, SetExchangeRate, StoreCurrencySettings,
+    BatchError, BatchErrorCode, BatchResult, CommerceError, ConversionResult, ConvertCurrency,
+    Currency, CurrencyRepository, ExchangeRate, ExchangeRateFilter, Result, RoundingMode,
+    SetExchangeRate, StoreCurrencySettings, validate_batch_size,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -118,11 +118,8 @@ impl PgCurrencyRepository {
         .map_err(map_db_error)?;
 
         if let Some(row) = inverse_row {
-            let inverse_rate = if row.rate.is_zero() {
-                Decimal::ZERO
-            } else {
-                Decimal::ONE / row.rate
-            };
+            let inverse_rate =
+                if row.rate.is_zero() { Decimal::ZERO } else { Decimal::ONE / row.rate };
 
             return Ok(Some(ExchangeRate {
                 id: Uuid::new_v4(),
@@ -246,11 +243,7 @@ impl PgCurrencyRepository {
             .await
             .map_err(map_db_error)?;
 
-        if result.rows_affected() == 0 {
-            Err(CommerceError::NotFound)
-        } else {
-            Ok(())
-        }
+        if result.rows_affected() == 0 { Err(CommerceError::NotFound) } else { Ok(()) }
     }
 
     /// Convert currency (async)
@@ -267,22 +260,16 @@ impl PgCurrencyRepository {
             });
         }
 
-        let rate = self
-            .get_rate_async(input.from, input.to)
-            .await?
-            .ok_or_else(|| {
-                CommerceError::ValidationError(format!(
-                    "No exchange rate found for {} to {}",
-                    input.from, input.to
-                ))
-            })?;
+        let rate = self.get_rate_async(input.from, input.to).await?.ok_or_else(|| {
+            CommerceError::ValidationError(format!(
+                "No exchange rate found for {} to {}",
+                input.from, input.to
+            ))
+        })?;
 
         let converted_amount = input.amount * rate.rate;
-        let inverse_rate = if rate.rate.is_zero() {
-            Decimal::ZERO
-        } else {
-            Decimal::ONE / rate.rate
-        };
+        let inverse_rate =
+            if rate.rate.is_zero() { Decimal::ZERO } else { Decimal::ONE / rate.rate };
 
         Ok(ConversionResult {
             original_amount: input.amount,
@@ -378,11 +365,8 @@ impl PgCurrencyRepository {
     ) -> Result<Vec<ExchangeRate>> {
         validate_batch_size(&rates)?;
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut tx =
+            self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut results = Vec::with_capacity(rates.len());
 
@@ -441,9 +425,7 @@ impl PgCurrencyRepository {
             results.push(Self::row_to_exchange_rate(row)?);
         }
 
-        tx.commit()
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         Ok(results)
     }
@@ -497,11 +479,8 @@ impl PgCurrencyRepository {
             return Ok(());
         }
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut tx =
+            self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         for id in &ids {
             let result = sqlx::query("DELETE FROM exchange_rates WHERE id = $1")
@@ -516,9 +495,7 @@ impl PgCurrencyRepository {
             }
         }
 
-        tx.commit()
-            .await
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }

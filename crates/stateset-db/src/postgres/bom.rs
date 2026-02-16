@@ -3,11 +3,11 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
-    validate_batch_size, BatchResult, BillOfMaterials, BomComponent, BomFilter, BomRepository,
-    BomStatus, CommerceError, CreateBom, CreateBomComponent, Result, UpdateBom,
+    BatchResult, BillOfMaterials, BomComponent, BomFilter, BomRepository, BomStatus, CommerceError,
+    CreateBom, CreateBomComponent, Result, UpdateBom, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -296,9 +296,7 @@ impl PgBomRepository {
     ) -> Result<BomComponent> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let uom = component
-            .unit_of_measure
-            .unwrap_or_else(|| "each".to_string());
+        let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
 
         sqlx::query(
             r#"
@@ -343,9 +341,7 @@ impl PgBomRepository {
         component: CreateBomComponent,
     ) -> Result<BomComponent> {
         let now = Utc::now();
-        let uom = component
-            .unit_of_measure
-            .unwrap_or_else(|| "each".to_string());
+        let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
 
         sqlx::query(
             "UPDATE manufacturing_bom_components SET component_product_id = $1, component_sku = $2, name = $3, quantity = $4, unit_of_measure = $5, position = $6, notes = $7, updated_at = $8 WHERE id = $9",
@@ -388,14 +384,8 @@ impl PgBomRepository {
 
     /// Activate BOM (async)
     pub async fn activate_async(&self, id: Uuid) -> Result<BillOfMaterials> {
-        self.update_async(
-            id,
-            UpdateBom {
-                status: Some(BomStatus::Active),
-                ..Default::default()
-            },
-        )
-        .await
+        self.update_async(id, UpdateBom { status: Some(BomStatus::Active), ..Default::default() })
+            .await
     }
 
     /// Count BOMs (async)
@@ -485,10 +475,8 @@ impl PgBomRepository {
             if let Some(comp_inputs) = input.components {
                 for comp_input in comp_inputs {
                     let comp_id = Uuid::new_v4();
-                    let uom = comp_input
-                        .unit_of_measure
-                        .clone()
-                        .unwrap_or_else(|| "each".to_string());
+                    let uom =
+                        comp_input.unit_of_measure.clone().unwrap_or_else(|| "each".to_string());
 
                     sqlx::query(
                         r#"
@@ -598,10 +586,7 @@ impl PgBomRepository {
 
             let existing = Self::row_to_bom(
                 existing_row,
-                existing_components
-                    .into_iter()
-                    .map(Self::row_to_component)
-                    .collect(),
+                existing_components.into_iter().map(Self::row_to_component).collect(),
             )?;
 
             let new_name = input.name.unwrap_or(existing.name);
@@ -641,10 +626,7 @@ impl PgBomRepository {
 
             boms.push(Self::row_to_bom(
                 updated_row,
-                updated_components
-                    .into_iter()
-                    .map(Self::row_to_component)
-                    .collect(),
+                updated_components.into_iter().map(Self::row_to_component).collect(),
             )?);
         }
 

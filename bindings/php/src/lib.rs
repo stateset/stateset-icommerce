@@ -11,8 +11,8 @@
 //! ```
 
 use ext_php_rs::prelude::*;
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use stateset_embedded::Commerce as RustCommerce;
 use std::sync::{Arc, Mutex};
 
@@ -22,16 +22,13 @@ use std::sync::{Arc, Mutex};
 
 macro_rules! lock_commerce {
     ($commerce:expr) => {
-        $commerce
-            .lock()
-            .map_err(|e| PhpException::default(format!("Lock error: {}", e)))?
+        $commerce.lock().map_err(|e| PhpException::default(format!("Lock error: {}", e)))?
     };
 }
 
 macro_rules! parse_uuid {
     ($id:expr, $name:expr) => {
-        $id.parse()
-            .map_err(|_| PhpException::default(format!("Invalid {} UUID", $name)))?
+        $id.parse().map_err(|_| PhpException::default(format!("Invalid {} UUID", $name)))?
     };
 }
 
@@ -66,189 +63,127 @@ impl Commerce {
         let commerce = RustCommerce::new(&db_path)
             .map_err(|e| PhpException::default(format!("Failed to initialize commerce: {}", e)))?;
 
-        Ok(Self {
-            inner: Arc::new(Mutex::new(commerce)),
-        })
+        Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
     }
 
     pub fn customers(&self) -> Customers {
-        Customers {
-            commerce: self.inner.clone(),
-        }
+        Customers { commerce: self.inner.clone() }
     }
 
     pub fn orders(&self) -> Orders {
-        Orders {
-            commerce: self.inner.clone(),
-        }
+        Orders { commerce: self.inner.clone() }
     }
 
     pub fn products(&self) -> Products {
-        Products {
-            commerce: self.inner.clone(),
-        }
+        Products { commerce: self.inner.clone() }
     }
 
     pub fn inventory(&self) -> Inventory {
-        Inventory {
-            commerce: self.inner.clone(),
-        }
+        Inventory { commerce: self.inner.clone() }
     }
 
     pub fn returns(&self) -> Returns {
-        Returns {
-            commerce: self.inner.clone(),
-        }
+        Returns { commerce: self.inner.clone() }
     }
 
     pub fn payments(&self) -> Payments {
-        Payments {
-            commerce: self.inner.clone(),
-        }
+        Payments { commerce: self.inner.clone() }
     }
 
     pub fn shipments(&self) -> Shipments {
-        Shipments {
-            commerce: self.inner.clone(),
-        }
+        Shipments { commerce: self.inner.clone() }
     }
 
     pub fn warranties(&self) -> Warranties {
-        Warranties {
-            commerce: self.inner.clone(),
-        }
+        Warranties { commerce: self.inner.clone() }
     }
 
     pub fn purchase_orders(&self) -> PurchaseOrders {
-        PurchaseOrders {
-            commerce: self.inner.clone(),
-        }
+        PurchaseOrders { commerce: self.inner.clone() }
     }
 
     pub fn invoices(&self) -> Invoices {
-        Invoices {
-            commerce: self.inner.clone(),
-        }
+        Invoices { commerce: self.inner.clone() }
     }
 
     pub fn bom(&self) -> BomApi {
-        BomApi {
-            commerce: self.inner.clone(),
-        }
+        BomApi { commerce: self.inner.clone() }
     }
 
     pub fn work_orders(&self) -> WorkOrders {
-        WorkOrders {
-            commerce: self.inner.clone(),
-        }
+        WorkOrders { commerce: self.inner.clone() }
     }
 
     pub fn carts(&self) -> Carts {
-        Carts {
-            commerce: self.inner.clone(),
-        }
+        Carts { commerce: self.inner.clone() }
     }
 
     pub fn analytics(&self) -> Analytics {
-        Analytics {
-            commerce: self.inner.clone(),
-        }
+        Analytics { commerce: self.inner.clone() }
     }
 
     pub fn currency(&self) -> CurrencyOps {
-        CurrencyOps {
-            commerce: self.inner.clone(),
-        }
+        CurrencyOps { commerce: self.inner.clone() }
     }
 
     pub fn subscriptions(&self) -> Subscriptions {
-        Subscriptions {
-            commerce: self.inner.clone(),
-        }
+        Subscriptions { commerce: self.inner.clone() }
     }
 
     pub fn promotions(&self) -> Promotions {
-        Promotions {
-            commerce: self.inner.clone(),
-        }
+        Promotions { commerce: self.inner.clone() }
     }
 
     pub fn tax(&self) -> Tax {
-        Tax {
-            commerce: self.inner.clone(),
-        }
+        Tax { commerce: self.inner.clone() }
     }
 
     pub fn quality(&self) -> Quality {
-        Quality {
-            commerce: self.inner.clone(),
-        }
+        Quality { commerce: self.inner.clone() }
     }
 
     pub fn lots(&self) -> Lots {
-        Lots {
-            commerce: self.inner.clone(),
-        }
+        Lots { commerce: self.inner.clone() }
     }
 
     pub fn serials(&self) -> Serials {
-        Serials {
-            commerce: self.inner.clone(),
-        }
+        Serials { commerce: self.inner.clone() }
     }
 
     pub fn warehouse(&self) -> WarehouseApi {
-        WarehouseApi {
-            commerce: self.inner.clone(),
-        }
+        WarehouseApi { commerce: self.inner.clone() }
     }
 
     pub fn receiving(&self) -> Receiving {
-        Receiving {
-            commerce: self.inner.clone(),
-        }
+        Receiving { commerce: self.inner.clone() }
     }
 
     pub fn fulfillment(&self) -> Fulfillment {
-        Fulfillment {
-            commerce: self.inner.clone(),
-        }
+        Fulfillment { commerce: self.inner.clone() }
     }
 
     pub fn accounts_payable(&self) -> AccountsPayable {
-        AccountsPayable {
-            commerce: self.inner.clone(),
-        }
+        AccountsPayable { commerce: self.inner.clone() }
     }
 
     pub fn accounts_receivable(&self) -> AccountsReceivable {
-        AccountsReceivable {
-            commerce: self.inner.clone(),
-        }
+        AccountsReceivable { commerce: self.inner.clone() }
     }
 
     pub fn cost_accounting(&self) -> CostAccounting {
-        CostAccounting {
-            commerce: self.inner.clone(),
-        }
+        CostAccounting { commerce: self.inner.clone() }
     }
 
     pub fn credit(&self) -> CreditApi {
-        CreditApi {
-            commerce: self.inner.clone(),
-        }
+        CreditApi { commerce: self.inner.clone() }
     }
 
     pub fn backorders(&self) -> Backorders {
-        Backorders {
-            commerce: self.inner.clone(),
-        }
+        Backorders { commerce: self.inner.clone() }
     }
 
     pub fn general_ledger(&self) -> GeneralLedger {
-        GeneralLedger {
-            commerce: self.inner.clone(),
-        }
+        GeneralLedger { commerce: self.inner.clone() }
     }
 }
 
@@ -476,10 +411,7 @@ impl OrderItem {
     }
 
     pub fn __to_string(&self) -> String {
-        format!(
-            "OrderItem(sku={}, qty={}, price={})",
-            self.sku, self.quantity, self.unit_price
-        )
+        format!("OrderItem(sku={}, qty={}, price={})", self.sku, self.quantity, self.unit_price)
     }
 }
 
@@ -636,23 +568,12 @@ impl Orders {
         let order_items: Vec<stateset_core::CreateOrderItem> = items
             .into_iter()
             .map(|h| {
-                let sku: String = h
-                    .get("sku")
-                    .and_then(|v| v.string().ok())
-                    .unwrap_or_default();
-                let name: String = h
-                    .get("name")
-                    .and_then(|v| v.string().ok())
-                    .unwrap_or_default();
-                let quantity: i32 = h
-                    .get("quantity")
-                    .and_then(|v| v.long().ok())
-                    .map(|l| l as i32)
-                    .unwrap_or(1);
-                let unit_price: f64 = h
-                    .get("unit_price")
-                    .and_then(|v| v.double().ok())
-                    .unwrap_or(0.0);
+                let sku: String = h.get("sku").and_then(|v| v.string().ok()).unwrap_or_default();
+                let name: String = h.get("name").and_then(|v| v.string().ok()).unwrap_or_default();
+                let quantity: i32 =
+                    h.get("quantity").and_then(|v| v.long().ok()).map(|l| l as i32).unwrap_or(1);
+                let unit_price: f64 =
+                    h.get("unit_price").and_then(|v| v.double().ok()).unwrap_or(0.0);
 
                 stateset_core::CreateOrderItem {
                     product_id: Default::default(),
@@ -896,10 +817,7 @@ impl Product {
     }
 
     pub fn __to_string(&self) -> String {
-        format!(
-            "Product(id={}, name={}, status={})",
-            self.id, self.name, self.status
-        )
+        format!("Product(id={}, name={}, status={})", self.id, self.name, self.status)
     }
 }
 
@@ -1083,10 +1001,7 @@ impl InventoryItem {
     }
 
     pub fn __to_string(&self) -> String {
-        format!(
-            "InventoryItem(sku={}, available={})",
-            self.sku, self.quantity_available
-        )
+        format!("InventoryItem(sku={}, available={})", self.sku, self.quantity_available)
     }
 }
 
@@ -1278,10 +1193,7 @@ impl Return {
     }
 
     pub fn __to_string(&self) -> String {
-        format!(
-            "Return(id={}, status={}, refund={})",
-            self.id, self.status, self.refund_amount
-        )
+        format!("Return(id={}, status={}, refund={})", self.id, self.status, self.refund_amount)
     }
 }
 
@@ -1314,11 +1226,7 @@ impl Returns {
 
         let ret = commerce
             .returns()
-            .create(stateset_core::CreateReturn {
-                order_id: uuid,
-                reason,
-                ..Default::default()
-            })
+            .create(stateset_core::CreateReturn { order_id: uuid, reason, ..Default::default() })
             .map_err(|e| PhpException::default(format!("Failed to create return: {}", e)))?;
 
         Ok(ret.into())
@@ -1975,10 +1883,7 @@ impl Warranty {
     }
 
     pub fn __to_string(&self) -> String {
-        format!(
-            "Warranty(id={}, type={}, status={})",
-            self.id, self.warranty_type, self.status
-        )
+        format!("Warranty(id={}, type={}, status={})", self.id, self.warranty_type, self.status)
     }
 }
 
@@ -2861,10 +2766,7 @@ impl BillOfMaterials {
     }
 
     pub fn __to_string(&self) -> String {
-        format!(
-            "BillOfMaterials(id={}, name={}, version={})",
-            self.id, self.name, self.version
-        )
+        format!("BillOfMaterials(id={}, name={}, version={})", self.id, self.name, self.version)
     }
 }
 
@@ -4303,11 +4205,7 @@ impl Lots {
 
         let lot = commerce
             .lots()
-            .create(stateset_core::CreateLot {
-                sku,
-                quantity_produced,
-                ..Default::default()
-            })
+            .create(stateset_core::CreateLot { sku, quantity_produced, ..Default::default() })
             .map_err(|e| PhpException::default(format!("Failed to create lot: {}", e)))?;
 
         Ok(lot.id.to_string())
@@ -4378,11 +4276,7 @@ impl Serials {
 
         let serial = commerce
             .serials()
-            .create(stateset_core::CreateSerial {
-                sku,
-                lot_number,
-                ..Default::default()
-            })
+            .create(stateset_core::CreateSerial { sku, lot_number, ..Default::default() })
             .map_err(|e| PhpException::default(format!("Failed to create serial: {}", e)))?;
 
         Ok(serial.serial_number)

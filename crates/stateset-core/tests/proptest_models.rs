@@ -141,6 +141,7 @@ fn valid_order_status_transitions(from: OrderStatus) -> Vec<OrderStatus> {
         OrderStatus::Delivered => vec![OrderStatus::Refunded],
         OrderStatus::Cancelled => vec![],
         OrderStatus::Refunded => vec![],
+        _ => vec![],
     }
 }
 

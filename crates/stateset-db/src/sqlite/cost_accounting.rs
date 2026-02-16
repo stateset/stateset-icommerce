@@ -5,11 +5,12 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    generate_cost_adjustment_number, CommerceError, CostAccountingRepository, CostAdjustment,
-    CostAdjustmentFilter, CostAdjustmentStatus, CostLayer, CostLayerFilter, CostMethod, CostRollup,
-    CostTransaction, CostTransactionFilter, CostTransactionType, CostVariance, CostVarianceFilter,
+    CommerceError, CostAccountingRepository, CostAdjustment, CostAdjustmentFilter,
+    CostAdjustmentStatus, CostLayer, CostLayerFilter, CostMethod, CostRollup, CostTransaction,
+    CostTransactionFilter, CostTransactionType, CostVariance, CostVarianceFilter,
     CreateCostAdjustment, CreateCostLayer, InventoryValuation, IssueCostLayers, ItemCost,
     ItemCostFilter, RecordCostVariance, Result, SetItemCost, SkuCostSummary,
+    generate_cost_adjustment_number,
 };
 use uuid::Uuid;
 
@@ -27,7 +28,7 @@ impl SqliteCostAccountingRepository {
         Self { pool }
     }
 
-    fn row_to_item_cost(&self, row: &rusqlite::Row) -> rusqlite::Result<ItemCost> {
+    fn row_to_item_cost(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<ItemCost> {
         Ok(ItemCost {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "item_cost", "id")?,
             sku: row.get(1)?,
@@ -65,7 +66,7 @@ impl SqliteCostAccountingRepository {
         })
     }
 
-    fn row_to_cost_layer(&self, row: &rusqlite::Row) -> rusqlite::Result<CostLayer> {
+    fn row_to_cost_layer(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<CostLayer> {
         Ok(CostLayer {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_layer", "id")?,
             sku: row.get(1)?,
@@ -90,7 +91,10 @@ impl SqliteCostAccountingRepository {
         })
     }
 
-    fn row_to_cost_transaction(&self, row: &rusqlite::Row) -> rusqlite::Result<CostTransaction> {
+    fn row_to_cost_transaction(
+        &self,
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<CostTransaction> {
         Ok(CostTransaction {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_transaction", "id")?,
             sku: row.get(1)?,
@@ -130,7 +134,7 @@ impl SqliteCostAccountingRepository {
         })
     }
 
-    fn row_to_cost_variance(&self, row: &rusqlite::Row) -> rusqlite::Result<CostVariance> {
+    fn row_to_cost_variance(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<CostVariance> {
         Ok(CostVariance {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_variance", "id")?,
             sku: row.get(1)?,
@@ -185,7 +189,7 @@ impl SqliteCostAccountingRepository {
         })
     }
 
-    fn row_to_cost_adjustment(&self, row: &rusqlite::Row) -> rusqlite::Result<CostAdjustment> {
+    fn row_to_cost_adjustment(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<CostAdjustment> {
         Ok(CostAdjustment {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_adjustment", "id")?,
             adjustment_number: row.get(1)?,
@@ -223,7 +227,7 @@ impl SqliteCostAccountingRepository {
         })
     }
 
-    fn row_to_cost_rollup(&self, row: &rusqlite::Row) -> rusqlite::Result<CostRollup> {
+    fn row_to_cost_rollup(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<CostRollup> {
         Ok(CostRollup {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_rollup", "id")?,
             sku: row.get(1)?,
@@ -266,10 +270,7 @@ impl SqliteCostAccountingRepository {
 
 impl CostAccountingRepository for SqliteCostAccountingRepository {
     fn get_item_cost(&self, sku: &str) -> Result<Option<ItemCost>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, sku, cost_method, standard_cost, average_cost, last_cost,
                     material_cost, labor_cost, overhead_cost, currency, effective_date,
@@ -303,10 +304,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let existing = self.get_item_cost(&sku)?;
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             if existing.is_some() {
                 // Update existing
                 conn.execute(
@@ -370,10 +368,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn list_item_costs(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, sku, cost_method, standard_cost, average_cost, last_cost,
                     material_cost, labor_cost, overhead_cost, currency, effective_date,
@@ -432,10 +427,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         }
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             // Calculate new weighted average
             // Get current quantity from inventory
             let sku_param = sku.to_string();
@@ -481,10 +473,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let now = Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE item_costs SET last_cost = ?, updated_at = ? WHERE sku = ?",
                 rusqlite::params![unit_cost.to_string(), now.to_rfc3339(), sku],
@@ -501,10 +490,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let total_cost = input.quantity * input.unit_cost;
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO cost_layers (id, sku, layer_date, quantity, remaining_quantity,
                     unit_cost, total_cost, source_type, source_id, lot_id, location_id, created_at)
@@ -531,10 +517,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn get_cost_layer(&self, id: Uuid) -> Result<Option<CostLayer>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, sku, layer_date, quantity, remaining_quantity, unit_cost, total_cost,
                     source_type, source_id, lot_id, location_id, created_at
@@ -551,10 +534,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn list_cost_layers(&self, filter: CostLayerFilter) -> Result<Vec<CostLayer>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, sku, layer_date, quantity, remaining_quantity, unit_cost, total_cost,
                     source_type, source_id, lot_id, location_id, created_at
@@ -594,10 +574,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn issue_fifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
 
@@ -643,10 +620,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn issue_lifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
 
@@ -693,10 +667,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn get_layers_remaining(&self, sku: &str) -> Result<Decimal> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let sku_param = sku.to_string();
         let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
         let result = sum_decimal_query(
@@ -721,10 +692,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         reference_id: Option<Uuid>,
         notes: Option<&str>,
     ) -> Result<CostTransaction> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let total_cost = quantity * unit_cost;
@@ -768,10 +736,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         &self,
         filter: CostTransactionFilter,
     ) -> Result<Vec<CostTransaction>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, sku, transaction_type, quantity, unit_cost, total_cost,
                     layer_id, reference_type, reference_id, notes, created_at
@@ -797,9 +762,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
-            .query_map(param_refs.as_slice(), |row| {
-                self.row_to_cost_transaction(row)
-            })
+            .query_map(param_refs.as_slice(), |row| self.row_to_cost_transaction(row))
             .map_err(map_db_error)?;
 
         let mut txns = Vec::new();
@@ -810,10 +773,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn record_variance(&self, input: RecordCostVariance) -> Result<CostVariance> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -868,10 +828,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn list_variances(&self, filter: CostVarianceFilter) -> Result<Vec<CostVariance>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, sku, variance_type, variance_date, standard_cost, actual_cost,
                     variance_amount, variance_percent, quantity, total_variance,
@@ -909,10 +866,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn get_variance_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Decimal> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let from_param = from.to_rfc3339();
         let to_param = to.to_rfc3339();
         let params: [&dyn rusqlite::ToSql; 2] = [&from_param, &to_param];
@@ -928,19 +882,14 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let adjustment_number = generate_cost_adjustment_number();
 
         // Get current cost
-        let current_cost = self
-            .get_item_cost(&input.sku)?
-            .map(|c| c.standard_cost)
-            .unwrap_or_default();
+        let current_cost =
+            self.get_item_cost(&input.sku)?.map(|c| c.standard_cost).unwrap_or_default();
         let adjustment_amount = input.new_cost - current_cost;
 
         conn.execute(
@@ -967,10 +916,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn get_adjustment(&self, id: Uuid) -> Result<Option<CostAdjustment>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, adjustment_number, sku, adjustment_type, previous_cost, new_cost,
                     adjustment_amount, reason, approved_by, approved_at, status, created_by, created_at
@@ -987,10 +933,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn list_adjustments(&self, filter: CostAdjustmentFilter) -> Result<Vec<CostAdjustment>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, adjustment_number, sku, adjustment_type, previous_cost, new_cost,
                     adjustment_amount, reason, approved_by, approved_at, status, created_by, created_at
@@ -1016,9 +959,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
-            .query_map(param_refs.as_slice(), |row| {
-                self.row_to_cost_adjustment(row)
-            })
+            .query_map(param_refs.as_slice(), |row| self.row_to_cost_adjustment(row))
             .map_err(map_db_error)?;
 
         let mut adjustments = Vec::new();
@@ -1029,10 +970,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn approve_adjustment(&self, id: Uuid, approved_by: &str) -> Result<CostAdjustment> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
@@ -1050,10 +988,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn apply_adjustment(&self, id: Uuid) -> Result<CostAdjustment> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let adjustment = self.get_adjustment(id)?.ok_or(CommerceError::NotFound)?;
 
@@ -1081,10 +1016,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn reject_adjustment(&self, id: Uuid) -> Result<CostAdjustment> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "UPDATE cost_adjustments SET status = ? WHERE id = ?",
@@ -1096,18 +1028,12 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn calculate_rollup(&self, sku: &str, bom_id: Option<Uuid>) -> Result<CostRollup> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
         // Get previous cost
-        let previous_cost = self
-            .get_rollup(sku)?
-            .map(|r| r.total_cost)
-            .unwrap_or_default();
+        let previous_cost = self.get_rollup(sku)?.map(|r| r.total_cost).unwrap_or_default();
 
         // Calculate from BOM components if bom_id provided
         let (material_cost, labor_cost, overhead_cost) = if let Some(bom_id) = bom_id {
@@ -1184,10 +1110,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn get_rollup(&self, sku: &str) -> Result<Option<CostRollup>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, sku, bom_id, rollup_date, material_cost, labor_cost, overhead_cost,
                     total_cost, previous_cost, cost_change, created_at
@@ -1204,10 +1127,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn get_inventory_valuation(&self, cost_method: CostMethod) -> Result<InventoryValuation> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         let mut stmt = conn
@@ -1259,6 +1179,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                 CostMethod::Average => average_cost,
                 CostMethod::Fifo | CostMethod::Lifo => average_cost,
                 CostMethod::Specific => last_cost,
+                _ => average_cost,
             };
 
             total_quantity += quantity;
@@ -1281,10 +1202,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn get_sku_cost_summary(&self, sku: &str) -> Result<Option<SkuCostSummary>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT

@@ -183,6 +183,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "auto_impl"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdcb70bdbc4d478427380519163274ac86e52916e10f0a8889adf0f96d3fee7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2632,6 +2643,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest-derive"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ee1c9ac207483d5e7db4940700de86a9aae46ef90c48b57f99fe7edb8345e49"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
 name = "prost"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3823,11 +3845,14 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 name = "stateset-core"
 version = "0.7.0"
 dependencies = [
+ "async-trait",
+ "auto_impl",
  "base64 0.22.1",
  "chrono",
  "criterion",
  "ed25519-dalek",
  "hex",
+ "insta",
  "once_cell",
  "prometheus",
  "proptest",
@@ -3839,7 +3864,11 @@ dependencies = [
  "serde_jcs",
  "serde_json",
  "sha2",
+ "stateset-primitives",
+ "stateset-test-utils",
+ "strum",
  "thiserror 1.0.69",
+ "tokio",
  "uuid",
 ]
 
@@ -4045,6 +4074,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "stateset-primitives"
+version = "0.7.0"
+dependencies = [
+ "proptest",
+ "proptest-derive",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "stateset-swift"
 version = "0.7.0"
 dependencies = [
@@ -4057,6 +4100,20 @@ dependencies = [
  "stateset-core",
  "stateset-embedded",
  "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "stateset-test-utils"
+version = "0.7.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "stateset-core",
+ "stateset-primitives",
  "uuid",
 ]
 
@@ -4082,6 +4139,28 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "strum"
+version = "0.26.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.114",
+]
 
 [[package]]
 name = "subtle"

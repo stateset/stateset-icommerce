@@ -28,9 +28,7 @@ impl SqliteLotRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn generate_lot_number(sku: &str) -> String {
@@ -41,7 +39,7 @@ impl SqliteLotRepository {
         )
     }
 
-    fn row_to_lot(row: &rusqlite::Row) -> rusqlite::Result<Lot> {
+    fn row_to_lot(row: &rusqlite::Row<'_>) -> rusqlite::Result<Lot> {
         let attributes_str: String = row.get("attributes")?;
         let attributes: serde_json::Value = parse_json_row(&attributes_str, "lot", "attributes")?;
 
@@ -121,14 +119,10 @@ impl SqliteLotRepository {
         })
     }
 
-    fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<LotTransaction> {
+    fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<LotTransaction> {
         Ok(LotTransaction {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "lot_transaction", "id")?,
-            lot_id: parse_uuid_row(
-                &row.get::<_, String>("lot_id")?,
-                "lot_transaction",
-                "lot_id",
-            )?,
+            lot_id: parse_uuid_row(&row.get::<_, String>("lot_id")?, "lot_transaction", "lot_id")?,
             transaction_type: parse_enum_row(
                 &row.get::<_, String>("transaction_type")?,
                 "lot_transaction",
@@ -157,14 +151,10 @@ impl SqliteLotRepository {
         })
     }
 
-    fn row_to_certificate(row: &rusqlite::Row) -> rusqlite::Result<LotCertificate> {
+    fn row_to_certificate(row: &rusqlite::Row<'_>) -> rusqlite::Result<LotCertificate> {
         Ok(LotCertificate {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "lot_certificate", "id")?,
-            lot_id: parse_uuid_row(
-                &row.get::<_, String>("lot_id")?,
-                "lot_certificate",
-                "lot_id",
-            )?,
+            lot_id: parse_uuid_row(&row.get::<_, String>("lot_id")?, "lot_certificate", "lot_id")?,
             certificate_type: parse_enum_row(
                 &row.get::<_, String>("certificate_type")?,
                 "lot_certificate",
@@ -252,9 +242,7 @@ impl LotRepository for SqliteLotRepository {
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let id = Uuid::new_v4();
-        let lot_number = input
-            .lot_number
-            .unwrap_or_else(|| Self::generate_lot_number(&input.sku));
+        let lot_number = input.lot_number.unwrap_or_else(|| Self::generate_lot_number(&input.sku));
         let now = Utc::now();
         let production_date = input.production_date.unwrap_or(now);
         let attributes_json = input
@@ -297,10 +285,7 @@ impl LotRepository for SqliteLotRepository {
 
         // Record initial transaction
         let tx_id = Uuid::new_v4();
-        let reference_id = input
-            .work_order_id
-            .or(input.purchase_order_id)
-            .unwrap_or(id);
+        let reference_id = input.work_order_id.or(input.purchase_order_id).unwrap_or(id);
         let reference_type = if input.work_order_id.is_some() {
             "work_order"
         } else if input.purchase_order_id.is_some() {
@@ -369,11 +354,8 @@ impl LotRepository for SqliteLotRepository {
 
     fn get(&self, id: Uuid) -> Result<Option<Lot>> {
         let conn = self.conn()?;
-        let result = conn.query_row(
-            "SELECT * FROM lots WHERE id = ?",
-            [id.to_string()],
-            Self::row_to_lot,
-        );
+        let result =
+            conn.query_row("SELECT * FROM lots WHERE id = ?", [id.to_string()], Self::row_to_lot);
 
         match result {
             Ok(lot) => Ok(Some(lot)),
@@ -435,8 +417,7 @@ impl LotRepository for SqliteLotRepository {
 
         let sql = format!("UPDATE lots SET {} WHERE id = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -507,8 +488,7 @@ impl LotRepository for SqliteLotRepository {
             ));
         }
 
-        conn.execute("DELETE FROM lots WHERE id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
+        conn.execute("DELETE FROM lots WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
         Ok(())
     }
 
@@ -554,10 +534,7 @@ impl LotRepository for SqliteLotRepository {
             input.lot_id,
             LotTransactionType::Adjusted,
             input.quantity_change,
-            input
-                .reference_type
-                .as_deref()
-                .unwrap_or("manual_adjustment"),
+            input.reference_type.as_deref().unwrap_or("manual_adjustment"),
             input.reference_id.unwrap_or(input.lot_id),
             None,
             input.location_id,
@@ -599,11 +576,8 @@ impl LotRepository for SqliteLotRepository {
         let new_remaining = lot.quantity_remaining - input.quantity;
 
         // Check if consumed completely
-        let new_status = if new_remaining <= Decimal::ZERO {
-            LotStatus::Consumed
-        } else {
-            lot.status
-        };
+        let new_status =
+            if new_remaining <= Decimal::ZERO { LotStatus::Consumed } else { lot.status };
 
         // Update lot
         tx.execute(
@@ -664,9 +638,7 @@ impl LotRepository for SqliteLotRepository {
 
         let reservation_id = Uuid::new_v4();
         let now = Utc::now();
-        let expires_at = input
-            .expires_in_seconds
-            .map(|s| now + chrono::Duration::seconds(s));
+        let expires_at = input.expires_in_seconds.map(|s| now + chrono::Duration::seconds(s));
 
         // Create reservation
         tx.execute(
@@ -894,9 +866,8 @@ impl LotRepository for SqliteLotRepository {
         }
 
         let new_lot_id = Uuid::new_v4();
-        let new_lot_number = input
-            .new_lot_number
-            .unwrap_or_else(|| format!("{}-SPLIT", original.lot_number));
+        let new_lot_number =
+            input.new_lot_number.unwrap_or_else(|| format!("{}-SPLIT", original.lot_number));
         let now = Utc::now();
 
         // Create new lot
@@ -915,10 +886,7 @@ impl LotRepository for SqliteLotRepository {
                 &new_lot_number,
                 input.quantity.to_string(),
                 input.quantity.to_string(),
-                input
-                    .reason
-                    .as_ref()
-                    .map(|r| format!("Split from {}: {}", original.lot_number, r)),
+                input.reason.as_ref().map(|r| format!("Split from {}: {}", original.lot_number, r)),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
                 input.lot_id.to_string(),
@@ -1015,9 +983,7 @@ impl LotRepository for SqliteLotRepository {
             lots_to_consume.push((lot.id, lot.lot_number, lot.quantity_remaining));
         }
 
-        let sku = sku.ok_or(CommerceError::ValidationError(
-            "No lots to merge".to_string(),
-        ))?;
+        let sku = sku.ok_or(CommerceError::ValidationError("No lots to merge".to_string()))?;
 
         // Create new merged lot
         let new_lot_id = Uuid::new_v4();
@@ -1105,11 +1071,7 @@ impl LotRepository for SqliteLotRepository {
 
         // Get lot
         let lot: Lot = tx
-            .query_row(
-                "SELECT * FROM lots WHERE id = ?",
-                [id.to_string()],
-                Self::row_to_lot,
-            )
+            .query_row("SELECT * FROM lots WHERE id = ?", [id.to_string()], Self::row_to_lot)
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
                 e => map_db_error(e),
@@ -1221,11 +1183,7 @@ impl LotRepository for SqliteLotRepository {
         );
 
         match result {
-            Ok(qty) => Ok(Some(parse_decimal_strict(
-                &qty,
-                "lot_location",
-                "quantity",
-            )?)),
+            Ok(qty) => Ok(Some(parse_decimal_strict(&qty, "lot_location", "quantity")?)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(map_db_error(e)),
         }
@@ -1319,11 +1277,8 @@ impl LotRepository for SqliteLotRepository {
 
     fn delete_certificate(&self, certificate_id: Uuid) -> Result<()> {
         let conn = self.conn()?;
-        conn.execute(
-            "DELETE FROM lot_certificates WHERE id = ?",
-            [certificate_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        conn.execute("DELETE FROM lot_certificates WHERE id = ?", [certificate_id.to_string()])
+            .map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1453,11 +1408,7 @@ impl LotRepository for SqliteLotRepository {
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
 
-        Ok(TraceabilityResult {
-            lot,
-            upstream,
-            downstream,
-        })
+        Ok(TraceabilityResult { lot, upstream, downstream })
     }
 
     fn count(&self, filter: LotFilter) -> Result<u64> {
@@ -1475,10 +1426,7 @@ impl LotRepository for SqliteLotRepository {
             params.push(Box::new(status.to_string()));
         }
 
-        let sql = format!(
-            "SELECT COUNT(*) FROM lots WHERE {}",
-            conditions.join(" AND ")
-        );
+        let sql = format!("SELECT COUNT(*) FROM lots WHERE {}", conditions.join(" AND "));
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 

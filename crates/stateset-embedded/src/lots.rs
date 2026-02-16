@@ -411,9 +411,6 @@ impl Lots {
 
     /// Get all quarantined lots.
     pub fn get_quarantined(&self) -> Result<Vec<Lot>> {
-        self.list(LotFilter {
-            status: Some(LotStatus::Quarantine),
-            ..Default::default()
-        })
+        self.list(LotFilter { status: Some(LotStatus::Quarantine), ..Default::default() })
     }
 }

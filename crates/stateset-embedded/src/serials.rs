@@ -393,19 +393,11 @@ impl Serials {
 
     /// Check if a serial is available for sale.
     pub fn is_available(&self, serial: &str) -> Result<bool> {
-        if let Some(s) = self.get_by_serial(serial)? {
-            Ok(s.is_available())
-        } else {
-            Ok(false)
-        }
+        if let Some(s) = self.get_by_serial(serial)? { Ok(s.is_available()) } else { Ok(false) }
     }
 
     /// Check if a serial can be shipped.
     pub fn can_ship(&self, serial: &str) -> Result<bool> {
-        if let Some(s) = self.get_by_serial(serial)? {
-            Ok(s.can_ship())
-        } else {
-            Ok(false)
-        }
+        if let Some(s) = self.get_by_serial(serial)? { Ok(s.can_ship()) } else { Ok(false) }
     }
 }

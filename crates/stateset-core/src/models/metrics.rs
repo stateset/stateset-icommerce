@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================================
 // Metric Types
@@ -42,20 +42,14 @@ impl Counter {
     pub fn add(&self, label_values: &[&str], value: u64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
         let mut values = self.values.write().unwrap_or_else(|e| e.into_inner());
-        values
-            .entry(key)
-            .or_insert_with(|| AtomicU64::new(0))
-            .fetch_add(value, Ordering::SeqCst);
+        values.entry(key).or_insert_with(|| AtomicU64::new(0)).fetch_add(value, Ordering::SeqCst);
     }
 
     /// Get the current counter value for the given label values
     pub fn get(&self, label_values: &[&str]) -> u64 {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
         let values = self.values.read().unwrap_or_else(|e| e.into_inner());
-        values
-            .get(&key)
-            .map(|v| v.load(Ordering::SeqCst))
-            .unwrap_or(0)
+        values.get(&key).map(|v| v.load(Ordering::SeqCst)).unwrap_or(0)
     }
 
     /// Render the counter in Prometheus exposition format
@@ -196,9 +190,7 @@ impl Histogram {
 
     /// Default buckets for request durations (in seconds)
     pub fn default_buckets() -> Vec<f64> {
-        vec![
-            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-        ]
+        vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
     }
 
     /// Record an observation value for the histogram
@@ -261,10 +253,7 @@ impl Histogram {
                 } else {
                     format!("{{{},le=\"{}\"}}", base_label_str, bucket)
                 };
-                output.push_str(&format!(
-                    "{}_bucket{} {}\n",
-                    self.name, label_str, cumulative
-                ));
+                output.push_str(&format!("{}_bucket{} {}\n", self.name, label_str, cumulative));
             }
 
             // +Inf bucket
@@ -296,6 +285,7 @@ impl Histogram {
 // ============================================================================
 
 /// Collection of commerce metrics
+// Debug is implemented manually because prometheus types do not derive Debug.
 pub struct CommerceMetrics {
     // Order metrics
     pub orders_created: Counter,
@@ -318,6 +308,12 @@ pub struct CommerceMetrics {
 
     // Error metrics
     pub errors: Counter,
+}
+
+impl std::fmt::Debug for CommerceMetrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommerceMetrics").finish_non_exhaustive()
+    }
 }
 
 impl CommerceMetrics {
@@ -421,6 +417,7 @@ impl Default for CommerceMetrics {
 /// Log level for structured logging
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -527,11 +524,8 @@ impl LogEntry {
         parts.push(self.message.clone());
 
         if !self.fields.is_empty() {
-            let fields_str: Vec<String> = self
-                .fields
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect();
+            let fields_str: Vec<String> =
+                self.fields.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
             parts.push(format!("{{{}}}", fields_str.join(", ")));
         }
 
@@ -540,6 +534,7 @@ impl LogEntry {
 }
 
 /// Commerce-specific log helpers
+#[derive(Debug)]
 pub struct CommerceLogger;
 
 impl CommerceLogger {

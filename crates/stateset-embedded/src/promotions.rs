@@ -35,9 +35,9 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    ApplyPromotionsRequest, ApplyPromotionsResult, CouponCode, CouponFilter, CreateCouponCode,
-    CreatePromotion, CreatePromotionCondition, Promotion, PromotionFilter, PromotionUsage, Result,
-    UpdatePromotion,
+    ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CouponCode, CouponFilter,
+    CreateCouponCode, CreatePromotion, CreatePromotionCondition, CustomerId, OrderId, Promotion,
+    PromotionFilter, PromotionId, PromotionUsage, Result, UpdatePromotion,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ impl Promotions {
     }
 
     /// Get a promotion by ID.
-    pub fn get(&self, id: Uuid) -> Result<Option<Promotion>> {
+    pub fn get(&self, id: PromotionId) -> Result<Option<Promotion>> {
         self.db.promotions().get(id)
     }
 
@@ -111,12 +111,12 @@ impl Promotions {
     }
 
     /// Update a promotion.
-    pub fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion> {
+    pub fn update(&self, id: PromotionId, input: UpdatePromotion) -> Result<Promotion> {
         self.db.promotions().update(id, input)
     }
 
     /// Delete a promotion.
-    pub fn delete(&self, id: Uuid) -> Result<()> {
+    pub fn delete(&self, id: PromotionId) -> Result<()> {
         self.db.promotions().delete(id)
     }
 
@@ -132,12 +132,12 @@ impl Promotions {
     /// commerce.promotions().activate(Uuid::new_v4())?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn activate(&self, id: Uuid) -> Result<Promotion> {
+    pub fn activate(&self, id: PromotionId) -> Result<Promotion> {
         self.db.promotions().activate(id)
     }
 
     /// Deactivate (pause) a promotion.
-    pub fn deactivate(&self, id: Uuid) -> Result<Promotion> {
+    pub fn deactivate(&self, id: PromotionId) -> Result<Promotion> {
         self.db.promotions().deactivate(id)
     }
 
@@ -281,11 +281,11 @@ impl Promotions {
     #[allow(clippy::too_many_arguments)]
     pub fn record_usage(
         &self,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
         coupon_id: Option<Uuid>,
-        customer_id: Option<Uuid>,
-        order_id: Option<Uuid>,
-        cart_id: Option<Uuid>,
+        customer_id: Option<CustomerId>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
@@ -306,31 +306,22 @@ impl Promotions {
 
     /// Get all active promotions.
     pub fn get_active(&self) -> Result<Vec<Promotion>> {
-        self.list(PromotionFilter {
-            is_active: Some(true),
-            ..Default::default()
-        })
+        self.list(PromotionFilter { is_active: Some(true), ..Default::default() })
     }
 
     /// Check if a promotion is currently valid.
-    pub fn is_valid(&self, id: Uuid) -> Result<bool> {
-        if let Some(promo) = self.get(id)? {
-            Ok(promo.is_active())
-        } else {
-            Ok(false)
-        }
+    pub fn is_valid(&self, id: PromotionId) -> Result<bool> {
+        if let Some(promo) = self.get(id)? { Ok(promo.is_active()) } else { Ok(false) }
     }
 
     /// Add a condition to an existing promotion.
     pub fn add_condition(
         &self,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
         condition: CreatePromotionCondition,
     ) -> Result<Promotion> {
         // Get current promotion
-        let promo = self
-            .get(promotion_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let promo = self.get(promotion_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Re-create with new condition
         // Note: In a production system, you'd want a separate conditions API

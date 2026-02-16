@@ -3,13 +3,13 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
-    validate_batch_size, validate_quantity, AdjustInventory, BatchResult, CommerceError,
-    CreateInventoryItem, InventoryBalance, InventoryFilter, InventoryItem, InventoryRepository,
-    InventoryReservation, InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory,
-    Result, StockLevel, TransactionType,
+    AdjustInventory, BatchResult, CommerceError, CreateInventoryItem, InventoryBalance,
+    InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
+    InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
+    TransactionType, validate_batch_size, validate_quantity,
 };
 use uuid::Uuid;
 
@@ -257,9 +257,7 @@ impl PgInventoryRepository {
         }
 
         let id = Uuid::new_v4();
-        let expires_at = input
-            .expires_in_seconds
-            .map(|s| now + chrono::Duration::seconds(s));
+        let expires_at = input.expires_in_seconds.map(|s| now + chrono::Duration::seconds(s));
 
         sqlx::query(
             r#"
@@ -860,9 +858,7 @@ impl PgInventoryRepository {
 
         // Create reservation
         let id = Uuid::new_v4();
-        let expires_at = input
-            .expires_in_seconds
-            .map(|s| now + chrono::Duration::seconds(s));
+        let expires_at = input.expires_in_seconds.map(|s| now + chrono::Duration::seconds(s));
 
         sqlx::query(
             r#"
@@ -1564,9 +1560,7 @@ impl InventoryRepository for PgInventoryRepository {
         &self,
         _transaction: InventoryTransaction,
     ) -> Result<InventoryTransaction> {
-        Err(CommerceError::Internal(
-            "record_transaction not implemented".to_string(),
-        ))
+        Err(CommerceError::Internal("record_transaction not implemented".to_string()))
     }
 
     fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>> {

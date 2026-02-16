@@ -145,7 +145,7 @@ proptest! {
             .iter()
             .zip(prices.iter())
             .map(|(&qty, &price)| CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: format!("SKU-{:03}", customer_id),
                 name: "Test Product".into(),
                 quantity: qty as i32,
@@ -157,7 +157,7 @@ proptest! {
         let order = commerce
             .orders()
             .create(CreateOrder {
-                customer_id,
+                customer_id: customer_id.into(),
                 items,
                 ..Default::default()
             });
@@ -200,9 +200,9 @@ fn test_concurrent_order_creation_preserves_consistency() {
         let commerce = Arc::clone(&commerce);
         let handle = std::thread::spawn(move || {
             commerce.orders().create(CreateOrder {
-                customer_id,
+                customer_id: customer_id.into(),
                 items: vec![CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: format!("SKU-{:03}", i),
                     name: "Test Product".into(),
                     quantity: 1,
@@ -233,10 +233,7 @@ fn test_concurrent_order_creation_preserves_consistency() {
     // Verify all orders exist
     let orders = commerce
         .orders()
-        .list(OrderFilter {
-            limit: Some(num_orders as u32),
-            ..Default::default()
-        })
+        .list(OrderFilter { limit: Some(num_orders as u32), ..Default::default() })
         .unwrap();
     assert_eq!(orders.len(), num_orders as usize);
 }
@@ -279,10 +276,7 @@ fn test_inventory_reserve_release_under_concurrent_modifications() {
                 // Try to release a reservation (may fail if none exist)
                 let reservation_id = reservations.lock().unwrap().pop();
                 if let Some(reservation_id) = reservation_id {
-                    commerce
-                        .inventory()
-                        .release_reservation(reservation_id)
-                        .ok();
+                    commerce.inventory().release_reservation(reservation_id).ok();
                 }
             }
         });

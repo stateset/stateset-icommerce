@@ -23,12 +23,10 @@ impl SqliteAgentValidationRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_request(row: &rusqlite::Row) -> rusqlite::Result<AgentValidationRequest> {
+    fn row_to_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentValidationRequest> {
         Ok(AgentValidationRequest {
             request_hash: row.get("request_hash")?,
             agent_registry: row.get("agent_registry")?,
@@ -43,7 +41,7 @@ impl SqliteAgentValidationRepository {
         })
     }
 
-    fn row_to_response(row: &rusqlite::Row) -> rusqlite::Result<AgentValidationResponse> {
+    fn row_to_response(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentValidationResponse> {
         Ok(AgentValidationResponse {
             id: Uuid::parse_str(&row.get::<_, String>("id")?).map_err(|e| {
                 rusqlite::Error::FromSqlConversionFailure(
@@ -96,8 +94,7 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
         let mut stmt = conn
             .prepare("SELECT * FROM agent_validation_requests WHERE request_hash = ?")
             .map_err(map_db_error)?;
-        stmt.query_row([request_hash], Self::row_to_request)
-            .map_err(map_db_error)
+        stmt.query_row([request_hash], Self::row_to_request).map_err(map_db_error)
     }
 
     fn respond_validation(
@@ -149,8 +146,7 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
             .prepare("SELECT * FROM agent_validation_responses WHERE id = ?")
             .map_err(map_db_error)?;
 
-        stmt.query_row([id.to_string()], Self::row_to_response)
-            .map_err(map_db_error)
+        stmt.query_row([id.to_string()], Self::row_to_response).map_err(map_db_error)
     }
 
     fn get_validation_status(&self, request_hash: &str) -> Result<Option<AgentValidationStatus>> {
@@ -215,10 +211,8 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
     ) -> Result<ValidationSummary> {
         let conn = self.conn()?;
         let mut conditions = vec!["agent_registry = ?".to_string(), "agent_id = ?".to_string()];
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![
-            Box::new(agent_registry.to_string()),
-            Box::new(agent_id.to_string()),
-        ];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(agent_registry.to_string()), Box::new(agent_id.to_string())];
 
         if let Some(validators) = validator_addresses {
             if !validators.is_empty() {
@@ -242,9 +236,7 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
 
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(rusqlite::params_from_iter(param_refs))
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(param_refs)).map_err(map_db_error)?;
 
         let mut count: u64 = 0;
         let mut sum: u64 = 0;
@@ -255,16 +247,10 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
         }
 
         if count == 0 {
-            return Ok(ValidationSummary {
-                count: 0,
-                average_response: 0,
-            });
+            return Ok(ValidationSummary { count: 0, average_response: 0 });
         }
 
-        Ok(ValidationSummary {
-            count,
-            average_response: (sum / count) as u8,
-        })
+        Ok(ValidationSummary { count, average_response: (sum / count) as u8 })
     }
 
     fn get_agent_validations(&self, agent_registry: &str, agent_id: &str) -> Result<Vec<String>> {

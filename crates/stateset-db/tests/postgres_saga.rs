@@ -1,7 +1,7 @@
 #[cfg(all(feature = "postgres", feature = "saga"))]
 use serde_json::json;
 #[cfg(all(feature = "postgres", feature = "saga"))]
-use stateset_db::{saga::SagaCoordinator, PostgresDatabase};
+use stateset_db::{PostgresDatabase, saga::SagaCoordinator};
 #[cfg(all(feature = "postgres", feature = "saga"))]
 use std::{env, sync::Arc};
 #[cfg(all(feature = "postgres", feature = "saga"))]
@@ -9,9 +9,7 @@ use uuid::Uuid;
 
 #[cfg(all(feature = "postgres", feature = "saga"))]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL")
-        .ok()
-        .or_else(|| env::var("DATABASE_URL").ok())
+    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
 }
 
 #[cfg(all(feature = "postgres", feature = "saga"))]
@@ -26,9 +24,7 @@ async fn postgres_saga_smoke() {
     };
 
     let db = Arc::new(
-        PostgresDatabase::connect(&url)
-            .await
-            .expect("connect to postgres and run migrations"),
+        PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations"),
     );
     let coordinator = SagaCoordinator::new(db);
 
@@ -57,26 +53,20 @@ async fn postgres_saga_smoke() {
     coordinator.start_saga(saga.id).await.expect("start saga");
 
     let result1 = coordinator
-        .execute_step(saga.id, step1.id, |_payload| async move {
-            Ok(json!({ "ok": true }))
-        })
+        .execute_step(saga.id, step1.id, |_payload| async move { Ok(json!({ "ok": true })) })
         .await
         .expect("execute step 1");
     assert_eq!(result1, json!({ "ok": true }));
 
     // Executing an already completed step should return the stored result without calling the handler.
     let result1_again = coordinator
-        .execute_step(saga.id, step1.id, |_payload| async move {
-            panic!("handler must not run")
-        })
+        .execute_step(saga.id, step1.id, |_payload| async move { panic!("handler must not run") })
         .await
         .expect("execute step 1 again");
     assert_eq!(result1_again, json!({ "ok": true }));
 
     coordinator
-        .execute_step(saga.id, step2.id, |_payload| async move {
-            Ok(json!({ "ok": true }))
-        })
+        .execute_step(saga.id, step2.id, |_payload| async move { Ok(json!({ "ok": true })) })
         .await
         .expect("execute step 2");
 
@@ -106,10 +96,7 @@ async fn postgres_saga_smoke() {
     let saga_row = coordinator.get_saga(saga.id).await.expect("get saga");
     assert_eq!(saga_row.status, stateset_db::saga::SagaStatus::RolledBack);
 
-    let steps = coordinator
-        .get_saga_steps(saga.id)
-        .await
-        .expect("get saga steps");
+    let steps = coordinator.get_saga_steps(saga.id).await.expect("get saga steps");
     assert_eq!(steps.len(), 2);
     for step in steps {
         assert!(step.rollback_at.is_some(), "expected rollback_at to be set");

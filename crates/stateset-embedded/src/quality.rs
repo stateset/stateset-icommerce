@@ -306,17 +306,11 @@ impl Quality {
 
     /// Get all open NCRs.
     pub fn get_open_ncrs(&self) -> Result<Vec<NonConformance>> {
-        self.list_ncrs(NonConformanceFilter {
-            status: Some(NcrStatus::Open),
-            ..Default::default()
-        })
+        self.list_ncrs(NonConformanceFilter { status: Some(NcrStatus::Open), ..Default::default() })
     }
 
     /// Get all active holds.
     pub fn get_active_holds(&self) -> Result<Vec<QualityHold>> {
-        self.list_holds(QualityHoldFilter {
-            active_only: Some(true),
-            ..Default::default()
-        })
+        self.list_holds(QualityHoldFilter { active_only: Some(true), ..Default::default() })
     }
 }

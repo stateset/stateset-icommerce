@@ -27,13 +27,9 @@ fn product_update_rejects_duplicate_slug() {
         })
         .expect("failed to create product");
 
-    let result = db.products().update(
-        second.id,
-        UpdateProduct {
-            slug: Some(first.slug.clone()),
-            ..Default::default()
-        },
-    );
+    let result = db
+        .products()
+        .update(second.id, UpdateProduct { slug: Some(first.slug.clone()), ..Default::default() });
 
     match result {
         Err(CommerceError::DuplicateSlug(_)) => {}
@@ -63,10 +59,7 @@ fn product_update_batch_atomic_rejects_duplicate_slug() {
 
     let result = db.products().update_batch_atomic(vec![(
         second.id,
-        UpdateProduct {
-            slug: Some(first.slug.clone()),
-            ..Default::default()
-        },
+        UpdateProduct { slug: Some(first.slug.clone()), ..Default::default() },
     )]);
 
     match result {

@@ -3,14 +3,13 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem};
-//! use uuid::Uuid;
+//! use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId};
 //!
 //! let commerce = Commerce::new("./store.db")?;
 //!
 //! // Create a shipment for an order
 //! let shipment = commerce.shipments().create(CreateShipment {
-//!     order_id: Uuid::new_v4(),
+//!     order_id: OrderId::new(),
 //!     recipient_name: "Alice Smith".into(),
 //!     shipping_address: "123 Main St, City, ST 12345".into(),
 //!     items: Some(vec![CreateShipmentItem {
@@ -32,8 +31,8 @@
 
 use crate::Database;
 use stateset_core::{
-    AddShipmentEvent, CreateShipment, CreateShipmentItem, Result, Shipment, ShipmentEvent,
-    ShipmentFilter, ShipmentItem,
+    AddShipmentEvent, CreateShipment, CreateShipmentItem, OrderId, Result, Shipment, ShipmentEvent,
+    ShipmentFilter, ShipmentId, ShipmentItem,
 };
 use stateset_observability::Metrics;
 use std::sync::Arc;
@@ -55,13 +54,12 @@ impl Shipments {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, ShippingCarrier};
-    /// use uuid::Uuid;
+    /// use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId, ShippingCarrier};
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let shipment = commerce.shipments().create(CreateShipment {
-    ///     order_id: Uuid::new_v4(),
+    ///     order_id: OrderId::new(),
     ///     carrier: Some(ShippingCarrier::Ups),
     ///     recipient_name: "John Doe".into(),
     ///     recipient_email: Some("john@example.com".into()),
@@ -78,13 +76,12 @@ impl Shipments {
     /// ```
     pub fn create(&self, input: CreateShipment) -> Result<Shipment> {
         let shipment = self.db.shipments().create(input)?;
-        self.metrics
-            .record_shipment_created(&shipment.id.to_string());
+        self.metrics.record_shipment_created(&shipment.id.to_string());
         Ok(shipment)
     }
 
     /// Get a shipment by ID
-    pub fn get(&self, id: Uuid) -> Result<Option<Shipment>> {
+    pub fn get(&self, id: ShipmentId) -> Result<Option<Shipment>> {
         self.db.shipments().get(id)
     }
 
@@ -99,7 +96,7 @@ impl Shipments {
     }
 
     /// Update a shipment
-    pub fn update(&self, id: Uuid, input: stateset_core::UpdateShipment) -> Result<Shipment> {
+    pub fn update(&self, id: ShipmentId, input: stateset_core::UpdateShipment) -> Result<Shipment> {
         self.db.shipments().update(id, input)
     }
 
@@ -111,17 +108,17 @@ impl Shipments {
     /// Get all shipments for an order
     ///
     /// An order may have multiple shipments for partial fulfillment.
-    pub fn for_order(&self, order_id: Uuid) -> Result<Vec<Shipment>> {
+    pub fn for_order(&self, order_id: OrderId) -> Result<Vec<Shipment>> {
         self.db.shipments().for_order(order_id)
     }
 
     /// Mark shipment as processing (being prepared)
-    pub fn mark_processing(&self, id: Uuid) -> Result<Shipment> {
+    pub fn mark_processing(&self, id: ShipmentId) -> Result<Shipment> {
         self.db.shipments().mark_processing(id)
     }
 
     /// Mark shipment as ready to ship
-    pub fn mark_ready(&self, id: Uuid) -> Result<Shipment> {
+    pub fn mark_ready(&self, id: ShipmentId) -> Result<Shipment> {
         self.db.shipments().mark_ready(id)
     }
 
@@ -130,61 +127,59 @@ impl Shipments {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::Commerce;
-    /// use uuid::Uuid;
+    /// use stateset_embedded::{Commerce, ShipmentId};
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// // Ship with a tracking number
     /// let shipment = commerce.shipments().ship(
-    ///     Uuid::new_v4(),
+    ///     ShipmentId::new(),
     ///     Some("1Z999AA10123456784".into())
     /// )?;
     ///
     /// println!("Tracking URL: {:?}", shipment.tracking_url);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn ship(&self, id: Uuid, tracking_number: Option<String>) -> Result<Shipment> {
+    pub fn ship(&self, id: ShipmentId, tracking_number: Option<String>) -> Result<Shipment> {
         self.db.shipments().ship(id, tracking_number)
     }
 
     /// Mark shipment as in transit
-    pub fn mark_in_transit(&self, id: Uuid) -> Result<Shipment> {
+    pub fn mark_in_transit(&self, id: ShipmentId) -> Result<Shipment> {
         self.db.shipments().mark_in_transit(id)
     }
 
     /// Mark shipment as out for delivery
-    pub fn mark_out_for_delivery(&self, id: Uuid) -> Result<Shipment> {
+    pub fn mark_out_for_delivery(&self, id: ShipmentId) -> Result<Shipment> {
         self.db.shipments().mark_out_for_delivery(id)
     }
 
     /// Mark shipment as delivered
     ///
     /// This records the delivery timestamp and marks the shipment complete.
-    pub fn mark_delivered(&self, id: Uuid) -> Result<Shipment> {
+    pub fn mark_delivered(&self, id: ShipmentId) -> Result<Shipment> {
         let shipment = self.db.shipments().mark_delivered(id)?;
-        self.metrics
-            .record_shipment_delivered(&shipment.id.to_string());
+        self.metrics.record_shipment_delivered(&shipment.id.to_string());
         Ok(shipment)
     }
 
     /// Mark shipment as failed delivery
-    pub fn mark_failed(&self, id: Uuid) -> Result<Shipment> {
+    pub fn mark_failed(&self, id: ShipmentId) -> Result<Shipment> {
         self.db.shipments().mark_failed(id)
     }
 
     /// Put shipment on hold
-    pub fn hold(&self, id: Uuid) -> Result<Shipment> {
+    pub fn hold(&self, id: ShipmentId) -> Result<Shipment> {
         self.db.shipments().hold(id)
     }
 
     /// Cancel a shipment
-    pub fn cancel(&self, id: Uuid) -> Result<Shipment> {
+    pub fn cancel(&self, id: ShipmentId) -> Result<Shipment> {
         self.db.shipments().cancel(id)
     }
 
     /// Add an item to a shipment
-    pub fn add_item(&self, shipment_id: Uuid, item: CreateShipmentItem) -> Result<ShipmentItem> {
+    pub fn add_item(&self, shipment_id: ShipmentId, item: CreateShipmentItem) -> Result<ShipmentItem> {
         self.db.shipments().add_item(shipment_id, item)
     }
 
@@ -194,7 +189,7 @@ impl Shipments {
     }
 
     /// Get items in a shipment
-    pub fn get_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
+    pub fn get_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>> {
         self.db.shipments().get_items(shipment_id)
     }
 
@@ -203,12 +198,11 @@ impl Shipments {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, AddShipmentEvent};
-    /// use uuid::Uuid;
+    /// use stateset_embedded::{Commerce, AddShipmentEvent, ShipmentId};
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
-    /// commerce.shipments().add_event(Uuid::new_v4(), AddShipmentEvent {
+    /// commerce.shipments().add_event(ShipmentId::new(), AddShipmentEvent {
     ///     event_type: "departed_facility".into(),
     ///     location: Some("Chicago, IL".into()),
     ///     description: Some("Package departed sorting facility".into()),
@@ -216,12 +210,12 @@ impl Shipments {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn add_event(&self, shipment_id: Uuid, event: AddShipmentEvent) -> Result<ShipmentEvent> {
+    pub fn add_event(&self, shipment_id: ShipmentId, event: AddShipmentEvent) -> Result<ShipmentEvent> {
         self.db.shipments().add_event(shipment_id, event)
     }
 
     /// Get tracking events for a shipment
-    pub fn get_events(&self, shipment_id: Uuid) -> Result<Vec<ShipmentEvent>> {
+    pub fn get_events(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentEvent>> {
         self.db.shipments().get_events(shipment_id)
     }
 

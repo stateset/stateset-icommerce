@@ -37,6 +37,7 @@ pub struct SerialNumber {
 /// Status of a serial number
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SerialStatus {
     /// In production/assembly
     InProduction,
@@ -141,6 +142,7 @@ pub struct SerialHistory {
 /// Type of serial number event
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SerialEventType {
     Created,
     Received,
@@ -384,12 +386,7 @@ pub struct MoveSerial {
 
 impl Default for MoveSerial {
     fn default() -> Self {
-        Self {
-            serial_id: Uuid::nil(),
-            to_location_id: 0,
-            performed_by: None,
-            notes: None,
-        }
+        Self { serial_id: Uuid::nil(), to_location_id: 0, performed_by: None, notes: None }
     }
 }
 
@@ -486,10 +483,7 @@ impl SerialNumber {
 
     /// Check if serial can be shipped
     pub fn can_ship(&self) -> bool {
-        matches!(
-            self.status,
-            SerialStatus::Available | SerialStatus::Reserved
-        )
+        matches!(self.status, SerialStatus::Available | SerialStatus::Reserved)
     }
 
     /// Check if serial can be returned
@@ -499,10 +493,7 @@ impl SerialNumber {
 
     /// Check if serial can be scrapped
     pub fn can_scrap(&self) -> bool {
-        !matches!(
-            self.status,
-            SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped
-        )
+        !matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped)
     }
 
     /// Check if serial has been activated
@@ -512,8 +503,7 @@ impl SerialNumber {
 
     /// Get age in days since manufacture
     pub fn age_days(&self) -> Option<i64> {
-        self.manufactured_at
-            .map(|mfg| (Utc::now() - mfg).num_days())
+        self.manufactured_at.map(|mfg| (Utc::now() - mfg).num_days())
     }
 
     /// Get days since sold

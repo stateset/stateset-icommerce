@@ -1,0 +1,15 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+assertion_line: 181
+expression: types
+---
+[
+  "receipt",
+  "shipment",
+  "adjustment",
+  "transfer",
+  "return",
+  "allocation",
+  "deallocation",
+  "cycle_count"
+]

@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CreditId, CustomerId, OrderId};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -15,8 +16,8 @@ use uuid::Uuid;
 /// Customer credit account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreditAccount {
-    pub id: Uuid,
-    pub customer_id: Uuid,
+    pub id: CreditId,
+    pub customer_id: CustomerId,
     pub credit_limit: Decimal,
     pub available_credit: Decimal,
     pub current_balance: Decimal,
@@ -36,8 +37,8 @@ pub struct CreditAccount {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreditHold {
     pub id: Uuid,
-    pub customer_id: Uuid,
-    pub order_id: Option<Uuid>,
+    pub customer_id: CustomerId,
+    pub order_id: Option<OrderId>,
     pub hold_type: CreditHoldType,
     pub hold_amount: Decimal,
     pub reason: String,
@@ -55,7 +56,7 @@ pub struct CreditHold {
 pub struct CreditApplication {
     pub id: Uuid,
     pub application_number: String,
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub requested_limit: Decimal,
     pub approved_limit: Option<Decimal>,
     pub status: CreditApplicationStatus,
@@ -77,7 +78,7 @@ pub struct CreditApplication {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreditTransaction {
     pub id: Uuid,
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub transaction_type: CreditTransactionType,
     pub amount: Decimal,
     pub running_balance: Decimal,
@@ -90,7 +91,7 @@ pub struct CreditTransaction {
 /// Credit check result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreditCheckResult {
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub order_amount: Decimal,
     pub credit_limit: Decimal,
     pub available_credit: Decimal,
@@ -108,6 +109,7 @@ pub struct CreditCheckResult {
 /// Credit account status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CreditAccountStatus {
     #[default]
     Active,
@@ -146,6 +148,7 @@ impl FromStr for CreditAccountStatus {
 /// Risk rating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RiskRating {
     Low,
     #[default]
@@ -181,6 +184,7 @@ impl FromStr for RiskRating {
 /// Credit hold type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CreditHoldType {
     #[default]
     OverLimit,
@@ -219,6 +223,7 @@ impl FromStr for CreditHoldType {
 /// Credit hold status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CreditHoldStatus {
     #[default]
     Active,
@@ -251,6 +256,7 @@ impl FromStr for CreditHoldStatus {
 /// Credit application status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CreditApplicationStatus {
     #[default]
     Pending,
@@ -294,6 +300,7 @@ impl FromStr for CreditApplicationStatus {
 /// Credit transaction type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CreditTransactionType {
     #[default]
     Charge,
@@ -339,7 +346,7 @@ impl FromStr for CreditTransactionType {
 /// Input for creating a credit account.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateCreditAccount {
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub credit_limit: Decimal,
     pub currency: Option<String>,
     pub payment_terms: Option<String>,
@@ -360,8 +367,8 @@ pub struct UpdateCreditAccount {
 /// Input for placing a credit hold.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaceCreditHold {
-    pub customer_id: Uuid,
-    pub order_id: Option<Uuid>,
+    pub customer_id: CustomerId,
+    pub order_id: Option<OrderId>,
     pub hold_type: CreditHoldType,
     pub hold_amount: Decimal,
     pub reason: String,
@@ -379,7 +386,7 @@ pub struct ReleaseCreditHold {
 /// Input for submitting a credit application.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SubmitCreditApplication {
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub requested_limit: Decimal,
     pub business_name: Option<String>,
     pub tax_id: Option<String>,
@@ -402,7 +409,7 @@ pub struct ReviewCreditApplication {
 /// Input for recording a credit transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordCreditTransaction {
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub transaction_type: CreditTransactionType,
     pub amount: Decimal,
     pub reference_type: Option<String>,
@@ -417,7 +424,7 @@ pub struct RecordCreditTransaction {
 /// Filter for listing credit accounts.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreditAccountFilter {
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub status: Option<CreditAccountStatus>,
     pub risk_rating: Option<RiskRating>,
     pub over_limit: Option<bool>,
@@ -428,8 +435,8 @@ pub struct CreditAccountFilter {
 /// Filter for listing credit holds.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreditHoldFilter {
-    pub customer_id: Option<Uuid>,
-    pub order_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
+    pub order_id: Option<OrderId>,
     pub hold_type: Option<CreditHoldType>,
     pub status: Option<CreditHoldStatus>,
     pub limit: Option<u32>,
@@ -439,7 +446,7 @@ pub struct CreditHoldFilter {
 /// Filter for listing credit applications.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreditApplicationFilter {
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub status: Option<CreditApplicationStatus>,
     pub from_date: Option<DateTime<Utc>>,
     pub to_date: Option<DateTime<Utc>>,
@@ -450,7 +457,7 @@ pub struct CreditApplicationFilter {
 /// Filter for listing credit transactions.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreditTransactionFilter {
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub transaction_type: Option<CreditTransactionType>,
     pub from_date: Option<DateTime<Utc>>,
     pub to_date: Option<DateTime<Utc>>,
@@ -476,7 +483,7 @@ pub struct CreditAgingBucket {
 /// Customer credit summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomerCreditSummary {
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub credit_limit: Decimal,
     pub current_balance: Decimal,
     pub available_credit: Decimal,
@@ -502,46 +509,28 @@ mod tests {
 
     #[test]
     fn test_credit_account_status_from_str() {
-        assert_eq!(
-            CreditAccountStatus::from_str("active").unwrap(),
-            CreditAccountStatus::Active
-        );
-        assert_eq!(
-            CreditAccountStatus::from_str("OnHold").unwrap(),
-            CreditAccountStatus::OnHold
-        );
+        assert_eq!(CreditAccountStatus::from_str("active").unwrap(), CreditAccountStatus::Active);
+        assert_eq!(CreditAccountStatus::from_str("OnHold").unwrap(), CreditAccountStatus::OnHold);
         assert!(CreditAccountStatus::from_str("nope").is_err());
     }
 
     #[test]
     fn test_risk_rating_from_str() {
         assert_eq!(RiskRating::from_str("low").unwrap(), RiskRating::Low);
-        assert_eq!(
-            RiskRating::from_str("CRITICAL").unwrap(),
-            RiskRating::Critical
-        );
+        assert_eq!(RiskRating::from_str("CRITICAL").unwrap(), RiskRating::Critical);
         assert!(RiskRating::from_str("nope").is_err());
     }
 
     #[test]
     fn test_credit_hold_type_from_str() {
-        assert_eq!(
-            CreditHoldType::from_str("overlimit").unwrap(),
-            CreditHoldType::OverLimit
-        );
-        assert_eq!(
-            CreditHoldType::from_str("past_due").unwrap(),
-            CreditHoldType::PastDue
-        );
+        assert_eq!(CreditHoldType::from_str("overlimit").unwrap(), CreditHoldType::OverLimit);
+        assert_eq!(CreditHoldType::from_str("past_due").unwrap(), CreditHoldType::PastDue);
         assert!(CreditHoldType::from_str("nope").is_err());
     }
 
     #[test]
     fn test_credit_hold_status_from_str() {
-        assert_eq!(
-            CreditHoldStatus::from_str("released").unwrap(),
-            CreditHoldStatus::Released
-        );
+        assert_eq!(CreditHoldStatus::from_str("released").unwrap(), CreditHoldStatus::Released);
         assert!(CreditHoldStatus::from_str("nope").is_err());
     }
 

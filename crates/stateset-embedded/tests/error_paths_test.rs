@@ -18,7 +18,7 @@ fn test_order_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let fake_id = Uuid::new_v4();
 
-    let result = commerce.orders().get(fake_id);
+    let result = commerce.orders().get(fake_id.into());
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 }
@@ -28,9 +28,7 @@ fn test_order_update_nonexistent() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let fake_id = Uuid::new_v4();
 
-    let result = commerce
-        .orders()
-        .update_status(fake_id, OrderStatus::Confirmed);
+    let result = commerce.orders().update_status(fake_id.into(), OrderStatus::Confirmed);
     assert!(result.is_err());
 }
 
@@ -39,7 +37,7 @@ fn test_order_delete_nonexistent() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let fake_id = Uuid::new_v4();
 
-    let result = commerce.orders().delete(fake_id);
+    let result = commerce.orders().delete(fake_id.into());
     // Should succeed even if not found (idempotent)
     assert!(result.is_ok());
 }
@@ -50,9 +48,9 @@ fn test_order_with_invalid_customer() {
 
     // Create order with non-existent customer - should fail due to FK constraint
     let result = commerce.orders().create(CreateOrder {
-        customer_id: Uuid::new_v4(),
+        customer_id: Uuid::new_v4().into(),
         items: vec![CreateOrderItem {
-            product_id: Uuid::new_v4(),
+            product_id: Uuid::new_v4().into(),
             sku: "TEST-001".into(),
             name: "Test Product".into(),
             quantity: 1,
@@ -71,7 +69,7 @@ fn test_order_empty_items() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     let result = commerce.orders().create(CreateOrder {
-        customer_id: Uuid::new_v4(),
+        customer_id: Uuid::new_v4().into(),
         items: vec![], // Empty items
         ..Default::default()
     });
@@ -85,9 +83,9 @@ fn test_order_negative_quantity() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     let result = commerce.orders().create(CreateOrder {
-        customer_id: Uuid::new_v4(),
+        customer_id: Uuid::new_v4().into(),
         items: vec![CreateOrderItem {
-            product_id: Uuid::new_v4(),
+            product_id: Uuid::new_v4().into(),
             sku: "TEST-001".into(),
             name: "Test Product".into(),
             quantity: -1, // Negative quantity
@@ -106,9 +104,9 @@ fn test_order_zero_quantity() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     let result = commerce.orders().create(CreateOrder {
-        customer_id: Uuid::new_v4(),
+        customer_id: Uuid::new_v4().into(),
         items: vec![CreateOrderItem {
-            product_id: Uuid::new_v4(),
+            product_id: Uuid::new_v4().into(),
             sku: "TEST-001".into(),
             name: "Test Product".into(),
             quantity: 0, // Zero quantity
@@ -131,7 +129,7 @@ fn test_customer_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let fake_id = Uuid::new_v4();
 
-    let result = commerce.customers().get(fake_id);
+    let result = commerce.customers().get(fake_id.into());
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 }
@@ -177,10 +175,7 @@ fn test_customer_invalid_email() {
     // Email validation should reject invalid emails
     assert!(result.is_err(), "Expected invalid email to be rejected");
     let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("@") || err.contains("email"),
-        "Error should mention email format"
-    );
+    assert!(err.contains("@") || err.contains("email"), "Error should mention email format");
 }
 
 #[test]
@@ -246,9 +241,7 @@ fn test_inventory_duplicate_sku() {
 fn test_inventory_adjust_nonexistent() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce
-        .inventory()
-        .adjust("NONEXISTENT-SKU", dec!(10), "Test adjustment");
+    let result = commerce.inventory().adjust("NONEXISTENT-SKU", dec!(10), "Test adjustment");
 
     // Should fail - SKU doesn't exist
     assert!(result.is_err());
@@ -287,9 +280,7 @@ fn test_inventory_release_nonexistent_reservation() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let fake_reservation_id = Uuid::new_v4();
 
-    let result = commerce
-        .inventory()
-        .release_reservation(fake_reservation_id);
+    let result = commerce.inventory().release_reservation(fake_reservation_id);
 
     // Should fail - reservation doesn't exist
     assert!(result.is_err());
@@ -311,9 +302,7 @@ fn test_inventory_negative_adjustment_exceeds_stock() {
         .expect("Failed to create item");
 
     // Try to adjust by more than available (would result in negative stock)
-    let result = commerce
-        .inventory()
-        .adjust("NEG-TEST-001", dec!(-100), "Over-adjustment");
+    let result = commerce.inventory().adjust("NEG-TEST-001", dec!(-100), "Over-adjustment");
 
     // Behavior depends on implementation - may allow negative or fail
     // This test documents current behavior
@@ -329,7 +318,7 @@ fn test_product_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let fake_id = Uuid::new_v4();
 
-    let result = commerce.products().get(fake_id);
+    let result = commerce.products().get(fake_id.into());
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 }
@@ -366,10 +355,7 @@ fn test_product_variant_duplicate_sku() {
     // Create product with variant
     let product = commerce
         .products()
-        .create(CreateProduct {
-            name: "Test Product".into(),
-            ..Default::default()
-        })
+        .create(CreateProduct { name: "Test Product".into(), ..Default::default() })
         .expect("Failed to create product");
 
     // Create first variant with inventory
@@ -395,7 +381,7 @@ fn test_return_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let fake_id = Uuid::new_v4();
 
-    let result = commerce.returns().get(fake_id);
+    let result = commerce.returns().get(fake_id.into());
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 }
@@ -405,7 +391,7 @@ fn test_return_for_nonexistent_order() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     let result = commerce.returns().create(CreateReturn {
-        order_id: Uuid::new_v4(), // Non-existent order
+        order_id: Uuid::new_v4().into(), // Non-existent order
         reason: stateset_embedded::ReturnReason::Other,
         reason_details: Some("Test return".into()),
         ..Default::default()
@@ -433,9 +419,9 @@ fn test_return_approve_already_approved() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "RET-001".into(),
                 name: "Returnable Item".into(),
                 quantity: 1,
@@ -447,25 +433,19 @@ fn test_return_approve_already_approved() {
         .expect("Failed to create order");
 
     // Get order to access items
-    let order_with_items = commerce
-        .orders()
-        .get(order.id)
-        .expect("Failed to get order")
-        .expect("Order not found");
-    let order_item = order_with_items
-        .items
-        .first()
-        .expect("Order should have items");
+    let order_with_items =
+        commerce.orders().get(order.id).expect("Failed to get order").expect("Order not found");
+    let order_item = order_with_items.items.first().expect("Order should have items");
 
     // Create return with items
     let ret = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id,
+            order_id: order.id.into(),
             reason: stateset_embedded::ReturnReason::Defective,
             reason_details: None,
             items: vec![stateset_embedded::CreateReturnItem {
-                order_item_id: order_item.id,
+                order_item_id: order_item.id.into(),
                 quantity: 1,
                 condition: None,
             }],
@@ -474,10 +454,7 @@ fn test_return_approve_already_approved() {
         .expect("Failed to create return");
 
     // Approve once
-    commerce
-        .returns()
-        .approve(ret.id)
-        .expect("Failed to approve return");
+    commerce.returns().approve(ret.id).expect("Failed to approve return");
 
     // Try to approve again
     let result = commerce.returns().approve(ret.id);
@@ -507,7 +484,7 @@ fn test_bom_activate_already_active() {
     let bom = commerce
         .bom()
         .create(CreateBom {
-            product_id: Uuid::new_v4(),
+            product_id: Uuid::new_v4().into(),
             name: "Test BOM".into(),
             ..Default::default()
         })
@@ -530,7 +507,7 @@ fn test_bom_component_circular_reference() {
     let bom = commerce
         .bom()
         .create(CreateBom {
-            product_id: Uuid::new_v4(),
+            product_id: Uuid::new_v4().into(),
             name: "Circular BOM".into(),
             ..Default::default()
         })
@@ -588,10 +565,7 @@ fn test_concurrent_inventory_updates() {
     }
 
     // Check final stock
-    let stock = commerce
-        .inventory()
-        .get_stock("CONC-001")
-        .expect("Failed to get stock");
+    let stock = commerce.inventory().get_stock("CONC-001").expect("Failed to get stock");
     println!("Final stock after concurrent updates: {:?}", stock);
 }
 
@@ -624,9 +598,9 @@ fn test_concurrent_order_creation() {
         let cid = customer_id;
         let handle = thread::spawn(move || {
             let result = commerce_clone.orders().create(CreateOrder {
-                customer_id: cid,
+                customer_id: cid.into(),
                 items: vec![CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: format!("THREAD-{}", i),
                     name: format!("Thread {} Product", i),
                     quantity: 1,
@@ -647,16 +621,10 @@ fn test_concurrent_order_creation() {
         }
     }
 
-    println!(
-        "Concurrent order creation: {} out of 5 succeeded",
-        success_count
-    );
+    println!("Concurrent order creation: {} out of 5 succeeded", success_count);
     // With in-memory SQLite, some concurrent operations may timeout or fail
     // Expect at least some to succeed
-    assert!(
-        success_count > 0,
-        "At least one concurrent order should succeed"
-    );
+    assert!(success_count > 0, "At least one concurrent order should succeed");
 }
 
 // ============================================================================
@@ -731,9 +699,9 @@ fn test_decimal_precision() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "PRECISION-001".into(),
                 name: "Precision Test".into(),
                 quantity: 1,
@@ -753,9 +721,9 @@ fn test_max_decimal_value() {
 
     // Test maximum decimal value
     let result = commerce.orders().create(CreateOrder {
-        customer_id: Uuid::new_v4(),
+        customer_id: Uuid::new_v4().into(),
         items: vec![CreateOrderItem {
-            product_id: Uuid::new_v4(),
+            product_id: Uuid::new_v4().into(),
             sku: "MAX-001".into(),
             name: "Max Value Test".into(),
             quantity: 1,
@@ -777,22 +745,14 @@ fn test_empty_database_queries() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // Query empty tables
-    let orders = commerce
-        .orders()
-        .list(Default::default())
-        .expect("Failed to list orders");
+    let orders = commerce.orders().list(Default::default()).expect("Failed to list orders");
     assert!(orders.is_empty());
 
-    let customers = commerce
-        .customers()
-        .list(Default::default())
-        .expect("Failed to list customers");
+    let customers =
+        commerce.customers().list(Default::default()).expect("Failed to list customers");
     assert!(customers.is_empty());
 
-    let products = commerce
-        .products()
-        .list(Default::default())
-        .expect("Failed to list products");
+    let products = commerce.products().list(Default::default()).expect("Failed to list products");
     assert!(products.is_empty());
 }
 
@@ -800,15 +760,10 @@ fn test_empty_database_queries() {
 fn test_count_on_empty_tables() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let order_count = commerce
-        .orders()
-        .count(Default::default())
-        .expect("Failed to count orders");
+    let order_count = commerce.orders().count(Default::default()).expect("Failed to count orders");
     assert_eq!(order_count, 0);
 
-    let customer_count = commerce
-        .customers()
-        .count(Default::default())
-        .expect("Failed to count customers");
+    let customer_count =
+        commerce.customers().count(Default::default()).expect("Failed to count customers");
     assert_eq!(customer_count, 0);
 }

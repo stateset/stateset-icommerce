@@ -12,9 +12,7 @@ use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL")
-        .ok()
-        .or_else(|| env::var("DATABASE_URL").ok())
+    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
 }
 
 #[cfg(feature = "postgres")]
@@ -28,9 +26,7 @@ async fn postgres_x402_payment_intent_smoke() {
         }
     };
 
-    let db = PostgresDatabase::connect(&url)
-        .await
-        .expect("connect to postgres and run migrations");
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
 
     let repo = db.x402_payment_intents();
     let payer = format!("0xtest{}", Uuid::new_v4().to_string().replace('-', ""));
@@ -71,9 +67,7 @@ async fn postgres_x402_payment_intent_smoke() {
     assert_eq!(by_key.id, intent.id);
 
     let mut local_signed = intent.clone();
-    local_signed
-        .sign_with_ed25519(&[11u8; 32])
-        .expect("sign intent locally");
+    local_signed.sign_with_ed25519(&[11u8; 32]).expect("sign intent locally");
 
     let signed = repo
         .sign_async(
@@ -89,16 +83,11 @@ async fn postgres_x402_payment_intent_smoke() {
     assert_eq!(signed.status, X402IntentStatus::Signed);
 
     let batch_id = Uuid::new_v4();
-    let sequenced = repo
-        .mark_sequenced_async(intent.id, 42, batch_id)
-        .await
-        .expect("sequence intent");
+    let sequenced =
+        repo.mark_sequenced_async(intent.id, 42, batch_id).await.expect("sequence intent");
     assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
 
-    let settled = repo
-        .mark_settled_async(intent.id, "0xtxhash", 123)
-        .await
-        .expect("settle intent");
+    let settled = repo.mark_settled_async(intent.id, "0xtxhash", 123).await.expect("settle intent");
     assert_eq!(settled.status, X402IntentStatus::Settled);
 
     let for_cart = repo.for_cart_async(cart_id).await.expect("for_cart");

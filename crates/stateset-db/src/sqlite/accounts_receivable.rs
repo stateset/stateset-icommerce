@@ -11,16 +11,16 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
 use stateset_core::{
-    generate_credit_memo_number, generate_write_off_number, AccountsReceivableRepository,
-    ApplyCreditMemo, ApplyPaymentToInvoices, ArAgingFilter, ArAgingSummary, ArPaymentApplication,
-    CollectionActivity, CollectionActivityFilter, CollectionActivityType, CollectionStatus,
-    CreateCollectionActivity, CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter,
-    CreditMemoStatus, CustomerArAging, CustomerArSummary, CustomerStatement, DunningLetterType,
-    GenerateStatementRequest, Invoice, Result, StatementLineItem, StatementTransactionType,
-    WriteOff, WriteOffFilter,
+    AccountsReceivableRepository, ApplyCreditMemo, ApplyPaymentToInvoices, ArAgingFilter,
+    ArAgingSummary, ArPaymentApplication, CollectionActivity, CollectionActivityFilter,
+    CollectionActivityType, CollectionStatus, CreateCollectionActivity, CreateCreditMemo,
+    CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoStatus, CustomerArAging,
+    CustomerArSummary, CustomerStatement, DunningLetterType, GenerateStatementRequest, Invoice,
+    Result, StatementLineItem, StatementTransactionType, WriteOff, WriteOffFilter,
+    generate_credit_memo_number, generate_write_off_number,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -34,13 +34,13 @@ impl SqliteAccountsReceivableRepository {
         Self { pool }
     }
 
-    fn map_collection_activity_row(row: &rusqlite::Row) -> rusqlite::Result<CollectionActivity> {
+    fn map_collection_activity_row(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<CollectionActivity> {
         let dunning_letter_type = match row.get::<_, Option<String>>(5)? {
-            Some(value) => Some(parse_enum_row(
-                &value,
-                "collection_activity",
-                "dunning_letter_type",
-            )?),
+            Some(value) => {
+                Some(parse_enum_row(&value, "collection_activity", "dunning_letter_type")?)
+            }
             None => None,
         };
 
@@ -89,7 +89,7 @@ impl SqliteAccountsReceivableRepository {
         })
     }
 
-    fn map_write_off_row(row: &rusqlite::Row) -> rusqlite::Result<WriteOff> {
+    fn map_write_off_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WriteOff> {
         Ok(WriteOff {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "write_off", "id")?,
             write_off_number: row.get(1)?,
@@ -123,7 +123,7 @@ impl SqliteAccountsReceivableRepository {
         })
     }
 
-    fn map_credit_memo_row(row: &rusqlite::Row) -> rusqlite::Result<CreditMemo> {
+    fn map_credit_memo_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CreditMemo> {
         Ok(CreditMemo {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_memo", "id")?,
             credit_memo_number: row.get(1)?,
@@ -170,7 +170,9 @@ impl SqliteAccountsReceivableRepository {
         })
     }
 
-    fn map_payment_application_row(row: &rusqlite::Row) -> rusqlite::Result<ArPaymentApplication> {
+    fn map_payment_application_row(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<ArPaymentApplication> {
         Ok(ArPaymentApplication {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "payment_application", "id")?,
             payment_id: parse_uuid_row(
@@ -372,9 +374,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                AND status NOT IN ('paid', 'voided', 'written_off')",
             )
             .map_err(map_db_error)?;
-        let mut rows = stmt
-            .query(params![customer_id.to_string()])
-            .map_err(map_db_error)?;
+        let mut rows = stmt.query(params![customer_id.to_string()]).map_err(map_db_error)?;
 
         while let Some(row) = rows.next().map_err(map_db_error)? {
             let balance_str: String = row.get(1).map_err(map_db_error)?;
@@ -496,14 +496,12 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             let due_date = parse_datetime_safe(&due_date_str, "invoice", "due_date")?;
             let created_at = parse_datetime_safe(&created_at_str, "invoice", "created_at")?;
 
-            let entry = by_customer
-                .entry(customer_id)
-                .or_insert_with(|| AgingAccum {
-                    customer_id,
-                    customer_name: format!("{} {}", first_name, last_name),
-                    customer_email: email,
-                    ..Default::default()
-                });
+            let entry = by_customer.entry(customer_id).or_insert_with(|| AgingAccum {
+                customer_id,
+                customer_name: format!("{} {}", first_name, last_name),
+                customer_email: email,
+                ..Default::default()
+            });
 
             entry.invoice_count += 1;
             entry.oldest_invoice_date = match entry.oldest_invoice_date {
@@ -660,11 +658,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt
-            .query_map([], Self::map_collection_activity_row)
-            .map_err(map_db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(map_db_error)
+        let rows = stmt.query_map([], Self::map_collection_activity_row).map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
     fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()> {
@@ -783,8 +778,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             })
             .map_err(map_db_error)?;
 
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(map_db_error)
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
     fn send_dunning_letter(
@@ -812,6 +806,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             DunningLetterType::DemandLetter | DunningLetterType::CollectionNotice => {
                 CollectionStatus::InCollections
             }
+            _ => CollectionStatus::InCollections,
         };
 
         self.update_collection_status(invoice_id, new_status)?;
@@ -927,11 +922,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt
-            .query_map([], Self::map_write_off_row)
-            .map_err(map_db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(map_db_error)
+        let rows = stmt.query_map([], Self::map_write_off_row).map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
     fn reverse_write_off(&self, id: Uuid) -> Result<WriteOff> {
@@ -943,9 +935,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let now = Utc::now();
 
         // Get the write-off
-        let wo = self
-            .get_write_off(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let wo = self.get_write_off(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if wo.reversed_at.is_some() {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -967,10 +957,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         )
         .map_err(map_db_error)?;
 
-        Ok(WriteOff {
-            reversed_at: Some(now),
-            ..wo
-        })
+        Ok(WriteOff { reversed_at: Some(now), ..wo })
     }
 
     fn create_credit_memo(&self, input: CreateCreditMemo) -> Result<CreditMemo> {
@@ -1087,11 +1074,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt
-            .query_map([], Self::map_credit_memo_row)
-            .map_err(map_db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(map_db_error)
+        let rows = stmt.query_map([], Self::map_credit_memo_row).map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
     fn apply_credit_memo(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {
@@ -1170,9 +1154,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let cm = self
-            .get_credit_memo(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let cm = self.get_credit_memo(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if cm.applied_amount > Decimal::ZERO {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -1186,11 +1168,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         )
         .map_err(map_db_error)?;
 
-        Ok(CreditMemo {
-            status: CreditMemoStatus::Voided,
-            updated_at: Utc::now(),
-            ..cm
-        })
+        Ok(CreditMemo { status: CreditMemoStatus::Voided, updated_at: Utc::now(), ..cm })
     }
 
     fn get_unapplied_credits(&self, customer_id: Uuid) -> Result<Vec<CreditMemo>> {
@@ -1259,13 +1237,9 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map(
-                params![payment_id.to_string()],
-                Self::map_payment_application_row,
-            )
+            .query_map(params![payment_id.to_string()], Self::map_payment_application_row)
             .map_err(map_db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(map_db_error)
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
     fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
@@ -1305,11 +1279,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         };
 
         // Get unapplied credits
-        let unapplied_credits = self
-            .get_unapplied_credits(customer_id)?
-            .iter()
-            .map(|cm| cm.unapplied_amount)
-            .sum();
+        let unapplied_credits =
+            self.get_unapplied_credits(customer_id)?.iter().map(|cm| cm.unapplied_amount).sum();
 
         let total_overdue = aging.total_overdue();
         Ok(Some(CustomerArSummary {
@@ -1335,9 +1306,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let now = Utc::now();
-        let period_start = request
-            .period_start
-            .unwrap_or_else(|| now - chrono::Duration::days(30));
+        let period_start = request.period_start.unwrap_or_else(|| now - chrono::Duration::days(30));
         let period_end = request.period_end.unwrap_or(now);
 
         // Get customer info

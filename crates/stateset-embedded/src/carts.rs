@@ -47,8 +47,8 @@
 use crate::Database;
 use rust_decimal::Decimal;
 use stateset_core::{
-    AddCartItem, Cart, CartAddress, CartFilter, CartItem, CheckoutResult, CreateCart, Result,
-    SetCartPayment, SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
+    AddCartItem, Cart, CartAddress, CartFilter, CartId, CartItem, CheckoutResult, CreateCart,
+    CustomerId, Result, SetCartPayment, SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
 };
 use stateset_observability::Metrics;
 use std::sync::Arc;
@@ -105,7 +105,7 @@ impl Carts {
     }
 
     /// Get a cart by ID
-    pub fn get(&self, id: Uuid) -> Result<Option<Cart>> {
+    pub fn get(&self, id: CartId) -> Result<Option<Cart>> {
         self.db.carts().get(id)
     }
 
@@ -115,7 +115,7 @@ impl Carts {
     }
 
     /// Update a cart
-    pub fn update(&self, id: Uuid, input: UpdateCart) -> Result<Cart> {
+    pub fn update(&self, id: CartId, input: UpdateCart) -> Result<Cart> {
         self.db.carts().update(id, input)
     }
 
@@ -125,12 +125,12 @@ impl Carts {
     }
 
     /// Get all carts for a customer
-    pub fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Cart>> {
+    pub fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Cart>> {
         self.db.carts().for_customer(customer_id)
     }
 
     /// Delete a cart
-    pub fn delete(&self, id: Uuid) -> Result<()> {
+    pub fn delete(&self, id: CartId) -> Result<()> {
         self.db.carts().delete(id)
     }
 
@@ -141,14 +141,14 @@ impl Carts {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, AddCartItem};
+    /// use stateset_embedded::{Commerce, AddCartItem, ProductId};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// commerce.carts().add_item(Uuid::new_v4(), AddCartItem {
-    ///     product_id: Some(Uuid::new_v4()),
+    ///     product_id: Some(ProductId::new()),
     ///     sku: "SKU-001".into(),
     ///     name: "Premium Widget".into(),
     ///     description: Some("A high-quality widget".into()),
@@ -160,7 +160,7 @@ impl Carts {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn add_item(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
+    pub fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
         self.db.carts().add_item(cart_id, item)
     }
 
@@ -175,12 +175,12 @@ impl Carts {
     }
 
     /// Get all items in the cart
-    pub fn get_items(&self, cart_id: Uuid) -> Result<Vec<CartItem>> {
+    pub fn get_items(&self, cart_id: CartId) -> Result<Vec<CartItem>> {
         self.db.carts().get_items(cart_id)
     }
 
     /// Clear all items from the cart
-    pub fn clear_items(&self, cart_id: Uuid) -> Result<()> {
+    pub fn clear_items(&self, cart_id: CartId) -> Result<()> {
         self.db.carts().clear_items(cart_id)
     }
 
@@ -211,26 +211,26 @@ impl Carts {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn set_shipping_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
+    pub fn set_shipping_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
         self.db.carts().set_shipping_address(id, address)
     }
 
     /// Set the billing address
-    pub fn set_billing_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
+    pub fn set_billing_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
         self.db.carts().set_billing_address(id, address)
     }
 
     // === Shipping Operations ===
 
     /// Set shipping method and address
-    pub fn set_shipping(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
+    pub fn set_shipping(&self, id: CartId, shipping: SetCartShipping) -> Result<Cart> {
         self.db.carts().set_shipping(id, shipping)
     }
 
     /// Get available shipping rates for the cart
     ///
     /// Returns available shipping options based on cart contents and shipping address.
-    pub fn get_shipping_rates(&self, id: Uuid) -> Result<Vec<ShippingRate>> {
+    pub fn get_shipping_rates(&self, id: CartId) -> Result<Vec<ShippingRate>> {
         self.db.carts().get_shipping_rates(id)
     }
 
@@ -253,19 +253,19 @@ impl Carts {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
+    pub fn set_payment(&self, id: CartId, payment: SetCartPayment) -> Result<Cart> {
         self.db.carts().set_payment(id, payment)
     }
 
     // === Discount Operations ===
 
     /// Apply a coupon/discount code to the cart
-    pub fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
+    pub fn apply_discount(&self, id: CartId, coupon_code: &str) -> Result<Cart> {
         self.db.carts().apply_discount(id, coupon_code)
     }
 
     /// Remove the discount from the cart
-    pub fn remove_discount(&self, id: Uuid) -> Result<Cart> {
+    pub fn remove_discount(&self, id: CartId) -> Result<Cart> {
         self.db.carts().remove_discount(id)
     }
 
@@ -274,12 +274,12 @@ impl Carts {
     /// Mark the cart as ready for payment
     ///
     /// This validates that all required information is present (shipping address, etc.)
-    pub fn mark_ready_for_payment(&self, id: Uuid) -> Result<Cart> {
+    pub fn mark_ready_for_payment(&self, id: CartId) -> Result<Cart> {
         self.db.carts().mark_ready_for_payment(id)
     }
 
     /// Begin the checkout process (payment pending)
-    pub fn begin_checkout(&self, id: Uuid) -> Result<Cart> {
+    pub fn begin_checkout(&self, id: CartId) -> Result<Cart> {
         self.db.carts().begin_checkout(id)
     }
 
@@ -299,7 +299,7 @@ impl Carts {
     /// println!("Total Charged: {} {}", result.total_charged, result.currency);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
+    pub fn complete(&self, id: CartId) -> Result<CheckoutResult> {
         let result = self.db.carts().complete(id)?;
         self.metrics.record_cart_checkout_completed(
             &result.cart_id.to_string(),
@@ -309,17 +309,17 @@ impl Carts {
     }
 
     /// Cancel the cart
-    pub fn cancel(&self, id: Uuid) -> Result<Cart> {
+    pub fn cancel(&self, id: CartId) -> Result<Cart> {
         self.db.carts().cancel(id)
     }
 
     /// Mark the cart as abandoned
-    pub fn abandon(&self, id: Uuid) -> Result<Cart> {
+    pub fn abandon(&self, id: CartId) -> Result<Cart> {
         self.db.carts().abandon(id)
     }
 
     /// Expire the cart
-    pub fn expire(&self, id: Uuid) -> Result<Cart> {
+    pub fn expire(&self, id: CartId) -> Result<Cart> {
         self.db.carts().expire(id)
     }
 
@@ -329,24 +329,24 @@ impl Carts {
     ///
     /// Creates inventory reservations for all items in the cart.
     /// Reservations typically expire after 15 minutes.
-    pub fn reserve_inventory(&self, id: Uuid) -> Result<Cart> {
+    pub fn reserve_inventory(&self, id: CartId) -> Result<Cart> {
         self.db.carts().reserve_inventory(id)
     }
 
     /// Release inventory reservations for the cart
-    pub fn release_inventory(&self, id: Uuid) -> Result<Cart> {
+    pub fn release_inventory(&self, id: CartId) -> Result<Cart> {
         self.db.carts().release_inventory(id)
     }
 
     // === Totals Operations ===
 
     /// Recalculate cart totals
-    pub fn recalculate(&self, id: Uuid) -> Result<Cart> {
+    pub fn recalculate(&self, id: CartId) -> Result<Cart> {
         self.db.carts().recalculate(id)
     }
 
     /// Set the tax amount for the cart
-    pub fn set_tax(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
+    pub fn set_tax(&self, id: CartId, tax_amount: Decimal) -> Result<Cart> {
         self.db.carts().set_tax(id, tax_amount)
     }
 

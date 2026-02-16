@@ -1,17 +1,17 @@
 //! PostgreSQL implementation of cart/checkout repository
 
-use super::{map_db_error, PgCustomerRepository, PgOrderRepository};
+use super::{PgCustomerRepository, PgOrderRepository, map_db_error};
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
-use sqlx::{postgres::PgPool, FromRow};
+use sqlx::{FromRow, postgres::PgPool};
 use stateset_core::{
-    validate_batch_size, AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartItem,
-    CartPaymentStatus, CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError,
-    CreateCart, CreateCustomer, CreateOrder, CreateOrderItem, FulfillmentType, OrderStatus,
-    PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
-    UpdateCart, UpdateCartItem, UpdateOrder, X402Asset, X402AwaitingSettlementData,
+    AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
+    CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
+    CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, FulfillmentType, OrderStatus,
+    PaymentId, PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
+    ShippingRate, UpdateCart, UpdateCartItem, UpdateOrder, X402Asset, X402AwaitingSettlementData,
     X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
-    X402PaymentRequiredData,
+    X402PaymentRequiredData, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -122,19 +122,15 @@ impl CartRow {
             })?),
             None => None,
         };
-        let shipping_address = shipping_address
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
+        let shipping_address =
+            shipping_address.map(serde_json::from_value).transpose().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for cart.shipping_address: {}",
                     e
                 ))
             })?;
-        let billing_address = billing_address
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
+        let billing_address =
+            billing_address.map(serde_json::from_value).transpose().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for cart.billing_address: {}",
                     e
@@ -293,7 +289,7 @@ impl PgCartRepository {
         })?;
 
         if let Some(customer) = customer_repo.get_by_email_async(email).await? {
-            return Ok(customer.id);
+            return Ok(customer.id.into_uuid());
         }
 
         let (first_name, last_name) = cart
@@ -305,11 +301,7 @@ impl PgCartRepository {
                 let mut parts = name.split_whitespace();
                 let first = parts.next().unwrap_or("Guest").to_string();
                 let rest = parts.collect::<Vec<_>>().join(" ");
-                let last = if rest.is_empty() {
-                    "Customer".to_string()
-                } else {
-                    rest
-                };
+                let last = if rest.is_empty() { "Customer".to_string() } else { rest };
                 (first, last)
             })
             .unwrap_or_else(|| ("Guest".to_string(), "Customer".to_string()));
@@ -323,7 +315,7 @@ impl PgCartRepository {
             })
             .await?;
 
-        Ok(customer.id)
+        Ok(customer.id.into_uuid())
     }
 
     fn order_items_from_cart(cart: &Cart) -> Vec<CreateOrderItem> {
@@ -344,10 +336,7 @@ impl PgCartRepository {
 
     fn billing_address_for_cart(cart: &Cart) -> Option<stateset_core::Address> {
         if cart.billing_same_as_shipping {
-            cart.billing_address
-                .clone()
-                .or_else(|| cart.shipping_address.clone())
-                .map(Into::into)
+            cart.billing_address.clone().or_else(|| cart.shipping_address.clone()).map(Into::into)
         } else {
             cart.billing_address.clone().map(Into::into)
         }
@@ -422,10 +411,7 @@ impl PgCartRepository {
     }
 
     async fn finalize_x402_checkout_async(&self, cart_id: Uuid) -> Result<X402CheckoutResult> {
-        let cart = self
-            .get_cart_with_items(cart_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let cart = self.get_cart_with_items(cart_id).await?.ok_or(CommerceError::NotFound)?;
 
         if cart.status == CartStatus::Completed {
             if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
@@ -509,18 +495,12 @@ impl PgCartRepository {
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
         let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
-        let expires_at = input
-            .expires_in_minutes
-            .map(|mins| now + Duration::minutes(mins));
+        let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
-        let shipping_address_json = input
-            .shipping_address
-            .as_ref()
-            .map(|a| serde_json::to_value(a).unwrap_or_default());
-        let billing_address_json = input
-            .billing_address
-            .as_ref()
-            .map(|a| serde_json::to_value(a).unwrap_or_default());
+        let shipping_address_json =
+            input.shipping_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
+        let billing_address_json =
+            input.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
         let metadata_json = input.metadata.clone();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -560,9 +540,7 @@ impl PgCartRepository {
         let mut items = vec![];
         if let Some(input_items) = &input.items {
             for item_input in input_items {
-                let item = self
-                    .add_item_internal(&mut tx, id, item_input.clone())
-                    .await?;
+                let item = self.add_item_internal(&mut tx, id, item_input.clone()).await?;
                 items.push(item);
             }
         }
@@ -585,9 +563,7 @@ impl PgCartRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     async fn add_item_internal(
@@ -704,18 +680,8 @@ impl PgCartRepository {
         .bind(&input.customer_email)
         .bind(&input.customer_phone)
         .bind(&input.customer_name)
-        .bind(
-            input
-                .shipping_address
-                .as_ref()
-                .map(|a| serde_json::to_value(a).unwrap_or_default()),
-        )
-        .bind(
-            input
-                .billing_address
-                .as_ref()
-                .map(|a| serde_json::to_value(a).unwrap_or_default()),
-        )
+        .bind(input.shipping_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default()))
+        .bind(input.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default()))
         .bind(input.billing_same_as_shipping)
         .bind(input.fulfillment_type.map(|f| f.to_string()))
         .bind(&input.shipping_method)
@@ -731,9 +697,7 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_async(&self, filter: CartFilter) -> Result<Vec<Cart>> {
@@ -818,11 +782,7 @@ impl PgCartRepository {
     }
 
     pub async fn for_customer_async(&self, customer_id: Uuid) -> Result<Vec<Cart>> {
-        self.list_async(CartFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
-        .await
+        self.list_async(CartFilter { customer_id: Some(customer_id), ..Default::default() }).await
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -1085,9 +1045,7 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn set_billing_address_async(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
@@ -1103,9 +1061,7 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn set_shipping_async(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
@@ -1168,10 +1124,8 @@ impl PgCartRepository {
     }
 
     pub async fn set_payment_async(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
-        let billing_json = payment
-            .billing_address
-            .as_ref()
-            .map(|a| serde_json::to_value(a).unwrap_or_default());
+        let billing_json =
+            payment.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
 
         if let Some(billing) = billing_json {
             sqlx::query(
@@ -1204,9 +1158,7 @@ impl PgCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn set_x402_payment_async(
@@ -1230,9 +1182,7 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn complete_with_x402_async(
@@ -1242,10 +1192,7 @@ impl PgCartRepository {
     ) -> Result<X402CheckoutResult> {
         use rust_decimal::prelude::ToPrimitive;
 
-        let cart = self
-            .get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let cart = self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)?;
 
         if cart.status == CartStatus::Completed {
             if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
@@ -1330,18 +1277,16 @@ impl PgCartRepository {
         }
 
         let chain_id = x402_payment.network.chain_id();
-        Ok(X402CheckoutResult::PaymentRequired(
-            X402PaymentRequiredData {
-                cart_id: id,
-                payee_address: payee_address.to_string(),
-                amount,
-                amount_display,
-                asset: x402_payment.asset,
-                network: x402_payment.network,
-                chain_id,
-                valid_seconds: 3600,
-            },
-        ))
+        Ok(X402CheckoutResult::PaymentRequired(X402PaymentRequiredData {
+            cart_id: id,
+            payee_address: payee_address.to_string(),
+            amount,
+            amount_display,
+            asset: x402_payment.asset,
+            network: x402_payment.network,
+            chain_id,
+            valid_seconds: 3600,
+        }))
     }
 
     pub async fn apply_discount_async(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
@@ -1353,9 +1298,7 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn remove_discount_async(&self, id: Uuid) -> Result<Cart> {
@@ -1375,10 +1318,7 @@ impl PgCartRepository {
     }
 
     pub async fn mark_ready_for_payment_async(&self, id: Uuid) -> Result<Cart> {
-        let cart = self
-            .get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let cart = self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)?;
 
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
@@ -1393,9 +1333,7 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn begin_checkout_async(&self, id: Uuid) -> Result<Cart> {
@@ -1406,9 +1344,7 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn complete_async(&self, id: Uuid) -> Result<CheckoutResult> {
@@ -1536,9 +1472,7 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn abandon_async(&self, id: Uuid) -> Result<Cart> {
@@ -1549,9 +1483,7 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn expire_async(&self, id: Uuid) -> Result<Cart> {
@@ -1562,9 +1494,7 @@ impl PgCartRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn reserve_inventory_async(&self, id: Uuid) -> Result<Cart> {
@@ -1580,9 +1510,7 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn release_inventory_async(&self, id: Uuid) -> Result<Cart> {
@@ -1595,16 +1523,12 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn recalculate_async(&self, id: Uuid) -> Result<Cart> {
         self.update_cart_totals_async(id).await?;
-        self.get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_cart_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn set_tax_async(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
@@ -1620,11 +1544,8 @@ impl PgCartRepository {
     }
 
     pub async fn get_abandoned_async(&self) -> Result<Vec<Cart>> {
-        self.list_async(CartFilter {
-            status: Some(CartStatus::Abandoned),
-            ..Default::default()
-        })
-        .await
+        self.list_async(CartFilter { status: Some(CartStatus::Abandoned), ..Default::default() })
+            .await
     }
 
     pub async fn get_expired_async(&self) -> Result<Vec<Cart>> {
@@ -1639,11 +1560,8 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.list_async(CartFilter {
-            status: Some(CartStatus::Expired),
-            ..Default::default()
-        })
-        .await
+        self.list_async(CartFilter { status: Some(CartStatus::Expired), ..Default::default() })
+            .await
     }
 
     pub async fn count_async(&self, filter: CartFilter) -> Result<u64> {
@@ -1701,18 +1619,14 @@ impl PgCartRepository {
             let cart_number = Self::generate_cart_number();
             let now = Utc::now();
             let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
-            let expires_at = input
-                .expires_in_minutes
-                .map(|mins| now + Duration::minutes(mins));
+            let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
             let shipping_address_json = input
                 .shipping_address
                 .as_ref()
                 .map(|a| serde_json::to_value(a).unwrap_or_default());
-            let billing_address_json = input
-                .billing_address
-                .as_ref()
-                .map(|a| serde_json::to_value(a).unwrap_or_default());
+            let billing_address_json =
+                input.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
             let metadata_json = input.metadata.clone();
 
             sqlx::query(
@@ -1929,10 +1843,7 @@ impl PgCartRepository {
                     .map(|a| serde_json::to_value(a).unwrap_or_default()),
             )
             .bind(
-                input
-                    .billing_address
-                    .as_ref()
-                    .map(|a| serde_json::to_value(a).unwrap_or_default()),
+                input.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default()),
             )
             .bind(input.billing_same_as_shipping)
             .bind(input.fulfillment_type.map(|f| f.to_string()))

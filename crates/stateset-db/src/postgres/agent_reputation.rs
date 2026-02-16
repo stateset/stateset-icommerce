@@ -133,10 +133,7 @@ impl PgAgentReputationRepository {
         }
         if let Some(clients) = filter.client_addresses {
             if !clients.is_empty() {
-                builder
-                    .push(" AND client_address = ANY(")
-                    .push_bind(clients)
-                    .push(")");
+                builder.push(" AND client_address = ANY(").push_bind(clients).push(")");
             }
         }
         if let Some(tag1) = filter.tag1 {
@@ -151,16 +148,11 @@ impl PgAgentReputationRepository {
 
         let limit = filter.limit.unwrap_or(100).min(1000);
         let offset = filter.offset.unwrap_or(0);
-        builder
-            .push(" ORDER BY created_at DESC LIMIT ")
-            .push_bind(limit as i64);
+        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
-        let rows: Vec<FeedbackRow> = builder
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows: Vec<FeedbackRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         rows.into_iter().map(Self::row_to_feedback).collect()
     }
@@ -339,10 +331,7 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             );
             builder.push_bind(&registry);
             builder.push(" AND agent_id = ").push_bind(&agent);
-            builder
-                .push(" AND client_address = ANY(")
-                .push_bind(client_addresses)
-                .push(")");
+            builder.push(" AND client_address = ANY(").push_bind(client_addresses).push(")");
             builder.push(" AND is_revoked = false");
 
             if let Some(tag1) = tag1 {
@@ -352,11 +341,8 @@ impl AgentReputationRepository for PgAgentReputationRepository {
                 builder.push(" AND tag2 = ").push_bind(tag2);
             }
 
-            let rows: Vec<(i64, i16)> = builder
-                .build_query_as()
-                .fetch_all(&pool)
-                .await
-                .map_err(map_db_error)?;
+            let rows: Vec<(i64, i16)> =
+                builder.build_query_as().fetch_all(&pool).await.map_err(map_db_error)?;
 
             if rows.is_empty() {
                 return Ok(FeedbackSummary {
@@ -456,24 +442,16 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             builder.push_bind(&registry);
             builder.push(" AND agent_id = ").push_bind(&agent);
             builder.push(" AND client_address = ").push_bind(&client);
-            builder
-                .push(" AND feedback_index = ")
-                .push_bind(feedback_index as i64);
+            builder.push(" AND feedback_index = ").push_bind(feedback_index as i64);
 
             if let Some(responders) = responders {
                 if !responders.is_empty() {
-                    builder
-                        .push(" AND responder_address = ANY(")
-                        .push_bind(responders)
-                        .push(")");
+                    builder.push(" AND responder_address = ANY(").push_bind(responders).push(")");
                 }
             }
 
-            let count: (i64,) = builder
-                .build_query_as()
-                .fetch_one(&pool)
-                .await
-                .map_err(map_db_error)?;
+            let count: (i64,) =
+                builder.build_query_as().fetch_one(&pool).await.map_err(map_db_error)?;
             Ok(count.0 as u64)
         })
     }

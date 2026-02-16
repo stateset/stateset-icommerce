@@ -9,6 +9,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::ProductId;
 use uuid::Uuid;
 
 // =============================================================================
@@ -22,7 +23,7 @@ pub struct BillOfMaterials {
     /// Unique BOM number (e.g., "BOM-2024-001")
     pub bom_number: String,
     /// Product this BOM is for
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     /// Human-readable name
     pub name: String,
     /// Description of the BOM
@@ -62,6 +63,7 @@ impl BillOfMaterials {
 /// BOM lifecycle status
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum BomStatus {
     /// Draft - being edited, not ready for production
     #[default]
@@ -102,7 +104,7 @@ pub struct BomComponent {
     /// The BOM this component belongs to
     pub bom_id: Uuid,
     /// The component product (for sub-assemblies)
-    pub component_product_id: Option<Uuid>,
+    pub component_product_id: Option<ProductId>,
     /// Component SKU
     pub component_sku: Option<String>,
     /// Component name
@@ -122,7 +124,7 @@ pub struct BomComponent {
 /// Input for creating a new BOM
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateBom {
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     pub name: String,
     pub description: Option<String>,
     pub revision: Option<String>,
@@ -133,7 +135,7 @@ pub struct CreateBom {
 /// Input for creating a BOM component
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateBomComponent {
-    pub component_product_id: Option<Uuid>,
+    pub component_product_id: Option<ProductId>,
     pub component_sku: Option<String>,
     pub name: String,
     pub quantity: Decimal,
@@ -155,7 +157,7 @@ pub struct UpdateBom {
 /// Filter for listing BOMs
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BomFilter {
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     pub status: Option<BomStatus>,
     pub search: Option<String>,
     pub limit: Option<u32>,
@@ -173,7 +175,7 @@ pub struct WorkOrder {
     /// Unique work order number (e.g., "WO-2024-001")
     pub work_order_number: String,
     /// Product being manufactured
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     /// BOM to use (optional - can manufacture without BOM)
     pub bom_id: Option<Uuid>,
     /// Work center or production line
@@ -217,10 +219,7 @@ impl WorkOrder {
 
     /// Check if work order can be started
     pub fn can_start(&self) -> bool {
-        matches!(
-            self.status,
-            WorkOrderStatus::Planned | WorkOrderStatus::OnHold
-        )
+        matches!(self.status, WorkOrderStatus::Planned | WorkOrderStatus::OnHold)
     }
 
     /// Check if work order can be completed
@@ -240,10 +239,7 @@ impl WorkOrder {
     /// Check if work order is overdue
     pub fn is_overdue(&self) -> bool {
         if let Some(scheduled_end) = self.scheduled_end {
-            if !matches!(
-                self.status,
-                WorkOrderStatus::Completed | WorkOrderStatus::Cancelled
-            ) {
+            if !matches!(self.status, WorkOrderStatus::Completed | WorkOrderStatus::Cancelled) {
                 return Utc::now() > scheduled_end;
             }
         }
@@ -254,6 +250,7 @@ impl WorkOrder {
 /// Work order status
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum WorkOrderStatus {
     /// Planned but not started
     #[default]
@@ -302,6 +299,7 @@ impl std::str::FromStr for WorkOrderStatus {
 /// Work order priority
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum WorkOrderPriority {
     /// Low priority
     Low,
@@ -342,7 +340,7 @@ impl std::str::FromStr for WorkOrderPriority {
 /// Input for creating a work order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWorkOrder {
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     pub bom_id: Option<Uuid>,
     pub work_center_id: Option<String>,
     pub assigned_to: Option<Uuid>,
@@ -358,7 +356,7 @@ pub struct CreateWorkOrder {
 impl Default for CreateWorkOrder {
     fn default() -> Self {
         Self {
-            product_id: Uuid::nil(),
+            product_id: ProductId::nil(),
             bom_id: None,
             work_center_id: None,
             assigned_to: None,
@@ -391,7 +389,7 @@ pub struct UpdateWorkOrder {
 /// Filter for listing work orders
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkOrderFilter {
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     pub bom_id: Option<Uuid>,
     pub status: Option<WorkOrderStatus>,
     pub priority: Option<WorkOrderPriority>,
@@ -457,6 +455,7 @@ impl WorkOrderTask {
 /// Task status
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TaskStatus {
     /// Not started
     #[default]
@@ -586,7 +585,7 @@ mod tests {
         let wo = WorkOrder {
             id: Uuid::new_v4(),
             work_order_number: "WO-001".into(),
-            product_id: Uuid::new_v4(),
+            product_id: ProductId::new(),
             bom_id: None,
             work_center_id: None,
             assigned_to: None,
@@ -640,19 +639,13 @@ mod tests {
 
     #[test]
     fn test_work_order_priority_from_str() {
-        assert_eq!(
-            WorkOrderPriority::from_str("urgent").unwrap(),
-            WorkOrderPriority::Urgent
-        );
+        assert_eq!(WorkOrderPriority::from_str("urgent").unwrap(), WorkOrderPriority::Urgent);
         assert!(WorkOrderPriority::from_str("unknown").is_err());
     }
 
     #[test]
     fn test_task_status_from_str() {
-        assert_eq!(
-            TaskStatus::from_str("pending").unwrap(),
-            TaskStatus::Pending
-        );
+        assert_eq!(TaskStatus::from_str("pending").unwrap(), TaskStatus::Pending);
         assert!(TaskStatus::from_str("unknown").is_err());
     }
 }

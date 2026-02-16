@@ -2,7 +2,7 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, Result, UpdateWorkOrder,
+    AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, ProductId, Result, UpdateWorkOrder,
     UpdateWorkOrderTask, WorkOrder, WorkOrderFilter, WorkOrderMaterial, WorkOrderTask,
 };
 use stateset_db::Database;
@@ -16,15 +16,14 @@ use uuid::Uuid;
 /// # Example
 ///
 /// ```rust,no_run
-/// use stateset_embedded::{Commerce, CreateWorkOrder, CreateWorkOrderTask};
+/// use stateset_embedded::{Commerce, CreateWorkOrder, CreateWorkOrderTask, ProductId};
 /// use rust_decimal_macros::dec;
-/// use uuid::Uuid;
 ///
 /// let commerce = Commerce::new("./store.db")?;
 ///
 /// // Create a work order
 /// let wo = commerce.work_orders().create(CreateWorkOrder {
-///     product_id: Uuid::new_v4(),
+///     product_id: ProductId::new(),
 ///     quantity_to_build: dec!(100),
 ///     tasks: Some(vec![
 ///         CreateWorkOrderTask {
@@ -58,14 +57,13 @@ impl WorkOrders {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, CreateWorkOrder};
+    /// use stateset_embedded::{Commerce, CreateWorkOrder, ProductId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let wo = commerce.work_orders().create(CreateWorkOrder {
-    ///     product_id: Uuid::new_v4(),
+    ///     product_id: ProductId::new(),
     ///     quantity_to_build: dec!(50),
     ///     notes: Some("Rush order".into()),
     ///     ..Default::default()
@@ -257,9 +255,7 @@ impl WorkOrders {
         material_id: Uuid,
         quantity: Decimal,
     ) -> Result<WorkOrderMaterial> {
-        self.db
-            .work_orders()
-            .consume_material(material_id, quantity)
+        self.db.work_orders().consume_material(material_id, quantity)
     }
 
     /// Get all materials for a work order.
@@ -273,18 +269,12 @@ impl WorkOrders {
     }
 
     /// Get work orders for a specific product.
-    pub fn for_product(&self, product_id: Uuid) -> Result<Vec<WorkOrder>> {
-        self.list(WorkOrderFilter {
-            product_id: Some(product_id),
-            ..Default::default()
-        })
+    pub fn for_product(&self, product_id: ProductId) -> Result<Vec<WorkOrder>> {
+        self.list(WorkOrderFilter { product_id: Some(product_id), ..Default::default() })
     }
 
     /// Get work orders using a specific BOM.
     pub fn for_bom(&self, bom_id: Uuid) -> Result<Vec<WorkOrder>> {
-        self.list(WorkOrderFilter {
-            bom_id: Some(bom_id),
-            ..Default::default()
-        })
+        self.list(WorkOrderFilter { bom_id: Some(bom_id), ..Default::default() })
     }
 }

@@ -6,12 +6,12 @@ use super::{
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, Row};
+use rusqlite::{Row, params};
 use stateset_core::{
-    generate_claim_number, generate_warranty_number, validate_batch_size, BatchResult,
-    ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim, Result,
-    UpdateWarranty, UpdateWarrantyClaim, Warranty, WarrantyClaim, WarrantyClaimFilter,
-    WarrantyFilter, WarrantyRepository, WarrantyStatus,
+    BatchResult, ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim,
+    CustomerId, OrderId, OrderItemId, ProductId, Result, UpdateWarranty, UpdateWarrantyClaim,
+    Warranty, WarrantyClaim, WarrantyClaimFilter, WarrantyFilter, WarrantyId, WarrantyRepository,
+    WarrantyStatus, generate_claim_number, generate_warranty_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -27,28 +27,34 @@ impl SqliteWarrantyRepository {
     fn ensure_can_void(warranty: &Warranty) -> Result<()> {
         match warranty.status {
             WarrantyStatus::Active | WarrantyStatus::Transferred => Ok(()),
-            WarrantyStatus::Expired => Err(CommerceError::ValidationError(
-                "Cannot void an expired warranty".to_string(),
-            )),
-            WarrantyStatus::Voided => Err(CommerceError::ValidationError(
-                "Warranty is already voided".to_string(),
-            )),
+            WarrantyStatus::Expired => {
+                Err(CommerceError::ValidationError("Cannot void an expired warranty".to_string()))
+            }
+            WarrantyStatus::Voided => {
+                Err(CommerceError::ValidationError("Warranty is already voided".to_string()))
+            }
+            _ => Err(CommerceError::ValidationError(format!(
+                "Cannot void warranty in status: {:?}", warranty.status
+            ))),
         }
     }
 
     fn ensure_can_expire(warranty: &Warranty) -> Result<()> {
         match warranty.status {
             WarrantyStatus::Active | WarrantyStatus::Transferred => Ok(()),
-            WarrantyStatus::Expired => Err(CommerceError::ValidationError(
-                "Warranty is already expired".to_string(),
-            )),
-            WarrantyStatus::Voided => Err(CommerceError::ValidationError(
-                "Cannot expire a voided warranty".to_string(),
-            )),
+            WarrantyStatus::Expired => {
+                Err(CommerceError::ValidationError("Warranty is already expired".to_string()))
+            }
+            WarrantyStatus::Voided => {
+                Err(CommerceError::ValidationError("Cannot expire a voided warranty".to_string()))
+            }
+            _ => Err(CommerceError::ValidationError(format!(
+                "Cannot expire warranty in status: {:?}", warranty.status
+            ))),
         }
     }
 
-    fn ensure_can_transfer(warranty: &Warranty, new_customer_id: Uuid) -> Result<()> {
+    fn ensure_can_transfer(warranty: &Warranty, new_customer_id: CustomerId) -> Result<()> {
         match warranty.status {
             WarrantyStatus::Active | WarrantyStatus::Transferred => {
                 if warranty.customer_id == new_customer_id {
@@ -61,9 +67,12 @@ impl SqliteWarrantyRepository {
             WarrantyStatus::Expired => Err(CommerceError::ValidationError(
                 "Cannot transfer an expired warranty".to_string(),
             )),
-            WarrantyStatus::Voided => Err(CommerceError::ValidationError(
-                "Cannot transfer a voided warranty".to_string(),
-            )),
+            WarrantyStatus::Voided => {
+                Err(CommerceError::ValidationError("Cannot transfer a voided warranty".to_string()))
+            }
+            _ => Err(CommerceError::ValidationError(format!(
+                "Cannot transfer warranty in status: {:?}", warranty.status
+            ))),
         }
     }
 
@@ -72,21 +81,24 @@ impl SqliteWarrantyRepository {
             ClaimStatus::Submitted | ClaimStatus::UnderReview | ClaimStatus::InfoRequested => {
                 Ok(())
             }
-            ClaimStatus::Approved => Err(CommerceError::ValidationError(
-                "Claim is already approved".to_string(),
-            )),
-            ClaimStatus::Denied => Err(CommerceError::ValidationError(
-                "Cannot approve a denied claim".to_string(),
-            )),
-            ClaimStatus::Completed => Err(CommerceError::ValidationError(
-                "Cannot approve a completed claim".to_string(),
-            )),
-            ClaimStatus::Cancelled => Err(CommerceError::ValidationError(
-                "Cannot approve a cancelled claim".to_string(),
-            )),
+            ClaimStatus::Approved => {
+                Err(CommerceError::ValidationError("Claim is already approved".to_string()))
+            }
+            ClaimStatus::Denied => {
+                Err(CommerceError::ValidationError("Cannot approve a denied claim".to_string()))
+            }
+            ClaimStatus::Completed => {
+                Err(CommerceError::ValidationError("Cannot approve a completed claim".to_string()))
+            }
+            ClaimStatus::Cancelled => {
+                Err(CommerceError::ValidationError("Cannot approve a cancelled claim".to_string()))
+            }
             ClaimStatus::InProgress => Err(CommerceError::ValidationError(
                 "Cannot approve a claim already in progress".to_string(),
             )),
+            _ => Err(CommerceError::ValidationError(format!(
+                "Cannot approve claim in status: {:?}", claim.status
+            ))),
         }
     }
 
@@ -95,21 +107,24 @@ impl SqliteWarrantyRepository {
             ClaimStatus::Submitted | ClaimStatus::UnderReview | ClaimStatus::InfoRequested => {
                 Ok(())
             }
-            ClaimStatus::Approved => Err(CommerceError::ValidationError(
-                "Cannot deny an approved claim".to_string(),
-            )),
-            ClaimStatus::Denied => Err(CommerceError::ValidationError(
-                "Claim is already denied".to_string(),
-            )),
-            ClaimStatus::Completed => Err(CommerceError::ValidationError(
-                "Cannot deny a completed claim".to_string(),
-            )),
-            ClaimStatus::Cancelled => Err(CommerceError::ValidationError(
-                "Cannot deny a cancelled claim".to_string(),
-            )),
-            ClaimStatus::InProgress => Err(CommerceError::ValidationError(
-                "Cannot deny a claim in progress".to_string(),
-            )),
+            ClaimStatus::Approved => {
+                Err(CommerceError::ValidationError("Cannot deny an approved claim".to_string()))
+            }
+            ClaimStatus::Denied => {
+                Err(CommerceError::ValidationError("Claim is already denied".to_string()))
+            }
+            ClaimStatus::Completed => {
+                Err(CommerceError::ValidationError("Cannot deny a completed claim".to_string()))
+            }
+            ClaimStatus::Cancelled => {
+                Err(CommerceError::ValidationError("Cannot deny a cancelled claim".to_string()))
+            }
+            ClaimStatus::InProgress => {
+                Err(CommerceError::ValidationError("Cannot deny a claim in progress".to_string()))
+            }
+            _ => Err(CommerceError::ValidationError(format!(
+                "Cannot deny claim in status: {:?}", claim.status
+            ))),
         }
     }
 
@@ -136,6 +151,11 @@ impl SqliteWarrantyRepository {
                     "Cannot complete a cancelled claim".to_string(),
                 ));
             }
+            _ => {
+                return Err(CommerceError::ValidationError(format!(
+                    "Cannot complete claim in status: {:?}", claim.status
+                )));
+            }
         }
 
         match resolution {
@@ -156,15 +176,18 @@ impl SqliteWarrantyRepository {
             | ClaimStatus::InfoRequested
             | ClaimStatus::Approved
             | ClaimStatus::InProgress => Ok(()),
-            ClaimStatus::Denied => Err(CommerceError::ValidationError(
-                "Cannot cancel a denied claim".to_string(),
-            )),
-            ClaimStatus::Completed => Err(CommerceError::ValidationError(
-                "Cannot cancel a completed claim".to_string(),
-            )),
-            ClaimStatus::Cancelled => Err(CommerceError::ValidationError(
-                "Claim is already cancelled".to_string(),
-            )),
+            ClaimStatus::Denied => {
+                Err(CommerceError::ValidationError("Cannot cancel a denied claim".to_string()))
+            }
+            ClaimStatus::Completed => {
+                Err(CommerceError::ValidationError("Cannot cancel a completed claim".to_string()))
+            }
+            ClaimStatus::Cancelled => {
+                Err(CommerceError::ValidationError("Claim is already cancelled".to_string()))
+            }
+            _ => Err(CommerceError::ValidationError(format!(
+                "Cannot cancel claim in status: {:?}", claim.status
+            ))),
         }
     }
 
@@ -205,6 +228,7 @@ impl SqliteWarrantyRepository {
                 matches!(next, ClaimStatus::Completed | ClaimStatus::Cancelled)
             }
             ClaimStatus::Denied | ClaimStatus::Completed | ClaimStatus::Cancelled => false,
+            _ => false,
         };
 
         if allowed {
@@ -217,30 +241,30 @@ impl SqliteWarrantyRepository {
         }
     }
 
-    fn row_to_warranty(row: &Row) -> rusqlite::Result<Warranty> {
+    fn row_to_warranty(row: &Row<'_>) -> rusqlite::Result<Warranty> {
         Ok(Warranty {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "warranty", "id")?,
+            id: WarrantyId::from(parse_uuid_row(&row.get::<_, String>("id")?, "warranty", "id")?),
             warranty_number: row.get("warranty_number")?,
-            customer_id: parse_uuid_row(
+            customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "warranty",
                 "customer_id",
-            )?,
+            )?),
             order_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("order_id")?,
                 "warranty",
                 "order_id",
-            )?,
+            )?.map(OrderId::from),
             order_item_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("order_item_id")?,
                 "warranty",
                 "order_item_id",
-            )?,
+            )?.map(OrderItemId::from),
             product_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("product_id")?,
                 "warranty",
                 "product_id",
-            )?,
+            )?.map(ProductId::from),
             sku: row.get("sku")?,
             serial_number: row.get("serial_number")?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "warranty", "status")?,
@@ -294,20 +318,20 @@ impl SqliteWarrantyRepository {
         })
     }
 
-    fn row_to_claim(row: &Row) -> rusqlite::Result<WarrantyClaim> {
+    fn row_to_claim(row: &Row<'_>) -> rusqlite::Result<WarrantyClaim> {
         Ok(WarrantyClaim {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "warranty_claim", "id")?,
             claim_number: row.get("claim_number")?,
-            warranty_id: parse_uuid_row(
+            warranty_id: WarrantyId::from(parse_uuid_row(
                 &row.get::<_, String>("warranty_id")?,
                 "warranty_claim",
                 "warranty_id",
-            )?,
-            customer_id: parse_uuid_row(
+            )?),
+            customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "warranty_claim",
                 "customer_id",
-            )?,
+            )?),
             status: parse_enum_row(&row.get::<_, String>("status")?, "warranty_claim", "status")?,
             resolution: parse_enum_row(
                 &row.get::<_, String>("resolution")?,
@@ -333,7 +357,7 @@ impl SqliteWarrantyRepository {
                 row.get::<_, Option<String>>("replacement_product_id")?,
                 "warranty_claim",
                 "replacement_product_id",
-            )?,
+            )?.map(ProductId::from),
             refund_amount: parse_decimal_opt_row(
                 row.get::<_, Option<String>>("refund_amount")?,
                 "warranty_claim",
@@ -373,7 +397,7 @@ impl SqliteWarrantyRepository {
 
 impl WarrantyRepository for SqliteWarrantyRepository {
     fn create(&self, input: CreateWarranty) -> Result<Warranty> {
-        let id = Uuid::new_v4();
+        let id = WarrantyId::new();
         let now = chrono::Utc::now();
         let warranty_number = generate_warranty_number();
         let purchase_date = input.purchase_date.unwrap_or(now);
@@ -387,10 +411,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         });
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO warranties (id, warranty_number, customer_id, order_id, order_item_id,
                  product_id, sku, serial_number, status, warranty_type, provider, coverage_description,
@@ -429,14 +450,10 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Warranty>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM warranties WHERE id = ?")
-            .map_err(map_db_error)?;
+    fn get(&self, id: WarrantyId) -> Result<Option<Warranty>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM warranties WHERE id = ?").map_err(map_db_error)?;
         let result = stmt.query_row([id.to_string()], Self::row_to_warranty);
         match result {
             Ok(warranty) => Ok(Some(warranty)),
@@ -446,10 +463,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn get_by_number(&self, warranty_number: &str) -> Result<Option<Warranty>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn
             .prepare("SELECT * FROM warranties WHERE warranty_number = ?")
             .map_err(map_db_error)?;
@@ -462,10 +476,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn get_by_serial(&self, serial_number: &str) -> Result<Option<Warranty>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn
             .prepare("SELECT * FROM warranties WHERE serial_number = ?")
             .map_err(map_db_error)?;
@@ -477,15 +488,12 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdateWarranty) -> Result<Warranty> {
+    fn update(&self, id: WarrantyId, input: UpdateWarranty) -> Result<Warranty> {
         let now = chrono::Utc::now();
         let warranty = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE warranties SET status = ?, serial_number = ?, end_date = ?,
                  coverage_description = ?, terms = ?, notes = ?, updated_at = ? WHERE id = ?",
@@ -510,10 +518,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn list(&self, filter: WarrantyFilter) -> Result<Vec<Warranty>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT * FROM warranties WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -544,9 +549,8 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::row_to_warranty)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map(params_refs.as_slice(), Self::row_to_warranty).map_err(map_db_error)?;
 
         let mut warranties = Vec::new();
         for row in rows {
@@ -555,54 +559,39 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(warranties)
     }
 
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Warranty>> {
-        self.list(WarrantyFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Warranty>> {
+        self.list(WarrantyFilter { customer_id: Some(customer_id), ..Default::default() })
     }
 
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Warranty>> {
-        self.list(WarrantyFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Warranty>> {
+        self.list(WarrantyFilter { order_id: Some(order_id), ..Default::default() })
     }
 
-    fn void(&self, id: Uuid) -> Result<Warranty> {
+    fn void(&self, id: WarrantyId) -> Result<Warranty> {
         let warranty = self.get(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_can_void(&warranty)?;
         self.update(
             id,
-            UpdateWarranty {
-                status: Some(WarrantyStatus::Voided),
-                ..Default::default()
-            },
+            UpdateWarranty { status: Some(WarrantyStatus::Voided), ..Default::default() },
         )
     }
 
-    fn expire(&self, id: Uuid) -> Result<Warranty> {
+    fn expire(&self, id: WarrantyId) -> Result<Warranty> {
         let warranty = self.get(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_can_expire(&warranty)?;
         self.update(
             id,
-            UpdateWarranty {
-                status: Some(WarrantyStatus::Expired),
-                ..Default::default()
-            },
+            UpdateWarranty { status: Some(WarrantyStatus::Expired), ..Default::default() },
         )
     }
 
-    fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
+    fn transfer(&self, id: WarrantyId, new_customer_id: CustomerId) -> Result<Warranty> {
         let warranty = self.get(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_can_transfer(&warranty, new_customer_id)?;
         let now = chrono::Utc::now();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE warranties SET customer_id = ?, status = ?, updated_at = ? WHERE id = ?",
                 params![
@@ -620,9 +609,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
     fn create_claim(&self, input: CreateWarrantyClaim) -> Result<WarrantyClaim> {
         // Get warranty to get customer_id and validate
-        let warranty = self
-            .get(input.warranty_id)?
-            .ok_or(CommerceError::NotFound)?;
+        let warranty = self.get(input.warranty_id)?.ok_or(CommerceError::NotFound)?;
 
         if !warranty.is_valid() {
             return Err(CommerceError::ValidationError(
@@ -635,10 +622,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let claim_number = generate_claim_number();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, status,
                  resolution, issue_description, issue_category, issue_date, contact_phone, contact_email,
@@ -676,13 +660,9 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn get_claim(&self, id: Uuid) -> Result<Option<WarrantyClaim>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let mut stmt = conn
-            .prepare("SELECT * FROM warranty_claims WHERE id = ?")
-            .map_err(map_db_error)?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM warranty_claims WHERE id = ?").map_err(map_db_error)?;
         let result = stmt.query_row([id.to_string()], Self::row_to_claim);
         match result {
             Ok(claim) => Ok(Some(claim)),
@@ -692,10 +672,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn get_claim_by_number(&self, claim_number: &str) -> Result<Option<WarrantyClaim>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn
             .prepare("SELECT * FROM warranty_claims WHERE claim_number = ?")
             .map_err(map_db_error)?;
@@ -736,11 +713,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
                     }
                 }
                 resolution = ClaimResolution::Denied;
-                if denial_reason
-                    .as_deref()
-                    .map(|value| value.trim().is_empty())
-                    .unwrap_or(true)
-                {
+                if denial_reason.as_deref().map(|value| value.trim().is_empty()).unwrap_or(true) {
                     return Err(CommerceError::ValidationError(
                         "Denial reason is required".to_string(),
                     ));
@@ -774,10 +747,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE warranty_claims SET status = ?, resolution = ?, repair_cost = ?,
                  replacement_product_id = ?, refund_amount = ?, denial_reason = ?,
@@ -811,10 +781,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn list_claims(&self, filter: WarrantyClaimFilter) -> Result<Vec<WarrantyClaim>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT * FROM warranty_claims WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -844,9 +811,8 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::row_to_claim)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map(params_refs.as_slice(), Self::row_to_claim).map_err(map_db_error)?;
 
         let mut claims = Vec::new();
         for row in rows {
@@ -855,7 +821,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(claims)
     }
 
-    fn get_claims(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>> {
+    fn get_claims(&self, warranty_id: WarrantyId) -> Result<Vec<WarrantyClaim>> {
         self.list_claims(WarrantyClaimFilter {
             warranty_id: Some(warranty_id),
             ..Default::default()
@@ -868,10 +834,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Self::ensure_claim_can_approve(&claim)?;
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE warranty_claims SET status = ?, approved_at = ?, updated_at = ? WHERE id = ?",
                 params![ClaimStatus::Approved.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
@@ -886,16 +849,11 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_deny(&claim)?;
         if reason.trim().is_empty() {
-            return Err(CommerceError::ValidationError(
-                "Denial reason is required".to_string(),
-            ));
+            return Err(CommerceError::ValidationError("Denial reason is required".to_string()));
         }
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE warranty_claims SET status = ?, resolution = ?, denial_reason = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
                 params![ClaimStatus::Denied.to_string(), ClaimResolution::Denied.to_string(), reason, now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
@@ -911,10 +869,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Self::ensure_claim_can_complete(&claim, resolution)?;
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE warranty_claims SET status = ?, resolution = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
                 params![ClaimStatus::Completed.to_string(), resolution.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
@@ -930,10 +885,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Self::ensure_claim_can_cancel(&claim)?;
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE warranty_claims SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
                 params![
@@ -950,10 +902,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn count(&self, filter: WarrantyFilter) -> Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT COUNT(*) FROM warranties WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -969,17 +918,13 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
     fn count_claims(&self, filter: WarrantyClaimFilter) -> Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT COUNT(*) FROM warranty_claims WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -995,9 +940,8 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -1023,15 +967,12 @@ impl WarrantyRepository for SqliteWarrantyRepository {
             return Ok(vec![]);
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
-            let id = Uuid::new_v4();
+            let id = WarrantyId::new();
             let now = chrono::Utc::now();
             let warranty_number = generate_warranty_number();
             let purchase_date = input.purchase_date.unwrap_or(now);
@@ -1109,7 +1050,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
+    fn update_batch(&self, updates: Vec<(WarrantyId, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -1123,16 +1064,13 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>> {
+    fn update_batch_atomic(&self, updates: Vec<(WarrantyId, UpdateWarranty)>) -> Result<Vec<Warranty>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let mut results = Vec::with_capacity(updates.len());
 
@@ -1186,13 +1124,13 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<WarrantyId>) -> Result<BatchResult<Uuid>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
         for (index, id) in ids.into_iter().enumerate() {
             match self.void(id) {
-                Ok(_) => result.record_success(id),
+                Ok(_) => result.record_success(id.into_uuid()),
                 Err(e) => result.record_failure(index, Some(id.to_string()), &e),
             }
         }
@@ -1200,16 +1138,13 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<WarrantyId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let placeholders = build_in_clause(ids.len());
@@ -1229,27 +1164,24 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
         let params_refs = params_refs(&params);
 
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
 
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Warranty>> {
+    fn get_batch(&self, ids: Vec<WarrantyId>) -> Result<Vec<Warranty>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
         }
 
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM warranties WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;

@@ -85,12 +85,7 @@ pub struct WebhookConfig {
 
 impl Default for WebhookConfig {
     fn default() -> Self {
-        Self {
-            max_retries: 3,
-            timeout_secs: 30,
-            retry_delay_ms: 1000,
-            max_in_flight: 8,
-        }
+        Self { max_retries: 3, timeout_secs: 30, retry_delay_ms: 1000, max_in_flight: 8 }
     }
 }
 
@@ -108,9 +103,8 @@ impl WebhookRuntime {
             match tokio::runtime::Runtime::new() {
                 Ok(runtime) => Self::Owned(runtime),
                 Err(err) => {
-                    let fallback = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build();
+                    let fallback =
+                        tokio::runtime::Builder::new_current_thread().enable_all().build();
                     match fallback {
                         Ok(runtime) => Self::Owned(runtime),
                         Err(fallback_err) => {
@@ -194,11 +188,7 @@ impl WebhookManager {
 
         Self {
             webhooks: Arc::new(RwLock::new(HashMap::new())),
-            config: WebhookConfig {
-                max_retries,
-                timeout_secs,
-                ..Default::default()
-            },
+            config: WebhookConfig { max_retries, timeout_secs, ..Default::default() },
             client,
             runtime,
         }
@@ -305,11 +295,8 @@ impl WebhookManager {
                 poison.into_inner()
             }
         };
-        let webhooks: Vec<Webhook> = webhooks_guard
-            .values()
-            .filter(|w| w.should_receive(&event))
-            .cloned()
-            .collect();
+        let webhooks: Vec<Webhook> =
+            webhooks_guard.values().filter(|w| w.should_receive(&event)).cloned().collect();
 
         if webhooks.is_empty() {
             return;
@@ -329,9 +316,7 @@ impl WebhookManager {
                 }
             }));
 
-            deliveries
-                .for_each_concurrent(max_in_flight, |fut| fut)
-                .await;
+            deliveries.for_each_concurrent(max_in_flight, |fut| fut).await;
         });
     }
 }
@@ -365,10 +350,7 @@ async fn deliver_to_webhook(
             let exp = attempt.saturating_sub(1);
             let shift = exp.min(16);
             let factor = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
-            let delay_ms = config
-                .retry_delay_ms
-                .saturating_mul(factor)
-                .min(MAX_BACKOFF_MS);
+            let delay_ms = config.retry_delay_ms.saturating_mul(factor).min(MAX_BACKOFF_MS);
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
 
@@ -492,15 +474,15 @@ mod tests {
             .with_events(vec!["order_created".to_string()]);
 
         let order_event = CommerceEvent::OrderCreated {
-            order_id: Uuid::new_v4(),
-            customer_id: Uuid::new_v4(),
+            order_id: stateset_core::OrderId::new(),
+            customer_id: stateset_core::CustomerId::new(),
             total_amount: dec!(100),
             item_count: 1,
             timestamp: Utc::now(),
         };
 
         let customer_event = CommerceEvent::CustomerCreated {
-            customer_id: Uuid::new_v4(),
+            customer_id: stateset_core::CustomerId::new(),
             email: "test@example.com".to_string(),
             timestamp: Utc::now(),
         };

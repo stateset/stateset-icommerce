@@ -3,12 +3,14 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::ProductId;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Product entity
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Product {
-    pub id: Uuid,
+    pub id: ProductId,
     pub name: String,
     pub slug: String,
     pub description: String,
@@ -24,7 +26,7 @@ pub struct Product {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProductVariant {
     pub id: Uuid,
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     pub sku: String,
     pub name: String,
     pub price: Decimal,
@@ -41,8 +43,10 @@ pub struct ProductVariant {
 }
 
 /// Product status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ProductStatus {
     Draft,
     Active,
@@ -55,32 +59,11 @@ impl Default for ProductStatus {
     }
 }
 
-impl std::fmt::Display for ProductStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Draft => write!(f, "draft"),
-            Self::Active => write!(f, "active"),
-            Self::Archived => write!(f, "archived"),
-        }
-    }
-}
-
-impl std::str::FromStr for ProductStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "draft" => Ok(Self::Draft),
-            "active" => Ok(Self::Active),
-            "archived" => Ok(Self::Archived),
-            _ => Err(format!("Unknown product status: {}", s)),
-        }
-    }
-}
-
 /// Product type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ProductType {
     Simple,
     Variable,
@@ -91,31 +74,6 @@ pub enum ProductType {
 impl Default for ProductType {
     fn default() -> Self {
         Self::Simple
-    }
-}
-
-impl std::fmt::Display for ProductType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Simple => write!(f, "simple"),
-            Self::Variable => write!(f, "variable"),
-            Self::Bundle => write!(f, "bundle"),
-            Self::Digital => write!(f, "digital"),
-        }
-    }
-}
-
-impl std::str::FromStr for ProductType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "simple" => Ok(Self::Simple),
-            "variable" => Ok(Self::Variable),
-            "bundle" => Ok(Self::Bundle),
-            "digital" => Ok(Self::Digital),
-            _ => Err(format!("Unknown product type: {}", s)),
-        }
     }
 }
 
@@ -247,9 +205,7 @@ impl ProductVariant {
 
     /// Check if on sale
     pub fn is_on_sale(&self) -> bool {
-        self.compare_at_price
-            .map(|compare| compare > self.price)
-            .unwrap_or(false)
+        self.compare_at_price.map(|compare| compare > self.price).unwrap_or(false)
     }
 }
 
@@ -272,34 +228,22 @@ mod tests {
 
     #[test]
     fn product_status_from_str() {
-        assert_eq!(
-            ProductStatus::from_str("draft").unwrap(),
-            ProductStatus::Draft
-        );
-        assert_eq!(
-            ProductStatus::from_str("Active").unwrap(),
-            ProductStatus::Active
-        );
+        assert_eq!(ProductStatus::from_str("draft").unwrap(), ProductStatus::Draft);
+        assert_eq!(ProductStatus::from_str("Active").unwrap(), ProductStatus::Active);
         assert!(ProductStatus::from_str("unknown").is_err());
     }
 
     #[test]
     fn product_type_from_str() {
-        assert_eq!(
-            ProductType::from_str("simple").unwrap(),
-            ProductType::Simple
-        );
-        assert_eq!(
-            ProductType::from_str("Bundle").unwrap(),
-            ProductType::Bundle
-        );
+        assert_eq!(ProductType::from_str("simple").unwrap(), ProductType::Simple);
+        assert_eq!(ProductType::from_str("Bundle").unwrap(), ProductType::Bundle);
         assert!(ProductType::from_str("physical").is_err());
     }
 
     fn create_test_product(status: ProductStatus) -> Product {
         let now = Utc::now();
         Product {
-            id: Uuid::new_v4(),
+            id: ProductId::new(),
             name: "Test Product".to_string(),
             slug: "test-product".to_string(),
             description: "A great test product".to_string(),
@@ -330,7 +274,7 @@ mod tests {
         let now = Utc::now();
         ProductVariant {
             id: Uuid::new_v4(),
-            product_id: Uuid::new_v4(),
+            product_id: ProductId::new(),
             sku: "TEST-SKU-001".to_string(),
             name: "Test Variant".to_string(),
             price,
@@ -339,10 +283,7 @@ mod tests {
             barcode: Some("1234567890123".to_string()),
             weight: Some(dec!(0.5)),
             weight_unit: Some("kg".to_string()),
-            options: vec![VariantOption {
-                name: "Size".to_string(),
-                value: "Large".to_string(),
-            }],
+            options: vec![VariantOption { name: "Size".to_string(), value: "Large".to_string() }],
             is_default: true,
             is_active: true,
             created_at: now,
@@ -620,10 +561,7 @@ mod tests {
 
     #[test]
     fn test_variant_option_serialization() {
-        let option = VariantOption {
-            name: "Color".to_string(),
-            value: "Red".to_string(),
-        };
+        let option = VariantOption { name: "Color".to_string(), value: "Red".to_string() };
 
         let json = serde_json::to_string(&option).unwrap();
         let deserialized: VariantOption = serde_json::from_str(&json).unwrap();

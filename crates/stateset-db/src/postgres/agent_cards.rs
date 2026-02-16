@@ -5,8 +5,9 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    validate_batch_size, A2ASkill, AgentCard, AgentCardFilter, AgentCardRepository, BatchResult,
-    CommerceError, CreateAgentCard, Result, TrustLevel, UpdateAgentCard, X402Asset, X402Network,
+    A2ASkill, AgentCard, AgentCardFilter, AgentCardRepository, BatchResult, CommerceError,
+    CreateAgentCard, Result, TrustLevel, UpdateAgentCard, X402Asset, X402Network,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -58,11 +59,9 @@ impl PgAgentCardRepository {
                 TrustLevel::Verified,
                 TrustLevel::Enterprise,
             ],
-            TrustLevel::Standard => vec![
-                TrustLevel::Standard,
-                TrustLevel::Verified,
-                TrustLevel::Enterprise,
-            ],
+            TrustLevel::Standard => {
+                vec![TrustLevel::Standard, TrustLevel::Verified, TrustLevel::Enterprise]
+            }
             TrustLevel::Verified => vec![TrustLevel::Verified, TrustLevel::Enterprise],
             TrustLevel::Enterprise => vec![TrustLevel::Enterprise],
         }
@@ -79,10 +78,9 @@ impl PgAgentCardRepository {
 
     fn parse_limit(value: Option<i64>, field: &str) -> Result<Option<u64>> {
         match value {
-            Some(val) if val < 0 => Err(CommerceError::DatabaseError(format!(
-                "{} cannot be negative",
-                field
-            ))),
+            Some(val) if val < 0 => {
+                Err(CommerceError::DatabaseError(format!("{} cannot be negative", field)))
+            }
             Some(val) => Ok(Some(val as u64)),
             None => Ok(None),
         }
@@ -161,12 +159,9 @@ impl PgAgentCardRepository {
         let now = Utc::now();
         let id = Uuid::new_v4();
 
-        let supported_networks = input
-            .supported_networks
-            .unwrap_or_else(|| vec![X402Network::SetChain]);
-        let supported_assets = input
-            .supported_assets
-            .unwrap_or_else(|| vec![X402Asset::Usdc]);
+        let supported_networks =
+            input.supported_networks.unwrap_or_else(|| vec![X402Network::SetChain]);
+        let supported_assets = input.supported_assets.unwrap_or_else(|| vec![X402Asset::Usdc]);
         let a2a_skills = input.a2a_skills.unwrap_or_default();
         let trust_level = input.trust_level.unwrap_or_default();
 
@@ -212,14 +207,8 @@ impl PgAgentCardRepository {
         .bind(&input.merchant_id)
         .bind(&input.merchant_name)
         .bind(&input.business_category)
-        .bind(Self::to_i64_opt(
-            input.max_transaction_amount,
-            "max_transaction_amount",
-        )?)
-        .bind(Self::to_i64_opt(
-            input.daily_volume_limit,
-            "daily_volume_limit",
-        )?)
+        .bind(Self::to_i64_opt(input.max_transaction_amount, "max_transaction_amount")?)
+        .bind(Self::to_i64_opt(input.daily_volume_limit, "daily_volume_limit")?)
         .bind(input.requires_kyc.unwrap_or(false))
         .bind(true)
         .bind(&input.metadata)
@@ -258,9 +247,7 @@ impl PgAgentCardRepository {
 
         let name = input.name.unwrap_or(existing.name);
         let description = input.description.or(existing.description);
-        let supported_networks = input
-            .supported_networks
-            .unwrap_or(existing.supported_networks);
+        let supported_networks = input.supported_networks.unwrap_or(existing.supported_networks);
         let supported_assets = input.supported_assets.unwrap_or(existing.supported_assets);
         let a2a_skills = input.a2a_skills.unwrap_or(existing.a2a_skills);
         let trust_level = input.trust_level.unwrap_or(existing.trust_level);
@@ -269,9 +256,8 @@ impl PgAgentCardRepository {
         let merchant_id = input.merchant_id.or(existing.merchant_id);
         let merchant_name = input.merchant_name.or(existing.merchant_name);
         let business_category = input.business_category.or(existing.business_category);
-        let max_transaction_amount = input
-            .max_transaction_amount
-            .or(existing.max_transaction_amount);
+        let max_transaction_amount =
+            input.max_transaction_amount.or(existing.max_transaction_amount);
         let daily_volume_limit = input.daily_volume_limit.or(existing.daily_volume_limit);
         let requires_kyc = input.requires_kyc.unwrap_or(existing.requires_kyc);
         let active = input.active.unwrap_or(existing.active);
@@ -310,10 +296,7 @@ impl PgAgentCardRepository {
         .bind(&merchant_id)
         .bind(&merchant_name)
         .bind(&business_category)
-        .bind(Self::to_i64_opt(
-            max_transaction_amount,
-            "max_transaction_amount",
-        )?)
+        .bind(Self::to_i64_opt(max_transaction_amount, "max_transaction_amount")?)
         .bind(Self::to_i64_opt(daily_volume_limit, "daily_volume_limit")?)
         .bind(requires_kyc)
         .bind(active)
@@ -347,9 +330,7 @@ impl PgAgentCardRepository {
             builder.push(" AND wallet_address = ").push_bind(wallet);
         }
         if let Some(trust) = filter.trust_level {
-            builder
-                .push(" AND trust_level = ")
-                .push_bind(trust.to_string());
+            builder.push(" AND trust_level = ").push_bind(trust.to_string());
         }
         if let Some(min_trust) = filter.min_trust_level {
             let levels = Self::trust_levels_at_or_above(min_trust);
@@ -361,19 +342,13 @@ impl PgAgentCardRepository {
             builder.push(")");
         }
         if let Some(network) = filter.network {
-            builder
-                .push(" AND supported_networks @> ")
-                .push_bind(serde_json::json!([network]));
+            builder.push(" AND supported_networks @> ").push_bind(serde_json::json!([network]));
         }
         if let Some(asset) = filter.asset {
-            builder
-                .push(" AND supported_assets @> ")
-                .push_bind(serde_json::json!([asset]));
+            builder.push(" AND supported_assets @> ").push_bind(serde_json::json!([asset]));
         }
         if let Some(skill) = filter.skill {
-            builder
-                .push(" AND a2a_skills @> ")
-                .push_bind(serde_json::json!([skill]));
+            builder.push(" AND a2a_skills @> ").push_bind(serde_json::json!([skill]));
         }
         if let Some(active) = filter.active {
             builder.push(" AND active = ").push_bind(active);
@@ -384,16 +359,11 @@ impl PgAgentCardRepository {
 
         let limit = filter.limit.unwrap_or(100).min(1000);
         let offset = filter.offset.unwrap_or(0);
-        builder
-            .push(" ORDER BY created_at DESC LIMIT ")
-            .push_bind(limit as i64);
+        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
-        let rows: Vec<AgentCardRow> = builder
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows: Vec<AgentCardRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         rows.into_iter().map(Self::row_to_agent_card).collect()
     }
@@ -405,9 +375,7 @@ impl PgAgentCardRepository {
             builder.push(" AND wallet_address = ").push_bind(wallet);
         }
         if let Some(trust) = filter.trust_level {
-            builder
-                .push(" AND trust_level = ")
-                .push_bind(trust.to_string());
+            builder.push(" AND trust_level = ").push_bind(trust.to_string());
         }
         if let Some(min_trust) = filter.min_trust_level {
             let levels = Self::trust_levels_at_or_above(min_trust);
@@ -419,19 +387,13 @@ impl PgAgentCardRepository {
             builder.push(")");
         }
         if let Some(network) = filter.network {
-            builder
-                .push(" AND supported_networks @> ")
-                .push_bind(serde_json::json!([network]));
+            builder.push(" AND supported_networks @> ").push_bind(serde_json::json!([network]));
         }
         if let Some(asset) = filter.asset {
-            builder
-                .push(" AND supported_assets @> ")
-                .push_bind(serde_json::json!([asset]));
+            builder.push(" AND supported_assets @> ").push_bind(serde_json::json!([asset]));
         }
         if let Some(skill) = filter.skill {
-            builder
-                .push(" AND a2a_skills @> ")
-                .push_bind(serde_json::json!([skill]));
+            builder.push(" AND a2a_skills @> ").push_bind(serde_json::json!([skill]));
         }
         if let Some(active) = filter.active {
             builder.push(" AND active = ").push_bind(active);
@@ -440,11 +402,8 @@ impl PgAgentCardRepository {
             builder.push(" AND merchant_id = ").push_bind(merchant_id);
         }
 
-        let count: (i64,) = builder
-            .build_query_as()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }
@@ -540,12 +499,9 @@ impl PgAgentCardRepository {
             let now = Utc::now();
             let id = Uuid::new_v4();
 
-            let supported_networks = input
-                .supported_networks
-                .unwrap_or_else(|| vec![X402Network::SetChain]);
-            let supported_assets = input
-                .supported_assets
-                .unwrap_or_else(|| vec![X402Asset::Usdc]);
+            let supported_networks =
+                input.supported_networks.unwrap_or_else(|| vec![X402Network::SetChain]);
+            let supported_assets = input.supported_assets.unwrap_or_else(|| vec![X402Asset::Usdc]);
             let a2a_skills = input.a2a_skills.unwrap_or_default();
             let trust_level = input.trust_level.unwrap_or_default();
 
@@ -591,14 +547,8 @@ impl PgAgentCardRepository {
             .bind(&input.merchant_id)
             .bind(&input.merchant_name)
             .bind(&input.business_category)
-            .bind(Self::to_i64_opt(
-                input.max_transaction_amount,
-                "max_transaction_amount",
-            )?)
-            .bind(Self::to_i64_opt(
-                input.daily_volume_limit,
-                "daily_volume_limit",
-            )?)
+            .bind(Self::to_i64_opt(input.max_transaction_amount, "max_transaction_amount")?)
+            .bind(Self::to_i64_opt(input.daily_volume_limit, "daily_volume_limit")?)
             .bind(input.requires_kyc.unwrap_or(false))
             .bind(true)
             .bind(&input.metadata)

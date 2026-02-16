@@ -3,19 +3,26 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{OrderId, ProductId, ShipmentId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Shipping carrier for deliveries
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ShippingCarrier {
     #[default]
     Other,
     Ups,
+    #[strum(serialize = "fedex", serialize = "fed_ex")]
     FedEx,
     Usps,
     Dhl,
+    #[strum(serialize = "ontrac", serialize = "on_trac")]
     OnTrac,
+    #[strum(serialize = "lasership", serialize = "laser_ship")]
     LaserShip,
 }
 
@@ -26,7 +33,9 @@ impl ShippingCarrier {
             ShippingCarrier::Ups => Some("https://www.ups.com/track?tracknum="),
             ShippingCarrier::FedEx => Some("https://www.fedex.com/apps/fedextrack/?tracknumbers="),
             ShippingCarrier::Usps => Some("https://tools.usps.com/go/TrackConfirmAction?tLabels="),
-            ShippingCarrier::Dhl => Some("https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id="),
+            ShippingCarrier::Dhl => Some(
+                "https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id=",
+            ),
             ShippingCarrier::OnTrac => Some("https://www.ontrac.com/tracking/?number="),
             ShippingCarrier::LaserShip => Some("https://www.lasership.com/track/"),
             ShippingCarrier::Other => None,
@@ -35,93 +44,34 @@ impl ShippingCarrier {
 
     /// Generate a full tracking URL for a tracking number
     pub fn tracking_url(&self, tracking_number: &str) -> Option<String> {
-        self.tracking_url_base()
-            .map(|base| format!("{}{}", base, tracking_number))
-    }
-}
-
-impl std::fmt::Display for ShippingCarrier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ShippingCarrier::Ups => write!(f, "ups"),
-            ShippingCarrier::FedEx => write!(f, "fedex"),
-            ShippingCarrier::Usps => write!(f, "usps"),
-            ShippingCarrier::Dhl => write!(f, "dhl"),
-            ShippingCarrier::OnTrac => write!(f, "ontrac"),
-            ShippingCarrier::LaserShip => write!(f, "lasership"),
-            ShippingCarrier::Other => write!(f, "other"),
-        }
-    }
-}
-
-impl std::str::FromStr for ShippingCarrier {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "ups" => Ok(Self::Ups),
-            "fedex" | "fed_ex" => Ok(Self::FedEx),
-            "usps" => Ok(Self::Usps),
-            "dhl" => Ok(Self::Dhl),
-            "ontrac" | "on_trac" => Ok(Self::OnTrac),
-            "lasership" | "laser_ship" => Ok(Self::LaserShip),
-            "other" => Ok(Self::Other),
-            _ => Err(format!("Unknown shipping carrier: {}", s)),
-        }
+        self.tracking_url_base().map(|base| format!("{}{}", base, tracking_number))
     }
 }
 
 /// Shipping method/speed
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ShippingMethod {
     #[default]
     Standard,
     Express,
     Overnight,
+    #[strum(serialize = "two_day", serialize = "twoday")]
     TwoDay,
     Ground,
     International,
+    #[strum(serialize = "same_day", serialize = "sameday")]
     SameDay,
     Freight,
 }
 
-impl std::fmt::Display for ShippingMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ShippingMethod::Standard => write!(f, "standard"),
-            ShippingMethod::Express => write!(f, "express"),
-            ShippingMethod::Overnight => write!(f, "overnight"),
-            ShippingMethod::TwoDay => write!(f, "two_day"),
-            ShippingMethod::Ground => write!(f, "ground"),
-            ShippingMethod::International => write!(f, "international"),
-            ShippingMethod::SameDay => write!(f, "same_day"),
-            ShippingMethod::Freight => write!(f, "freight"),
-        }
-    }
-}
-
-impl std::str::FromStr for ShippingMethod {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "standard" => Ok(Self::Standard),
-            "express" => Ok(Self::Express),
-            "overnight" => Ok(Self::Overnight),
-            "two_day" | "twoday" => Ok(Self::TwoDay),
-            "ground" => Ok(Self::Ground),
-            "international" => Ok(Self::International),
-            "same_day" | "sameday" => Ok(Self::SameDay),
-            "freight" => Ok(Self::Freight),
-            _ => Err(format!("Unknown shipping method: {}", s)),
-        }
-    }
-}
-
 /// Status of a shipment through its lifecycle
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum ShipmentStatus {
     /// Initial state - shipment created but not yet processed
     #[default]
@@ -129,12 +79,15 @@ pub enum ShipmentStatus {
     /// Being prepared for shipping
     Processing,
     /// Packed and ready to ship
+    #[strum(serialize = "ready_to_ship", serialize = "readytoship")]
     ReadyToShip,
     /// Handed off to carrier
     Shipped,
     /// In carrier's network
+    #[strum(serialize = "in_transit", serialize = "intransit")]
     InTransit,
     /// On delivery vehicle
+    #[strum(serialize = "out_for_delivery", serialize = "outfordelivery")]
     OutForDelivery,
     /// Successfully delivered
     Delivered,
@@ -143,8 +96,10 @@ pub enum ShipmentStatus {
     /// Returned to sender
     Returned,
     /// Shipment cancelled
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     /// On hold for investigation
+    #[strum(serialize = "on_hold", serialize = "onhold")]
     OnHold,
 }
 
@@ -187,54 +142,16 @@ impl ShipmentStatus {
     }
 }
 
-impl std::fmt::Display for ShipmentStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ShipmentStatus::Pending => write!(f, "pending"),
-            ShipmentStatus::Processing => write!(f, "processing"),
-            ShipmentStatus::ReadyToShip => write!(f, "ready_to_ship"),
-            ShipmentStatus::Shipped => write!(f, "shipped"),
-            ShipmentStatus::InTransit => write!(f, "in_transit"),
-            ShipmentStatus::OutForDelivery => write!(f, "out_for_delivery"),
-            ShipmentStatus::Delivered => write!(f, "delivered"),
-            ShipmentStatus::Failed => write!(f, "failed"),
-            ShipmentStatus::Returned => write!(f, "returned"),
-            ShipmentStatus::Cancelled => write!(f, "cancelled"),
-            ShipmentStatus::OnHold => write!(f, "on_hold"),
-        }
-    }
-}
-
-impl std::str::FromStr for ShipmentStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "processing" => Ok(Self::Processing),
-            "ready_to_ship" | "readytoship" => Ok(Self::ReadyToShip),
-            "shipped" => Ok(Self::Shipped),
-            "in_transit" | "intransit" => Ok(Self::InTransit),
-            "out_for_delivery" | "outfordelivery" => Ok(Self::OutForDelivery),
-            "delivered" => Ok(Self::Delivered),
-            "failed" => Ok(Self::Failed),
-            "returned" => Ok(Self::Returned),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            "on_hold" | "onhold" => Ok(Self::OnHold),
-            _ => Err(format!("Unknown shipment status: {}", s)),
-        }
-    }
-}
 
 /// A shipment tracks the physical delivery of items from an order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Shipment {
     /// Unique identifier
-    pub id: Uuid,
+    pub id: ShipmentId,
     /// Human-readable shipment number (e.g., "SHP-ABC123")
     pub shipment_number: String,
     /// Order this shipment belongs to
-    pub order_id: Uuid,
+    pub order_id: OrderId,
     /// Current status
     pub status: ShipmentStatus,
     /// Shipping carrier
@@ -321,11 +238,11 @@ impl Shipment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShipmentItem {
     pub id: Uuid,
-    pub shipment_id: Uuid,
+    pub shipment_id: ShipmentId,
     /// Reference to order item
     pub order_item_id: Option<Uuid>,
     /// Product being shipped
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// SKU of the item
     pub sku: String,
     /// Item name/description
@@ -340,7 +257,7 @@ pub struct ShipmentItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShipmentEvent {
     pub id: Uuid,
-    pub shipment_id: Uuid,
+    pub shipment_id: ShipmentId,
     /// Type of event (e.g., "picked_up", "departed_facility", "arrived_at_hub")
     pub event_type: String,
     /// Location where event occurred
@@ -355,7 +272,7 @@ pub struct ShipmentEvent {
 /// Input for creating a new shipment
 #[derive(Debug, Clone, Default)]
 pub struct CreateShipment {
-    pub order_id: Uuid,
+    pub order_id: OrderId,
     pub carrier: Option<ShippingCarrier>,
     pub shipping_method: Option<ShippingMethod>,
     pub tracking_number: Option<String>,
@@ -377,7 +294,7 @@ pub struct CreateShipment {
 #[derive(Debug, Clone, Default)]
 pub struct CreateShipmentItem {
     pub order_item_id: Option<Uuid>,
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     pub sku: String,
     pub name: String,
     pub quantity: i32,
@@ -412,7 +329,7 @@ pub struct AddShipmentEvent {
 /// Filter for querying shipments
 #[derive(Debug, Clone, Default)]
 pub struct ShipmentFilter {
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     pub status: Option<ShipmentStatus>,
     pub carrier: Option<ShippingCarrier>,
     pub tracking_number: Option<String>,
@@ -427,57 +344,27 @@ mod tests {
 
     #[test]
     fn test_shipment_status_from_str() {
-        assert_eq!(
-            ShipmentStatus::from_str("pending").unwrap(),
-            ShipmentStatus::Pending
-        );
-        assert_eq!(
-            ShipmentStatus::from_str("ready_to_ship").unwrap(),
-            ShipmentStatus::ReadyToShip
-        );
+        assert_eq!(ShipmentStatus::from_str("pending").unwrap(), ShipmentStatus::Pending);
+        assert_eq!(ShipmentStatus::from_str("ready_to_ship").unwrap(), ShipmentStatus::ReadyToShip);
         assert_eq!(
             ShipmentStatus::from_str("outfordelivery").unwrap(),
             ShipmentStatus::OutForDelivery
         );
-        assert_eq!(
-            ShipmentStatus::from_str("canceled").unwrap(),
-            ShipmentStatus::Cancelled
-        );
+        assert_eq!(ShipmentStatus::from_str("canceled").unwrap(), ShipmentStatus::Cancelled);
     }
 
     #[test]
     fn test_shipping_carrier_from_str() {
-        assert_eq!(
-            ShippingCarrier::from_str("ups").unwrap(),
-            ShippingCarrier::Ups
-        );
-        assert_eq!(
-            ShippingCarrier::from_str("fed_ex").unwrap(),
-            ShippingCarrier::FedEx
-        );
-        assert_eq!(
-            ShippingCarrier::from_str("on_trac").unwrap(),
-            ShippingCarrier::OnTrac
-        );
-        assert_eq!(
-            ShippingCarrier::from_str("other").unwrap(),
-            ShippingCarrier::Other
-        );
+        assert_eq!(ShippingCarrier::from_str("ups").unwrap(), ShippingCarrier::Ups);
+        assert_eq!(ShippingCarrier::from_str("fed_ex").unwrap(), ShippingCarrier::FedEx);
+        assert_eq!(ShippingCarrier::from_str("on_trac").unwrap(), ShippingCarrier::OnTrac);
+        assert_eq!(ShippingCarrier::from_str("other").unwrap(), ShippingCarrier::Other);
     }
 
     #[test]
     fn test_shipping_method_from_str() {
-        assert_eq!(
-            ShippingMethod::from_str("standard").unwrap(),
-            ShippingMethod::Standard
-        );
-        assert_eq!(
-            ShippingMethod::from_str("two_day").unwrap(),
-            ShippingMethod::TwoDay
-        );
-        assert_eq!(
-            ShippingMethod::from_str("sameday").unwrap(),
-            ShippingMethod::SameDay
-        );
+        assert_eq!(ShippingMethod::from_str("standard").unwrap(), ShippingMethod::Standard);
+        assert_eq!(ShippingMethod::from_str("two_day").unwrap(), ShippingMethod::TwoDay);
+        assert_eq!(ShippingMethod::from_str("sameday").unwrap(), ShippingMethod::SameDay);
     }
 }

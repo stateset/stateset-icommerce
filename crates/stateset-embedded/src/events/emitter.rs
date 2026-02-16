@@ -45,8 +45,8 @@ impl EventEmitter {
     /// Create and emit an OrderCreated event
     pub fn order_created(
         &self,
-        order_id: uuid::Uuid,
-        customer_id: uuid::Uuid,
+        order_id: stateset_core::OrderId,
+        customer_id: stateset_core::CustomerId,
         total_amount: rust_decimal::Decimal,
         item_count: usize,
     ) {
@@ -62,7 +62,7 @@ impl EventEmitter {
     /// Create and emit an OrderStatusChanged event
     pub fn order_status_changed(
         &self,
-        order_id: uuid::Uuid,
+        order_id: stateset_core::OrderId,
         from_status: stateset_core::OrderStatus,
         to_status: stateset_core::OrderStatus,
     ) {
@@ -75,7 +75,7 @@ impl EventEmitter {
     }
 
     /// Create and emit an OrderCancelled event
-    pub fn order_cancelled(&self, order_id: uuid::Uuid, reason: Option<String>) {
+    pub fn order_cancelled(&self, order_id: stateset_core::OrderId, reason: Option<String>) {
         self.emit(CommerceEvent::OrderCancelled {
             order_id,
             reason,
@@ -122,7 +122,7 @@ impl EventEmitter {
     }
 
     /// Create and emit a CustomerCreated event
-    pub fn customer_created(&self, customer_id: uuid::Uuid, email: String) {
+    pub fn customer_created(&self, customer_id: stateset_core::CustomerId, email: String) {
         self.emit(CommerceEvent::CustomerCreated {
             customer_id,
             email,
@@ -131,7 +131,7 @@ impl EventEmitter {
     }
 
     /// Create and emit a ProductCreated event
-    pub fn product_created(&self, product_id: uuid::Uuid, name: String, slug: String) {
+    pub fn product_created(&self, product_id: stateset_core::ProductId, name: String, slug: String) {
         self.emit(CommerceEvent::ProductCreated {
             product_id,
             name,
@@ -143,9 +143,9 @@ impl EventEmitter {
     /// Create and emit a ReturnRequested event
     pub fn return_requested(
         &self,
-        return_id: uuid::Uuid,
-        order_id: uuid::Uuid,
-        customer_id: uuid::Uuid,
+        return_id: stateset_core::ReturnId,
+        order_id: stateset_core::OrderId,
+        customer_id: stateset_core::CustomerId,
         reason: stateset_core::ReturnReason,
         item_count: usize,
     ) {
@@ -160,7 +160,7 @@ impl EventEmitter {
     }
 
     /// Create and emit a ReturnApproved event
-    pub fn return_approved(&self, return_id: uuid::Uuid, order_id: uuid::Uuid) {
+    pub fn return_approved(&self, return_id: stateset_core::ReturnId, order_id: stateset_core::OrderId) {
         self.emit(CommerceEvent::ReturnApproved {
             return_id,
             order_id,
@@ -171,8 +171,8 @@ impl EventEmitter {
     /// Create and emit a RefundIssued event
     pub fn refund_issued(
         &self,
-        return_id: uuid::Uuid,
-        order_id: uuid::Uuid,
+        return_id: stateset_core::ReturnId,
+        order_id: stateset_core::OrderId,
         amount: rust_decimal::Decimal,
         method: String,
     ) {

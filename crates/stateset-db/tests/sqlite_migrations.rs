@@ -5,9 +5,8 @@ use stateset_db::SqliteDatabase;
 
 #[cfg(feature = "sqlite")]
 fn column_names(conn: &rusqlite::Connection, table: &str) -> Vec<String> {
-    let mut stmt = conn
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .expect("prepare PRAGMA table_info");
+    let mut stmt =
+        conn.prepare(&format!("PRAGMA table_info({table})")).expect("prepare PRAGMA table_info");
     stmt.query_map([], |row| row.get::<_, String>(1))
         .expect("query PRAGMA table_info")
         .collect::<rusqlite::Result<Vec<_>>>()
@@ -28,11 +27,9 @@ fn has_table(conn: &rusqlite::Connection, table: &str) -> bool {
 
 #[cfg(feature = "sqlite")]
 fn fts5_available(conn: &rusqlite::Connection) -> bool {
-    conn.query_row(
-        "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
-        [],
-        |row| row.get::<_, i32>(0),
-    )
+    conn.query_row("SELECT sqlite_compileoption_used('ENABLE_FTS5')", [], |row| {
+        row.get::<_, i32>(0)
+    })
     .optional()
     .ok()
     .flatten()
@@ -55,10 +52,7 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let expected = 34
         - if cfg!(feature = "vector") { 0 } else { 1 }
         - if fts5_available(&conn) { 0 } else { 1 };
-    assert_eq!(
-        applied, expected,
-        "expected all embedded migrations to apply"
-    );
+    assert_eq!(applied, expected, "expected all embedded migrations to apply");
 
     for table in [
         "exchange_rates",
@@ -103,16 +97,11 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     assert!(cart_items.contains(&"currency".to_string()));
 
     let defaults: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM store_currency_settings WHERE id = 'default'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM store_currency_settings WHERE id = 'default'", [], |row| {
+            row.get(0)
+        })
         .expect("query store_currency_settings default row");
-    assert_eq!(
-        defaults, 1,
-        "expected a default store_currency_settings row"
-    );
+    assert_eq!(defaults, 1, "expected a default store_currency_settings row");
 
     for table in ["x402_credit_accounts", "x402_credit_transactions"] {
         assert!(has_table(&conn, table), "missing table `{table}`");

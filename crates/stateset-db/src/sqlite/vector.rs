@@ -28,9 +28,7 @@ impl SqliteVectorRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     /// Convert f32 slice to blob for storage
@@ -63,11 +61,7 @@ impl SqliteVectorRepository {
         }
 
         let denominator = norm_a.sqrt() * norm_b.sqrt();
-        if denominator == 0.0 {
-            0.0
-        } else {
-            dot_product / denominator
-        }
+        if denominator == 0.0 { 0.0 } else { dot_product / denominator }
     }
 
     /// Convert cosine similarity to distance (lower = more similar)
@@ -126,42 +120,27 @@ impl SqliteVectorRepository {
             entry.rrf += Self::rrf_score(idx + 1);
         }
 
-        let max_rrf = entries
-            .values()
-            .fold(0.0f32, |max, entry| max.max(entry.rrf));
+        let max_rrf = entries.values().fold(0.0f32, |max, entry| max.max(entry.rrf));
 
         let mut merged: Vec<VectorSearchResult<T>> = entries
             .into_values()
             .map(|entry| {
-                let score = if max_rrf > 0.0 {
-                    entry.rrf / max_rrf
-                } else {
-                    0.0
-                };
+                let score = if max_rrf > 0.0 { entry.rrf / max_rrf } else { 0.0 };
                 let distance = 2.0 * (1.0 - score);
-                VectorSearchResult {
-                    entity: entry.entity,
-                    distance,
-                    score,
-                }
+                VectorSearchResult { entity: entry.entity, distance, score }
             })
             .collect();
 
         merged.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    a.distance
-                        .partial_cmp(&b.distance)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then_with(|| {
+                a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
         merged.truncate(limit);
         merged
     }
 
-    fn row_to_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
+    fn row_to_product(row: &rusqlite::Row<'_>) -> rusqlite::Result<Product> {
         let attributes_json: String = row.get("attributes")?;
         let seo_json: Option<String> = row.get("seo")?;
 
@@ -191,7 +170,7 @@ impl SqliteVectorRepository {
         })
     }
 
-    fn row_to_customer(row: &rusqlite::Row) -> rusqlite::Result<Customer> {
+    fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<Customer> {
         let tags_json: String = row.get("tags")?;
         let metadata_json: Option<String> = row.get("metadata")?;
 
@@ -225,7 +204,7 @@ impl SqliteVectorRepository {
         })
     }
 
-    fn row_to_order(row: &rusqlite::Row) -> rusqlite::Result<Order> {
+    fn row_to_order(row: &rusqlite::Row<'_>) -> rusqlite::Result<Order> {
         let shipping_address_json: Option<String> = row.get("shipping_address")?;
         let billing_address_json: Option<String> = row.get("billing_address")?;
 
@@ -284,7 +263,7 @@ impl SqliteVectorRepository {
         })
     }
 
-    fn row_to_inventory_item(row: &rusqlite::Row) -> rusqlite::Result<InventoryItem> {
+    fn row_to_inventory_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<InventoryItem> {
         Ok(InventoryItem {
             id: row.get("id")?,
             sku: row.get("sku")?,
@@ -314,11 +293,9 @@ impl SqliteVectorRepository {
         ] {
             let table = entity_type.embedding_table();
             let length: Option<i64> = conn
-                .query_row(
-                    &format!("SELECT length(embedding) FROM {} LIMIT 1", table),
-                    [],
-                    |row| row.get(0),
-                )
+                .query_row(&format!("SELECT length(embedding) FROM {} LIMIT 1", table), [], |row| {
+                    row.get(0)
+                })
                 .optional()
                 .map_err(map_db_error)?;
 
@@ -361,9 +338,7 @@ impl SqliteVectorRepository {
             .collect();
 
         results.sort_by(|a, b| {
-            a.distance
-                .partial_cmp(&b.distance)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
         });
         results.truncate(limit);
 
@@ -399,9 +374,7 @@ impl SqliteVectorRepository {
             .collect();
 
         results.sort_by(|a, b| {
-            a.distance
-                .partial_cmp(&b.distance)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
         });
         results.truncate(limit);
 
@@ -437,9 +410,7 @@ impl SqliteVectorRepository {
             .collect();
 
         results.sort_by(|a, b| {
-            a.distance
-                .partial_cmp(&b.distance)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
         });
         results.truncate(limit);
 
@@ -475,9 +446,7 @@ impl SqliteVectorRepository {
             .collect();
 
         results.sort_by(|a, b| {
-            a.distance
-                .partial_cmp(&b.distance)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
         });
         results.truncate(limit);
 
@@ -608,12 +577,7 @@ impl SqliteVectorRepository {
             Err(_) => return Ok(vector_results),
         };
 
-        Ok(Self::merge_rrf(
-            vector_results,
-            bm25_results,
-            limit,
-            |product| product.id.to_string(),
-        ))
+        Ok(Self::merge_rrf(vector_results, bm25_results, limit, |product| product.id.to_string()))
     }
 
     pub fn search_customers_hybrid(
@@ -632,12 +596,7 @@ impl SqliteVectorRepository {
             Err(_) => return Ok(vector_results),
         };
 
-        Ok(Self::merge_rrf(
-            vector_results,
-            bm25_results,
-            limit,
-            |customer| customer.id.to_string(),
-        ))
+        Ok(Self::merge_rrf(vector_results, bm25_results, limit, |customer| customer.id.to_string()))
     }
 
     pub fn search_orders_hybrid(
@@ -656,12 +615,7 @@ impl SqliteVectorRepository {
             Err(_) => return Ok(vector_results),
         };
 
-        Ok(Self::merge_rrf(
-            vector_results,
-            bm25_results,
-            limit,
-            |order| order.id.to_string(),
-        ))
+        Ok(Self::merge_rrf(vector_results, bm25_results, limit, |order| order.id.to_string()))
     }
 
     pub fn search_inventory_hybrid(
@@ -680,12 +634,7 @@ impl SqliteVectorRepository {
             Err(_) => return Ok(vector_results),
         };
 
-        Ok(Self::merge_rrf(
-            vector_results,
-            bm25_results,
-            limit,
-            |item| item.id.to_string(),
-        ))
+        Ok(Self::merge_rrf(vector_results, bm25_results, limit, |item| item.id.to_string()))
     }
 }
 
@@ -769,11 +718,8 @@ impl VectorRepository for SqliteVectorRepository {
         let table = entity_type.embedding_table();
         let id_col = entity_type.id_column();
 
-        conn.execute(
-            &format!("DELETE FROM {} WHERE {} = ?", table, id_col),
-            [entity_id],
-        )
-        .map_err(map_db_error)?;
+        conn.execute(&format!("DELETE FROM {} WHERE {} = ?", table, id_col), [entity_id])
+            .map_err(map_db_error)?;
 
         conn.execute(
             "DELETE FROM embedding_metadata WHERE entity_type = ? AND entity_id = ?",
@@ -865,11 +811,7 @@ impl VectorRepository for SqliteVectorRepository {
 
         let dimensions = Self::infer_dimensions(&conn)?.unwrap_or(1536);
 
-        Ok(EmbeddingStats {
-            counts,
-            model,
-            dimensions,
-        })
+        Ok(EmbeddingStats { counts, model, dimensions })
     }
 
     fn clear_embeddings(&self, entity_type: EntityType) -> Result<u64> {
@@ -878,14 +820,11 @@ impl VectorRepository for SqliteVectorRepository {
 
         // Get count before deleting
         let count: i64 = conn
-            .query_row(&format!("SELECT COUNT(*) FROM {}", table), [], |row| {
-                row.get(0)
-            })
+            .query_row(&format!("SELECT COUNT(*) FROM {}", table), [], |row| row.get(0))
             .map_err(map_db_error)?;
 
         // Clear embedding table
-        conn.execute(&format!("DELETE FROM {}", table), [])
-            .map_err(map_db_error)?;
+        conn.execute(&format!("DELETE FROM {}", table), []).map_err(map_db_error)?;
 
         // Clear metadata
         conn.execute(

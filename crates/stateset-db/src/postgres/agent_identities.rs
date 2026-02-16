@@ -156,16 +156,11 @@ impl PgAgentIdentityRepository {
 
         let limit = filter.limit.unwrap_or(100).min(1000);
         let offset = filter.offset.unwrap_or(0);
-        builder
-            .push(" ORDER BY created_at DESC LIMIT ")
-            .push_bind(limit as i64);
+        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
-        let rows: Vec<AgentIdentityRow> = builder
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows: Vec<AgentIdentityRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         rows.into_iter().map(Self::row_to_identity).collect()
     }
@@ -193,11 +188,8 @@ impl PgAgentIdentityRepository {
             builder.push(" AND active = ").push_bind(active);
         }
 
-        let count: (i64,) = builder
-            .build_query_as()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }
@@ -276,10 +268,8 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
         let agent = agent_id.to_string();
         block_on(async move {
             let repo = PgAgentIdentityRepository::new(pool.clone());
-            let existing = repo
-                .fetch_identity(&registry, &agent)
-                .await?
-                .ok_or(CommerceError::NotFound)?;
+            let existing =
+                repo.fetch_identity(&registry, &agent).await?.ok_or(CommerceError::NotFound)?;
 
             let agent_uri = input.agent_uri.unwrap_or(existing.agent_uri);
             let agent_wallet = input.agent_wallet.or(existing.agent_wallet);
@@ -289,12 +279,10 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
             let registration_hash = input.registration_hash.or(existing.registration_hash);
             let wallet_proof_type = input.wallet_proof_type.or(existing.wallet_proof_type);
             let wallet_proof = input.wallet_proof.or(existing.wallet_proof);
-            let wallet_proof_chain_id = input
-                .wallet_proof_chain_id
-                .or(existing.wallet_proof_chain_id);
-            let wallet_proof_deadline = input
-                .wallet_proof_deadline
-                .or(existing.wallet_proof_deadline);
+            let wallet_proof_chain_id =
+                input.wallet_proof_chain_id.or(existing.wallet_proof_chain_id);
+            let wallet_proof_deadline =
+                input.wallet_proof_deadline.or(existing.wallet_proof_deadline);
             let active = input.active.unwrap_or(existing.active);
 
             sqlx::query(
@@ -331,9 +319,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
             .await
             .map_err(map_db_error)?;
 
-            repo.fetch_identity(&registry, &agent)
-                .await?
-                .ok_or(CommerceError::NotFound)
+            repo.fetch_identity(&registry, &agent).await?.ok_or(CommerceError::NotFound)
         })
     }
 
@@ -376,9 +362,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
             .map_err(map_db_error)?;
 
             let repo = PgAgentIdentityRepository::new(pool);
-            repo.fetch_identity(&registry, &agent)
-                .await?
-                .ok_or(CommerceError::NotFound)
+            repo.fetch_identity(&registry, &agent).await?.ok_or(CommerceError::NotFound)
         })
     }
 
@@ -405,9 +389,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
             .map_err(map_db_error)?;
 
             let repo = PgAgentIdentityRepository::new(pool);
-            repo.fetch_identity(&registry, &agent)
-                .await?
-                .ok_or(CommerceError::NotFound)
+            repo.fetch_identity(&registry, &agent).await?.ok_or(CommerceError::NotFound)
         })
     }
 

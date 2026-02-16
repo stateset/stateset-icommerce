@@ -6,12 +6,12 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
-    generate_promotion_code, AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult,
-    CommerceError, ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus,
-    CreateCouponCode, CreatePromotion, CreatePromotionCondition, DiscountTier, Promotion,
-    PromotionCondition, PromotionFilter, PromotionRepository, PromotionStatus, PromotionTarget,
-    PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result,
-    StackingBehavior, UpdatePromotion,
+    AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CommerceError,
+    ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode,
+    CreatePromotion, CreatePromotionCondition, CustomerId, DiscountTier, OrderId, Promotion,
+    PromotionCondition, PromotionFilter, PromotionId, PromotionRepository, PromotionStatus,
+    PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion,
+    RejectionReason, Result, StackingBehavior, UpdatePromotion, generate_promotion_code,
 };
 use uuid::Uuid;
 
@@ -40,7 +40,7 @@ impl SqlitePromotionRepository {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
 
-        let id = Uuid::new_v4();
+        let id = PromotionId::new();
         let code = input.code.unwrap_or_else(generate_promotion_code);
         let now = Utc::now();
         let starts_at = input.starts_at.unwrap_or(now);
@@ -88,10 +88,7 @@ impl SqlitePromotionRepository {
                 input.buy_quantity,
                 input.get_quantity,
                 input.get_discount_percent.map(|d| d.to_string()),
-                input
-                    .tiers
-                    .as_ref()
-                    .map(|t| serde_json::to_string(t).unwrap_or_default()),
+                input.tiers.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default()),
                 input
                     .bundle_product_ids
                     .as_ref()
@@ -117,10 +114,7 @@ impl SqlitePromotionRepository {
                     .unwrap_or_default(),
                 input.currency.unwrap_or_else(|| "USD".to_string()),
                 input.priority.unwrap_or(0),
-                input
-                    .metadata
-                    .as_ref()
-                    .map(|m| serde_json::to_string(m).unwrap_or_default()),
+                input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
@@ -156,7 +150,7 @@ impl SqlitePromotionRepository {
         })
     }
 
-    pub fn get(&self, id: Uuid) -> Result<Option<Promotion>> {
+    pub fn get(&self, id: PromotionId) -> Result<Option<Promotion>> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
@@ -278,7 +272,7 @@ impl SqlitePromotionRepository {
         Ok(promotions)
     }
 
-    pub fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion> {
+    pub fn update(&self, id: PromotionId, input: UpdatePromotion) -> Result<Promotion> {
         // Scope the connection so we don't attempt to re-checkout from the pool while holding it.
         {
             let conn = self.pool.get().map_err(|e| {
@@ -329,36 +323,29 @@ impl SqlitePromotionRepository {
         self.get(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    pub fn delete(&self, id: Uuid) -> Result<()> {
+    pub fn delete(&self, id: PromotionId) -> Result<()> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
 
-        conn.execute("DELETE FROM promotions WHERE id = ?1", [id.to_string()])
-            .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Delete error: {}", e))
-            })?;
+        conn.execute("DELETE FROM promotions WHERE id = ?1", [id.to_string()]).map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Delete error: {}", e))
+        })?;
 
         Ok(())
     }
 
-    pub fn activate(&self, id: Uuid) -> Result<Promotion> {
+    pub fn activate(&self, id: PromotionId) -> Result<Promotion> {
         self.update(
             id,
-            UpdatePromotion {
-                status: Some(PromotionStatus::Active),
-                ..Default::default()
-            },
+            UpdatePromotion { status: Some(PromotionStatus::Active), ..Default::default() },
         )
     }
 
-    pub fn deactivate(&self, id: Uuid) -> Result<Promotion> {
+    pub fn deactivate(&self, id: PromotionId) -> Result<Promotion> {
         self.update(
             id,
-            UpdatePromotion {
-                status: Some(PromotionStatus::Paused),
-                ..Default::default()
-            },
+            UpdatePromotion { status: Some(PromotionStatus::Paused), ..Default::default() },
         )
     }
 
@@ -369,7 +356,7 @@ impl SqlitePromotionRepository {
     #[allow(dead_code)]
     fn create_condition(
         &self,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
         input: CreatePromotionCondition,
     ) -> Result<PromotionCondition> {
         let conn = self.pool.get().map_err(|e| {
@@ -404,7 +391,7 @@ impl SqlitePromotionRepository {
     fn get_conditions_with_conn(
         &self,
         conn: &rusqlite::Connection,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
     ) -> Result<Vec<PromotionCondition>> {
         let mut stmt = conn
             .prepare(
@@ -417,11 +404,11 @@ impl SqlitePromotionRepository {
             .query_map([promotion_id.to_string()], |row| {
                 Ok(PromotionCondition {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "promotion_condition", "id")?,
-                    promotion_id: parse_uuid_row(
+                    promotion_id: PromotionId::from(parse_uuid_row(
                         &row.get::<_, String>(1)?,
                         "promotion_condition",
                         "promotion_id",
-                    )?,
+                    )?),
                     condition_type: parse_enum_row(
                         &row.get::<_, String>(2)?,
                         "promotion_condition",
@@ -570,10 +557,7 @@ impl SqlitePromotionRepository {
 
         // Get active automatic promotions
         let auto_promotions = self
-            .list(PromotionFilter {
-                is_active: Some(true),
-                ..Default::default()
-            })?
+            .list(PromotionFilter { is_active: Some(true), ..Default::default() })?
             .into_iter()
             .filter(|p| {
                 p.trigger == PromotionTrigger::Automatic || p.trigger == PromotionTrigger::Both
@@ -611,11 +595,8 @@ impl SqlitePromotionRepository {
         }
 
         // Combine and sort by priority
-        let mut all_promotions: Vec<(Promotion, Option<String>)> = auto_promotions
-            .into_iter()
-            .map(|p| (p, None))
-            .chain(coupon_promotions)
-            .collect();
+        let mut all_promotions: Vec<(Promotion, Option<String>)> =
+            auto_promotions.into_iter().map(|p| (p, None)).chain(coupon_promotions).collect();
 
         all_promotions.sort_by_key(|(p, _)| p.priority);
 
@@ -868,11 +849,9 @@ impl SqlitePromotionRepository {
             }
             PromotionType::BuyXGetY => {
                 // Simplified BOGO calculation
-                if let (Some(buy), Some(get), Some(discount_pct)) = (
-                    promo.buy_quantity,
-                    promo.get_quantity,
-                    promo.get_discount_percent,
-                ) {
+                if let (Some(buy), Some(get), Some(discount_pct)) =
+                    (promo.buy_quantity, promo.get_quantity, promo.get_discount_percent)
+                {
                     let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
                     let sets = total_qty / (buy + get);
                     if sets > 0 {
@@ -894,11 +873,8 @@ impl SqlitePromotionRepository {
         };
 
         // Apply max discount cap
-        let final_discount = if let Some(max) = promo.max_discount_amount {
-            discount.min(max)
-        } else {
-            discount
-        };
+        let final_discount =
+            if let Some(max) = promo.max_discount_amount { discount.min(max) } else { discount };
 
         Ok(final_discount.round_dp(2))
     }
@@ -945,11 +921,11 @@ impl SqlitePromotionRepository {
     #[allow(clippy::too_many_arguments)]
     pub fn record_usage(
         &self,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
         coupon_id: Option<Uuid>,
-        customer_id: Option<Uuid>,
-        order_id: Option<Uuid>,
-        cart_id: Option<Uuid>,
+        customer_id: Option<CustomerId>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
@@ -1011,9 +987,9 @@ impl SqlitePromotionRepository {
     // Helper Methods
     // ========================================================================
 
-    fn row_to_promotion(&self, row: &rusqlite::Row) -> rusqlite::Result<Promotion> {
+    fn row_to_promotion(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<Promotion> {
         Ok(Promotion {
-            id: parse_uuid_row(&row.get::<_, String>(0)?, "promotion", "id")?,
+            id: PromotionId::from(parse_uuid_row(&row.get::<_, String>(0)?, "promotion", "id")?),
             code: row.get(1)?,
             name: row.get(2)?,
             description: row.get(3)?,
@@ -1124,10 +1100,10 @@ impl SqlitePromotionRepository {
         })
     }
 
-    fn row_to_coupon(&self, row: &rusqlite::Row) -> rusqlite::Result<CouponCode> {
+    fn row_to_coupon(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<CouponCode> {
         Ok(CouponCode {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "coupon_code", "id")?,
-            promotion_id: parse_uuid_row(&row.get::<_, String>(1)?, "coupon_code", "promotion_id")?,
+            promotion_id: PromotionId::from(parse_uuid_row(&row.get::<_, String>(1)?, "coupon_code", "promotion_id")?),
             code: row.get(2)?,
             status: parse_enum_row(&row.get::<_, String>(3)?, "coupon_code", "status")?,
             usage_limit: row.get(4)?,
@@ -1171,7 +1147,7 @@ impl PromotionRepository for SqlitePromotionRepository {
         SqlitePromotionRepository::create(self, input)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Promotion>> {
+    fn get(&self, id: PromotionId) -> Result<Option<Promotion>> {
         SqlitePromotionRepository::get(self, id)
     }
 
@@ -1183,19 +1159,19 @@ impl PromotionRepository for SqlitePromotionRepository {
         SqlitePromotionRepository::list(self, filter)
     }
 
-    fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion> {
+    fn update(&self, id: PromotionId, input: UpdatePromotion) -> Result<Promotion> {
         SqlitePromotionRepository::update(self, id, input)
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: PromotionId) -> Result<()> {
         SqlitePromotionRepository::delete(self, id)
     }
 
-    fn activate(&self, id: Uuid) -> Result<Promotion> {
+    fn activate(&self, id: PromotionId) -> Result<Promotion> {
         SqlitePromotionRepository::activate(self, id)
     }
 
-    fn deactivate(&self, id: Uuid) -> Result<Promotion> {
+    fn deactivate(&self, id: PromotionId) -> Result<Promotion> {
         SqlitePromotionRepository::deactivate(self, id)
     }
 
@@ -1221,11 +1197,11 @@ impl PromotionRepository for SqlitePromotionRepository {
 
     fn record_usage(
         &self,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
         coupon_id: Option<Uuid>,
-        customer_id: Option<Uuid>,
-        order_id: Option<Uuid>,
-        cart_id: Option<Uuid>,
+        customer_id: Option<CustomerId>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {

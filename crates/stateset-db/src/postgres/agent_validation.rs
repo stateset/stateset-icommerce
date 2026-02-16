@@ -234,10 +234,7 @@ impl AgentValidationRepository for PgAgentValidationRepository {
 
             if let Some(validators) = validator_addresses {
                 if !validators.is_empty() {
-                    builder
-                        .push(" AND validator_address = ANY(")
-                        .push_bind(validators)
-                        .push(")");
+                    builder.push(" AND validator_address = ANY(").push_bind(validators).push(")");
                 }
             }
 
@@ -245,26 +242,17 @@ impl AgentValidationRepository for PgAgentValidationRepository {
                 builder.push(" AND tag = ").push_bind(tag_val);
             }
 
-            let rows: Vec<(i16,)> = builder
-                .build_query_as()
-                .fetch_all(&pool)
-                .await
-                .map_err(map_db_error)?;
+            let rows: Vec<(i16,)> =
+                builder.build_query_as().fetch_all(&pool).await.map_err(map_db_error)?;
 
             if rows.is_empty() {
-                return Ok(ValidationSummary {
-                    count: 0,
-                    average_response: 0,
-                });
+                return Ok(ValidationSummary { count: 0, average_response: 0 });
             }
 
             let count = rows.len() as u64;
             let sum: u64 = rows.iter().map(|row| row.0 as u64).sum();
 
-            Ok(ValidationSummary {
-                count,
-                average_response: (sum / count) as u8,
-            })
+            Ok(ValidationSummary { count, average_response: (sum / count) as u8 })
         })
     }
 

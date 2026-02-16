@@ -1,0 +1,14 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+assertion_line: 47
+expression: statuses
+---
+[
+  "pending",
+  "confirmed",
+  "processing",
+  "shipped",
+  "delivered",
+  "cancelled",
+  "refunded"
+]

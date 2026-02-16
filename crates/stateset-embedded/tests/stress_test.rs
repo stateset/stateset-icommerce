@@ -40,9 +40,9 @@ fn stress_test_bulk_order_creation() {
         commerce
             .orders()
             .create(CreateOrder {
-                customer_id,
+                customer_id: customer_id.into(),
                 items: vec![CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: format!("BULK-{}", i),
                     name: format!("Bulk Product {}", i),
                     quantity: 1,
@@ -57,16 +57,10 @@ fn stress_test_bulk_order_creation() {
     let duration = start.elapsed();
     let orders_per_sec = order_count as f64 / duration.as_secs_f64();
 
-    println!(
-        "Created {} orders in {:?} ({:.2} orders/sec)",
-        order_count, duration, orders_per_sec
-    );
+    println!("Created {} orders in {:?} ({:.2} orders/sec)", order_count, duration, orders_per_sec);
 
     // Verify count
-    let count = commerce
-        .orders()
-        .count(Default::default())
-        .expect("Failed to count");
+    let count = commerce.orders().count(Default::default()).expect("Failed to count");
     assert_eq!(count, order_count as u64);
 
     // Performance threshold: at least 100 orders/sec for in-memory SQLite
@@ -106,10 +100,7 @@ fn stress_test_bulk_customer_creation() {
     );
 
     // Verify count
-    let count = commerce
-        .customers()
-        .count(Default::default())
-        .expect("Failed to count");
+    let count = commerce.customers().count(Default::default()).expect("Failed to count");
     assert_eq!(count, customer_count as u64);
 }
 
@@ -222,9 +213,9 @@ fn stress_test_concurrent_orders() {
 
             for i in 0..orders_per_thread {
                 let result = commerce_clone.orders().create(CreateOrder {
-                    customer_id: cid,
+                    customer_id: cid.into(),
                     items: vec![CreateOrderItem {
-                        product_id: Uuid::new_v4(),
+                        product_id: Uuid::new_v4().into(),
                         sku: format!("THREAD-{}-ORDER-{}", t, i),
                         name: format!("Thread {} Order {} Product", t, i),
                         quantity: 1,
@@ -327,10 +318,7 @@ fn stress_test_concurrent_inventory_reservations() {
 
     let duration = start.elapsed();
 
-    println!(
-        "Concurrent reservations: {} successful in {:?}",
-        total_success, duration
-    );
+    println!("Concurrent reservations: {} successful in {:?}", total_success, duration);
 
     // Check stock levels
     let stock = commerce
@@ -421,9 +409,9 @@ fn stress_test_mixed_workload() {
         let handle = thread::spawn(move || {
             for i in 0..50 {
                 let _ = commerce_clone.orders().create(CreateOrder {
-                    customer_id: Uuid::new_v4(),
+                    customer_id: Uuid::new_v4().into(),
                     items: vec![CreateOrderItem {
-                        product_id: Uuid::new_v4(),
+                        product_id: Uuid::new_v4().into(),
                         sku: "MIXED-001".into(),
                         name: "Mixed Item".into(),
                         quantity: 1,
@@ -462,20 +450,14 @@ fn stress_test_mixed_workload() {
     println!("Mixed workload completed in {:?}", duration);
 
     // Verify data integrity
-    let order_count = commerce
-        .orders()
-        .count(Default::default())
-        .expect("Failed to count orders");
+    let order_count = commerce.orders().count(Default::default()).expect("Failed to count orders");
     let stock = commerce
         .inventory()
         .get_stock("MIXED-001")
         .expect("Failed to get stock")
         .expect("Stock not found");
 
-    println!(
-        "Final state: {} orders, stock on_hand={}",
-        order_count, stock.total_on_hand
-    );
+    println!("Final state: {} orders, stock on_hand={}", order_count, stock.total_on_hand);
 }
 
 // ============================================================================
@@ -506,10 +488,7 @@ fn stress_test_repeated_open_close() {
     }
 
     let duration = start.elapsed();
-    println!(
-        "Opened/closed {} commerce instances in {:?}",
-        iterations, duration
-    );
+    println!("Opened/closed {} commerce instances in {:?}", iterations, duration);
 }
 
 #[test]
@@ -537,7 +516,7 @@ fn stress_test_large_batch_insert() {
     for i in 0..batch_size {
         let items: Vec<CreateOrderItem> = (0..item_count_per_order)
             .map(|j| CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: format!("BATCH-{}-ITEM-{}", i, j),
                 name: format!("Batch {} Item {}", i, j),
                 quantity: 1,
@@ -548,21 +527,14 @@ fn stress_test_large_batch_insert() {
 
         commerce
             .orders()
-            .create(CreateOrder {
-                customer_id,
-                items,
-                ..Default::default()
-            })
+            .create(CreateOrder { customer_id: customer_id.into(), items, ..Default::default() })
             .expect("Failed to create order");
     }
 
     let duration = start.elapsed();
     let total_items = batch_size * item_count_per_order;
 
-    println!(
-        "Created {} orders with {} total items in {:?}",
-        batch_size, total_items, duration
-    );
+    println!("Created {} orders with {} total items in {:?}", batch_size, total_items, duration);
 }
 
 #[test]
@@ -646,9 +618,9 @@ fn stress_test_long_running_operations() {
         let order = commerce
             .orders()
             .create(CreateOrder {
-                customer_id: customer.id,
+                customer_id: customer.id.into(),
                 items: vec![CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: Uuid::new_v4().into(),
                     sku: format!("LONG-RUN-{}", i),
                     name: "Long Running Item".into(),
                     quantity: 1,
@@ -671,20 +643,11 @@ fn stress_test_long_running_operations() {
     }
 
     let duration = start.elapsed();
-    println!(
-        "Long-running test: {} iterations in {:?}",
-        operation_count, duration
-    );
+    println!("Long-running test: {} iterations in {:?}", operation_count, duration);
 
     // Verify final state
-    let customer_count = commerce
-        .customers()
-        .count(Default::default())
-        .expect("Failed to count");
-    let order_count = commerce
-        .orders()
-        .count(Default::default())
-        .expect("Failed to count");
+    let customer_count = commerce.customers().count(Default::default()).expect("Failed to count");
+    let order_count = commerce.orders().count(Default::default()).expect("Failed to count");
 
     assert_eq!(customer_count, operation_count as u64);
     assert_eq!(order_count, operation_count as u64);

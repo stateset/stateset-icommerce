@@ -3,14 +3,16 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CustomerId, OrderId, OrderItemId, ProductId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Order aggregate root
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Order {
-    pub id: Uuid,
+    pub id: OrderId,
     pub order_number: String,
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub status: OrderStatus,
     pub order_date: DateTime<Utc>,
     pub total_amount: Decimal,
@@ -33,9 +35,9 @@ pub struct Order {
 /// Order line item
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrderItem {
-    pub id: Uuid,
-    pub order_id: Uuid,
-    pub product_id: Uuid,
+    pub id: OrderItemId,
+    pub order_id: OrderId,
+    pub product_id: ProductId,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
@@ -57,15 +59,20 @@ pub struct Address {
     pub country: String,
 }
 
-/// Order status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Order status enumeration.
+///
+/// Uses [`strum`] derives for `Display` (snake_case) and `FromStr` (case-insensitive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum OrderStatus {
     Pending,
     Confirmed,
     Processing,
     Shipped,
     Delivered,
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     Refunded,
 }
@@ -73,37 +80,6 @@ pub enum OrderStatus {
 impl Default for OrderStatus {
     fn default() -> Self {
         Self::Pending
-    }
-}
-
-impl std::fmt::Display for OrderStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Confirmed => write!(f, "confirmed"),
-            Self::Processing => write!(f, "processing"),
-            Self::Shipped => write!(f, "shipped"),
-            Self::Delivered => write!(f, "delivered"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::Refunded => write!(f, "refunded"),
-        }
-    }
-}
-
-impl std::str::FromStr for OrderStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "confirmed" => Ok(Self::Confirmed),
-            "processing" => Ok(Self::Processing),
-            "shipped" => Ok(Self::Shipped),
-            "delivered" => Ok(Self::Delivered),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            "refunded" => Ok(Self::Refunded),
-            _ => Err(format!("Unknown order status: {}", s)),
-        }
     }
 }
 
@@ -125,15 +101,21 @@ impl OrderStatus {
     }
 }
 
-/// Payment status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Payment status enumeration.
+///
+/// Uses [`strum`] derives for `Display` (snake_case) and `FromStr` (case-insensitive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum PaymentStatus {
     Pending,
     Authorized,
     Paid,
+    #[strum(serialize = "partially_paid", serialize = "partiallypaid")]
     PartiallyPaid,
     Refunded,
+    #[strum(serialize = "partially_refunded", serialize = "partiallyrefunded")]
     PartiallyRefunded,
     Failed,
 }
@@ -144,42 +126,16 @@ impl Default for PaymentStatus {
     }
 }
 
-impl std::fmt::Display for PaymentStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Authorized => write!(f, "authorized"),
-            Self::Paid => write!(f, "paid"),
-            Self::PartiallyPaid => write!(f, "partially_paid"),
-            Self::Refunded => write!(f, "refunded"),
-            Self::PartiallyRefunded => write!(f, "partially_refunded"),
-            Self::Failed => write!(f, "failed"),
-        }
-    }
-}
-
-impl std::str::FromStr for PaymentStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "authorized" => Ok(Self::Authorized),
-            "paid" => Ok(Self::Paid),
-            "partially_paid" | "partiallypaid" => Ok(Self::PartiallyPaid),
-            "refunded" => Ok(Self::Refunded),
-            "partially_refunded" | "partiallyrefunded" => Ok(Self::PartiallyRefunded),
-            "failed" => Ok(Self::Failed),
-            _ => Err(format!("Unknown payment status: {}", s)),
-        }
-    }
-}
-
-/// Fulfillment status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Fulfillment status enumeration.
+///
+/// Uses [`strum`] derives for `Display` (snake_case) and `FromStr` (case-insensitive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum FulfillmentStatus {
     Unfulfilled,
+    #[strum(serialize = "partially_fulfilled", serialize = "partiallyfulfilled")]
     PartiallyFulfilled,
     Fulfilled,
     Shipped,
@@ -192,37 +148,10 @@ impl Default for FulfillmentStatus {
     }
 }
 
-impl std::fmt::Display for FulfillmentStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unfulfilled => write!(f, "unfulfilled"),
-            Self::PartiallyFulfilled => write!(f, "partially_fulfilled"),
-            Self::Fulfilled => write!(f, "fulfilled"),
-            Self::Shipped => write!(f, "shipped"),
-            Self::Delivered => write!(f, "delivered"),
-        }
-    }
-}
-
-impl std::str::FromStr for FulfillmentStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "unfulfilled" => Ok(Self::Unfulfilled),
-            "partially_fulfilled" | "partiallyfulfilled" => Ok(Self::PartiallyFulfilled),
-            "fulfilled" => Ok(Self::Fulfilled),
-            "shipped" => Ok(Self::Shipped),
-            "delivered" => Ok(Self::Delivered),
-            _ => Err(format!("Unknown fulfillment status: {}", s)),
-        }
-    }
-}
-
 /// Input for creating a new order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateOrder {
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     pub items: Vec<CreateOrderItem>,
     pub currency: Option<String>,
     pub shipping_address: Option<Address>,
@@ -235,7 +164,7 @@ pub struct CreateOrder {
 impl Default for CreateOrder {
     fn default() -> Self {
         Self {
-            customer_id: Uuid::nil(),
+            customer_id: CustomerId::nil(),
             items: vec![],
             currency: None,
             shipping_address: None,
@@ -250,7 +179,7 @@ impl Default for CreateOrder {
 /// Input for creating an order item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateOrderItem {
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
@@ -263,7 +192,7 @@ pub struct CreateOrderItem {
 impl Default for CreateOrderItem {
     fn default() -> Self {
         Self {
-            product_id: Uuid::nil(),
+            product_id: ProductId::nil(),
             variant_id: None,
             sku: String::new(),
             name: String::new(),
@@ -290,7 +219,7 @@ pub struct UpdateOrder {
 /// Order filter for querying
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OrderFilter {
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     pub status: Option<OrderStatus>,
     pub payment_status: Option<PaymentStatus>,
     pub fulfillment_status: Option<FulfillmentStatus>,
@@ -316,10 +245,7 @@ impl Order {
 
     /// Check if order can be refunded
     pub fn can_refund(&self) -> bool {
-        matches!(
-            self.payment_status,
-            PaymentStatus::Paid | PaymentStatus::PartiallyPaid
-        )
+        matches!(self.payment_status, PaymentStatus::Paid | PaymentStatus::PartiallyPaid)
     }
 }
 
@@ -357,15 +283,15 @@ mod tests {
     }
 
     fn create_test_order_item(quantity: i32, unit_price: Decimal) -> OrderItem {
-        let order_id = Uuid::new_v4();
+        let order_id = OrderId::new();
         let discount = dec!(0.00);
         let tax = (unit_price * Decimal::from(quantity) * dec!(0.08)).round_dp(2);
         let total = OrderItem::calculate_total(quantity, unit_price, discount, tax);
 
         OrderItem {
-            id: Uuid::new_v4(),
+            id: OrderItemId::new(),
             order_id,
-            product_id: Uuid::new_v4(),
+            product_id: ProductId::new(),
             variant_id: None,
             sku: "TEST-SKU-001".to_string(),
             name: "Test Product".to_string(),
@@ -379,16 +305,14 @@ mod tests {
 
     fn create_test_order(status: OrderStatus, payment_status: PaymentStatus) -> Order {
         let now = Utc::now();
-        let items = vec![
-            create_test_order_item(2, dec!(29.99)),
-            create_test_order_item(1, dec!(49.99)),
-        ];
+        let items =
+            vec![create_test_order_item(2, dec!(29.99)), create_test_order_item(1, dec!(49.99))];
         let total: Decimal = items.iter().map(|i| i.total).sum();
 
         Order {
-            id: Uuid::new_v4(),
+            id: OrderId::new(),
             order_number: "ORD-2024-001".to_string(),
-            customer_id: Uuid::new_v4(),
+            customer_id: CustomerId::new(),
             status,
             order_date: now,
             total_amount: total,
@@ -502,10 +426,7 @@ mod tests {
     fn test_status_from_str_accepts_legacy_variants() {
         use std::str::FromStr;
 
-        assert_eq!(
-            PaymentStatus::from_str("partiallypaid").unwrap(),
-            PaymentStatus::PartiallyPaid
-        );
+        assert_eq!(PaymentStatus::from_str("partiallypaid").unwrap(), PaymentStatus::PartiallyPaid);
         assert_eq!(
             PaymentStatus::from_str("partiallyrefunded").unwrap(),
             PaymentStatus::PartiallyRefunded
@@ -514,10 +435,7 @@ mod tests {
             FulfillmentStatus::from_str("partiallyfulfilled").unwrap(),
             FulfillmentStatus::PartiallyFulfilled
         );
-        assert_eq!(
-            OrderStatus::from_str("canceled").unwrap(),
-            OrderStatus::Cancelled
-        );
+        assert_eq!(OrderStatus::from_str("canceled").unwrap(), OrderStatus::Cancelled);
     }
 
     #[test]
@@ -607,15 +525,9 @@ mod tests {
         assert_eq!(format!("{}", PaymentStatus::Pending), "pending");
         assert_eq!(format!("{}", PaymentStatus::Authorized), "authorized");
         assert_eq!(format!("{}", PaymentStatus::Paid), "paid");
-        assert_eq!(
-            format!("{}", PaymentStatus::PartiallyPaid),
-            "partially_paid"
-        );
+        assert_eq!(format!("{}", PaymentStatus::PartiallyPaid), "partially_paid");
         assert_eq!(format!("{}", PaymentStatus::Refunded), "refunded");
-        assert_eq!(
-            format!("{}", PaymentStatus::PartiallyRefunded),
-            "partially_refunded"
-        );
+        assert_eq!(format!("{}", PaymentStatus::PartiallyRefunded), "partially_refunded");
         assert_eq!(format!("{}", PaymentStatus::Failed), "failed");
     }
 
@@ -641,10 +553,7 @@ mod tests {
     #[test]
     fn test_fulfillment_status_display() {
         assert_eq!(format!("{}", FulfillmentStatus::Unfulfilled), "unfulfilled");
-        assert_eq!(
-            format!("{}", FulfillmentStatus::PartiallyFulfilled),
-            "partially_fulfilled"
-        );
+        assert_eq!(format!("{}", FulfillmentStatus::PartiallyFulfilled), "partially_fulfilled");
         assert_eq!(format!("{}", FulfillmentStatus::Fulfilled), "fulfilled");
         assert_eq!(format!("{}", FulfillmentStatus::Shipped), "shipped");
         assert_eq!(format!("{}", FulfillmentStatus::Delivered), "delivered");
@@ -657,7 +566,7 @@ mod tests {
     #[test]
     fn test_create_order_default() {
         let create_order = CreateOrder::default();
-        assert_eq!(create_order.customer_id, Uuid::nil());
+        assert!(create_order.customer_id.is_nil());
         assert!(create_order.items.is_empty());
         assert!(create_order.currency.is_none());
         assert!(create_order.shipping_address.is_none());
@@ -670,7 +579,7 @@ mod tests {
     #[test]
     fn test_create_order_item_default() {
         let item = CreateOrderItem::default();
-        assert_eq!(item.product_id, Uuid::nil());
+        assert!(item.product_id.is_nil());
         assert_eq!(item.quantity, 0);
         assert_eq!(item.unit_price, Decimal::ZERO);
         assert!(item.sku.is_empty());
@@ -765,7 +674,7 @@ mod tests {
 
     #[test]
     fn test_order_filter_with_values() {
-        let customer_id = Uuid::new_v4();
+        let customer_id = CustomerId::new();
         let filter = OrderFilter {
             customer_id: Some(customer_id),
             status: Some(OrderStatus::Pending),

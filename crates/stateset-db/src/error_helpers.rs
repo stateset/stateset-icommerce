@@ -100,11 +100,7 @@ pub mod sqlite {
     /// Extract constraint name from SQLite error message
     fn extract_constraint_name(msg: &str) -> &str {
         // SQLite constraint errors often look like "UNIQUE constraint failed: table.column"
-        if let Some(idx) = msg.find(':') {
-            msg[..idx].trim()
-        } else {
-            msg
-        }
+        if let Some(idx) = msg.find(':') { msg[..idx].trim() } else { msg }
     }
 
     /// Helper macro for mapping SQLite errors with context
@@ -193,10 +189,7 @@ pub mod postgres {
 
     /// Convert a migration error to CommerceError
     pub fn map_migration_error(version: i32, err: impl std::fmt::Display) -> CommerceError {
-        CommerceError::Database(DbError::MigrationFailed {
-            version,
-            message: err.to_string(),
-        })
+        CommerceError::Database(DbError::MigrationFailed { version, message: err.to_string() })
     }
 
     /// Helper macro for mapping PostgreSQL errors with context
@@ -227,10 +220,7 @@ pub fn map_db_error(msg: impl Into<String>) -> CommerceError {
 
 /// Create a migration failed error
 pub fn migration_failed(version: i32, msg: impl Into<String>) -> CommerceError {
-    CommerceError::Database(DbError::MigrationFailed {
-        version,
-        message: msg.into(),
-    })
+    CommerceError::Database(DbError::MigrationFailed { version, message: msg.into() })
 }
 
 #[cfg(test)]

@@ -11,10 +11,10 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, AddWorkOrderMaterial, BatchResult, CommerceError, CreateWorkOrder,
-    CreateWorkOrderTask, Result, TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder,
+    AddWorkOrderMaterial, BatchResult, CommerceError, CreateWorkOrder, CreateWorkOrderTask,
+    ProductId, Result, TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder,
     WorkOrderFilter, WorkOrderMaterial, WorkOrderPriority, WorkOrderRepository, WorkOrderStatus,
-    WorkOrderTask,
+    WorkOrderTask, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -29,10 +29,7 @@ impl SqliteWorkOrderRepository {
     }
 
     fn load_tasks(&self, work_order_id: Uuid) -> Result<Vec<WorkOrderTask>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -103,10 +100,7 @@ impl SqliteWorkOrderRepository {
     }
 
     fn load_materials(&self, work_order_id: Uuid) -> Result<Vec<WorkOrderMaterial>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -170,10 +164,7 @@ impl SqliteWorkOrderRepository {
     }
 
     fn get_task_internal(&self, task_id: Uuid) -> Result<WorkOrderTask> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.query_row(
             "SELECT id, work_order_id, sequence, task_name, status, estimated_hours,
@@ -209,10 +200,7 @@ impl SqliteWorkOrderRepository {
     }
 
     fn get_material_internal(&self, material_id: Uuid) -> Result<WorkOrderMaterial> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.query_row(
             "SELECT id, work_order_id, component_id, component_sku, component_name,
@@ -258,10 +246,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Insert work order in a scoped block to release connection before adding tasks
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "INSERT INTO manufacturing_work_orders (id, work_order_number, product_id, bom_id, work_center_id,
@@ -322,10 +307,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     fn get(&self, id: Uuid) -> Result<Option<WorkOrder>> {
         // Query work order in a scoped block to release connection before loading tasks/materials
         let wo_data = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let result = conn.query_row(
                 "SELECT id, work_order_number, product_id, bom_id, work_center_id, assigned_to,
@@ -390,7 +372,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 Ok(Some(WorkOrder {
                     id: wo_id,
                     work_order_number,
-                    product_id: parse_uuid(&product_id, "work_order", "product_id")?,
+                    product_id: ProductId::from(parse_uuid(&product_id, "work_order", "product_id")?),
                     bom_id: parse_uuid_opt(bom_id, "work_order", "bom_id")?,
                     work_center_id,
                     assigned_to: parse_uuid_opt(assigned_to, "work_order", "assigned_to")?,
@@ -433,10 +415,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     fn get_by_number(&self, work_order_number: &str) -> Result<Option<WorkOrder>> {
         // Query ID in a scoped block to release connection before calling self.get()
         let id_result = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let result = conn.query_row(
                 "SELECT id FROM manufacturing_work_orders WHERE work_order_number = ?",
@@ -472,10 +451,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Do the update in a scoped block
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE manufacturing_work_orders SET status = ?, priority = ?, assigned_to = ?,
@@ -502,10 +478,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     fn list(&self, filter: WorkOrderFilter) -> Result<Vec<WorkOrder>> {
         // Collect all IDs in a scoped block to release connection before calling self.get()
         let ids = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let limit = filter.limit.unwrap_or(100) as i64;
             let offset = filter.offset.unwrap_or(0) as i64;
@@ -551,9 +524,8 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             params.push(Box::new(limit));
             params.push(Box::new(offset));
 
-            let mut stmt = conn
-                .prepare(&sql)
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut stmt =
+                conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
@@ -581,10 +553,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Mark as cancelled instead of hard delete
         conn.execute(
@@ -601,10 +570,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Do the update in a scoped block
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE manufacturing_work_orders SET status = 'in_progress', actual_start = ?, updated_at = ? WHERE id = ?",
@@ -631,10 +597,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Do the update in a scoped block
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE manufacturing_work_orders SET status = ?, quantity_completed = ?, actual_end = ?, updated_at = ? WHERE id = ?",
@@ -656,38 +619,26 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     fn hold(&self, id: Uuid) -> Result<WorkOrder> {
         self.update(
             id,
-            UpdateWorkOrder {
-                status: Some(WorkOrderStatus::OnHold),
-                ..Default::default()
-            },
+            UpdateWorkOrder { status: Some(WorkOrderStatus::OnHold), ..Default::default() },
         )
     }
 
     fn resume(&self, id: Uuid) -> Result<WorkOrder> {
         self.update(
             id,
-            UpdateWorkOrder {
-                status: Some(WorkOrderStatus::InProgress),
-                ..Default::default()
-            },
+            UpdateWorkOrder { status: Some(WorkOrderStatus::InProgress), ..Default::default() },
         )
     }
 
     fn cancel(&self, id: Uuid) -> Result<WorkOrder> {
         self.update(
             id,
-            UpdateWorkOrder {
-                status: Some(WorkOrderStatus::Cancelled),
-                ..Default::default()
-            },
+            UpdateWorkOrder { status: Some(WorkOrderStatus::Cancelled), ..Default::default() },
         )
     }
 
     fn add_task(&self, work_order_id: Uuid, task: CreateWorkOrderTask) -> Result<WorkOrderTask> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -744,10 +695,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Do the update in a scoped block
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE manufacturing_work_order_tasks SET sequence = ?, task_name = ?, status = ?,
@@ -774,10 +722,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     }
 
     fn remove_task(&self, task_id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "DELETE FROM manufacturing_work_order_tasks WHERE id = ?",
@@ -797,10 +742,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Do the update in a scoped block
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE manufacturing_work_order_tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?",
@@ -817,10 +759,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Do the update in a scoped block
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE manufacturing_work_order_tasks SET status = 'completed', actual_hours = ?, completed_at = ?, updated_at = ? WHERE id = ?",
@@ -842,10 +781,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         work_order_id: Uuid,
         material: AddWorkOrderMaterial,
     ) -> Result<WorkOrderMaterial> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -889,10 +825,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Do the update in a scoped block
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "UPDATE manufacturing_work_order_materials SET consumed_quantity = ?, updated_at = ? WHERE id = ?",
@@ -913,10 +846,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     }
 
     fn count(&self, filter: WorkOrderFilter) -> Result<u64> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT COUNT(*) FROM manufacturing_work_orders WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -986,10 +916,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             return Ok(vec![]);
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let mut results = Vec::with_capacity(inputs.len());
 
@@ -1114,10 +1041,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             return Ok(vec![]);
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let mut updated_ids = Vec::with_capacity(updates.len());
 
@@ -1146,19 +1070,13 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
             let new_status = input.status.map(|s| s.to_string()).unwrap_or(existing.0);
             let new_priority = input.priority.map(|p| p.to_string()).unwrap_or(existing.1);
-            let new_assigned_to = input
-                .assigned_to
-                .map(|u| Some(u.to_string()))
-                .unwrap_or(existing.2);
+            let new_assigned_to =
+                input.assigned_to.map(|u| Some(u.to_string())).unwrap_or(existing.2);
             let new_work_center_id = input.work_center_id.or(existing.3);
-            let new_scheduled_start = input
-                .scheduled_start
-                .map(|dt| Some(dt.to_rfc3339()))
-                .unwrap_or(existing.4);
-            let new_scheduled_end = input
-                .scheduled_end
-                .map(|dt| Some(dt.to_rfc3339()))
-                .unwrap_or(existing.5);
+            let new_scheduled_start =
+                input.scheduled_start.map(|dt| Some(dt.to_rfc3339())).unwrap_or(existing.4);
+            let new_scheduled_end =
+                input.scheduled_end.map(|dt| Some(dt.to_rfc3339())).unwrap_or(existing.5);
             let new_notes = input.notes;
 
             tx.execute(
@@ -1214,10 +1132,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             return Ok(());
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let placeholders = build_in_clause(ids.len());
@@ -1229,16 +1144,14 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             "DELETE FROM manufacturing_work_order_tasks WHERE work_order_id IN ({})",
             placeholders
         );
-        tx.execute(&sql, param_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, param_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete materials (foreign key constraint)
         let sql = format!(
             "DELETE FROM manufacturing_work_order_materials WHERE work_order_id IN ({})",
             placeholders
         );
-        tx.execute(&sql, param_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, param_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete work orders (using soft delete - mark as cancelled)
         let now = Utc::now().to_rfc3339();
@@ -1250,8 +1163,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             "UPDATE manufacturing_work_orders SET status = 'cancelled', updated_at = ? WHERE id IN ({})",
             placeholders
         );
-        tx.execute(&sql, all_params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, all_params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
@@ -1265,10 +1177,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
         // Query all work orders in a single query
         let work_order_data = {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             let placeholders = build_in_clause(ids.len());
             let sql = format!(
@@ -1344,7 +1253,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             work_orders.push(WorkOrder {
                 id: wo_id,
                 work_order_number,
-                product_id: parse_uuid(&product_id, "work_order", "product_id")?,
+                product_id: ProductId::from(parse_uuid(&product_id, "work_order", "product_id")?),
                 bom_id: parse_uuid_opt(bom_id, "work_order", "bom_id")?,
                 work_center_id,
                 assigned_to: parse_uuid_opt(assigned_to, "work_order", "assigned_to")?,

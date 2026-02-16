@@ -1,4 +1,11 @@
 #![deny(unsafe_code)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/stateset/stateset-icommerce/main/assets/stateset.png",
+    html_favicon_url = "https://raw.githubusercontent.com/stateset/stateset-icommerce/main/assets/favicon.ico",
+    issue_tracker_base_url = "https://github.com/stateset/stateset-icommerce/issues/"
+)]
 
 //! # StateSet DB
 //!
@@ -97,6 +104,8 @@ pub struct TransactionOptions {
     pub max_retries: u32,
 }
 
+const DEFAULT_TRANSACTION_TIMEOUT_MS: u64 = 30_000;
+
 impl TransactionOptions {
     /// Create options with default settings
     pub fn new() -> Self {
@@ -116,6 +125,9 @@ impl TransactionOptions {
     }
 
     /// Enable retry on conflict
+    ///
+    /// If enabled, the transaction closure may re-run on transient database failures.
+    /// Ensure the closure body is idempotent (or safely handles retry) when enabling this option.
     pub fn with_retries(mut self, max_retries: u32) -> Self {
         self.retry_on_conflict = true;
         self.max_retries = max_retries;
@@ -126,13 +138,13 @@ impl TransactionOptions {
 /// Transaction isolation levels
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TransactionIsolation {
-    /// Read uncommitted (SQLite ignores this, uses serializable)
+    /// Read uncommitted.
     ReadUncommitted,
-    /// Read committed
+    /// Read committed.
     ReadCommitted,
-    /// Repeatable read
+    /// Repeatable read.
     RepeatableRead,
-    /// Serializable (default for SQLite)
+    /// Serializable.
     #[default]
     Serializable,
 }
@@ -256,14 +268,14 @@ pub trait DatabaseExt {
     /// and rolled back if it returns `Err` or panics.
     fn with_transaction<F, T>(&self, f: F) -> Result<T>
     where
-        F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>;
+        F: FnMut(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>;
 
     /// Execute a closure within a database transaction with custom options.
     ///
     /// This method allows setting transaction options like timeout and retry behavior.
     fn with_transaction_opts<F, T>(&self, _opts: TransactionOptions, f: F) -> Result<T>
     where
-        F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
+        F: FnMut(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
     {
         // Default implementation ignores options and delegates to with_transaction
         self.with_transaction(f)
@@ -293,20 +305,26 @@ pub trait AsyncDatabaseExt {
     ///
     /// The transaction is automatically committed if the closure returns `Ok`,
     /// and rolled back if it returns `Err` or panics.
-    async fn with_transaction_async<F, T, Fut>(&self, f: F) -> Result<T>
+    /// If `retry_on_conflict` is enabled, the closure may run more than once.
+    async fn with_transaction_async<'a, F, T, Fut>(&'a self, f: F) -> Result<T>
     where
-        F: FnOnce(sqlx::Transaction<'static, sqlx::Postgres>) -> Fut + Send,
+        F: FnMut(&mut sqlx::Transaction<'a, sqlx::Postgres>) -> Fut + Send,
         Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>> + Send,
-        T: Send;
+        T: Send
+    {
+        self.with_transaction_async_opts(crate::TransactionOptions::new(), f).await
+    }
 
     /// Execute an async closure within a transaction with custom options.
-    async fn with_transaction_async_opts<F, T, Fut>(
-        &self,
+    ///
+    /// If `opts.retry_on_conflict` is enabled, the closure may run multiple times.
+    async fn with_transaction_async_opts<'a, F, T, Fut>(
+        &'a self,
         opts: TransactionOptions,
         f: F,
     ) -> Result<T>
     where
-        F: FnOnce(sqlx::Transaction<'static, sqlx::Postgres>) -> Fut + Send,
+        F: FnMut(&mut sqlx::Transaction<'a, sqlx::Postgres>) -> Fut + Send,
         Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>> + Send,
         T: Send;
 }
@@ -485,20 +503,14 @@ pub struct DatabaseConfig {
 
 impl Default for DatabaseConfig {
     fn default() -> Self {
-        Self {
-            url: "stateset.db".to_string(),
-            max_connections: 5,
-        }
+        Self { url: "stateset.db".to_string(), max_connections: 5 }
     }
 }
 
 impl DatabaseConfig {
     /// Create config for SQLite with path
     pub fn sqlite(path: &str) -> Self {
-        Self {
-            url: path.to_string(),
-            max_connections: 5,
-        }
+        Self { url: path.to_string(), max_connections: 5 }
     }
 
     /// Create config for in-memory SQLite (useful for testing)
@@ -518,9 +530,6 @@ impl DatabaseConfig {
     /// let config = DatabaseConfig::postgres("postgres://user:pass@localhost/stateset");
     /// ```
     pub fn postgres(connection_string: &str) -> Self {
-        Self {
-            url: connection_string.to_string(),
-            max_connections: 10,
-        }
+        Self { url: connection_string.to_string(), max_connections: 10 }
     }
 }

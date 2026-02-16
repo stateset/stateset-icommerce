@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{FulfillmentId, OrderId, OrderItemId, ShipmentId};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -15,7 +16,7 @@ use uuid::Uuid;
 /// A wave groups multiple orders for efficient picking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Wave {
-    pub id: Uuid,
+    pub id: FulfillmentId,
     pub wave_number: String,
     pub warehouse_id: i32,
     pub status: WaveStatus,
@@ -35,9 +36,9 @@ pub struct Wave {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PickTask {
     pub id: Uuid,
-    pub wave_id: Option<Uuid>,
-    pub order_id: Uuid,
-    pub order_item_id: Uuid,
+    pub wave_id: Option<FulfillmentId>,
+    pub order_id: OrderId,
+    pub order_item_id: OrderItemId,
     pub warehouse_id: i32,
     pub status: PickStatus,
     pub sku: String,
@@ -63,8 +64,8 @@ pub struct PickTask {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackTask {
     pub id: Uuid,
-    pub order_id: Uuid,
-    pub shipment_id: Option<Uuid>,
+    pub order_id: OrderId,
+    pub shipment_id: Option<ShipmentId>,
     pub status: PackStatus,
     pub carton_count: i32,
     pub total_weight_kg: Option<Decimal>,
@@ -108,8 +109,8 @@ pub struct CartonItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShipTask {
     pub id: Uuid,
-    pub order_id: Uuid,
-    pub shipment_id: Uuid,
+    pub order_id: OrderId,
+    pub shipment_id: ShipmentId,
     pub pack_task_id: Uuid,
     pub status: ShipStatus,
     pub carrier: Option<String>,
@@ -131,6 +132,7 @@ pub struct ShipTask {
 /// Status of a wave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum WaveStatus {
     #[default]
     Draft,
@@ -169,6 +171,7 @@ impl FromStr for WaveStatus {
 /// Status of a pick task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PickStatus {
     #[default]
     Pending,
@@ -210,6 +213,7 @@ impl FromStr for PickStatus {
 /// Status of a pack task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PackStatus {
     #[default]
     Pending,
@@ -251,6 +255,7 @@ impl FromStr for PackStatus {
 /// Status of a ship task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ShipStatus {
     #[default]
     Pending,
@@ -289,6 +294,7 @@ impl FromStr for ShipStatus {
 /// Package type for cartons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PackageType {
     #[default]
     Box,
@@ -327,6 +333,7 @@ impl FromStr for PackageType {
 /// Type of wave for order grouping
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum WaveType {
     /// Process orders in batches
     #[default]
@@ -371,7 +378,7 @@ impl FromStr for WaveType {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateWave {
     pub warehouse_id: i32,
-    pub order_ids: Vec<Uuid>,
+    pub order_ids: Vec<OrderId>,
     pub priority: Option<i32>,
     pub notes: Option<String>,
     pub created_by: Option<String>,
@@ -380,9 +387,9 @@ pub struct CreateWave {
 /// Input for creating a pick task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePickTask {
-    pub wave_id: Option<Uuid>,
-    pub order_id: Uuid,
-    pub order_item_id: Uuid,
+    pub wave_id: Option<FulfillmentId>,
+    pub order_id: OrderId,
+    pub order_item_id: OrderItemId,
     pub warehouse_id: i32,
     pub sku: String,
     pub product_name: Option<String>,
@@ -409,7 +416,7 @@ pub struct CompletePick {
 /// Input for creating a pack task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePackTask {
-    pub order_id: Uuid,
+    pub order_id: OrderId,
     pub notes: Option<String>,
 }
 
@@ -437,8 +444,8 @@ pub struct AddCartonItem {
 /// Input for creating a ship task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateShipTask {
-    pub order_id: Uuid,
-    pub shipment_id: Uuid,
+    pub order_id: OrderId,
+    pub shipment_id: ShipmentId,
     pub pack_task_id: Uuid,
     pub carrier: Option<String>,
     pub service_level: Option<String>,
@@ -473,8 +480,8 @@ pub struct WaveFilter {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PickTaskFilter {
     pub warehouse_id: Option<i32>,
-    pub wave_id: Option<Uuid>,
-    pub order_id: Option<Uuid>,
+    pub wave_id: Option<FulfillmentId>,
+    pub order_id: Option<OrderId>,
     pub status: Option<PickStatus>,
     pub assigned_to: Option<String>,
     pub limit: Option<u32>,
@@ -484,7 +491,7 @@ pub struct PickTaskFilter {
 /// Filter for listing pack tasks.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PackTaskFilter {
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     pub status: Option<PackStatus>,
     pub assigned_to: Option<String>,
     pub limit: Option<u32>,
@@ -494,7 +501,7 @@ pub struct PackTaskFilter {
 /// Filter for listing ship tasks.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ShipTaskFilter {
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     pub status: Option<ShipStatus>,
     pub carrier: Option<String>,
     pub limit: Option<u32>,
@@ -525,53 +532,29 @@ mod tests {
 
     #[test]
     fn test_wave_status_from_str() {
-        assert_eq!(
-            WaveStatus::from_str("released").unwrap(),
-            WaveStatus::Released
-        );
-        assert_eq!(
-            WaveStatus::from_str("InProgress").unwrap(),
-            WaveStatus::InProgress
-        );
+        assert_eq!(WaveStatus::from_str("released").unwrap(), WaveStatus::Released);
+        assert_eq!(WaveStatus::from_str("InProgress").unwrap(), WaveStatus::InProgress);
         assert!(WaveStatus::from_str("nope").is_err());
     }
 
     #[test]
     fn test_pick_status_from_str() {
-        assert_eq!(
-            PickStatus::from_str("assigned").unwrap(),
-            PickStatus::Assigned
-        );
-        assert_eq!(
-            PickStatus::from_str("canceled").unwrap(),
-            PickStatus::Cancelled
-        );
+        assert_eq!(PickStatus::from_str("assigned").unwrap(), PickStatus::Assigned);
+        assert_eq!(PickStatus::from_str("canceled").unwrap(), PickStatus::Cancelled);
         assert!(PickStatus::from_str("nope").is_err());
     }
 
     #[test]
     fn test_pack_status_from_str() {
-        assert_eq!(
-            PackStatus::from_str("assigned").unwrap(),
-            PackStatus::Assigned
-        );
-        assert_eq!(
-            PackStatus::from_str("readytopack").unwrap(),
-            PackStatus::ReadyToPack
-        );
+        assert_eq!(PackStatus::from_str("assigned").unwrap(), PackStatus::Assigned);
+        assert_eq!(PackStatus::from_str("readytopack").unwrap(), PackStatus::ReadyToPack);
         assert!(PackStatus::from_str("nope").is_err());
     }
 
     #[test]
     fn test_ship_status_from_str() {
-        assert_eq!(
-            ShipStatus::from_str("labelprinted").unwrap(),
-            ShipStatus::LabelPrinted
-        );
-        assert_eq!(
-            ShipStatus::from_str("ready_to_ship").unwrap(),
-            ShipStatus::ReadyToShip
-        );
+        assert_eq!(ShipStatus::from_str("labelprinted").unwrap(), ShipStatus::LabelPrinted);
+        assert_eq!(ShipStatus::from_str("ready_to_ship").unwrap(), ShipStatus::ReadyToShip);
         assert!(ShipStatus::from_str("nope").is_err());
     }
 
@@ -583,10 +566,7 @@ mod tests {
 
     #[test]
     fn test_wave_type_from_str() {
-        assert_eq!(
-            WaveType::from_str("single_order").unwrap(),
-            WaveType::Single
-        );
+        assert_eq!(WaveType::from_str("single_order").unwrap(), WaveType::Single);
         assert!(WaveType::from_str("nope").is_err());
     }
 }

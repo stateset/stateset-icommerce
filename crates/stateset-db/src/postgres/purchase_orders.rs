@@ -3,14 +3,14 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
-    generate_po_number, generate_supplier_code, validate_batch_size, BatchResult, CommerceError,
-    CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PaymentTerms, PurchaseOrder,
-    PurchaseOrderFilter, PurchaseOrderItem, PurchaseOrderRepository, PurchaseOrderStatus,
-    ReceivePurchaseOrderItems, Result, Supplier, SupplierFilter, UpdatePurchaseOrder,
-    UpdateSupplier,
+    BatchResult, CommerceError, CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier,
+    PaymentTerms, PurchaseOrder, PurchaseOrderFilter, PurchaseOrderItem, PurchaseOrderRepository,
+    PurchaseOrderStatus, ReceivePurchaseOrderItems, Result, Supplier, SupplierFilter,
+    UpdatePurchaseOrder, UpdateSupplier, generate_po_number, generate_supplier_code,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -343,9 +343,7 @@ impl PgPurchaseOrderRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_supplier_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_supplier_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_supplier_async(&self, id: Uuid) -> Result<Option<Supplier>> {
@@ -370,10 +368,7 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn update_supplier_async(&self, id: Uuid, input: UpdateSupplier) -> Result<Supplier> {
-        let supplier = self
-            .get_supplier_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let supplier = self.get_supplier_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
         sqlx::query(
@@ -405,9 +400,7 @@ impl PgPurchaseOrderRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_supplier_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_supplier_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_suppliers_async(&self, filter: SupplierFilter) -> Result<Vec<Supplier>> {
@@ -444,10 +437,8 @@ impl PgPurchaseOrderRepository {
 
     // Purchase Order methods
     pub async fn create_async(&self, input: CreatePurchaseOrder) -> Result<PurchaseOrder> {
-        let supplier = self
-            .get_supplier_async(input.supplier_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let supplier =
+            self.get_supplier_async(input.supplier_id).await?.ok_or(CommerceError::NotFound)?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -704,8 +695,7 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn submit_for_approval_async(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.update_status_async(id, PurchaseOrderStatus::PendingApproval)
-            .await
+        self.update_status_async(id, PurchaseOrderStatus::PendingApproval).await
     }
 
     pub async fn approve_async(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
@@ -758,13 +748,11 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn hold_async(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.update_status_async(id, PurchaseOrderStatus::OnHold)
-            .await
+        self.update_status_async(id, PurchaseOrderStatus::OnHold).await
     }
 
     pub async fn cancel_async(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.update_status_async(id, PurchaseOrderStatus::Cancelled)
-            .await
+        self.update_status_async(id, PurchaseOrderStatus::Cancelled).await
     }
 
     pub async fn receive_async(
@@ -786,9 +774,7 @@ impl PgPurchaseOrderRepository {
 
         // Check receipt status
         let items = self.load_items_async(id).await?;
-        let all_received = items
-            .iter()
-            .all(|i| i.quantity_received >= i.quantity_ordered);
+        let all_received = items.iter().all(|i| i.quantity_received >= i.quantity_ordered);
         let any_received = items.iter().any(|i| i.quantity_received > Decimal::ZERO);
 
         let new_status = if all_received {
@@ -814,8 +800,7 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn complete_async(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.update_status_async(id, PurchaseOrderStatus::Completed)
-            .await
+        self.update_status_async(id, PurchaseOrderStatus::Completed).await
     }
 
     pub async fn add_item_async(
@@ -972,10 +957,8 @@ impl PgPurchaseOrderRepository {
             query.push_str(" AND is_active = true");
         }
 
-        let (count,): (i64,) = sqlx::query_as(&query)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let (count,): (i64,) =
+            sqlx::query_as(&query).fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count as u64)
     }

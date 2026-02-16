@@ -158,10 +158,7 @@ fn test_list_plans_by_status() {
         .expect("Failed to create draft plan");
 
     // Activate it
-    commerce
-        .subscriptions()
-        .activate_plan(draft.id)
-        .expect("Failed to activate plan");
+    commerce.subscriptions().activate_plan(draft.id).expect("Failed to activate plan");
 
     // Create another draft
     commerce
@@ -214,10 +211,8 @@ fn test_activate_plan() {
 
     assert_eq!(plan.status, PlanStatus::Draft);
 
-    let activated = commerce
-        .subscriptions()
-        .activate_plan(plan.id)
-        .expect("Failed to activate plan");
+    let activated =
+        commerce.subscriptions().activate_plan(plan.id).expect("Failed to activate plan");
 
     assert_eq!(activated.status, PlanStatus::Active);
 }
@@ -237,16 +232,10 @@ fn test_archive_plan() {
         .expect("Failed to create plan");
 
     // Activate first
-    commerce
-        .subscriptions()
-        .activate_plan(plan.id)
-        .expect("Failed to activate plan");
+    commerce.subscriptions().activate_plan(plan.id).expect("Failed to activate plan");
 
     // Then archive
-    let archived = commerce
-        .subscriptions()
-        .archive_plan(plan.id)
-        .expect("Failed to archive plan");
+    let archived = commerce.subscriptions().archive_plan(plan.id).expect("Failed to archive plan");
 
     assert_eq!(archived.status, PlanStatus::Archived);
 }
@@ -315,7 +304,7 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
             ..Default::default()
         })
         .expect("Failed to create customer");
-    customer.id
+    customer.id.into_uuid()
 }
 
 fn create_active_plan(commerce: &Commerce, name: &str, price: rust_decimal::Decimal) -> Uuid {
@@ -330,10 +319,7 @@ fn create_active_plan(commerce: &Commerce, name: &str, price: rust_decimal::Deci
         })
         .expect("Failed to create plan");
 
-    commerce
-        .subscriptions()
-        .activate_plan(plan.id)
-        .expect("Failed to activate plan");
+    commerce.subscriptions().activate_plan(plan.id).expect("Failed to activate plan");
 
     plan.id
 }
@@ -347,11 +333,7 @@ fn test_create_subscription() {
 
     let subscription = commerce
         .subscriptions()
-        .subscribe(CreateSubscription {
-            customer_id,
-            plan_id,
-            ..Default::default()
-        })
+        .subscribe(CreateSubscription { customer_id, plan_id, ..Default::default() })
         .expect("Failed to create subscription");
 
     assert!(!subscription.id.is_nil());
@@ -500,10 +482,7 @@ fn test_list_subscriptions_by_customer() {
     // Filter by customer1
     let customer1_subs = commerce
         .subscriptions()
-        .list(SubscriptionFilter {
-            customer_id: Some(customer1),
-            ..Default::default()
-        })
+        .list(SubscriptionFilter { customer_id: Some(customer1), ..Default::default() })
         .expect("Failed to list subscriptions");
 
     assert_eq!(customer1_subs.len(), 2);
@@ -531,40 +510,26 @@ fn test_list_subscriptions_by_status() {
     // Create trial subscription
     commerce
         .subscriptions()
-        .subscribe(CreateSubscription {
-            customer_id,
-            plan_id,
-            ..Default::default()
-        })
+        .subscribe(CreateSubscription { customer_id, plan_id, ..Default::default() })
         .expect("Failed to create trial subscription");
 
     // Filter by active status
     let active_subs = commerce
         .subscriptions()
-        .list(SubscriptionFilter {
-            status: Some(SubscriptionStatus::Active),
-            ..Default::default()
-        })
+        .list(SubscriptionFilter { status: Some(SubscriptionStatus::Active), ..Default::default() })
         .expect("Failed to list active subscriptions");
 
     assert!(!active_subs.is_empty());
-    assert!(active_subs
-        .iter()
-        .all(|s| s.status == SubscriptionStatus::Active));
+    assert!(active_subs.iter().all(|s| s.status == SubscriptionStatus::Active));
 
     // Filter by trial status
     let trial_subs = commerce
         .subscriptions()
-        .list(SubscriptionFilter {
-            status: Some(SubscriptionStatus::Trial),
-            ..Default::default()
-        })
+        .list(SubscriptionFilter { status: Some(SubscriptionStatus::Trial), ..Default::default() })
         .expect("Failed to list trial subscriptions");
 
     assert!(!trial_subs.is_empty());
-    assert!(trial_subs
-        .iter()
-        .all(|s| s.status == SubscriptionStatus::Trial));
+    assert!(trial_subs.iter().all(|s| s.status == SubscriptionStatus::Trial));
 }
 
 // ============================================================================
@@ -594,10 +559,7 @@ fn test_pause_subscription() {
         .subscriptions()
         .pause(
             subscription.id,
-            PauseSubscription {
-                reason: Some("Customer requested".into()),
-                ..Default::default()
-            },
+            PauseSubscription { reason: Some("Customer requested".into()), ..Default::default() },
         )
         .expect("Failed to pause subscription");
 
@@ -629,10 +591,8 @@ fn test_resume_subscription() {
         .expect("Failed to pause subscription");
 
     // Then resume
-    let resumed = commerce
-        .subscriptions()
-        .resume(subscription.id)
-        .expect("Failed to resume subscription");
+    let resumed =
+        commerce.subscriptions().resume(subscription.id).expect("Failed to resume subscription");
 
     assert_eq!(resumed.status, SubscriptionStatus::Active);
     assert!(resumed.paused_at.is_none());
@@ -730,9 +690,7 @@ fn test_skip_billing_cycle() {
         .subscriptions()
         .skip_next_cycle(
             subscription.id,
-            SkipBillingCycle {
-                reason: Some("Customer traveling".into()),
-            },
+            SkipBillingCycle { reason: Some("Customer traveling".into()) },
         )
         .expect("Failed to skip billing cycle");
 
@@ -761,19 +719,11 @@ fn test_cannot_pause_cancelled_subscription() {
     // Cancel first
     commerce
         .subscriptions()
-        .cancel(
-            subscription.id,
-            CancelSubscription {
-                immediate: Some(true),
-                ..Default::default()
-            },
-        )
+        .cancel(subscription.id, CancelSubscription { immediate: Some(true), ..Default::default() })
         .expect("Failed to cancel subscription");
 
     // Try to pause - should fail
-    let result = commerce
-        .subscriptions()
-        .pause(subscription.id, PauseSubscription::default());
+    let result = commerce.subscriptions().pause(subscription.id, PauseSubscription::default());
     assert!(result.is_err());
 }
 
@@ -820,10 +770,8 @@ fn test_subscription_events_created_on_subscribe() {
         })
         .expect("Failed to create subscription");
 
-    let events = commerce
-        .subscriptions()
-        .get_events(subscription.id)
-        .expect("Failed to get events");
+    let events =
+        commerce.subscriptions().get_events(subscription.id).expect("Failed to get events");
 
     // Should have at least created and activated events
     assert!(events.len() >= 2);
@@ -853,23 +801,15 @@ fn test_subscription_events_on_pause_resume() {
         .subscriptions()
         .pause(
             subscription.id,
-            PauseSubscription {
-                reason: Some("Going on vacation".into()),
-                ..Default::default()
-            },
+            PauseSubscription { reason: Some("Going on vacation".into()), ..Default::default() },
         )
         .expect("Failed to pause");
 
     // Resume
-    commerce
-        .subscriptions()
-        .resume(subscription.id)
-        .expect("Failed to resume");
+    commerce.subscriptions().resume(subscription.id).expect("Failed to resume");
 
-    let events = commerce
-        .subscriptions()
-        .get_events(subscription.id)
-        .expect("Failed to get events");
+    let events =
+        commerce.subscriptions().get_events(subscription.id).expect("Failed to get events");
 
     // Should have paused and resumed events
     assert!(events.iter().any(|e| e.description.contains("aused"))); // Paused
@@ -898,16 +838,11 @@ fn test_subscription_events_list_all() {
         .subscriptions()
         .pause(subscription.id, PauseSubscription::default())
         .expect("Failed to pause");
-    commerce
-        .subscriptions()
-        .resume(subscription.id)
-        .expect("Failed to resume");
+    commerce.subscriptions().resume(subscription.id).expect("Failed to resume");
 
     // Get all events
-    let events = commerce
-        .subscriptions()
-        .get_events(subscription.id)
-        .expect("Failed to get events");
+    let events =
+        commerce.subscriptions().get_events(subscription.id).expect("Failed to get events");
 
     assert!(events.len() >= 4);
 }
@@ -1008,10 +943,8 @@ fn test_mark_billing_cycle_paid() {
         .create_billing_cycle(subscription.id, 1, now, now + chrono::Duration::days(30))
         .expect("Failed to create billing cycle");
 
-    let paid = commerce
-        .subscriptions()
-        .mark_cycle_paid(cycle.id)
-        .expect("Failed to mark cycle paid");
+    let paid =
+        commerce.subscriptions().mark_cycle_paid(cycle.id).expect("Failed to mark cycle paid");
 
     assert_eq!(paid.status, stateset_embedded::BillingCycleStatus::Paid);
     assert!(paid.payment_id.is_none());
@@ -1041,10 +974,8 @@ fn test_mark_billing_cycle_failed() {
         .create_billing_cycle(subscription.id, 1, now, now + chrono::Duration::days(30))
         .expect("Failed to create billing cycle");
 
-    let failed = commerce
-        .subscriptions()
-        .mark_cycle_failed(cycle.id)
-        .expect("Failed to mark cycle failed");
+    let failed =
+        commerce.subscriptions().mark_cycle_failed(cycle.id).expect("Failed to mark cycle failed");
 
     assert_eq!(failed.status, stateset_embedded::BillingCycleStatus::Failed);
     assert!(failed.failure_reason.is_none());
@@ -1069,15 +1000,10 @@ fn test_get_active_plans() {
         })
         .expect("Failed to create plan");
 
-    commerce
-        .subscriptions()
-        .activate_plan(plan.id)
-        .expect("Failed to activate plan");
+    commerce.subscriptions().activate_plan(plan.id).expect("Failed to activate plan");
 
-    let active_plans = commerce
-        .subscriptions()
-        .get_active_plans()
-        .expect("Failed to get active plans");
+    let active_plans =
+        commerce.subscriptions().get_active_plans().expect("Failed to get active plans");
 
     assert!(!active_plans.is_empty());
     assert!(active_plans.iter().all(|p| p.status == PlanStatus::Active));
@@ -1127,27 +1053,19 @@ fn test_is_active() {
         })
         .expect("Failed to create subscription");
 
-    assert!(commerce
-        .subscriptions()
-        .is_active(subscription.id)
-        .expect("Failed to check if active"));
+    assert!(
+        commerce.subscriptions().is_active(subscription.id).expect("Failed to check if active")
+    );
 
     // Cancel it
     commerce
         .subscriptions()
-        .cancel(
-            subscription.id,
-            CancelSubscription {
-                immediate: Some(true),
-                ..Default::default()
-            },
-        )
+        .cancel(subscription.id, CancelSubscription { immediate: Some(true), ..Default::default() })
         .expect("Failed to cancel");
 
-    assert!(!commerce
-        .subscriptions()
-        .is_active(subscription.id)
-        .expect("Failed to check if active"));
+    assert!(
+        !commerce.subscriptions().is_active(subscription.id).expect("Failed to check if active")
+    );
 }
 
 #[test]
@@ -1160,17 +1078,12 @@ fn test_is_in_trial() {
     // Create subscription with trial
     let trial_sub = commerce
         .subscriptions()
-        .subscribe(CreateSubscription {
-            customer_id,
-            plan_id,
-            ..Default::default()
-        })
+        .subscribe(CreateSubscription { customer_id, plan_id, ..Default::default() })
         .expect("Failed to create subscription");
 
-    assert!(commerce
-        .subscriptions()
-        .is_in_trial(trial_sub.id)
-        .expect("Failed to check trial status"));
+    assert!(
+        commerce.subscriptions().is_in_trial(trial_sub.id).expect("Failed to check trial status")
+    );
 
     // Create subscription without trial
     let active_sub = commerce
@@ -1183,10 +1096,9 @@ fn test_is_in_trial() {
         })
         .expect("Failed to create subscription");
 
-    assert!(!commerce
-        .subscriptions()
-        .is_in_trial(active_sub.id)
-        .expect("Failed to check trial status"));
+    assert!(
+        !commerce.subscriptions().is_in_trial(active_sub.id).expect("Failed to check trial status")
+    );
 }
 
 // ============================================================================
@@ -1239,10 +1151,7 @@ fn test_subscribe_to_nonexistent_plan_fails() {
 fn test_get_nonexistent_subscription() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce
-        .subscriptions()
-        .get(Uuid::new_v4())
-        .expect("Should not error");
+    let result = commerce.subscriptions().get(Uuid::new_v4()).expect("Should not error");
 
     assert!(result.is_none());
 }
@@ -1251,10 +1160,7 @@ fn test_get_nonexistent_subscription() {
 fn test_get_nonexistent_plan() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce
-        .subscriptions()
-        .get_plan(Uuid::new_v4())
-        .expect("Should not error");
+    let result = commerce.subscriptions().get_plan(Uuid::new_v4()).expect("Should not error");
 
     assert!(result.is_none());
 }

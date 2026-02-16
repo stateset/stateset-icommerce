@@ -180,11 +180,7 @@ fn test_lot_create_and_get() {
     assert_eq!(lot.quantity_remaining, dec!(1000));
 
     // Get the lot
-    let fetched = commerce
-        .lots()
-        .get(lot.id)
-        .expect("Failed to get lot")
-        .expect("Lot not found");
+    let fetched = commerce.lots().get(lot.id).expect("Failed to get lot").expect("Lot not found");
     assert_eq!(fetched.id, lot.id);
 }
 
@@ -260,7 +256,7 @@ fn test_serial_lookup_with_related_data() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             sku: Some("SERIAL-LOOKUP-SKU".into()),
             serial_number: Some(serial.serial.clone()),
             warranty_type: Some(WarrantyType::Standard),
@@ -273,10 +269,7 @@ fn test_serial_lookup_with_related_data() {
         .serials()
         .update(
             serial.id,
-            UpdateSerialNumber {
-                warranty_id: Some(warranty.id),
-                ..Default::default()
-            },
+            UpdateSerialNumber { warranty_id: Some(warranty.id), ..Default::default() },
         )
         .expect("Failed to update serial");
 
@@ -361,10 +354,8 @@ fn test_bill_create_and_list() {
     assert_eq!(bill.status, BillStatus::Draft);
     assert_eq!(bill.total_amount, dec!(1000.00));
 
-    let bills = commerce
-        .accounts_payable()
-        .list_bills(Default::default())
-        .expect("Failed to list bills");
+    let bills =
+        commerce.accounts_payable().list_bills(Default::default()).expect("Failed to list bills");
     assert!(bills.iter().any(|b| b.id == bill.id));
 }
 
@@ -444,14 +435,14 @@ fn test_credit_account_create_and_get() {
     let account = commerce
         .credit()
         .create_credit_account(CreateCreditAccount {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             credit_limit: dec!(5000.00),
             risk_rating: Some(RiskRating::Low),
             ..Default::default()
         })
         .expect("Failed to create credit account");
 
-    assert_eq!(account.customer_id, customer.id);
+    assert_eq!(account.customer_id, customer.id.into_uuid());
     assert_eq!(account.credit_limit, dec!(5000.00));
 
     // Get account
@@ -486,9 +477,9 @@ fn test_backorder_create_and_list() {
     let order = commerce
         .orders()
         .create(stateset_embedded::CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![stateset_embedded::CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "BO-SKU-001".into(),
                 quantity: 10,
                 unit_price: dec!(25.00),
@@ -502,8 +493,8 @@ fn test_backorder_create_and_list() {
     let backorder = commerce
         .backorder()
         .create_backorder(CreateBackorder {
-            order_id: order.id,
-            customer_id: customer.id,
+            order_id: order.id.into(),
+            customer_id: customer.id.into(),
             sku: "BO-SKU-001".into(),
             quantity: dec!(50),
             priority: Some(BackorderPriority::High),
@@ -607,10 +598,8 @@ fn test_ar_aging_summary() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // AR aging should work even with no invoices
-    let summary = commerce
-        .accounts_receivable()
-        .get_aging_summary()
-        .expect("Failed to get aging summary");
+    let summary =
+        commerce.accounts_receivable().get_aging_summary().expect("Failed to get aging summary");
 
     assert_eq!(summary.total, dec!(0));
     assert_eq!(summary.current, dec!(0));
@@ -649,10 +638,8 @@ fn test_fulfillment_wave_create() {
     assert_eq!(wave.warehouse_id, warehouse.id);
 
     // List waves
-    let waves = commerce
-        .fulfillment()
-        .list_waves(Default::default())
-        .expect("Failed to list waves");
+    let waves =
+        commerce.fulfillment().list_waves(Default::default()).expect("Failed to list waves");
     assert!(waves.iter().any(|w| w.id == wave.id));
 }
 
@@ -677,9 +664,9 @@ fn test_shipment_tracking_flow() {
     let order = commerce
         .orders()
         .create(stateset_embedded::CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![stateset_embedded::CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "SHIP-SKU-001".into(),
                 name: "Shipment Item".into(),
                 quantity: 1,
@@ -695,7 +682,7 @@ fn test_shipment_tracking_flow() {
     let shipment = commerce
         .shipments()
         .create(CreateShipment {
-            order_id: order.id,
+            order_id: order.id.into(),
             carrier: Some(ShippingCarrier::Ups),
             recipient_name: "Alice Smith".into(),
             shipping_address: "123 Main St, City, ST 12345".into(),
@@ -716,15 +703,10 @@ fn test_shipment_tracking_flow() {
         .ship(shipment.id, Some(tracking_number.clone()))
         .expect("Failed to ship");
     assert_eq!(shipped.status, ShipmentStatus::Shipped);
-    assert!(shipped
-        .tracking_url
-        .as_ref()
-        .is_some_and(|url| url.contains("ups.com")));
+    assert!(shipped.tracking_url.as_ref().is_some_and(|url| url.contains("ups.com")));
 
-    let delivered = commerce
-        .shipments()
-        .mark_delivered(shipment.id)
-        .expect("Failed to mark delivered");
+    let delivered =
+        commerce.shipments().mark_delivered(shipment.id).expect("Failed to mark delivered");
     assert_eq!(delivered.status, ShipmentStatus::Delivered);
 
     let by_tracking = commerce
@@ -756,7 +738,7 @@ fn test_warranty_claim_lifecycle() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             sku: Some("WRN-SKU-001".into()),
             warranty_type: Some(WarrantyType::Standard),
             duration_months: Some(12),
@@ -785,10 +767,7 @@ fn test_warranty_claim_lifecycle() {
 
     assert_eq!(claim.status, ClaimStatus::Submitted);
 
-    let approved = commerce
-        .warranties()
-        .approve_claim(claim.id)
-        .expect("Failed to approve claim");
+    let approved = commerce.warranties().approve_claim(claim.id).expect("Failed to approve claim");
     assert_eq!(approved.status, ClaimStatus::Approved);
 
     let completed = commerce
@@ -816,7 +795,7 @@ fn test_warranty_claim_invalid_transitions() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             sku: Some("WRN-SKU-002".into()),
             warranty_type: Some(WarrantyType::Standard),
             duration_months: Some(12),
@@ -833,18 +812,13 @@ fn test_warranty_claim_invalid_transitions() {
         })
         .expect("Failed to create warranty claim");
 
-    let result = commerce
-        .warranties()
-        .complete_claim(claim.id, ClaimResolution::Replacement);
+    let result = commerce.warranties().complete_claim(claim.id, ClaimResolution::Replacement);
     assert!(result.is_err());
 
     let result = commerce.warranties().deny_claim(claim.id, "");
     assert!(result.is_err());
 
-    let approved = commerce
-        .warranties()
-        .approve_claim(claim.id)
-        .expect("Failed to approve claim");
+    let approved = commerce.warranties().approve_claim(claim.id).expect("Failed to approve claim");
     assert_eq!(approved.status, ClaimStatus::Approved);
 
     let result = commerce.warranties().approve_claim(claim.id);
@@ -853,9 +827,7 @@ fn test_warranty_claim_invalid_transitions() {
     let result = commerce.warranties().deny_claim(claim.id, "Late filing");
     assert!(result.is_err());
 
-    let result = commerce
-        .warranties()
-        .complete_claim(claim.id, ClaimResolution::None);
+    let result = commerce.warranties().complete_claim(claim.id, ClaimResolution::None);
     assert!(result.is_err());
 
     let completed = commerce
@@ -895,7 +867,7 @@ fn test_warranty_status_transition_guards() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             sku: Some("WRN-SKU-003".into()),
             warranty_type: Some(WarrantyType::Standard),
             duration_months: Some(12),
@@ -903,16 +875,13 @@ fn test_warranty_status_transition_guards() {
         })
         .expect("Failed to create warranty");
 
-    let expired = commerce
-        .warranties()
-        .expire(warranty.id)
-        .expect("Failed to expire warranty");
+    let expired = commerce.warranties().expire(warranty.id).expect("Failed to expire warranty");
     assert_eq!(expired.status, WarrantyStatus::Expired);
 
     let result = commerce.warranties().void(warranty.id);
     assert!(result.is_err());
 
-    let result = commerce.warranties().transfer(warranty.id, new_customer.id);
+    let result = commerce.warranties().transfer(warranty.id, new_customer.id.into());
     assert!(result.is_err());
 }
 
@@ -933,7 +902,7 @@ fn test_warranty_update_claim_transitions() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             sku: Some("WRN-SKU-004".into()),
             warranty_type: Some(WarrantyType::Standard),
             duration_months: Some(12),
@@ -954,10 +923,7 @@ fn test_warranty_update_claim_transitions() {
         .warranties()
         .update_claim(
             claim.id,
-            UpdateWarrantyClaim {
-                status: Some(ClaimStatus::UnderReview),
-                ..Default::default()
-            },
+            UpdateWarrantyClaim { status: Some(ClaimStatus::UnderReview), ..Default::default() },
         )
         .expect("Failed to update claim to under_review");
     assert_eq!(under_review.status, ClaimStatus::UnderReview);
@@ -976,10 +942,7 @@ fn test_warranty_update_claim_transitions() {
         .warranties()
         .update_claim(
             claim.id,
-            UpdateWarrantyClaim {
-                status: Some(ClaimStatus::Approved),
-                ..Default::default()
-            },
+            UpdateWarrantyClaim { status: Some(ClaimStatus::Approved), ..Default::default() },
         )
         .expect("Failed to update claim to approved");
     assert_eq!(approved.status, ClaimStatus::Approved);
@@ -989,10 +952,7 @@ fn test_warranty_update_claim_transitions() {
         .warranties()
         .update_claim(
             claim.id,
-            UpdateWarrantyClaim {
-                status: Some(ClaimStatus::InProgress),
-                ..Default::default()
-            },
+            UpdateWarrantyClaim { status: Some(ClaimStatus::InProgress), ..Default::default() },
         )
         .expect("Failed to update claim to in_progress");
     assert_eq!(in_progress.status, ClaimStatus::InProgress);
@@ -1043,10 +1003,7 @@ fn test_warranty_update_claim_transitions() {
 
     let result = commerce.warranties().update_claim(
         claim2.id,
-        UpdateWarrantyClaim {
-            status: Some(ClaimStatus::Denied),
-            ..Default::default()
-        },
+        UpdateWarrantyClaim { status: Some(ClaimStatus::Denied), ..Default::default() },
     );
     assert!(result.is_err());
 
@@ -1102,22 +1059,14 @@ fn test_purchase_order_workflow() {
     assert_eq!(po.status, PurchaseOrderStatus::Draft);
     assert_eq!(po.items.len(), 1);
 
-    let submitted = commerce
-        .purchase_orders()
-        .submit(po.id)
-        .expect("Failed to submit PO");
+    let submitted = commerce.purchase_orders().submit(po.id).expect("Failed to submit PO");
     assert_eq!(submitted.status, PurchaseOrderStatus::PendingApproval);
 
-    let approved = commerce
-        .purchase_orders()
-        .approve(po.id, "tester")
-        .expect("Failed to approve PO");
+    let approved =
+        commerce.purchase_orders().approve(po.id, "tester").expect("Failed to approve PO");
     assert_eq!(approved.status, PurchaseOrderStatus::Approved);
 
-    let sent = commerce
-        .purchase_orders()
-        .send(po.id)
-        .expect("Failed to send PO");
+    let sent = commerce.purchase_orders().send(po.id).expect("Failed to send PO");
     assert_eq!(sent.status, PurchaseOrderStatus::Sent);
 
     let fetched = commerce
@@ -1156,7 +1105,7 @@ fn test_invoice_send_and_payment() {
     let invoice = commerce
         .invoices()
         .create(CreateInvoice {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateInvoiceItem {
                 description: "Implementation services".into(),
                 quantity: dec!(2),
@@ -1170,10 +1119,7 @@ fn test_invoice_send_and_payment() {
     assert_eq!(invoice.status, InvoiceStatus::Draft);
     assert_eq!(invoice.total, dec!(200.00));
 
-    let sent = commerce
-        .invoices()
-        .send(invoice.id)
-        .expect("Failed to send invoice");
+    let sent = commerce.invoices().send(invoice.id).expect("Failed to send invoice");
     assert_eq!(sent.status, InvoiceStatus::Sent);
 
     let paid = commerce

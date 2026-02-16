@@ -12,11 +12,11 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
+    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
+    CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
+    OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, UpdateOrder,
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
-    validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
-    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, FulfillmentStatus, Order,
-    OrderFilter, OrderItem, OrderRepository, OrderStatus, PaymentStatus, ReserveInventory, Result,
-    UpdateOrder,
+    validate_required_text, validate_required_uuid, validate_sku,
 };
 use uuid::Uuid;
 
@@ -31,9 +31,7 @@ impl SqliteOrderRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn generate_order_number() -> String {
@@ -45,7 +43,7 @@ impl SqliteOrderRepository {
         format!("ORD-{}-{:06}-{:08X}", timestamp, nanos / 1000, random)
     }
 
-    fn row_to_order(row: &rusqlite::Row) -> rusqlite::Result<Order> {
+    fn row_to_order(row: &rusqlite::Row<'_>) -> rusqlite::Result<Order> {
         let shipping_addr: Option<Address> = parse_json_opt_row(
             row.get::<_, Option<String>>("shipping_address")?,
             "order",
@@ -58,13 +56,13 @@ impl SqliteOrderRepository {
         )?;
 
         Ok(Order {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "order", "id")?,
+            id: OrderId::from(parse_uuid_row(&row.get::<_, String>("id")?, "order", "id")?),
             order_number: row.get("order_number")?,
-            customer_id: parse_uuid_row(
+            customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "order",
                 "customer_id",
-            )?,
+            )?),
             status: parse_enum_row(&row.get::<_, String>("status")?, "order", "status")?,
             order_date: parse_datetime_row(
                 &row.get::<_, String>("order_date")?,
@@ -109,7 +107,7 @@ impl SqliteOrderRepository {
     }
 
     fn validate_order_item_input(item: &CreateOrderItem) -> Result<()> {
-        validate_required_uuid("order_item.product_id", item.product_id)?;
+        validate_required_uuid("order_item.product_id", item.product_id.into_uuid())?;
         if let Some(variant_id) = item.variant_id {
             validate_required_uuid("order_item.variant_id", variant_id)?;
         }
@@ -167,16 +165,14 @@ impl SqliteOrderRepository {
     }
 
     fn validate_order_input(input: &CreateOrder) -> Result<()> {
-        validate_required_uuid("order.customer_id", input.customer_id)?;
+        validate_required_uuid("order.customer_id", input.customer_id.into_uuid())?;
 
         if let Some(ref currency) = input.currency {
             validate_currency_code(currency)?;
         }
 
         if input.items.is_empty() {
-            return Err(CommerceError::ValidationError(
-                "Order must have at least one item".into(),
-            ));
+            return Err(CommerceError::ValidationError("Order must have at least one item".into()));
         }
 
         for item in &input.items {
@@ -195,7 +191,7 @@ impl SqliteOrderRepository {
 
     fn load_order_items_with_conn(
         conn: &rusqlite::Connection,
-        order_id: Uuid,
+        order_id: OrderId,
     ) -> Result<Vec<OrderItem>> {
         let mut stmt = conn
             .prepare(
@@ -208,17 +204,17 @@ impl SqliteOrderRepository {
         let items = stmt
             .query_map([order_id.to_string()], |row| {
                 Ok(OrderItem {
-                    id: parse_uuid_row(&row.get::<_, String>("id")?, "order_item", "id")?,
-                    order_id: parse_uuid_row(
+                    id: OrderItemId::from(parse_uuid_row(&row.get::<_, String>("id")?, "order_item", "id")?),
+                    order_id: OrderId::from(parse_uuid_row(
                         &row.get::<_, String>("order_id")?,
                         "order_item",
                         "order_id",
-                    )?,
-                    product_id: parse_uuid_row(
+                    )?),
+                    product_id: ProductId::from(parse_uuid_row(
                         &row.get::<_, String>("product_id")?,
                         "order_item",
                         "product_id",
-                    )?,
+                    )?),
                     variant_id: row
                         .get::<_, Option<String>>("variant_id")?
                         .and_then(|s| s.parse().ok()),
@@ -288,7 +284,7 @@ impl SqliteOrderRepository {
     ) -> Result<Order> {
         Self::validate_order_input(&input)?;
 
-        let id = Uuid::new_v4();
+        let id = OrderId::new();
         let order_number = Self::generate_order_number();
         let now = Utc::now();
         let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
@@ -444,7 +440,7 @@ impl SqliteOrderRepository {
             // Insert order items and build items vec
             let mut items = Vec::with_capacity(input.items.len());
             for item in &input.items {
-                let item_id = Uuid::new_v4();
+                let item_id = OrderItemId::new();
                 let item_total = OrderItem::calculate_total(
                     item.quantity,
                     item.unit_price,
@@ -554,9 +550,9 @@ impl SqliteOrderRepository {
                 let remaining = requested - reserved;
                 if remaining > Decimal::ZERO {
                     let backorder_input = CreateBackorder {
-                        order_id: id,
-                        order_line_id: Some(item.id),
-                        customer_id: input.customer_id,
+                        order_id: id.into_uuid(),
+                        order_line_id: Some(item.id.into_uuid()),
+                        customer_id: input.customer_id.into_uuid(),
                         sku: item.sku.clone(),
                         quantity: remaining,
                         priority: None,
@@ -599,7 +595,7 @@ impl OrderRepository for SqliteOrderRepository {
         self.create_internal(None, false, input)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Order>> {
+    fn get(&self, id: OrderId) -> Result<Option<Order>> {
         let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT * FROM orders WHERE id = ?",
@@ -635,7 +631,7 @@ impl OrderRepository for SqliteOrderRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
+    fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
         if let Some(address) = &input.shipping_address {
             Self::validate_address_input(address, "order.shipping_address")?;
         }
@@ -688,7 +684,7 @@ impl OrderRepository for SqliteOrderRepository {
                 .map_err(|e| match e {
                     rusqlite::Error::QueryReturnedNoRows => {
                         rusqlite::Error::ToSqlConversionFailure(Box::new(
-                            CommerceError::OrderNotFound(id),
+                            CommerceError::OrderNotFound(id.into_uuid()),
                         ))
                     }
                     e => e,
@@ -784,7 +780,7 @@ impl OrderRepository for SqliteOrderRepository {
                     Ok(order) => order,
                     Err(rusqlite::Error::QueryReturnedNoRows) => {
                         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                            CommerceError::OrderNotFound(id),
+                            CommerceError::OrderNotFound(id.into_uuid()),
                         )));
                     }
                     Err(e) => return Err(e),
@@ -836,10 +832,8 @@ impl OrderRepository for SqliteOrderRepository {
             params.push(Box::new(id.to_string()));
             params.push(Box::new(current_version));
 
-            let sql = format!(
-                "UPDATE orders SET {} WHERE id = ? AND version = ?",
-                updates.join(", ")
-            );
+            let sql =
+                format!("UPDATE orders SET {} WHERE id = ? AND version = ?", updates.join(", "));
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
                 params.iter().map(|p| p.as_ref()).collect();
@@ -864,7 +858,7 @@ impl OrderRepository for SqliteOrderRepository {
                 for reservation_id in reservation_ids {
                     SqliteInventoryRepository::release_reservation_in_tx(tx, reservation_id)?;
                 }
-                cancel_backorders_for_order_in_tx(tx, id)?;
+                cancel_backorders_for_order_in_tx(tx, id.into_uuid())?;
             }
 
             let result = tx.query_row(
@@ -877,7 +871,7 @@ impl OrderRepository for SqliteOrderRepository {
                 Ok(order) => order,
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
                     return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::OrderNotFound(id),
+                        CommerceError::OrderNotFound(id.into_uuid()),
                     )));
                 }
                 Err(e) => return Err(e),
@@ -886,10 +880,7 @@ impl OrderRepository for SqliteOrderRepository {
             order.items = Self::load_order_items_with_conn(tx, id)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
-            Ok(UpdateOutcome {
-                order,
-                post_commit_error: None,
-            })
+            Ok(UpdateOutcome { order, post_commit_error: None })
         })?;
 
         if let Some(err) = outcome.post_commit_error {
@@ -957,28 +948,24 @@ impl OrderRepository for SqliteOrderRepository {
         Ok(result)
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: OrderId) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
-        tx.execute(
-            "DELETE FROM order_items WHERE order_id = ?",
-            [id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()])
+        tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
+        tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
-        validate_required_uuid("order.id", order_id)?;
+    fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem> {
+        validate_required_uuid("order.id", order_id.into_uuid())?;
         Self::validate_order_item_input(&item)?;
 
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
-        let item_id = Uuid::new_v4();
+        let item_id = OrderItemId::new();
         let item_total = OrderItem::calculate_total(
             item.quantity,
             item.unit_price,
@@ -1025,7 +1012,7 @@ impl OrderRepository for SqliteOrderRepository {
         })
     }
 
-    fn remove_item(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
+    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         tx.execute(
@@ -1070,9 +1057,8 @@ impl OrderRepository for SqliteOrderRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
         Ok(count as u64)
     }
@@ -1106,7 +1092,7 @@ impl OrderRepository for SqliteOrderRepository {
         for input in inputs {
             Self::validate_order_input(&input)?;
 
-            let id = Uuid::new_v4();
+            let id = OrderId::new();
             let order_number = Self::generate_order_number();
             let now = Utc::now();
             let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
@@ -1176,7 +1162,7 @@ impl OrderRepository for SqliteOrderRepository {
 
             let mut items = Vec::with_capacity(input.items.len());
             for item in &input.items {
-                let item_id = Uuid::new_v4();
+                let item_id = OrderItemId::new();
                 let item_total = OrderItem::calculate_total(
                     item.quantity,
                     item.unit_price,
@@ -1246,7 +1232,7 @@ impl OrderRepository for SqliteOrderRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<BatchResult<Order>> {
+    fn update_batch(&self, updates: Vec<(OrderId, UpdateOrder)>) -> Result<BatchResult<Order>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -1260,7 +1246,7 @@ impl OrderRepository for SqliteOrderRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<Vec<Order>> {
+    fn update_batch_atomic(&self, updates: Vec<(OrderId, UpdateOrder)>) -> Result<Vec<Order>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -1284,7 +1270,7 @@ impl OrderRepository for SqliteOrderRepository {
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(id),
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(id.into_uuid()),
                     e => map_db_error(e),
                 })?;
             let current_status: OrderStatus = parse_enum(&current_status_raw, "order", "status")?;
@@ -1378,9 +1364,7 @@ impl OrderRepository for SqliteOrderRepository {
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
                 params.iter().map(|p| p.as_ref()).collect();
-            let rows_affected = tx
-                .execute(&sql, params_refs.as_slice())
-                .map_err(map_db_error)?;
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
             if rows_affected == 0 {
                 return Err(CommerceError::VersionConflict {
                     entity: "order".to_string(),
@@ -1411,7 +1395,7 @@ impl OrderRepository for SqliteOrderRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<OrderId>) -> Result<BatchResult<OrderId>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
@@ -1425,7 +1409,7 @@ impl OrderRepository for SqliteOrderRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<OrderId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -1435,27 +1419,23 @@ impl OrderRepository for SqliteOrderRepository {
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&ids);
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         // Delete order items first
-        let sql = format!(
-            "DELETE FROM order_items WHERE order_id IN ({})",
-            placeholders
-        );
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let sql = format!("DELETE FROM order_items WHERE order_id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete orders
         let sql = format!("DELETE FROM orders WHERE id IN ({})", placeholders);
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Order>> {
+    fn get_batch(&self, ids: Vec<OrderId>) -> Result<Vec<Order>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
@@ -1465,7 +1445,8 @@ impl OrderRepository for SqliteOrderRepository {
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM orders WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -1487,15 +1468,13 @@ impl OrderRepository for SqliteOrderRepository {
 }
 
 impl SqliteOrderRepository {
-    fn update_order_total(&self, conn: &rusqlite::Connection, order_id: Uuid) -> Result<()> {
+    fn update_order_total(&self, conn: &rusqlite::Connection, order_id: OrderId) -> Result<()> {
         let current_version: i32 = conn
-            .query_row(
-                "SELECT version FROM orders WHERE id = ?",
-                [order_id.to_string()],
-                |row| row.get(0),
-            )
+            .query_row("SELECT version FROM orders WHERE id = ?", [order_id.to_string()], |row| {
+                row.get(0)
+            })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(order_id),
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(order_id.into_uuid()),
                 e => map_db_error(e),
             })?;
 
@@ -1544,10 +1523,7 @@ mod tests {
             PaymentStatus::from_str("partially_paid").unwrap(),
             PaymentStatus::PartiallyPaid
         );
-        assert_eq!(
-            PaymentStatus::from_str("partiallypaid").unwrap(),
-            PaymentStatus::PartiallyPaid
-        );
+        assert_eq!(PaymentStatus::from_str("partiallypaid").unwrap(), PaymentStatus::PartiallyPaid);
         assert_eq!(
             PaymentStatus::from_str("partially_refunded").unwrap(),
             PaymentStatus::PartiallyRefunded

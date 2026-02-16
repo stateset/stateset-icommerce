@@ -3,7 +3,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use stateset_embedded::{Commerce, CreateWarranty, WarrantyType};
+//! use stateset_embedded::{Commerce, CreateWarranty, ProductId, WarrantyType};
 //! use uuid::Uuid;
 //!
 //! let commerce = Commerce::new("./store.db")?;
@@ -11,7 +11,7 @@
 //! // Register a warranty for a product
 //! let warranty = commerce.warranties().create(CreateWarranty {
 //!     customer_id: Uuid::new_v4(),
-//!     product_id: Some(Uuid::new_v4()),
+//!     product_id: Some(ProductId::new()),
 //!     order_id: Some(Uuid::new_v4()),
 //!     warranty_type: Some(WarrantyType::Standard),
 //!     duration_months: Some(12),
@@ -57,14 +57,14 @@ impl Warranties {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, CreateWarranty, WarrantyType};
+    /// use stateset_embedded::{Commerce, CreateWarranty, ProductId, WarrantyType};
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let warranty = commerce.warranties().create(CreateWarranty {
     ///     customer_id: Uuid::new_v4(),
-    ///     product_id: Some(Uuid::new_v4()),
+    ///     product_id: Some(ProductId::new()),
     ///     warranty_type: Some(WarrantyType::Extended),
     ///     duration_months: Some(24),
     ///     coverage_description: Some("Full coverage including accidental damage".into()),
@@ -128,11 +128,7 @@ impl Warranties {
 
     /// Check if a warranty is valid (active and not expired)
     pub fn is_valid(&self, id: Uuid) -> Result<bool> {
-        if let Some(warranty) = self.get(id)? {
-            Ok(warranty.is_valid())
-        } else {
-            Ok(false)
-        }
+        if let Some(warranty) = self.get(id)? { Ok(warranty.is_valid()) } else { Ok(false) }
     }
 
     /// File a warranty claim

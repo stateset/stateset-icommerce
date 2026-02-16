@@ -231,10 +231,7 @@ impl Currency {
 
     /// Check if this is a cryptocurrency
     pub fn is_crypto(&self) -> bool {
-        matches!(
-            self,
-            Currency::BTC | Currency::ETH | Currency::USDC | Currency::USDT
-        )
+        matches!(self, Currency::BTC | Currency::ETH | Currency::USDC | Currency::USDT)
     }
 
     /// Check if this is a fiat currency
@@ -363,10 +360,7 @@ impl Money {
 
     /// Create zero money in a currency
     pub fn zero(currency: Currency) -> Self {
-        Self {
-            amount: Decimal::ZERO,
-            currency,
-        }
+        Self { amount: Decimal::ZERO, currency }
     }
 
     /// Check if the amount is zero
@@ -386,19 +380,13 @@ impl Money {
 
     /// Get the absolute value
     pub fn abs(&self) -> Self {
-        Self {
-            amount: self.amount.abs(),
-            currency: self.currency,
-        }
+        Self { amount: self.amount.abs(), currency: self.currency }
     }
 
     /// Round to the currency's decimal places
     pub fn round(&self) -> Self {
         let places = self.currency.decimal_places() as u32;
-        Self {
-            amount: self.amount.round_dp(places),
-            currency: self.currency,
-        }
+        Self { amount: self.amount.round_dp(places), currency: self.currency }
     }
 
     /// Format as a string with symbol
@@ -420,11 +408,7 @@ impl Money {
     pub fn format_with_code(&self) -> String {
         let rounded = self.round();
         let places = self.currency.decimal_places();
-        format!(
-            "{} {}",
-            Self::format_amount_fixed(rounded.amount, places),
-            self.currency.code()
-        )
+        format!("{} {}", Self::format_amount_fixed(rounded.amount, places), self.currency.code())
     }
 
     fn format_amount_fixed(amount: Decimal, places: u8) -> String {
@@ -499,20 +483,12 @@ impl ExchangeRate {
 
     /// Convert an amount from quote to base currency (inverse)
     pub fn convert_inverse(&self, amount: Decimal) -> Decimal {
-        if self.rate.is_zero() {
-            Decimal::ZERO
-        } else {
-            amount / self.rate
-        }
+        if self.rate.is_zero() { Decimal::ZERO } else { amount / self.rate }
     }
 
     /// Get the inverse rate
     pub fn inverse(&self) -> Decimal {
-        if self.rate.is_zero() {
-            Decimal::ZERO
-        } else {
-            Decimal::ONE / self.rate
-        }
+        if self.rate.is_zero() { Decimal::ZERO } else { Decimal::ONE / self.rate }
     }
 }
 
@@ -566,10 +542,7 @@ pub struct MultiCurrencyPrice {
 impl MultiCurrencyPrice {
     /// Create a new multi-currency price with just the base
     pub fn new(base: Money) -> Self {
-        Self {
-            base,
-            prices: Vec::new(),
-        }
+        Self { base, prices: Vec::new() }
     }
 
     /// Get the price in a specific currency if available
@@ -734,18 +707,9 @@ mod tests {
 
     #[test]
     fn test_rounding_mode_from_str() {
-        assert_eq!(
-            RoundingMode::from_str("half_up").unwrap(),
-            RoundingMode::HalfUp
-        );
-        assert_eq!(
-            RoundingMode::from_str("HalfDown").unwrap(),
-            RoundingMode::HalfDown
-        );
-        assert_eq!(
-            RoundingMode::from_str("half-even").unwrap(),
-            RoundingMode::HalfEven
-        );
+        assert_eq!(RoundingMode::from_str("half_up").unwrap(), RoundingMode::HalfUp);
+        assert_eq!(RoundingMode::from_str("HalfDown").unwrap(), RoundingMode::HalfDown);
+        assert_eq!(RoundingMode::from_str("half-even").unwrap(), RoundingMode::HalfEven);
         assert!(RoundingMode::from_str("nope").is_err());
     }
 }

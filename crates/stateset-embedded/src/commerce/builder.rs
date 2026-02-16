@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use stateset_core::CommerceError;
 use stateset_db::{Database, DatabaseConfig};
-use stateset_observability::{init_metrics, MetricsConfig};
+use stateset_observability::{MetricsConfig, init_metrics};
 
 #[cfg(feature = "events")]
 use crate::events::{EventConfig, EventSystem};
@@ -138,11 +138,8 @@ impl CommerceBuilder {
 
         // Create event system if events feature is enabled
         #[cfg(feature = "events")]
-        let event_system = Arc::new(
-            self.event_config
-                .map(EventSystem::with_config)
-                .unwrap_or_default(),
-        );
+        let event_system =
+            Arc::new(self.event_config.map(EventSystem::with_config).unwrap_or_default());
 
         // Check if PostgreSQL URL is set
         #[cfg(feature = "postgres")]
@@ -171,9 +168,7 @@ impl CommerceBuilder {
         // Default to SQLite
         #[cfg(feature = "sqlite")]
         {
-            let path = self
-                .sqlite_path
-                .unwrap_or_else(|| "stateset.db".to_string());
+            let path = self.sqlite_path.unwrap_or_else(|| "stateset.db".to_string());
 
             let mut config = if path == ":memory:" {
                 DatabaseConfig::in_memory()

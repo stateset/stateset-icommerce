@@ -31,11 +31,7 @@ fn create_test_inventory_item(commerce: &Commerce, sku: &str) -> i64 {
 
 /// Helper to generate a unique SKU
 fn unique_sku(prefix: &str) -> String {
-    format!(
-        "{}-{}",
-        prefix,
-        Uuid::new_v4().to_string().split('-').next().unwrap()
-    )
+    format!("{}-{}", prefix, Uuid::new_v4().to_string().split('-').next().unwrap())
 }
 
 // ============================================================================
@@ -126,10 +122,7 @@ fn test_get_inventory_item_by_sku() {
 fn test_get_inventory_item_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce
-        .inventory()
-        .get_item(99999)
-        .expect("Should not error for missing item");
+    let result = commerce.inventory().get_item(99999).expect("Should not error for missing item");
 
     assert!(result.is_none());
 }
@@ -371,14 +364,9 @@ fn test_adjust_below_allocated_fails() {
         .reserve(&sku, dec!(80), "order", "ORD-ALLOC-001", None)
         .expect("Failed to create reservation");
 
-    let result = commerce
-        .inventory()
-        .adjust(&sku, dec!(-30), "test adjustment");
+    let result = commerce.inventory().adjust(&sku, dec!(-30), "test adjustment");
 
-    assert!(matches!(
-        result,
-        Err(CommerceError::InsufficientStock { .. })
-    ));
+    assert!(matches!(result, Err(CommerceError::InsufficientStock { .. })));
 }
 
 #[test]
@@ -543,26 +531,15 @@ fn test_adjustment_creates_transaction() {
     let item_id = create_test_inventory_item(&commerce, &sku);
 
     // Make several adjustments
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(25), "First adjustment")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(25), "First adjustment").expect("Failed to adjust");
 
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(-10), "Second adjustment")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(-10), "Second adjustment").expect("Failed to adjust");
 
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(5), "Third adjustment")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(5), "Third adjustment").expect("Failed to adjust");
 
     // Get transaction history
-    let transactions = commerce
-        .inventory()
-        .get_transactions(item_id, 10)
-        .expect("Failed to get transactions");
+    let transactions =
+        commerce.inventory().get_transactions(item_id, 10).expect("Failed to get transactions");
 
     // Should have at least 3 transactions for the adjustments
     assert!(transactions.len() >= 3);
@@ -653,10 +630,7 @@ fn test_stock_level_after_operations() {
     assert_eq!(stock.total_available, dec!(70));
 
     // Add 20 more
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(20), "Restock")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(20), "Restock").expect("Failed to adjust");
 
     // Stock: 120 on hand, 30 allocated, 90 available
     let stock = commerce
@@ -668,10 +642,7 @@ fn test_stock_level_after_operations() {
     assert_eq!(stock.total_available, dec!(90));
 
     // Remove 10
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(-10), "Shrinkage")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(-10), "Shrinkage").expect("Failed to adjust");
 
     // Stock: 110 on hand, 30 allocated, 80 available
     let stock = commerce
@@ -690,22 +661,13 @@ fn test_has_stock() {
     create_test_inventory_item(&commerce, &sku);
 
     // Should have stock for 50 units
-    assert!(commerce
-        .inventory()
-        .has_stock(&sku, dec!(50))
-        .expect("Failed to check stock"));
+    assert!(commerce.inventory().has_stock(&sku, dec!(50)).expect("Failed to check stock"));
 
     // Should have stock for exactly 100 units
-    assert!(commerce
-        .inventory()
-        .has_stock(&sku, dec!(100))
-        .expect("Failed to check stock"));
+    assert!(commerce.inventory().has_stock(&sku, dec!(100)).expect("Failed to check stock"));
 
     // Should NOT have stock for 150 units
-    assert!(!commerce
-        .inventory()
-        .has_stock(&sku, dec!(150))
-        .expect("Failed to check stock"));
+    assert!(!commerce.inventory().has_stock(&sku, dec!(150)).expect("Failed to check stock"));
 
     // Reserve some
     commerce
@@ -714,16 +676,10 @@ fn test_has_stock() {
         .expect("Failed to reserve");
 
     // Now should NOT have stock for 50 (only 40 available)
-    assert!(!commerce
-        .inventory()
-        .has_stock(&sku, dec!(50))
-        .expect("Failed to check stock"));
+    assert!(!commerce.inventory().has_stock(&sku, dec!(50)).expect("Failed to check stock"));
 
     // But should have stock for 40
-    assert!(commerce
-        .inventory()
-        .has_stock(&sku, dec!(40))
-        .expect("Failed to check stock"));
+    assert!(commerce.inventory().has_stock(&sku, dec!(40)).expect("Failed to check stock"));
 }
 
 // ============================================================================
@@ -748,25 +704,18 @@ fn test_reorder_point_detection() {
         .expect("Failed to create inventory item");
 
     // Initially not below reorder point
-    let reorder_needed = commerce
-        .inventory()
-        .get_reorder_needed()
-        .expect("Failed to get reorder needed");
+    let reorder_needed =
+        commerce.inventory().get_reorder_needed().expect("Failed to get reorder needed");
 
     let needs_reorder = reorder_needed.iter().any(|s| s.sku == sku);
     assert!(!needs_reorder);
 
     // Remove stock to go below reorder point
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(-10), "Sold items")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(-10), "Sold items").expect("Failed to adjust");
 
     // Now should be at 15, below reorder point of 20
-    let reorder_needed = commerce
-        .inventory()
-        .get_reorder_needed()
-        .expect("Failed to get reorder needed");
+    let reorder_needed =
+        commerce.inventory().get_reorder_needed().expect("Failed to get reorder needed");
 
     let needs_reorder = reorder_needed.iter().any(|s| s.sku == sku);
     assert!(needs_reorder);
@@ -796,10 +745,8 @@ fn test_reorder_point_with_reservations() {
         .expect("Failed to reserve");
 
     // Available (10) is now below reorder point (15)
-    let reorder_needed = commerce
-        .inventory()
-        .get_reorder_needed()
-        .expect("Failed to get reorder needed");
+    let reorder_needed =
+        commerce.inventory().get_reorder_needed().expect("Failed to get reorder needed");
 
     // Check if this SKU needs reorder
     let _item_needs_reorder = reorder_needed.iter().any(|s| s.sku == sku);
@@ -860,10 +807,8 @@ fn test_multiple_items_below_reorder() {
         })
         .expect("Failed to create item 3");
 
-    let reorder_needed = commerce
-        .inventory()
-        .get_reorder_needed()
-        .expect("Failed to get reorder needed");
+    let reorder_needed =
+        commerce.inventory().get_reorder_needed().expect("Failed to get reorder needed");
 
     // Items 1 and 3 should be in the list, item 2 should not
     let skus_needing_reorder: Vec<&str> = reorder_needed.iter().map(|s| s.sku.as_str()).collect();
@@ -890,10 +835,8 @@ fn test_list_inventory_items() {
     create_test_inventory_item(&commerce, &sku2);
     create_test_inventory_item(&commerce, &sku3);
 
-    let items = commerce
-        .inventory()
-        .list(InventoryFilter::default())
-        .expect("Failed to list items");
+    let items =
+        commerce.inventory().list(InventoryFilter::default()).expect("Failed to list items");
 
     assert!(items.len() >= 3);
 }
@@ -910,10 +853,7 @@ fn test_list_inventory_with_limit() {
 
     let items = commerce
         .inventory()
-        .list(InventoryFilter {
-            limit: Some(5),
-            ..Default::default()
-        })
+        .list(InventoryFilter { limit: Some(5), ..Default::default() })
         .expect("Failed to list items");
 
     assert_eq!(items.len(), 5);
@@ -931,20 +871,12 @@ fn test_list_inventory_with_offset() {
 
     let first_page = commerce
         .inventory()
-        .list(InventoryFilter {
-            limit: Some(5),
-            offset: Some(0),
-            ..Default::default()
-        })
+        .list(InventoryFilter { limit: Some(5), offset: Some(0), ..Default::default() })
         .expect("Failed to list first page");
 
     let second_page = commerce
         .inventory()
-        .list(InventoryFilter {
-            limit: Some(5),
-            offset: Some(5),
-            ..Default::default()
-        })
+        .list(InventoryFilter { limit: Some(5), offset: Some(5), ..Default::default() })
         .expect("Failed to list second page");
 
     // Ensure pages don't overlap
@@ -961,10 +893,7 @@ fn test_list_inventory_by_sku_filter() {
 
     let items = commerce
         .inventory()
-        .list(InventoryFilter {
-            sku: Some(sku.clone()),
-            ..Default::default()
-        })
+        .list(InventoryFilter { sku: Some(sku.clone()), ..Default::default() })
         .expect("Failed to list items");
 
     assert_eq!(items.len(), 1);
@@ -980,10 +909,7 @@ fn test_list_active_inventory_only() {
 
     let active_items = commerce
         .inventory()
-        .list(InventoryFilter {
-            is_active: Some(true),
-            ..Default::default()
-        })
+        .list(InventoryFilter { is_active: Some(true), ..Default::default() })
         .expect("Failed to list active items");
 
     assert!(active_items.iter().all(|i| i.is_active));
@@ -1000,15 +926,9 @@ fn test_transaction_history() {
     let item_id = create_test_inventory_item(&commerce, &sku);
 
     // Perform various operations
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(50), "Restock")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(50), "Restock").expect("Failed to adjust");
 
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(-20), "Sold")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(-20), "Sold").expect("Failed to adjust");
 
     commerce
         .inventory()
@@ -1016,10 +936,8 @@ fn test_transaction_history() {
         .expect("Failed to reserve");
 
     // Get transaction history
-    let transactions = commerce
-        .inventory()
-        .get_transactions(item_id, 100)
-        .expect("Failed to get transactions");
+    let transactions =
+        commerce.inventory().get_transactions(item_id, 100).expect("Failed to get transactions");
 
     assert!(transactions.len() >= 3);
 
@@ -1051,10 +969,8 @@ fn test_transaction_history_limit() {
     }
 
     // Request limited history
-    let transactions = commerce
-        .inventory()
-        .get_transactions(item_id, 5)
-        .expect("Failed to get transactions");
+    let transactions =
+        commerce.inventory().get_transactions(item_id, 5).expect("Failed to get transactions");
 
     assert!(transactions.len() <= 5);
 }
@@ -1070,9 +986,7 @@ fn test_zero_quantity_adjustment_rejected() {
     create_test_inventory_item(&commerce, &sku);
 
     // Zero adjustments are not allowed - should return an error
-    let result = commerce
-        .inventory()
-        .adjust(&sku, dec!(0), "Zero adjustment");
+    let result = commerce.inventory().adjust(&sku, dec!(0), "Zero adjustment");
 
     // Verify that zero adjustment is rejected
     assert!(result.is_err());
@@ -1128,10 +1042,7 @@ fn test_decimal_precision() {
         .expect("Failed to create item");
 
     // Adjust with decimal
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(25.75), "Decimal adjustment")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(25.75), "Decimal adjustment").expect("Failed to adjust");
 
     let stock = commerce
         .inventory()
@@ -1271,10 +1182,8 @@ fn test_full_inventory_lifecycle() {
     assert_eq!(final_stock.total_on_hand, dec!(120));
 
     // 9. Check transaction history
-    let transactions = commerce
-        .inventory()
-        .get_transactions(item.id, 100)
-        .expect("Failed to get transactions");
+    let transactions =
+        commerce.inventory().get_transactions(item.id, 100).expect("Failed to get transactions");
 
     assert!(transactions.len() >= 3); // At least: receipt, shipment adjustment, restock
 }
@@ -1322,10 +1231,7 @@ fn test_inventory_reserve_and_release_cycle() {
     assert_eq!(stock.total_available, dec!(30));
 
     // Release first reservation (customer abandons cart)
-    commerce
-        .inventory()
-        .release_reservation(res1.id)
-        .expect("Failed to release reservation");
+    commerce.inventory().release_reservation(res1.id).expect("Failed to release reservation");
 
     // 70 available
     let stock = commerce
@@ -1336,10 +1242,7 @@ fn test_inventory_reserve_and_release_cycle() {
     assert_eq!(stock.total_available, dec!(70));
 
     // Confirm second reservation (customer completes purchase)
-    commerce
-        .inventory()
-        .confirm_reservation(res2.id)
-        .expect("Failed to confirm reservation");
+    commerce.inventory().confirm_reservation(res2.id).expect("Failed to confirm reservation");
 
     // Check final state
     let final_stock = commerce
@@ -1361,30 +1264,21 @@ fn test_multiple_operations_same_item() {
     create_test_inventory_item(&commerce, &sku);
 
     // Perform multiple interleaved operations
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(10), "Add 1")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(10), "Add 1").expect("Failed to adjust");
 
     commerce
         .inventory()
         .reserve(&sku, dec!(5), "order", "ORD-001", None)
         .expect("Failed to reserve");
 
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(-3), "Remove 1")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(-3), "Remove 1").expect("Failed to adjust");
 
     commerce
         .inventory()
         .reserve(&sku, dec!(10), "order", "ORD-002", None)
         .expect("Failed to reserve");
 
-    commerce
-        .inventory()
-        .adjust(&sku, dec!(20), "Add 2")
-        .expect("Failed to adjust");
+    commerce.inventory().adjust(&sku, dec!(20), "Add 2").expect("Failed to adjust");
 
     // Calculate expected: 100 + 10 - 3 + 20 = 127 on hand, 15 allocated
     let stock = commerce
@@ -1419,9 +1313,7 @@ fn test_insufficient_stock_for_reservation() {
         .expect("Failed to create item");
 
     // Try to reserve 50 units - should fail
-    let result = commerce
-        .inventory()
-        .reserve(&sku, dec!(50), "order", "ORD-001", None);
+    let result = commerce.inventory().reserve(&sku, dec!(50), "order", "ORD-001", None);
 
     assert!(result.is_err());
 }
@@ -1443,9 +1335,7 @@ fn test_prevent_negative_adjustment() {
         .expect("Failed to create item");
 
     // Try to remove 50 units - depends on implementation whether this is allowed
-    let _result = commerce
-        .inventory()
-        .adjust(&sku, dec!(-50), "Excessive removal");
+    let _result = commerce.inventory().adjust(&sku, dec!(-50), "Excessive removal");
 
     // This test documents the behavior - some systems allow negative inventory, some don't
     // If it fails, negative inventory is prevented

@@ -3,11 +3,11 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::{postgres::PgPool, FromRow};
+use sqlx::{FromRow, postgres::PgPool};
 use stateset_core::{
-    generate_invoice_number, validate_batch_size, BatchResult, CommerceError, CreateInvoice,
-    CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem, InvoiceRepository, InvoiceStatus,
-    InvoiceType, RecordInvoicePayment, Result, UpdateInvoice,
+    BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter,
+    InvoiceItem, InvoiceRepository, InvoiceStatus, InvoiceType, RecordInvoicePayment, Result,
+    UpdateInvoice, generate_invoice_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -345,9 +345,7 @@ impl PgInvoiceRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_async(&self, id: Uuid) -> Result<Option<Invoice>> {
@@ -372,10 +370,7 @@ impl PgInvoiceRepository {
     }
 
     pub async fn update_async(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
-        let invoice = self
-            .get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let invoice = self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
         sqlx::query(
@@ -413,9 +408,7 @@ impl PgInvoiceRepository {
 
         self.recalculate_async(id).await?;
 
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_async(&self, filter: InvoiceFilter) -> Result<Vec<Invoice>> {
@@ -542,19 +535,12 @@ impl PgInvoiceRepository {
     }
 
     pub async fn for_customer_async(&self, customer_id: Uuid) -> Result<Vec<Invoice>> {
-        self.list_async(InvoiceFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
-        .await
+        self.list_async(InvoiceFilter { customer_id: Some(customer_id), ..Default::default() })
+            .await
     }
 
     pub async fn for_order_async(&self, order_id: Uuid) -> Result<Vec<Invoice>> {
-        self.list_async(InvoiceFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
-        .await
+        self.list_async(InvoiceFilter { order_id: Some(order_id), ..Default::default() }).await
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -605,9 +591,7 @@ impl PgInvoiceRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn mark_viewed_async(&self, id: Uuid) -> Result<Invoice> {
@@ -627,9 +611,7 @@ impl PgInvoiceRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn record_payment_async(
@@ -656,11 +638,8 @@ impl PgInvoiceRepository {
             InvoiceStatus::PartiallyPaid
         };
 
-        let paid_at: Option<DateTime<Utc>> = if new_status == InvoiceStatus::Paid {
-            Some(now)
-        } else {
-            None
-        };
+        let paid_at: Option<DateTime<Utc>> =
+            if new_status == InvoiceStatus::Paid { Some(now) } else { None };
 
         sqlx::query(
             r#"UPDATE invoices SET
@@ -680,9 +659,7 @@ impl PgInvoiceRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn void_async(&self, id: Uuid) -> Result<Invoice> {
@@ -699,9 +676,7 @@ impl PgInvoiceRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn write_off_async(&self, id: Uuid) -> Result<Invoice> {
@@ -715,9 +690,7 @@ impl PgInvoiceRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn dispute_async(&self, id: Uuid) -> Result<Invoice> {
@@ -731,9 +704,7 @@ impl PgInvoiceRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn add_item_async(
@@ -837,17 +808,11 @@ impl PgInvoiceRepository {
 
     pub async fn recalculate_invoice_async(&self, id: Uuid) -> Result<Invoice> {
         self.recalculate_async(id).await?;
-        self.get_invoice_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_overdue_async(&self) -> Result<Vec<Invoice>> {
-        self.list_async(InvoiceFilter {
-            overdue_only: Some(true),
-            ..Default::default()
-        })
-        .await
+        self.list_async(InvoiceFilter { overdue_only: Some(true), ..Default::default() }).await
     }
 
     pub async fn count_async(&self, filter: InvoiceFilter) -> Result<u64> {
@@ -1188,13 +1153,9 @@ impl PgInvoiceRepository {
             .await
             .map_err(map_db_error)?;
 
-            let discount_amount = input
-                .discount_amount
-                .unwrap_or(existing_row.discount_amount);
+            let discount_amount = input.discount_amount.unwrap_or(existing_row.discount_amount);
             let tax_amount = input.tax_amount.unwrap_or(existing_row.tax_amount);
-            let shipping_amount = input
-                .shipping_amount
-                .unwrap_or(existing_row.shipping_amount);
+            let shipping_amount = input.shipping_amount.unwrap_or(existing_row.shipping_amount);
             let total = subtotal - discount_amount + tax_amount + shipping_amount;
 
             // Get current amount_paid to calculate balance

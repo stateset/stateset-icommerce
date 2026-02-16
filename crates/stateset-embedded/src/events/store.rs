@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 /// Stored event with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredEvent {
+pub(super) struct StoredEvent {
     /// Sequence number (monotonically increasing)
     pub sequence: u64,
     /// Unique event ID
@@ -72,26 +72,23 @@ impl InMemoryEventStore {
             }
             CommerceEvent::CustomObjectTypeCreated { type_id, .. }
             | CommerceEvent::CustomObjectTypeUpdated { type_id, .. }
-            | CommerceEvent::CustomObjectTypeDeleted { type_id, .. } => (
-                Some("custom_object_type".to_string()),
-                Some(type_id.to_string()),
-            ),
+            | CommerceEvent::CustomObjectTypeDeleted { type_id, .. } => {
+                (Some("custom_object_type".to_string()), Some(type_id.to_string()))
+            }
             CommerceEvent::CustomObjectCreated { object_id, .. }
             | CommerceEvent::CustomObjectUpdated { object_id, .. }
-            | CommerceEvent::CustomObjectDeleted { object_id, .. } => (
-                Some("custom_object".to_string()),
-                Some(object_id.to_string()),
-            ),
+            | CommerceEvent::CustomObjectDeleted { object_id, .. } => {
+                (Some("custom_object".to_string()), Some(object_id.to_string()))
+            }
             CommerceEvent::InventoryItemCreated { item_id, .. }
             | CommerceEvent::InventoryAdjusted { item_id, .. } => {
                 (Some("inventory".to_string()), Some(item_id.to_string()))
             }
             CommerceEvent::InventoryReserved { reservation_id, .. }
             | CommerceEvent::InventoryReservationReleased { reservation_id, .. }
-            | CommerceEvent::InventoryReservationConfirmed { reservation_id, .. } => (
-                Some("reservation".to_string()),
-                Some(reservation_id.to_string()),
-            ),
+            | CommerceEvent::InventoryReservationConfirmed { reservation_id, .. } => {
+                (Some("reservation".to_string()), Some(reservation_id.to_string()))
+            }
             CommerceEvent::LowStockAlert { sku, .. } => {
                 (Some("inventory".to_string()), Some(sku.clone()))
             }
@@ -127,10 +124,9 @@ impl InMemoryEventStore {
             }
             CommerceEvent::A2APurchaseInitiated { purchase_id, .. }
             | CommerceEvent::A2APurchasePaid { purchase_id, .. }
-            | CommerceEvent::A2ADeliveryConfirmed { purchase_id, .. } => (
-                Some("a2a_purchase".to_string()),
-                Some(purchase_id.to_string()),
-            ),
+            | CommerceEvent::A2ADeliveryConfirmed { purchase_id, .. } => {
+                (Some("a2a_purchase".to_string()), Some(purchase_id.to_string()))
+            }
         }
     }
 }
@@ -184,14 +180,12 @@ impl EventStore for InMemoryEventStore {
             .filter(|e| e.sequence > sequence)
             .take(limit as usize)
             .map(|e| {
-                CommerceEvent::from_json(&e.data)
-                    .map(|event| (e.sequence, event))
-                    .map_err(|err| {
-                        stateset_core::CommerceError::Internal(format!(
-                            "Failed to deserialize event {}: {}",
-                            e.id, err
-                        ))
-                    })
+                CommerceEvent::from_json(&e.data).map(|event| (e.sequence, event)).map_err(|err| {
+                    stateset_core::CommerceError::Internal(format!(
+                        "Failed to deserialize event {}: {}",
+                        e.id, err
+                    ))
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(result)
@@ -435,9 +429,7 @@ impl EventStore for SqliteEventStore {
         })?;
 
         let sequence: Option<i64> = conn
-            .query_row("SELECT MAX(sequence) FROM commerce_events", [], |row| {
-                row.get(0)
-            })
+            .query_row("SELECT MAX(sequence) FROM commerce_events", [], |row| row.get(0))
             .map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!(
                     "Failed to get latest sequence: {}",
@@ -671,8 +663,8 @@ mod tests {
         let store = InMemoryEventStore::new(100);
 
         let event = CommerceEvent::OrderCreated {
-            order_id: Uuid::new_v4(),
-            customer_id: Uuid::new_v4(),
+            order_id: stateset_core::OrderId::new(),
+            customer_id: stateset_core::CustomerId::new(),
             total_amount: dec!(100.00),
             item_count: 2,
             timestamp: Utc::now(),
@@ -692,7 +684,7 @@ mod tests {
 
         for i in 0..5 {
             let event = CommerceEvent::CustomerCreated {
-                customer_id: Uuid::new_v4(),
+                customer_id: stateset_core::CustomerId::new(),
                 email: format!("test{}@example.com", i),
                 timestamp: Utc::now(),
             };

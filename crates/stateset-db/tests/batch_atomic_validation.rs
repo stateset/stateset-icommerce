@@ -3,8 +3,8 @@
 use rust_decimal_macros::dec;
 use stateset_core::{
     AdjustInventory, CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder,
-    CreateOrderItem, CustomerRepository, InventoryRepository, OrderRepository, OrderStatus,
-    PaymentStatus, UpdateCustomer, UpdateOrder,
+    CreateOrderItem, CustomerId, CustomerRepository, InventoryRepository, OrderRepository,
+    OrderStatus, PaymentStatus, ProductId, UpdateCustomer, UpdateOrder,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -13,7 +13,7 @@ fn setup_db() -> SqliteDatabase {
     SqliteDatabase::in_memory().expect("failed to create in-memory db")
 }
 
-fn create_test_customer(db: &SqliteDatabase) -> Uuid {
+fn create_test_customer(db: &SqliteDatabase) -> CustomerId {
     db.customers()
         .create(CreateCustomer {
             email: format!("test-{}@example.com", Uuid::new_v4()),
@@ -25,12 +25,12 @@ fn create_test_customer(db: &SqliteDatabase) -> Uuid {
         .id
 }
 
-fn create_test_order(db: &SqliteDatabase, customer_id: Uuid) -> stateset_core::Order {
+fn create_test_order(db: &SqliteDatabase, customer_id: CustomerId) -> stateset_core::Order {
     db.orders()
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: ProductId::new(),
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 1,
@@ -50,10 +50,7 @@ fn order_update_batch_atomic_rejects_invalid_transition() {
 
     let result = db.orders().update_batch_atomic(vec![(
         order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Delivered),
-            ..Default::default()
-        },
+        UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
     )]);
 
     match result {
@@ -72,34 +69,19 @@ fn order_update_batch_atomic_rejects_refund_without_payment() {
     let repo = db.orders();
     repo.update(
         order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Confirmed),
-            ..Default::default()
-        },
+        UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
     )
     .expect("failed to update order to confirmed");
     repo.update(
         order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Processing),
-            ..Default::default()
-        },
+        UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
     )
     .expect("failed to update order to processing");
+    repo.update(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() })
+        .expect("failed to update order to shipped");
     repo.update(
         order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Shipped),
-            ..Default::default()
-        },
-    )
-    .expect("failed to update order to shipped");
-    repo.update(
-        order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Delivered),
-            ..Default::default()
-        },
+        UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
     )
     .expect("failed to update order to delivered");
 
@@ -125,10 +107,7 @@ fn customer_update_batch_atomic_validates_email() {
 
     let result = db.customers().update_batch_atomic(vec![(
         customer_id,
-        UpdateCustomer {
-            email: Some("invalid".into()),
-            ..Default::default()
-        },
+        UpdateCustomer { email: Some("invalid".into()), ..Default::default() },
     )]);
 
     match result {

@@ -21,9 +21,7 @@ use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL")
-        .ok()
-        .or_else(|| env::var("DATABASE_URL").ok())
+    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
 }
 
 #[cfg(feature = "postgres")]
@@ -54,9 +52,8 @@ async fn postgres_cart_checkout_creates_order() {
         }
     };
 
-    let commerce = AsyncCommerce::connect(&url)
-        .await
-        .expect("connect to postgres and run migrations");
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
 
     let unique = Uuid::new_v4().to_string();
     let sku = format!("SKU-{}", unique.replace('-', ""));
@@ -97,7 +94,7 @@ async fn postgres_cart_checkout_creates_order() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id),
+            customer_id: Some(customer.id.into_uuid()),
             customer_email: Some(customer.email.clone()),
             customer_name: Some(format!("{} {}", customer.first_name, customer.last_name)),
             ..Default::default()
@@ -140,17 +137,9 @@ async fn postgres_cart_checkout_creates_order() {
         .await
         .expect("set payment");
 
-    let result = commerce
-        .carts()
-        .complete(cart.id)
-        .await
-        .expect("complete checkout");
+    let result = commerce.carts().complete(cart.id).await.expect("complete checkout");
 
-    let second = commerce
-        .carts()
-        .complete(cart.id)
-        .await
-        .expect("checkout should be idempotent");
+    let second = commerce.carts().complete(cart.id).await.expect("checkout should be idempotent");
     assert_eq!(second.order_id, result.order_id);
     assert_eq!(second.order_number, result.order_number);
 
@@ -159,25 +148,13 @@ async fn postgres_cart_checkout_creates_order() {
     assert!(result.order_number.starts_with("ORD-"));
     assert!(result.total_charged > dec!(0));
 
-    let updated_cart = commerce
-        .carts()
-        .get(cart.id)
-        .await
-        .expect("get cart")
-        .expect("cart row");
+    let updated_cart = commerce.carts().get(cart.id).await.expect("get cart").expect("cart row");
     assert_eq!(updated_cart.status, CartStatus::Completed);
     assert_eq!(updated_cart.order_id, Some(result.order_id));
-    assert_eq!(
-        updated_cart.order_number.as_deref(),
-        Some(result.order_number.as_str())
-    );
+    assert_eq!(updated_cart.order_number.as_deref(), Some(result.order_number.as_str()));
 
-    let order = commerce
-        .orders()
-        .get(result.order_id)
-        .await
-        .expect("get order")
-        .expect("order row");
+    let order =
+        commerce.orders().get(result.order_id).await.expect("get order").expect("order row");
     assert_eq!(order.customer_id, customer.id);
     assert_eq!(order.status, OrderStatus::Confirmed);
     assert_eq!(order.payment_status, PaymentStatus::Paid);
@@ -189,9 +166,7 @@ async fn postgres_cart_checkout_creates_order() {
         .await
         .expect("list reservations for order");
     assert!(!reservations.is_empty());
-    assert!(reservations
-        .iter()
-        .all(|r| r.status == ReservationStatus::Pending));
+    assert!(reservations.iter().all(|r| r.status == ReservationStatus::Pending));
 }
 
 #[cfg(feature = "postgres")]
@@ -206,9 +181,7 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
     };
 
     let db = Arc::new(
-        PostgresDatabase::connect(&url)
-            .await
-            .expect("connect to postgres and run migrations"),
+        PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations"),
     );
     let commerce = AsyncCommerce::from_database(db.clone());
 
@@ -251,7 +224,7 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id),
+            customer_id: Some(customer.id.into_uuid()),
             customer_email: Some(customer.email.clone()),
             customer_name: Some(format!("{} {}", customer.first_name, customer.last_name)),
             ..Default::default()
@@ -329,21 +302,12 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
     assert_eq!(result.order_id, order.id);
     assert_eq!(result.order_number, order.order_number);
 
-    let updated_cart = commerce
-        .carts()
-        .get(cart.id)
-        .await
-        .expect("get cart")
-        .expect("cart row");
+    let updated_cart = commerce.carts().get(cart.id).await.expect("get cart").expect("cart row");
     assert_eq!(updated_cart.status, CartStatus::Completed);
     assert_eq!(updated_cart.order_id, Some(order.id));
 
-    let updated_order = commerce
-        .orders()
-        .get(order.id)
-        .await
-        .expect("get order")
-        .expect("order row");
+    let updated_order =
+        commerce.orders().get(order.id).await.expect("get order").expect("order row");
     assert_eq!(updated_order.status, OrderStatus::Confirmed);
     assert_eq!(updated_order.payment_status, PaymentStatus::Paid);
 }
@@ -362,9 +326,7 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
     };
 
     let db = Arc::new(
-        PostgresDatabase::connect(&url)
-            .await
-            .expect("connect to postgres and run migrations"),
+        PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations"),
     );
     let commerce = AsyncCommerce::from_database(db.clone());
 
@@ -407,7 +369,7 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id),
+            customer_id: Some(customer.id.into_uuid()),
             customer_email: Some(customer.email.clone()),
             customer_name: Some(format!("{} {}", customer.first_name, customer.last_name)),
             ..Default::default()
@@ -457,12 +419,8 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
         tokio::time::timeout(Duration::from_secs(10), carts2.complete(cart.id)),
     );
 
-    let r1 = r1
-        .expect("timeout waiting for first checkout")
-        .expect("first checkout succeeds");
-    let r2 = r2
-        .expect("timeout waiting for second checkout")
-        .expect("second checkout succeeds");
+    let r1 = r1.expect("timeout waiting for first checkout").expect("first checkout succeeds");
+    let r2 = r2.expect("timeout waiting for second checkout").expect("second checkout succeeds");
 
     assert_eq!(r1.order_id, r2.order_id);
     assert_eq!(r1.order_number, r2.order_number);
@@ -475,12 +433,7 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
         .expect("order should exist for cart_id");
     assert_eq!(order.id, r1.order_id);
 
-    let updated_cart = commerce
-        .carts()
-        .get(cart.id)
-        .await
-        .expect("get cart")
-        .expect("cart row");
+    let updated_cart = commerce.carts().get(cart.id).await.expect("get cart").expect("cart row");
     assert_eq!(updated_cart.status, CartStatus::Completed);
     assert_eq!(updated_cart.order_id, Some(order.id));
 }
@@ -498,9 +451,8 @@ async fn postgres_guest_cart_checkout_creates_customer() {
         }
     };
 
-    let commerce = AsyncCommerce::connect(&url)
-        .await
-        .expect("connect to postgres and run migrations");
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
 
     let unique = Uuid::new_v4().to_string();
     let sku = format!("SKU-{}", unique.replace('-', ""));
@@ -574,31 +526,16 @@ async fn postgres_guest_cart_checkout_creates_customer() {
         .await
         .expect("set payment");
 
-    let result = commerce
-        .carts()
-        .complete(cart.id)
-        .await
-        .expect("complete checkout");
+    let result = commerce.carts().complete(cart.id).await.expect("complete checkout");
 
-    let updated_cart = commerce
-        .carts()
-        .get(cart.id)
-        .await
-        .expect("get cart")
-        .expect("cart row");
+    let updated_cart = commerce.carts().get(cart.id).await.expect("get cart").expect("cart row");
     assert_eq!(updated_cart.status, CartStatus::Completed);
 
-    let customer_id = updated_cart
-        .customer_id
-        .expect("guest checkout should attach a customer_id");
+    let customer_id = updated_cart.customer_id.expect("guest checkout should attach a customer_id");
 
-    let order = commerce
-        .orders()
-        .get(result.order_id)
-        .await
-        .expect("get order")
-        .expect("order row");
-    assert_eq!(order.customer_id, customer_id);
+    let order =
+        commerce.orders().get(result.order_id).await.expect("get order").expect("order row");
+    assert_eq!(order.customer_id.into_uuid(), customer_id);
 
     let customer = commerce
         .customers()
@@ -606,7 +543,7 @@ async fn postgres_guest_cart_checkout_creates_customer() {
         .await
         .expect("get customer by email")
         .expect("customer row");
-    assert_eq!(customer.id, customer_id);
+    assert_eq!(customer.id.into_uuid(), customer_id);
 }
 
 #[cfg(feature = "postgres")]
@@ -620,9 +557,8 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
         }
     };
 
-    let commerce = AsyncCommerce::connect(&url)
-        .await
-        .expect("connect to postgres and run migrations");
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
 
     let unique = Uuid::new_v4().to_string();
     let sku = format!("SKU-{}", unique.replace('-', ""));
@@ -663,7 +599,7 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id),
+            customer_id: Some(customer.id.into_uuid()),
             customer_email: Some(customer.email.clone()),
             customer_name: Some(format!("{} {}", customer.first_name, customer.last_name)),
             ..Default::default()
@@ -706,11 +642,7 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
         .await
         .expect("set payment");
 
-    let result = commerce
-        .carts()
-        .complete(cart.id)
-        .await
-        .expect("complete checkout");
+    let result = commerce.carts().complete(cart.id).await.expect("complete checkout");
 
     let reservations = commerce
         .inventory()
@@ -718,15 +650,9 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
         .await
         .expect("list reservations for order");
     assert!(!reservations.is_empty());
-    assert!(reservations
-        .iter()
-        .all(|r| r.status == ReservationStatus::Pending));
+    assert!(reservations.iter().all(|r| r.status == ReservationStatus::Pending));
 
-    let cancelled = commerce
-        .orders()
-        .cancel(result.order_id)
-        .await
-        .expect("cancel order");
+    let cancelled = commerce.orders().cancel(result.order_id).await.expect("cancel order");
     assert_eq!(cancelled.status, OrderStatus::Cancelled);
 
     let reservations = commerce
@@ -735,9 +661,7 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
         .await
         .expect("list reservations for order after cancel");
     assert!(
-        reservations
-            .iter()
-            .all(|r| r.status == ReservationStatus::Released),
+        reservations.iter().all(|r| r.status == ReservationStatus::Released),
         "expected reservations to be released after cancel"
     );
 }

@@ -89,10 +89,7 @@ impl std::fmt::Debug for EventConfig {
         f.debug_struct("EventConfig")
             .field("channel_capacity", &self.channel_capacity)
             .field("persist_events", &self.persist_events)
-            .field(
-                "event_store",
-                &self.event_store.as_ref().map(|_| "<custom>"),
-            )
+            .field("event_store", &self.event_store.as_ref().map(|_| "<custom>"))
             .field("max_in_memory_events", &self.max_in_memory_events)
             .field("enable_webhooks", &self.enable_webhooks)
             .field("webhook_max_retries", &self.webhook_max_retries)
@@ -121,10 +118,7 @@ impl EventSystem {
         let bus = Arc::new(EventBus::new(config.channel_capacity));
         let emitter = EventEmitter::new(bus.clone());
         let webhook_manager = if config.enable_webhooks {
-            Some(WebhookManager::new(
-                config.webhook_max_retries,
-                config.webhook_timeout_secs,
-            ))
+            Some(WebhookManager::new(config.webhook_max_retries, config.webhook_timeout_secs))
         } else {
             None
         };
@@ -137,13 +131,7 @@ impl EventSystem {
                 None
             };
 
-        Self {
-            bus,
-            emitter,
-            webhook_manager,
-            event_store,
-            config,
-        }
+        Self { bus, emitter, webhook_manager, event_store, config }
     }
 
     /// Get the event emitter for publishing events
@@ -161,10 +149,7 @@ impl EventSystem {
     where
         F: Fn(&CommerceEvent) -> bool + Send + 'static,
     {
-        FilteredSubscription {
-            inner: self.bus.subscribe(),
-            filter,
-        }
+        FilteredSubscription { inner: self.bus.subscribe(), filter }
     }
 
     /// Register a webhook endpoint
@@ -174,18 +159,12 @@ impl EventSystem {
 
     /// Unregister a webhook
     pub fn unregister_webhook(&self, id: uuid::Uuid) -> bool {
-        self.webhook_manager
-            .as_ref()
-            .map(|wm| wm.unregister(id))
-            .unwrap_or(false)
+        self.webhook_manager.as_ref().map(|wm| wm.unregister(id)).unwrap_or(false)
     }
 
     /// List all registered webhooks
     pub fn list_webhooks(&self) -> Vec<Webhook> {
-        self.webhook_manager
-            .as_ref()
-            .map(|wm| wm.list())
-            .unwrap_or_default()
+        self.webhook_manager.as_ref().map(|wm| wm.list()).unwrap_or_default()
     }
 
     /// Get the event bus for advanced usage

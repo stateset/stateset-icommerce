@@ -10,6 +10,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::ProductId;
 use uuid::Uuid;
 
 // ============================================================================
@@ -19,6 +20,7 @@ use uuid::Uuid;
 /// Types of taxes supported
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TaxType {
     /// US Sales Tax (state/local)
     #[default]
@@ -82,6 +84,7 @@ impl std::str::FromStr for TaxType {
 /// Tax calculation method
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TaxCalculationMethod {
     /// Tax is calculated on top of the price (US style)
     #[default]
@@ -114,6 +117,7 @@ impl std::str::FromStr for TaxCalculationMethod {
 /// How to apply multiple tax rates
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TaxCompoundMethod {
     /// Add all taxes together, apply to subtotal
     #[default]
@@ -150,6 +154,7 @@ impl std::str::FromStr for TaxCompoundMethod {
 /// Product tax category
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ProductTaxCategory {
     /// Standard taxable goods
     #[default]
@@ -229,6 +234,7 @@ impl std::str::FromStr for ProductTaxCategory {
 /// Customer exemption type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ExemptionType {
     /// Wholesale/resale (has resale certificate)
     Resale,
@@ -328,6 +334,7 @@ pub struct TaxJurisdiction {
 /// Level of tax jurisdiction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JurisdictionLevel {
     #[default]
     Country,
@@ -473,7 +480,7 @@ pub struct TaxLineItem {
     /// Product SKU
     pub sku: Option<String>,
     /// Product ID
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// Quantity
     pub quantity: Decimal,
     /// Unit price
@@ -1170,10 +1177,7 @@ mod tests {
 
     #[test]
     fn tax_compound_method_from_str() {
-        assert_eq!(
-            TaxCompoundMethod::from_str("combined").unwrap(),
-            TaxCompoundMethod::Combined
-        );
+        assert_eq!(TaxCompoundMethod::from_str("combined").unwrap(), TaxCompoundMethod::Combined);
         assert!(TaxCompoundMethod::from_str("other").is_err());
     }
 
@@ -1188,19 +1192,13 @@ mod tests {
 
     #[test]
     fn exemption_type_from_str() {
-        assert_eq!(
-            ExemptionType::from_str("non_profit").unwrap(),
-            ExemptionType::NonProfit
-        );
+        assert_eq!(ExemptionType::from_str("non_profit").unwrap(), ExemptionType::NonProfit);
         assert!(ExemptionType::from_str("unknown").is_err());
     }
 
     #[test]
     fn jurisdiction_level_from_str() {
-        assert_eq!(
-            JurisdictionLevel::from_str("state").unwrap(),
-            JurisdictionLevel::State
-        );
+        assert_eq!(JurisdictionLevel::from_str("state").unwrap(), JurisdictionLevel::State);
         assert!(JurisdictionLevel::from_str("unknown").is_err());
     }
 }

@@ -2,10 +2,9 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CreateCustomer, CreateOrder, CreateOrderItem, CustomerRepository, OrderRepository,
+    CreateCustomer, CreateOrder, CreateOrderItem, CustomerRepository, OrderRepository, ProductId,
 };
 use stateset_db::SqliteDatabase;
-use uuid::Uuid;
 
 #[test]
 fn sqlite_order_item_changes_increment_version_and_total() {
@@ -24,9 +23,9 @@ fn sqlite_order_item_changes_increment_version_and_total() {
     let order = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: ProductId::new(),
                 sku: "SKU-1".to_string(),
                 name: "Item 1".to_string(),
                 quantity: 1,
@@ -44,7 +43,7 @@ fn sqlite_order_item_changes_increment_version_and_total() {
         .add_item(
             order.id,
             CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: ProductId::new(),
                 sku: "SKU-2".to_string(),
                 name: "Item 2".to_string(),
                 quantity: 2,
@@ -54,23 +53,13 @@ fn sqlite_order_item_changes_increment_version_and_total() {
         )
         .expect("add item");
 
-    let after_add = db
-        .orders()
-        .get(order.id)
-        .expect("get order")
-        .expect("order exists");
+    let after_add = db.orders().get(order.id).expect("get order").expect("order exists");
     assert_eq!(after_add.version, initial_version + 1);
     assert_eq!(after_add.total_amount, after_add.calculate_total());
 
-    db.orders()
-        .remove_item(order.id, added_item.id)
-        .expect("remove item");
+    db.orders().remove_item(order.id, added_item.id).expect("remove item");
 
-    let after_remove = db
-        .orders()
-        .get(order.id)
-        .expect("get order")
-        .expect("order exists");
+    let after_remove = db.orders().get(order.id).expect("get order").expect("order exists");
     assert_eq!(after_remove.version, initial_version + 2);
     assert_eq!(after_remove.total_amount, after_remove.calculate_total());
 }

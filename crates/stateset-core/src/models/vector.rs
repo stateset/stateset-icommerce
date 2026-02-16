@@ -19,11 +19,7 @@ impl<T> VectorSearchResult<T> {
     pub fn new(entity: T, distance: f32) -> Self {
         // Normalize distance to score (assuming cosine distance in [0, 2])
         let score = 1.0 - (distance / 2.0).min(1.0);
-        Self {
-            entity,
-            distance,
-            score,
-        }
+        Self { entity, distance, score }
     }
 }
 
@@ -156,12 +152,7 @@ pub struct VectorSearchQuery {
 
 impl Default for VectorSearchQuery {
     fn default() -> Self {
-        Self {
-            query: String::new(),
-            entity_type: EntityType::Product,
-            limit: 10,
-            min_score: None,
-        }
+        Self { query: String::new(), entity_type: EntityType::Product, limit: 10, min_score: None }
     }
 }
 
@@ -182,22 +173,10 @@ mod tests {
 
     #[test]
     fn test_entity_type_parsing() {
-        assert_eq!(
-            "product".parse::<EntityType>().unwrap(),
-            EntityType::Product
-        );
-        assert_eq!(
-            "products".parse::<EntityType>().unwrap(),
-            EntityType::Product
-        );
-        assert_eq!(
-            "customer".parse::<EntityType>().unwrap(),
-            EntityType::Customer
-        );
-        assert_eq!(
-            "inventory".parse::<EntityType>().unwrap(),
-            EntityType::InventoryItem
-        );
+        assert_eq!("product".parse::<EntityType>().unwrap(), EntityType::Product);
+        assert_eq!("products".parse::<EntityType>().unwrap(), EntityType::Product);
+        assert_eq!("customer".parse::<EntityType>().unwrap(), EntityType::Customer);
+        assert_eq!("inventory".parse::<EntityType>().unwrap(), EntityType::InventoryItem);
     }
 
     #[test]

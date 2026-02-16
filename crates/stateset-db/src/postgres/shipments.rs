@@ -3,12 +3,13 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use sqlx::postgres::PgPool;
 use stateset_core::{
-    validate_batch_size, AddShipmentEvent, BatchResult, CommerceError, CreateShipment,
-    CreateShipmentItem, Result, Shipment, ShipmentEvent, ShipmentFilter, ShipmentItem,
+    AddShipmentEvent, BatchResult, CommerceError, CreateShipment, CreateShipmentItem, OrderId,
+    ProductId, Result, Shipment, ShipmentEvent, ShipmentFilter, ShipmentId, ShipmentItem,
     ShipmentRepository, ShipmentStatus, ShippingCarrier, ShippingMethod, UpdateShipment,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -129,9 +130,9 @@ impl PgShipmentRepository {
         })?;
 
         Ok(Shipment {
-            id,
+            id: ShipmentId::from(id),
             shipment_number,
-            order_id,
+            order_id: OrderId::from(order_id),
             status,
             carrier,
             shipping_method,
@@ -161,9 +162,9 @@ impl PgShipmentRepository {
     fn row_to_item(row: ShipmentItemRow) -> ShipmentItem {
         ShipmentItem {
             id: row.id,
-            shipment_id: row.shipment_id,
+            shipment_id: ShipmentId::from(row.shipment_id),
             order_item_id: row.order_item_id,
-            product_id: row.product_id,
+            product_id: row.product_id.map(ProductId::from),
             sku: row.sku,
             name: row.name,
             quantity: row.quantity,
@@ -175,7 +176,7 @@ impl PgShipmentRepository {
     fn row_to_event(row: ShipmentEventRow) -> ShipmentEvent {
         ShipmentEvent {
             id: row.id,
-            shipment_id: row.shipment_id,
+            shipment_id: ShipmentId::from(row.shipment_id),
             event_type: row.event_type,
             location: row.location,
             description: row.description,
@@ -231,10 +232,7 @@ impl PgShipmentRepository {
         let now = Utc::now();
         let carrier = input.carrier.unwrap_or_default();
         let method = input.shipping_method.unwrap_or_default();
-        let tracking_url = input
-            .tracking_number
-            .as_ref()
-            .and_then(|tn| carrier.tracking_url(tn));
+        let tracking_url = input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
@@ -247,7 +245,7 @@ impl PgShipmentRepository {
         )
         .bind(id)
         .bind(&shipment_number)
-        .bind(input.order_id)
+        .bind(input.order_id.into_uuid())
         .bind(carrier.to_string())
         .bind(method.to_string())
         .bind(&input.tracking_number)
@@ -281,7 +279,7 @@ impl PgShipmentRepository {
                 .bind(item_id)
                 .bind(id)
                 .bind(item_input.order_item_id)
-                .bind(item_input.product_id)
+                .bind(item_input.product_id.map(|pid| pid.into_uuid()))
                 .bind(&item_input.sku)
                 .bind(&item_input.name)
                 .bind(item_input.quantity)
@@ -293,7 +291,7 @@ impl PgShipmentRepository {
 
                 items.push(ShipmentItem {
                     id: item_id,
-                    shipment_id: id,
+                    shipment_id: ShipmentId::from(id),
                     order_item_id: item_input.order_item_id,
                     product_id: item_input.product_id,
                     sku: item_input.sku.clone(),
@@ -308,7 +306,7 @@ impl PgShipmentRepository {
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(Shipment {
-            id,
+            id: ShipmentId::from(id),
             shipment_number,
             order_id: input.order_id,
             status: ShipmentStatus::Pending,
@@ -344,7 +342,7 @@ impl PgShipmentRepository {
                     tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
                     shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
                     signature_required, shipped_at, estimated_delivery, delivered_at, notes,
-                    created_at, updated_at
+                    version, created_at, updated_at
              FROM shipments WHERE id = $1",
         )
         .bind(id)
@@ -400,9 +398,7 @@ impl PgShipmentRepository {
         let new_status = input.status.unwrap_or(existing.status);
         let new_carrier = input.carrier.unwrap_or(existing.carrier);
         let new_tracking = input.tracking_number.or(existing.tracking_number);
-        let new_tracking_url = new_tracking
-            .as_ref()
-            .and_then(|tn| new_carrier.tracking_url(tn));
+        let new_tracking_url = new_tracking.as_ref().and_then(|tn| new_carrier.tracking_url(tn));
         let new_recipient_name = input.recipient_name.unwrap_or(existing.recipient_name);
         let new_recipient_email = input.recipient_email.or(existing.recipient_email);
         let new_recipient_phone = input.recipient_phone.or(existing.recipient_phone);
@@ -475,7 +471,7 @@ impl PgShipmentRepository {
         let mut q = sqlx::query_as::<_, (Uuid,)>(&query);
 
         if let Some(order_id) = filter.order_id {
-            q = q.bind(order_id);
+            q = q.bind(order_id.into_uuid());
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());
@@ -503,11 +499,7 @@ impl PgShipmentRepository {
 
     /// Get shipments for order (async)
     pub async fn for_order_async(&self, order_id: Uuid) -> Result<Vec<Shipment>> {
-        self.list_async(ShipmentFilter {
-            order_id: Some(order_id),
-            ..Default::default()
-        })
-        .await
+        self.list_async(ShipmentFilter { order_id: Some(OrderId::from(order_id)), ..Default::default() }).await
     }
 
     /// Delete shipment (async) - marks as cancelled
@@ -524,14 +516,12 @@ impl PgShipmentRepository {
 
     /// Mark as processing (async)
     pub async fn mark_processing_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::Processing)
-            .await
+        self.update_status_async(id, ShipmentStatus::Processing).await
     }
 
     /// Mark as ready to ship (async)
     pub async fn mark_ready_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::ReadyToShip)
-            .await
+        self.update_status_async(id, ShipmentStatus::ReadyToShip).await
     }
 
     /// Ship the shipment (async)
@@ -539,9 +529,8 @@ impl PgShipmentRepository {
         let existing = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
-        let tracking_url = tracking_number
-            .as_ref()
-            .and_then(|tn| existing.carrier.tracking_url(tn));
+        let tracking_url =
+            tracking_number.as_ref().and_then(|tn| existing.carrier.tracking_url(tn));
 
         sqlx::query(
             "UPDATE shipments SET status = 'shipped', tracking_number = COALESCE($1, tracking_number),
@@ -561,14 +550,12 @@ impl PgShipmentRepository {
 
     /// Mark as in transit (async)
     pub async fn mark_in_transit_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::InTransit)
-            .await
+        self.update_status_async(id, ShipmentStatus::InTransit).await
     }
 
     /// Mark as out for delivery (async)
     pub async fn mark_out_for_delivery_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::OutForDelivery)
-            .await
+        self.update_status_async(id, ShipmentStatus::OutForDelivery).await
     }
 
     /// Mark as delivered (async)
@@ -598,8 +585,7 @@ impl PgShipmentRepository {
 
     /// Cancel shipment (async)
     pub async fn cancel_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::Cancelled)
-            .await
+        self.update_status_async(id, ShipmentStatus::Cancelled).await
     }
 
     /// Add item to shipment (async)
@@ -618,7 +604,7 @@ impl PgShipmentRepository {
         .bind(id)
         .bind(shipment_id)
         .bind(item.order_item_id)
-        .bind(item.product_id)
+        .bind(item.product_id.map(|pid| pid.into_uuid()))
         .bind(&item.sku)
         .bind(&item.name)
         .bind(item.quantity)
@@ -630,7 +616,7 @@ impl PgShipmentRepository {
 
         Ok(ShipmentItem {
             id,
-            shipment_id,
+            shipment_id: ShipmentId::from(shipment_id),
             order_item_id: item.order_item_id,
             product_id: item.product_id,
             sku: item.sku,
@@ -684,7 +670,7 @@ impl PgShipmentRepository {
 
         Ok(ShipmentEvent {
             id,
-            shipment_id,
+            shipment_id: ShipmentId::from(shipment_id),
             event_type: event.event_type,
             location: event.location,
             description: event.description,
@@ -718,7 +704,7 @@ impl PgShipmentRepository {
         let mut q = sqlx::query_as::<_, (i64,)>(&query);
 
         if let Some(order_id) = filter.order_id {
-            q = q.bind(order_id);
+            q = q.bind(order_id.into_uuid());
         }
         if let Some(status) = filter.status {
             q = q.bind(status.to_string());
@@ -767,10 +753,8 @@ impl PgShipmentRepository {
             let now = Utc::now();
             let carrier = input.carrier.unwrap_or_default();
             let method = input.shipping_method.unwrap_or_default();
-            let tracking_url = input
-                .tracking_number
-                .as_ref()
-                .and_then(|tn| carrier.tracking_url(tn));
+            let tracking_url =
+                input.tracking_number.as_ref().and_then(|tn| carrier.tracking_url(tn));
 
             sqlx::query(
                 "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
@@ -781,7 +765,7 @@ impl PgShipmentRepository {
             )
             .bind(id)
             .bind(&shipment_number)
-            .bind(input.order_id)
+            .bind(input.order_id.into_uuid())
             .bind(carrier.to_string())
             .bind(method.to_string())
             .bind(&input.tracking_number)
@@ -815,7 +799,7 @@ impl PgShipmentRepository {
                     .bind(item_id)
                     .bind(id)
                     .bind(item_input.order_item_id)
-                    .bind(item_input.product_id)
+                    .bind(item_input.product_id.map(|pid| pid.into_uuid()))
                     .bind(&item_input.sku)
                     .bind(&item_input.name)
                     .bind(item_input.quantity)
@@ -827,7 +811,7 @@ impl PgShipmentRepository {
 
                     items.push(ShipmentItem {
                         id: item_id,
-                        shipment_id: id,
+                        shipment_id: ShipmentId::from(id),
                         order_item_id: item_input.order_item_id,
                         product_id: item_input.product_id,
                         sku: item_input.sku.clone(),
@@ -840,7 +824,7 @@ impl PgShipmentRepository {
             }
 
             shipments.push(Shipment {
-                id,
+                id: ShipmentId::from(id),
                 shipment_number,
                 order_id: input.order_id,
                 status: ShipmentStatus::Pending,
@@ -876,15 +860,16 @@ impl PgShipmentRepository {
     /// Update multiple shipments in a batch (async, non-atomic)
     pub async fn update_batch_async(
         &self,
-        updates: Vec<(Uuid, UpdateShipment)>,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
     ) -> Result<BatchResult<Shipment>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
         for (index, (id, input)) in updates.into_iter().enumerate() {
-            match self.update_async(id, input).await {
+            let raw_id = id.into_uuid();
+            match self.update_async(raw_id, input).await {
                 Ok(shipment) => result.record_success(shipment),
-                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+                Err(e) => result.record_failure(index, Some(raw_id.to_string()), &e),
             }
         }
 
@@ -894,7 +879,7 @@ impl PgShipmentRepository {
     /// Update multiple shipments in a batch atomically (async)
     pub async fn update_batch_atomic_async(
         &self,
-        updates: Vec<(Uuid, UpdateShipment)>,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
     ) -> Result<Vec<Shipment>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -902,6 +887,7 @@ impl PgShipmentRepository {
         let now = Utc::now();
 
         for (id, input) in updates {
+            let raw_id = id.into_uuid();
             // Get existing shipment with lock
             let existing_row = sqlx::query_as::<_, ShipmentRow>(
                 "SELECT id, shipment_number, order_id, status, carrier, shipping_method,
@@ -911,7 +897,7 @@ impl PgShipmentRepository {
                         version, created_at, updated_at
                  FROM shipments WHERE id = $1 FOR UPDATE"
             )
-            .bind(id)
+            .bind(raw_id)
             .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
@@ -934,24 +920,17 @@ impl PgShipmentRepository {
 
             let new_status = input.status.unwrap_or(existing_status);
             let new_carrier = input.carrier.unwrap_or(existing_carrier);
-            let new_tracking = input
-                .tracking_number
-                .or(existing_row.tracking_number.clone());
-            let new_tracking_url = new_tracking
-                .as_ref()
-                .and_then(|tn| new_carrier.tracking_url(tn));
-            let new_recipient_name = input
-                .recipient_name
-                .unwrap_or(existing_row.recipient_name.clone());
-            let new_recipient_email = input
-                .recipient_email
-                .or(existing_row.recipient_email.clone());
-            let new_recipient_phone = input
-                .recipient_phone
-                .or(existing_row.recipient_phone.clone());
-            let new_shipping_address = input
-                .shipping_address
-                .unwrap_or(existing_row.shipping_address.clone());
+            let new_tracking = input.tracking_number.or(existing_row.tracking_number.clone());
+            let new_tracking_url =
+                new_tracking.as_ref().and_then(|tn| new_carrier.tracking_url(tn));
+            let new_recipient_name =
+                input.recipient_name.unwrap_or(existing_row.recipient_name.clone());
+            let new_recipient_email =
+                input.recipient_email.or(existing_row.recipient_email.clone());
+            let new_recipient_phone =
+                input.recipient_phone.or(existing_row.recipient_phone.clone());
+            let new_shipping_address =
+                input.shipping_address.unwrap_or(existing_row.shipping_address.clone());
             let new_weight = input.weight_kg.or(existing_row.weight_kg);
             let new_dimensions = input.dimensions.or(existing_row.dimensions.clone());
             let new_shipping_cost = input.shipping_cost.or(existing_row.shipping_cost);
@@ -979,7 +958,7 @@ impl PgShipmentRepository {
             .bind(new_estimated_delivery)
             .bind(&new_notes)
             .bind(now)
-            .bind(id)
+            .bind(raw_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -993,7 +972,7 @@ impl PgShipmentRepository {
                         version, created_at, updated_at
                  FROM shipments WHERE id = $1"
             )
-            .bind(id)
+            .bind(raw_id)
             .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -1003,7 +982,7 @@ impl PgShipmentRepository {
                 "SELECT id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at
                  FROM shipment_items WHERE shipment_id = $1"
             )
-            .bind(id)
+            .bind(raw_id)
             .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -1012,7 +991,7 @@ impl PgShipmentRepository {
                 "SELECT id, shipment_id, event_type, location, description, event_time, created_at
                  FROM shipment_events WHERE shipment_id = $1 ORDER BY event_time DESC",
             )
-            .bind(id)
+            .bind(raw_id)
             .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -1029,14 +1008,15 @@ impl PgShipmentRepository {
     }
 
     /// Delete multiple shipments in a batch (async, non-atomic)
-    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    pub async fn delete_batch_async(&self, ids: Vec<ShipmentId>) -> Result<BatchResult<Uuid>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
         for (index, id) in ids.into_iter().enumerate() {
-            match self.delete_async(id).await {
-                Ok(()) => result.record_success(id),
-                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            let raw_id = id.into_uuid();
+            match self.delete_async(raw_id).await {
+                Ok(()) => result.record_success(raw_id),
+                Err(e) => result.record_failure(index, Some(raw_id.to_string()), &e),
             }
         }
 
@@ -1044,20 +1024,23 @@ impl PgShipmentRepository {
     }
 
     /// Delete multiple shipments in a batch atomically (async)
-    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<ShipmentId>) -> Result<()> {
         validate_batch_size(&ids)?;
+
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         // Delete shipment events first (foreign key constraint)
         sqlx::query("DELETE FROM shipment_events WHERE shipment_id = ANY($1)")
-            .bind(&ids)
+            .bind(&raw_ids)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete shipment items (foreign key constraint)
         sqlx::query("DELETE FROM shipment_items WHERE shipment_id = ANY($1)")
-            .bind(&ids)
+            .bind(&raw_ids)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -1067,7 +1050,7 @@ impl PgShipmentRepository {
             "UPDATE shipments SET status = 'cancelled', updated_at = $1 WHERE id = ANY($2)",
         )
         .bind(Utc::now())
-        .bind(&ids)
+        .bind(&raw_ids)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
@@ -1077,8 +1060,10 @@ impl PgShipmentRepository {
     }
 
     /// Get multiple shipments by IDs (async)
-    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Shipment>> {
+    pub async fn get_batch_async(&self, ids: Vec<ShipmentId>) -> Result<Vec<Shipment>> {
         validate_batch_size(&ids)?;
+
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
 
         let rows = sqlx::query_as::<_, ShipmentRow>(
             "SELECT id, shipment_number, order_id, status, carrier, shipping_method,
@@ -1088,7 +1073,7 @@ impl PgShipmentRepository {
                     version, created_at, updated_at
              FROM shipments WHERE id = ANY($1)",
         )
-        .bind(&ids)
+        .bind(&raw_ids)
         .fetch_all(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -1106,43 +1091,43 @@ impl PgShipmentRepository {
     // ==================== Sync Batch Wrappers ====================
 
     /// Create multiple shipments in a batch (sync, non-atomic)
-    pub fn create_batch(&self, inputs: Vec<CreateShipment>) -> Result<BatchResult<Shipment>> {
+    pub fn create_batch_sync(&self, inputs: Vec<CreateShipment>) -> Result<BatchResult<Shipment>> {
         super::block_on(self.create_batch_async(inputs))
     }
 
     /// Create multiple shipments in a batch atomically (sync)
-    pub fn create_batch_atomic(&self, inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>> {
+    pub fn create_batch_atomic_sync(&self, inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>> {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
     /// Update multiple shipments in a batch (sync, non-atomic)
-    pub fn update_batch(
+    pub fn update_batch_sync(
         &self,
-        updates: Vec<(Uuid, UpdateShipment)>,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
     ) -> Result<BatchResult<Shipment>> {
         super::block_on(self.update_batch_async(updates))
     }
 
     /// Update multiple shipments in a batch atomically (sync)
-    pub fn update_batch_atomic(
+    pub fn update_batch_atomic_sync(
         &self,
-        updates: Vec<(Uuid, UpdateShipment)>,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
     ) -> Result<Vec<Shipment>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 
     /// Delete multiple shipments in a batch (sync, non-atomic)
-    pub fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    pub fn delete_batch_sync(&self, ids: Vec<ShipmentId>) -> Result<BatchResult<Uuid>> {
         super::block_on(self.delete_batch_async(ids))
     }
 
     /// Delete multiple shipments in a batch atomically (sync)
-    pub fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    pub fn delete_batch_atomic_sync(&self, ids: Vec<ShipmentId>) -> Result<()> {
         super::block_on(self.delete_batch_atomic_async(ids))
     }
 
     /// Get multiple shipments by IDs (sync)
-    pub fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Shipment>> {
+    pub fn get_batch_sync(&self, ids: Vec<ShipmentId>) -> Result<Vec<Shipment>> {
         super::block_on(self.get_batch_async(ids))
     }
 }
@@ -1152,8 +1137,8 @@ impl ShipmentRepository for PgShipmentRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Shipment>> {
-        super::block_on(self.get_async(id))
+    fn get(&self, id: ShipmentId) -> Result<Option<Shipment>> {
+        super::block_on(self.get_async(id.into_uuid()))
     }
 
     fn get_by_number(&self, shipment_number: &str) -> Result<Option<Shipment>> {
@@ -1164,76 +1149,76 @@ impl ShipmentRepository for PgShipmentRepository {
         super::block_on(self.get_by_tracking_async(tracking_number))
     }
 
-    fn update(&self, id: Uuid, input: UpdateShipment) -> Result<Shipment> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: ShipmentId, input: UpdateShipment) -> Result<Shipment> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: ShipmentFilter) -> Result<Vec<Shipment>> {
         super::block_on(self.list_async(filter))
     }
 
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Shipment>> {
-        super::block_on(self.for_order_async(order_id))
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Shipment>> {
+        super::block_on(self.for_order_async(order_id.into_uuid()))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
-        super::block_on(self.delete_async(id))
+    fn delete(&self, id: ShipmentId) -> Result<()> {
+        super::block_on(self.delete_async(id.into_uuid()))
     }
 
-    fn mark_processing(&self, id: Uuid) -> Result<Shipment> {
-        super::block_on(self.mark_processing_async(id))
+    fn mark_processing(&self, id: ShipmentId) -> Result<Shipment> {
+        super::block_on(self.mark_processing_async(id.into_uuid()))
     }
 
-    fn mark_ready(&self, id: Uuid) -> Result<Shipment> {
-        super::block_on(self.mark_ready_async(id))
+    fn mark_ready(&self, id: ShipmentId) -> Result<Shipment> {
+        super::block_on(self.mark_ready_async(id.into_uuid()))
     }
 
-    fn ship(&self, id: Uuid, tracking_number: Option<String>) -> Result<Shipment> {
-        super::block_on(self.ship_async(id, tracking_number))
+    fn ship(&self, id: ShipmentId, tracking_number: Option<String>) -> Result<Shipment> {
+        super::block_on(self.ship_async(id.into_uuid(), tracking_number))
     }
 
-    fn mark_in_transit(&self, id: Uuid) -> Result<Shipment> {
-        super::block_on(self.mark_in_transit_async(id))
+    fn mark_in_transit(&self, id: ShipmentId) -> Result<Shipment> {
+        super::block_on(self.mark_in_transit_async(id.into_uuid()))
     }
 
-    fn mark_out_for_delivery(&self, id: Uuid) -> Result<Shipment> {
-        super::block_on(self.mark_out_for_delivery_async(id))
+    fn mark_out_for_delivery(&self, id: ShipmentId) -> Result<Shipment> {
+        super::block_on(self.mark_out_for_delivery_async(id.into_uuid()))
     }
 
-    fn mark_delivered(&self, id: Uuid) -> Result<Shipment> {
-        super::block_on(self.mark_delivered_async(id))
+    fn mark_delivered(&self, id: ShipmentId) -> Result<Shipment> {
+        super::block_on(self.mark_delivered_async(id.into_uuid()))
     }
 
-    fn mark_failed(&self, id: Uuid) -> Result<Shipment> {
-        super::block_on(self.mark_failed_async(id))
+    fn mark_failed(&self, id: ShipmentId) -> Result<Shipment> {
+        super::block_on(self.mark_failed_async(id.into_uuid()))
     }
 
-    fn hold(&self, id: Uuid) -> Result<Shipment> {
-        super::block_on(self.hold_async(id))
+    fn hold(&self, id: ShipmentId) -> Result<Shipment> {
+        super::block_on(self.hold_async(id.into_uuid()))
     }
 
-    fn cancel(&self, id: Uuid) -> Result<Shipment> {
-        super::block_on(self.cancel_async(id))
+    fn cancel(&self, id: ShipmentId) -> Result<Shipment> {
+        super::block_on(self.cancel_async(id.into_uuid()))
     }
 
-    fn add_item(&self, shipment_id: Uuid, item: CreateShipmentItem) -> Result<ShipmentItem> {
-        super::block_on(self.add_item_async(shipment_id, item))
+    fn add_item(&self, shipment_id: ShipmentId, item: CreateShipmentItem) -> Result<ShipmentItem> {
+        super::block_on(self.add_item_async(shipment_id.into_uuid(), item))
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
         super::block_on(self.remove_item_async(item_id))
     }
 
-    fn get_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
-        super::block_on(self.get_items_async(shipment_id))
+    fn get_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>> {
+        super::block_on(self.get_items_async(shipment_id.into_uuid()))
     }
 
-    fn add_event(&self, shipment_id: Uuid, event: AddShipmentEvent) -> Result<ShipmentEvent> {
-        super::block_on(self.add_event_async(shipment_id, event))
+    fn add_event(&self, shipment_id: ShipmentId, event: AddShipmentEvent) -> Result<ShipmentEvent> {
+        super::block_on(self.add_event_async(shipment_id.into_uuid(), event))
     }
 
-    fn get_events(&self, shipment_id: Uuid) -> Result<Vec<ShipmentEvent>> {
-        super::block_on(self.get_events_async(shipment_id))
+    fn get_events(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentEvent>> {
+        super::block_on(self.get_events_async(shipment_id.into_uuid()))
     }
 
     fn count(&self, filter: ShipmentFilter) -> Result<u64> {
@@ -1241,30 +1226,30 @@ impl ShipmentRepository for PgShipmentRepository {
     }
 
     fn create_batch(&self, inputs: Vec<CreateShipment>) -> Result<BatchResult<Shipment>> {
-        self.create_batch(inputs)
+        self.create_batch_sync(inputs)
     }
 
     fn create_batch_atomic(&self, inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>> {
-        self.create_batch_atomic(inputs)
+        self.create_batch_atomic_sync(inputs)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
-        self.update_batch(updates)
+    fn update_batch(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
+        self.update_batch_sync(updates)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<Vec<Shipment>> {
-        self.update_batch_atomic(updates)
+    fn update_batch_atomic(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<Vec<Shipment>> {
+        self.update_batch_atomic_sync(updates)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
-        self.delete_batch(ids)
+    fn delete_batch(&self, ids: Vec<ShipmentId>) -> Result<BatchResult<Uuid>> {
+        self.delete_batch_sync(ids)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
-        self.delete_batch_atomic(ids)
+    fn delete_batch_atomic(&self, ids: Vec<ShipmentId>) -> Result<()> {
+        self.delete_batch_atomic_sync(ids)
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Shipment>> {
-        self.get_batch(ids)
+    fn get_batch(&self, ids: Vec<ShipmentId>) -> Result<Vec<Shipment>> {
+        self.get_batch_sync(ids)
     }
 }

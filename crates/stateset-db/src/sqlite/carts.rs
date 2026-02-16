@@ -2,10 +2,10 @@
 
 use super::parse_helpers::{parse_decimal as parse_decimal_err, parse_uuid};
 use super::{
-    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
-    parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_json_opt_row,
-    parse_uuid_opt_row, parse_uuid_row, sum_decimal_query, uuid_params, SqliteCustomerRepository,
-    SqliteOrderRepository, SqlitePromotionRepository,
+    SqliteCustomerRepository, SqliteOrderRepository, SqlitePromotionRepository, build_in_clause,
+    map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
+    sum_decimal_query, uuid_params,
 };
 use chrono::{Duration, Utc};
 use r2d2::Pool;
@@ -13,13 +13,14 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, validate_currency_code, validate_price, AddCartItem, BatchResult, Cart,
-    CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository, CartStatus,
-    CartX402Payment, CheckoutResult, CommerceError, CreateCart, CreateCustomer, CreateOrder,
-    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus,
-    PromotionType, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
-    UpdateCart, UpdateCartItem, UpdateOrder, X402AwaitingSettlementData, X402CheckoutResult,
-    X402IntentCreatedData, X402IntentStatus, X402PaymentRequiredData,
+    AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
+    CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
+    CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, CustomerRepository, OrderId,
+    OrderRepository,
+    OrderStatus, PaymentId, PaymentStatus, ProductId, PromotionType, Result, SetCartPayment,
+    SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem, UpdateOrder,
+    X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData, X402IntentStatus,
+    X402PaymentRequiredData, validate_batch_size, validate_currency_code, validate_price,
 };
 use uuid::Uuid;
 
@@ -34,9 +35,7 @@ impl SqliteCartRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn generate_cart_number() -> String {
@@ -45,19 +44,19 @@ impl SqliteCartRepository {
         format!("CART-{}-{:04}", timestamp, random)
     }
 
-    fn row_to_cart(row: &rusqlite::Row) -> rusqlite::Result<Cart> {
+    fn row_to_cart(row: &rusqlite::Row<'_>) -> rusqlite::Result<Cart> {
         let shipping_addr: Option<String> = row.get("shipping_address")?;
         let billing_addr: Option<String> = row.get("billing_address")?;
         let metadata: Option<String> = row.get("metadata")?;
 
         Ok(Cart {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "cart", "id")?,
+            id: CartId::from(parse_uuid_row(&row.get::<_, String>("id")?, "cart", "id")?),
             cart_number: row.get("cart_number")?,
             customer_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("customer_id")?,
                 "cart",
                 "customer_id",
-            )?,
+            )?.map(CustomerId::from),
             status: parse_enum_row(&row.get::<_, String>("status")?, "cart", "status")?,
             currency: row.get("currency")?,
 
@@ -120,7 +119,7 @@ impl SqliteCartRepository {
                 row.get::<_, Option<String>>("order_id")?,
                 "cart",
                 "order_id",
-            )?,
+            )?.map(OrderId::from),
             order_number: row.get("order_number")?,
 
             notes: row.get("notes")?,
@@ -147,9 +146,7 @@ impl SqliteCartRepository {
                         network: network_str
                             .map(|s| s.parse().unwrap_or_default())
                             .unwrap_or_default(),
-                        asset: asset_str
-                            .map(|s| s.parse().unwrap_or_default())
-                            .unwrap_or_default(),
+                        asset: asset_str.map(|s| s.parse().unwrap_or_default()).unwrap_or_default(),
                         status: status_str
                             .map(|s| s.parse().unwrap_or_default())
                             .unwrap_or_default(),
@@ -184,7 +181,7 @@ impl SqliteCartRepository {
 
     fn load_cart_items_with_conn(
         conn: &r2d2::PooledConnection<SqliteConnectionManager>,
-        cart_id: Uuid,
+        cart_id: CartId,
     ) -> Result<Vec<CartItem>> {
         let mut stmt = conn
             .prepare(
@@ -200,16 +197,16 @@ impl SqliteCartRepository {
                 let metadata: Option<String> = row.get("metadata")?;
                 Ok(CartItem {
                     id: parse_uuid_row(&row.get::<_, String>("id")?, "cart_item", "id")?,
-                    cart_id: parse_uuid_row(
+                    cart_id: CartId::from(parse_uuid_row(
                         &row.get::<_, String>("cart_id")?,
                         "cart_item",
                         "cart_id",
-                    )?,
+                    )?),
                     product_id: parse_uuid_opt_row(
                         row.get::<_, Option<String>>("product_id")?,
                         "cart_item",
                         "product_id",
-                    )?,
+                    )?.map(ProductId::from),
                     variant_id: parse_uuid_opt_row(
                         row.get::<_, Option<String>>("variant_id")?,
                         "cart_item",
@@ -272,7 +269,7 @@ impl SqliteCartRepository {
     }
 
     /// Finalize x402 checkout after payment settlement
-    fn finalize_x402_checkout(&self, cart_id: Uuid) -> Result<X402CheckoutResult> {
+    fn finalize_x402_checkout(&self, cart_id: CartId) -> Result<X402CheckoutResult> {
         // This is similar to complete() but assumes x402 payment is settled
         let cart = self.get(cart_id)?.ok_or(CommerceError::NotFound)?;
 
@@ -303,7 +300,7 @@ impl SqliteCartRepository {
             .items
             .iter()
             .map(|item| CreateOrderItem {
-                product_id: item.product_id.unwrap_or_else(Uuid::new_v4),
+                product_id: item.product_id.unwrap_or_else(ProductId::new),
                 variant_id: item.variant_id,
                 sku: item.sku.clone(),
                 name: item.name.clone(),
@@ -316,16 +313,13 @@ impl SqliteCartRepository {
 
         let shipping_address = cart.shipping_address.clone().map(Into::into);
         let billing_address = if cart.billing_same_as_shipping {
-            cart.billing_address
-                .clone()
-                .or_else(|| cart.shipping_address.clone())
-                .map(Into::into)
+            cart.billing_address.clone().or_else(|| cart.shipping_address.clone()).map(Into::into)
         } else {
             cart.billing_address.clone().map(Into::into)
         };
 
         let order = order_repo.create_from_cart(
-            cart_id,
+            cart_id.into_uuid(),
             CreateOrder {
                 customer_id,
                 items: order_items,
@@ -376,7 +370,7 @@ impl SqliteCartRepository {
         }))
     }
 
-    fn update_cart_totals(&self, conn: &rusqlite::Connection, cart_id: Uuid) -> Result<()> {
+    fn update_cart_totals(&self, conn: &rusqlite::Connection, cart_id: CartId) -> Result<()> {
         // Calculate subtotal from items
         let cart_id_param = cart_id.to_string();
         let cart_params: [&dyn rusqlite::ToSql; 1] = [&cart_id_param];
@@ -427,27 +421,19 @@ impl CartRepository for SqliteCartRepository {
 
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
-        let id = Uuid::new_v4();
+        let id = CartId::new();
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
         let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
 
-        let expires_at = input
-            .expires_in_minutes
-            .map(|mins| now + Duration::minutes(mins));
+        let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
-        let shipping_address_json = input
-            .shipping_address
-            .as_ref()
-            .map(|a| serde_json::to_string(a).unwrap_or_default());
-        let billing_address_json = input
-            .billing_address
-            .as_ref()
-            .map(|a| serde_json::to_string(a).unwrap_or_default());
-        let metadata_json = input
-            .metadata
-            .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default());
+        let shipping_address_json =
+            input.shipping_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default());
+        let billing_address_json =
+            input.billing_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default());
+        let metadata_json =
+            input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
 
         tx.execute(
             "INSERT INTO carts (id, cart_number, customer_id, status, currency,
@@ -537,13 +523,10 @@ impl CartRepository for SqliteCartRepository {
         Ok(cart)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Cart>> {
+    fn get(&self, id: CartId) -> Result<Option<Cart>> {
         let conn = self.conn()?;
-        let result = conn.query_row(
-            "SELECT * FROM carts WHERE id = ?",
-            [id.to_string()],
-            Self::row_to_cart,
-        );
+        let result =
+            conn.query_row("SELECT * FROM carts WHERE id = ?", [id.to_string()], Self::row_to_cart);
 
         match result {
             Ok(mut cart) => {
@@ -573,7 +556,7 @@ impl CartRepository for SqliteCartRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdateCart) -> Result<Cart> {
+    fn update(&self, id: CartId, input: UpdateCart) -> Result<Cart> {
         let now = Utc::now();
 
         let mut updates = vec!["updated_at = ?"];
@@ -646,8 +629,7 @@ impl CartRepository for SqliteCartRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         {
             let conn = self.conn()?;
-            conn.execute(&sql, params_refs.as_slice())
-                .map_err(map_db_error)?;
+            conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
         }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
@@ -716,25 +698,21 @@ impl CartRepository for SqliteCartRepository {
         Ok(result)
     }
 
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Cart>> {
-        self.list(CartFilter {
-            customer_id: Some(customer_id),
-            ..Default::default()
-        })
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Cart>> {
+        self.list(CartFilter { customer_id: Some(customer_id), ..Default::default() })
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: CartId) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         tx.execute("DELETE FROM cart_items WHERE cart_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
-        tx.execute("DELETE FROM carts WHERE id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
+        tx.execute("DELETE FROM carts WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn add_item(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
+    fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
         // Validate item quantity (must be positive)
         if item.quantity <= 0 {
             return Err(CommerceError::ValidationError(format!(
@@ -795,8 +773,7 @@ impl CartRepository for SqliteCartRepository {
 
         let sql = format!("UPDATE cart_items SET {} WHERE id = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Recalculate item total
         let (qty, unit_price, discount, tax): (i32, String, String, String) = tx
@@ -821,83 +798,79 @@ impl CartRepository for SqliteCartRepository {
         .map_err(map_db_error)?;
 
         // Update cart totals
-        let cart_uuid: Uuid = parse_uuid(&cart_id, "cart_item", "cart_id")?;
+        let cart_uuid = CartId::from(parse_uuid(&cart_id, "cart_item", "cart_id")?);
         self.update_cart_totals(&tx, cart_uuid)?;
 
         // Return updated item
         let item = tx
-            .query_row(
-                "SELECT * FROM cart_items WHERE id = ?",
-                [item_id.to_string()],
-                |row| {
-                    let metadata: Option<String> = row.get("metadata")?;
-                    Ok(CartItem {
-                        id: parse_uuid_row(&row.get::<_, String>("id")?, "cart_item", "id")?,
-                        cart_id: parse_uuid_row(
-                            &row.get::<_, String>("cart_id")?,
-                            "cart_item",
-                            "cart_id",
-                        )?,
-                        product_id: parse_uuid_opt_row(
-                            row.get::<_, Option<String>>("product_id")?,
-                            "cart_item",
-                            "product_id",
-                        )?,
-                        variant_id: parse_uuid_opt_row(
-                            row.get::<_, Option<String>>("variant_id")?,
-                            "cart_item",
-                            "variant_id",
-                        )?,
-                        sku: row.get("sku")?,
-                        name: row.get("name")?,
-                        description: row.get("description")?,
-                        image_url: row.get("image_url")?,
-                        quantity: row.get("quantity")?,
-                        unit_price: parse_decimal_row(
-                            &row.get::<_, String>("unit_price")?,
-                            "cart_item",
-                            "unit_price",
-                        )?,
-                        original_price: parse_decimal_opt_row(
-                            row.get::<_, Option<String>>("original_price")?,
-                            "cart_item",
-                            "original_price",
-                        )?,
-                        discount_amount: parse_decimal_row(
-                            &row.get::<_, String>("discount_amount")?,
-                            "cart_item",
-                            "discount_amount",
-                        )?,
-                        tax_amount: parse_decimal_row(
-                            &row.get::<_, String>("tax_amount")?,
-                            "cart_item",
-                            "tax_amount",
-                        )?,
-                        total: parse_decimal_row(
-                            &row.get::<_, String>("total")?,
-                            "cart_item",
-                            "total",
-                        )?,
-                        weight: parse_decimal_opt_row(
-                            row.get::<_, Option<String>>("weight")?,
-                            "cart_item",
-                            "weight",
-                        )?,
-                        requires_shipping: row.get::<_, i32>("requires_shipping")? == 1,
-                        metadata: parse_json_opt_row(metadata, "cart_item", "metadata")?,
-                        created_at: parse_datetime_row(
-                            &row.get::<_, String>("created_at")?,
-                            "cart_item",
-                            "created_at",
-                        )?,
-                        updated_at: parse_datetime_row(
-                            &row.get::<_, String>("updated_at")?,
-                            "cart_item",
-                            "updated_at",
-                        )?,
-                    })
-                },
-            )
+            .query_row("SELECT * FROM cart_items WHERE id = ?", [item_id.to_string()], |row| {
+                let metadata: Option<String> = row.get("metadata")?;
+                Ok(CartItem {
+                    id: parse_uuid_row(&row.get::<_, String>("id")?, "cart_item", "id")?,
+                    cart_id: CartId::from(parse_uuid_row(
+                        &row.get::<_, String>("cart_id")?,
+                        "cart_item",
+                        "cart_id",
+                    )?),
+                    product_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>("product_id")?,
+                        "cart_item",
+                        "product_id",
+                    )?.map(ProductId::from),
+                    variant_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>("variant_id")?,
+                        "cart_item",
+                        "variant_id",
+                    )?,
+                    sku: row.get("sku")?,
+                    name: row.get("name")?,
+                    description: row.get("description")?,
+                    image_url: row.get("image_url")?,
+                    quantity: row.get("quantity")?,
+                    unit_price: parse_decimal_row(
+                        &row.get::<_, String>("unit_price")?,
+                        "cart_item",
+                        "unit_price",
+                    )?,
+                    original_price: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>("original_price")?,
+                        "cart_item",
+                        "original_price",
+                    )?,
+                    discount_amount: parse_decimal_row(
+                        &row.get::<_, String>("discount_amount")?,
+                        "cart_item",
+                        "discount_amount",
+                    )?,
+                    tax_amount: parse_decimal_row(
+                        &row.get::<_, String>("tax_amount")?,
+                        "cart_item",
+                        "tax_amount",
+                    )?,
+                    total: parse_decimal_row(
+                        &row.get::<_, String>("total")?,
+                        "cart_item",
+                        "total",
+                    )?,
+                    weight: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>("weight")?,
+                        "cart_item",
+                        "weight",
+                    )?,
+                    requires_shipping: row.get::<_, i32>("requires_shipping")? == 1,
+                    metadata: parse_json_opt_row(metadata, "cart_item", "metadata")?,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>("created_at")?,
+                        "cart_item",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>("updated_at")?,
+                        "cart_item",
+                        "updated_at",
+                    )?,
+                })
+            })
             .map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
@@ -921,32 +894,29 @@ impl CartRepository for SqliteCartRepository {
         tx.execute("DELETE FROM cart_items WHERE id = ?", [item_id.to_string()])
             .map_err(map_db_error)?;
 
-        let cart_uuid: Uuid = parse_uuid(&cart_id, "cart_item", "cart_id")?;
+        let cart_uuid = CartId::from(parse_uuid(&cart_id, "cart_item", "cart_id")?);
         self.update_cart_totals(&tx, cart_uuid)?;
         tx.commit().map_err(map_db_error)?;
 
         Ok(())
     }
 
-    fn get_items(&self, cart_id: Uuid) -> Result<Vec<CartItem>> {
+    fn get_items(&self, cart_id: CartId) -> Result<Vec<CartItem>> {
         let conn = self.conn()?;
         Self::load_cart_items_with_conn(&conn, cart_id)
     }
 
-    fn clear_items(&self, cart_id: Uuid) -> Result<()> {
+    fn clear_items(&self, cart_id: CartId) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
-        tx.execute(
-            "DELETE FROM cart_items WHERE cart_id = ?",
-            [cart_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        tx.execute("DELETE FROM cart_items WHERE cart_id = ?", [cart_id.to_string()])
+            .map_err(map_db_error)?;
         self.update_cart_totals(&tx, cart_id)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn set_shipping_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
+    fn set_shipping_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
         let address_json = serde_json::to_string(&address).unwrap_or_default();
 
         {
@@ -961,7 +931,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn set_billing_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
+    fn set_billing_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
         let address_json = serde_json::to_string(&address).unwrap_or_default();
 
         {
@@ -976,7 +946,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn set_shipping(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
+    fn set_shipping(&self, id: CartId, shipping: SetCartShipping) -> Result<Cart> {
         let address_json = serde_json::to_string(&shipping.shipping_address).unwrap_or_default();
         let shipping_amount = shipping.shipping_amount.unwrap_or_default();
 
@@ -1001,7 +971,7 @@ impl CartRepository for SqliteCartRepository {
         self.recalculate(id)
     }
 
-    fn get_shipping_rates(&self, _id: Uuid) -> Result<Vec<ShippingRate>> {
+    fn get_shipping_rates(&self, _id: CartId) -> Result<Vec<ShippingRate>> {
         // This would typically integrate with shipping providers
         // For now, return some default rates
         Ok(vec![
@@ -1038,7 +1008,7 @@ impl CartRepository for SqliteCartRepository {
         ])
     }
 
-    fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
+    fn set_payment(&self, id: CartId, payment: SetCartPayment) -> Result<Cart> {
         let billing_json = payment
             .billing_address
             .as_ref()
@@ -1063,7 +1033,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn set_x402_payment(&self, id: Uuid, payment: SetCartX402Payment) -> Result<Cart> {
+    fn set_x402_payment(&self, id: CartId, payment: SetCartX402Payment) -> Result<Cart> {
         let conn = self.conn()?;
 
         conn.execute(
@@ -1085,7 +1055,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn complete_with_x402(&self, id: Uuid, payee_address: &str) -> Result<X402CheckoutResult> {
+    fn complete_with_x402(&self, id: CartId, payee_address: &str) -> Result<X402CheckoutResult> {
         use rust_decimal::prelude::ToPrimitive;
 
         let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
@@ -1179,7 +1149,8 @@ impl CartRepository for SqliteCartRepository {
                     }
                     X402IntentStatus::Expired
                     | X402IntentStatus::Failed
-                    | X402IntentStatus::Cancelled => {
+                    | X402IntentStatus::Cancelled
+                    | _ => {
                         // Need to create a new intent
                     }
                 }
@@ -1188,21 +1159,19 @@ impl CartRepository for SqliteCartRepository {
 
         // No valid intent exists - return PaymentRequired
         let chain_id = x402_payment.network.chain_id();
-        Ok(X402CheckoutResult::PaymentRequired(
-            X402PaymentRequiredData {
-                cart_id: id,
-                payee_address: payee_address.to_string(),
-                amount,
-                amount_display,
-                asset: x402_payment.asset,
-                network: x402_payment.network,
-                chain_id,
-                valid_seconds: 3600, // 1 hour default
-            },
-        ))
+        Ok(X402CheckoutResult::PaymentRequired(X402PaymentRequiredData {
+            cart_id: id,
+            payee_address: payee_address.to_string(),
+            amount,
+            amount_display,
+            asset: x402_payment.asset,
+            network: x402_payment.network,
+            chain_id,
+            valid_seconds: 3600, // 1 hour default
+        }))
     }
 
-    fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
+    fn apply_discount(&self, id: CartId, coupon_code: &str) -> Result<Cart> {
         // Get the cart first to calculate discount
         let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
@@ -1229,10 +1198,9 @@ impl CartRepository for SqliteCartRepository {
                     discount
                 }
             }
-            PromotionType::FixedAmountOff => promotion
-                .fixed_amount_off
-                .unwrap_or(Decimal::ZERO)
-                .min(subtotal),
+            PromotionType::FixedAmountOff => {
+                promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
+            }
             _ => Decimal::ZERO, // Other types not fully implemented
         };
 
@@ -1258,7 +1226,7 @@ impl CartRepository for SqliteCartRepository {
         self.recalculate(id)
     }
 
-    fn remove_discount(&self, id: Uuid) -> Result<Cart> {
+    fn remove_discount(&self, id: CartId) -> Result<Cart> {
         {
             let conn = self.conn()?;
             conn.execute(
@@ -1272,7 +1240,7 @@ impl CartRepository for SqliteCartRepository {
         self.recalculate(id)
     }
 
-    fn mark_ready_for_payment(&self, id: Uuid) -> Result<Cart> {
+    fn mark_ready_for_payment(&self, id: CartId) -> Result<Cart> {
         let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
         if !cart.is_ready_for_checkout() {
@@ -1293,7 +1261,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn begin_checkout(&self, id: Uuid) -> Result<Cart> {
+    fn begin_checkout(&self, id: CartId) -> Result<Cart> {
         {
             let conn = self.conn()?;
             conn.execute(
@@ -1306,7 +1274,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
+    fn complete(&self, id: CartId) -> Result<CheckoutResult> {
         let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
         // Idempotent checkout: if already completed, return the existing order reference.
@@ -1335,7 +1303,7 @@ impl CartRepository for SqliteCartRepository {
             .items
             .iter()
             .map(|item| CreateOrderItem {
-                product_id: item.product_id.unwrap_or_else(Uuid::new_v4),
+                product_id: item.product_id.unwrap_or_else(ProductId::new),
                 variant_id: item.variant_id,
                 sku: item.sku.clone(),
                 name: item.name.clone(),
@@ -1348,17 +1316,14 @@ impl CartRepository for SqliteCartRepository {
 
         let shipping_address = cart.shipping_address.clone().map(Into::into);
         let billing_address = if cart.billing_same_as_shipping {
-            cart.billing_address
-                .clone()
-                .or_else(|| cart.shipping_address.clone())
-                .map(Into::into)
+            cart.billing_address.clone().or_else(|| cart.shipping_address.clone()).map(Into::into)
         } else {
             cart.billing_address.clone().map(Into::into)
         };
 
         let order_repo = SqliteOrderRepository::new(self.pool.clone());
         let order = order_repo.create_from_cart(
-            id,
+            id.into_uuid(),
             CreateOrder {
                 customer_id,
                 items: order_items,
@@ -1411,7 +1376,7 @@ impl CartRepository for SqliteCartRepository {
         })
     }
 
-    fn cancel(&self, id: Uuid) -> Result<Cart> {
+    fn cancel(&self, id: CartId) -> Result<Cart> {
         {
             let conn = self.conn()?;
             conn.execute(
@@ -1424,7 +1389,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn abandon(&self, id: Uuid) -> Result<Cart> {
+    fn abandon(&self, id: CartId) -> Result<Cart> {
         {
             let conn = self.conn()?;
             conn.execute(
@@ -1437,7 +1402,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn expire(&self, id: Uuid) -> Result<Cart> {
+    fn expire(&self, id: CartId) -> Result<Cart> {
         {
             let conn = self.conn()?;
             conn.execute(
@@ -1450,7 +1415,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn reserve_inventory(&self, id: Uuid) -> Result<Cart> {
+    fn reserve_inventory(&self, id: CartId) -> Result<Cart> {
         let reservation_expires = Utc::now() + Duration::minutes(15);
 
         {
@@ -1469,7 +1434,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn release_inventory(&self, id: Uuid) -> Result<Cart> {
+    fn release_inventory(&self, id: CartId) -> Result<Cart> {
         {
             let conn = self.conn()?;
             conn.execute(
@@ -1482,7 +1447,7 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn recalculate(&self, id: Uuid) -> Result<Cart> {
+    fn recalculate(&self, id: CartId) -> Result<Cart> {
         {
             let conn = self.conn()?;
             self.update_cart_totals(&conn, id)?;
@@ -1491,16 +1456,12 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn set_tax(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
+    fn set_tax(&self, id: CartId, tax_amount: Decimal) -> Result<Cart> {
         {
             let conn = self.conn()?;
             conn.execute(
                 "UPDATE carts SET tax_amount = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    tax_amount.to_string(),
-                    Utc::now().to_rfc3339(),
-                    id.to_string()
-                ],
+                rusqlite::params![tax_amount.to_string(), Utc::now().to_rfc3339(), id.to_string()],
             )
             .map_err(map_db_error)?;
         }
@@ -1509,10 +1470,7 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn get_abandoned(&self) -> Result<Vec<Cart>> {
-        self.list(CartFilter {
-            status: Some(CartStatus::Abandoned),
-            ..Default::default()
-        })
+        self.list(CartFilter { status: Some(CartStatus::Abandoned), ..Default::default() })
     }
 
     fn get_expired(&self) -> Result<Vec<Cart>> {
@@ -1528,10 +1486,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.list(CartFilter {
-            status: Some(CartStatus::Expired),
-            ..Default::default()
-        })
+        self.list(CartFilter { status: Some(CartStatus::Expired), ..Default::default() })
     }
 
     fn count(&self, filter: CartFilter) -> Result<u64> {
@@ -1549,9 +1504,8 @@ impl CartRepository for SqliteCartRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
         Ok(count as u64)
     }
@@ -1583,14 +1537,12 @@ impl CartRepository for SqliteCartRepository {
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
-            let id = Uuid::new_v4();
+            let id = CartId::new();
             let cart_number = Self::generate_cart_number();
             let now = Utc::now();
             let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
 
-            let expires_at = input
-                .expires_in_minutes
-                .map(|mins| now + Duration::minutes(mins));
+            let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
             let shipping_address_json = input
                 .shipping_address
@@ -1600,10 +1552,8 @@ impl CartRepository for SqliteCartRepository {
                 .billing_address
                 .as_ref()
                 .map(|a| serde_json::to_string(a).unwrap_or_default());
-            let metadata_json = input
-                .metadata
-                .as_ref()
-                .map(|m| serde_json::to_string(m).unwrap_or_default());
+            let metadata_json =
+                input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
 
             tx.execute(
                 "INSERT INTO carts (id, cart_number, customer_id, status, currency,
@@ -1693,7 +1643,7 @@ impl CartRepository for SqliteCartRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<BatchResult<Cart>> {
+    fn update_batch(&self, updates: Vec<(CartId, UpdateCart)>) -> Result<BatchResult<Cart>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -1707,7 +1657,7 @@ impl CartRepository for SqliteCartRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<Vec<Cart>> {
+    fn update_batch_atomic(&self, updates: Vec<(CartId, UpdateCart)>) -> Result<Vec<Cart>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -1781,9 +1731,7 @@ impl CartRepository for SqliteCartRepository {
             let sql = format!("UPDATE carts SET {} WHERE id = ?", update_parts.join(", "));
             let params_refs: Vec<&dyn rusqlite::ToSql> =
                 params.iter().map(|p| p.as_ref()).collect();
-            let rows_affected = tx
-                .execute(&sql, params_refs.as_slice())
-                .map_err(map_db_error)?;
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
             if rows_affected == 0 {
                 return Err(CommerceError::NotFound);
@@ -1791,11 +1739,7 @@ impl CartRepository for SqliteCartRepository {
 
             // Fetch the updated cart
             let cart = tx
-                .query_row(
-                    "SELECT * FROM carts WHERE id = ?",
-                    [id.to_string()],
-                    Self::row_to_cart,
-                )
+                .query_row("SELECT * FROM carts WHERE id = ?", [id.to_string()], Self::row_to_cart)
                 .map_err(map_db_error)?;
 
             results.push(cart);
@@ -1812,7 +1756,7 @@ impl CartRepository for SqliteCartRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<CartId>) -> Result<BatchResult<CartId>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
@@ -1826,7 +1770,7 @@ impl CartRepository for SqliteCartRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<CartId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -1835,35 +1779,35 @@ impl CartRepository for SqliteCartRepository {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         // Delete cart items first
         let sql = format!("DELETE FROM cart_items WHERE cart_id IN ({})", placeholders);
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete carts
         let sql = format!("DELETE FROM carts WHERE id IN ({})", placeholders);
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Cart>> {
+    fn get_batch(&self, ids: Vec<CartId>) -> Result<Vec<Cart>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
         }
 
         let conn = self.conn()?;
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM carts WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -1889,7 +1833,7 @@ impl SqliteCartRepository {
     fn add_item_internal(
         &self,
         conn: &rusqlite::Connection,
-        cart_id: Uuid,
+        cart_id: CartId,
         item: AddCartItem,
     ) -> Result<CartItem> {
         let item_id = Uuid::new_v4();
@@ -1899,10 +1843,8 @@ impl SqliteCartRepository {
         let total =
             CartItem::calculate_total(item.quantity, item.unit_price, Decimal::ZERO, Decimal::ZERO);
 
-        let metadata_json = item
-            .metadata
-            .as_ref()
-            .map(|m| serde_json::to_string(m).unwrap_or_default());
+        let metadata_json =
+            item.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
 
         conn.execute(
             "INSERT INTO cart_items (id, cart_id, product_id, variant_id, sku, name, description,
@@ -1957,7 +1899,7 @@ impl SqliteCartRepository {
         })
     }
 
-    fn resolve_customer_id(&self, cart: &Cart) -> Result<Uuid> {
+    fn resolve_customer_id(&self, cart: &Cart) -> Result<CustomerId> {
         if let Some(customer_id) = cart.customer_id {
             return Ok(customer_id);
         }

@@ -330,8 +330,6 @@ impl Analytics {
         periods_ahead: u32,
         granularity: TimeGranularity,
     ) -> Result<Vec<RevenueForecast>> {
-        self.db
-            .analytics()
-            .get_revenue_forecast(periods_ahead, granularity)
+        self.db.analytics().get_revenue_forecast(periods_ahead, granularity)
     }
 }

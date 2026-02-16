@@ -5,10 +5,10 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    validate_custom_object_type_input, validate_required_text, validate_sku, CommerceError,
-    CreateCustomObject, CreateCustomObjectType, CustomFieldDefinition, CustomObject,
+    CommerceError, CreateCustomObject, CreateCustomObjectType, CustomFieldDefinition, CustomObject,
     CustomObjectFilter, CustomObjectRepository, CustomObjectType, CustomObjectTypeFilter, Result,
-    UpdateCustomObject, UpdateCustomObjectType,
+    UpdateCustomObject, UpdateCustomObjectType, validate_custom_object_type_input,
+    validate_required_text, validate_sku,
 };
 use uuid::Uuid;
 
@@ -209,16 +209,12 @@ impl PgCustomObjectRepository {
         let current_version = existing.version;
         let handle = existing.handle.clone();
 
-        let next_display_name = input
-            .display_name
-            .clone()
-            .unwrap_or_else(|| existing.display_name.clone());
+        let next_display_name =
+            input.display_name.clone().unwrap_or_else(|| existing.display_name.clone());
         validate_required_text("custom_object_type.display_name", &next_display_name, 128)?;
 
-        let next_description = input
-            .description
-            .clone()
-            .unwrap_or_else(|| existing.description.clone());
+        let next_description =
+            input.description.clone().unwrap_or_else(|| existing.description.clone());
 
         let next_fields = if let Some(fields) = input.fields.clone() {
             // Validate field definitions (unique keys, key format).
@@ -266,14 +262,11 @@ impl PgCustomObjectRepository {
 
         let _ = updated;
         // Return fresh state
-        self.get_type_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
-            .map(|mut ty| {
-                // Keep handle stable if DB row was returned without change.
-                ty.handle = handle;
-                ty
-            })
+        self.get_type_async(id).await?.ok_or(CommerceError::NotFound).map(|mut ty| {
+            // Keep handle stable if DB row was returned without change.
+            ty.handle = handle;
+            ty
+        })
     }
 
     pub async fn list_types_async(
@@ -284,12 +277,7 @@ impl PgCustomObjectRepository {
             "SELECT id, handle, display_name, description, fields, created_at, updated_at, version FROM custom_object_types",
         );
 
-        if let Some(search) = filter
-            .search
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(search) = filter.search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             qb.push(" WHERE handle ILIKE ");
             qb.push_bind(format!("%{}%", search));
             qb.push(" OR display_name ILIKE ");
@@ -304,11 +292,8 @@ impl PgCustomObjectRepository {
         qb.push(" OFFSET ");
         qb.push_bind(offset);
 
-        let rows: Vec<TypeRow> = qb
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows: Vec<TypeRow> =
+            qb.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
         rows.into_iter().map(Self::row_to_type).collect()
     }
 
@@ -570,9 +555,7 @@ impl PgCustomObjectRepository {
             });
         }
 
-        self.get_object_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_object_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_objects_async(
@@ -591,11 +574,8 @@ impl PgCustomObjectRepository {
         );
 
         let mut first = true;
-        if let Some(type_handle) = filter
-            .type_handle
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
+        if let Some(type_handle) =
+            filter.type_handle.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty())
         {
             qb.push(if first { " WHERE " } else { " AND " });
             first = false;
@@ -603,12 +583,7 @@ impl PgCustomObjectRepository {
             qb.push_bind(type_handle.to_string());
         }
 
-        if let Some(handle) = filter
-            .handle
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(handle) = filter.handle.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             qb.push(if first { " WHERE " } else { " AND " });
             first = false;
             qb.push("r.handle = ");
@@ -631,11 +606,8 @@ impl PgCustomObjectRepository {
         qb.push(" OFFSET ");
         qb.push_bind(offset);
 
-        let rows: Vec<ObjectRow> = qb
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows: Vec<ObjectRow> =
+            qb.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
         rows.into_iter().map(Self::row_to_object).collect()
     }
 

@@ -3,11 +3,10 @@
 use rust_decimal_macros::dec;
 use stateset_core::{
     AddCartItem, CartAddress, CartRepository, CreateCart, CreateCustomer, CreateOrder,
-    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus,
-    SetCartPayment,
+    CreateOrderItem, CustomerId, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus,
+    ProductId, SetCartPayment,
 };
 use stateset_db::SqliteDatabase;
-use uuid::Uuid;
 
 fn test_address() -> CartAddress {
     CartAddress {
@@ -32,7 +31,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
     let orders = db.orders();
     let customers = db.customers();
 
-    let product_id = Uuid::new_v4();
+    let product_id = ProductId::new();
 
     let customer = customers
         .create(CreateCustomer {
@@ -45,7 +44,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
 
     let cart = carts
         .create(CreateCart {
-            customer_id: Some(customer.id),
+            customer_id: Some(customer.id.into_uuid()),
             customer_email: Some("checkout-reuse@example.com".into()),
             customer_name: Some("Checkout Reuse".into()),
             ..Default::default()
@@ -66,9 +65,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
         )
         .expect("add cart item");
 
-    carts
-        .set_shipping_address(cart.id, test_address())
-        .expect("set shipping address");
+    carts.set_shipping_address(cart.id, test_address()).expect("set shipping address");
 
     carts
         .set_payment(
@@ -88,7 +85,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
         .items
         .iter()
         .map(|item| CreateOrderItem {
-            product_id: item.product_id.expect("product_id set on cart item"),
+            product_id: item.product_id.expect("product_id set on cart item").into(),
             variant_id: item.variant_id,
             sku: item.sku.clone(),
             name: item.name.clone(),
@@ -103,7 +100,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
         .create_from_cart(
             cart.id,
             CreateOrder {
-                customer_id: customer.id,
+                customer_id: customer.id.into(),
                 items: order_items,
                 currency: Some(cart_for_order.currency.clone()),
                 shipping_address: cart_for_order.shipping_address.clone().map(Into::into),
@@ -121,10 +118,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
     assert_eq!(checkout.order_number, order.order_number);
 
     // Checkout confirms and marks the order paid.
-    let updated_order = orders
-        .get(order.id)
-        .expect("get order")
-        .expect("order exists");
+    let updated_order = orders.get(order.id).expect("get order").expect("order exists");
     assert_eq!(updated_order.status, OrderStatus::Confirmed);
     assert_eq!(updated_order.payment_status, PaymentStatus::Paid);
 }

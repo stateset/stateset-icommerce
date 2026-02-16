@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    validate_batch_size, AddLotCertificate, AdjustLot, BatchResult, CertificateType, CommerceError,
-    ConsumeLot, CreateLot, Lot, LotCertificate, LotFilter, LotLocation, LotRepository, LotStatus,
+    AddLotCertificate, AdjustLot, BatchResult, CertificateType, CommerceError, ConsumeLot,
+    CreateLot, Lot, LotCertificate, LotFilter, LotLocation, LotRepository, LotStatus,
     LotTransaction, LotTransactionType, MergeLots, ReserveLot, Result, SplitLot, TraceNode,
-    TraceNodeType, TraceabilityResult, TransferLot, UpdateLot,
+    TraceNodeType, TraceabilityResult, TransferLot, UpdateLot, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -242,9 +242,7 @@ impl PgLotRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let id = Uuid::new_v4();
-        let lot_number = input
-            .lot_number
-            .unwrap_or_else(|| Self::generate_lot_number(&input.sku));
+        let lot_number = input.lot_number.unwrap_or_else(|| Self::generate_lot_number(&input.sku));
         let now = Utc::now();
         let production_date = input.production_date.unwrap_or(now);
         let attributes = input.attributes.unwrap_or_else(|| serde_json::json!({}));
@@ -281,10 +279,7 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        let reference_id = input
-            .work_order_id
-            .or(input.purchase_order_id)
-            .unwrap_or(id);
+        let reference_id = input.work_order_id.or(input.purchase_order_id).unwrap_or(id);
         let reference_type = if input.work_order_id.is_some() {
             "work_order"
         } else if input.purchase_order_id.is_some() {
@@ -429,11 +424,8 @@ impl PgLotRepository {
         builder.push(" LIMIT ").push_bind(limit);
         builder.push(" OFFSET ").push_bind(offset);
 
-        let rows = builder
-            .build_query_as::<LotRow>()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows =
+            builder.build_query_as::<LotRow>().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         let mut lots = Vec::with_capacity(rows.len());
         for row in rows {
@@ -497,10 +489,7 @@ impl PgLotRepository {
                 input.lot_id,
                 LotTransactionType::Adjusted,
                 input.quantity_change,
-                input
-                    .reference_type
-                    .as_deref()
-                    .unwrap_or("manual_adjustment"),
+                input.reference_type.as_deref().unwrap_or("manual_adjustment"),
                 input.reference_id.unwrap_or(input.lot_id),
                 None,
                 input.location_id,
@@ -534,11 +523,8 @@ impl PgLotRepository {
         }
 
         let new_remaining = lot.quantity_remaining - input.quantity;
-        let new_status = if new_remaining <= Decimal::ZERO {
-            LotStatus::Consumed
-        } else {
-            lot.status
-        };
+        let new_status =
+            if new_remaining <= Decimal::ZERO { LotStatus::Consumed } else { lot.status };
 
         sqlx::query(
             "UPDATE lots SET quantity_remaining = $1, status = $2, updated_at = $3 WHERE id = $4",
@@ -592,9 +578,7 @@ impl PgLotRepository {
 
         let reservation_id = Uuid::new_v4();
         let now = Utc::now();
-        let expires_at = input
-            .expires_in_seconds
-            .map(|s| now + chrono::Duration::seconds(s));
+        let expires_at = input.expires_in_seconds.map(|s| now + chrono::Duration::seconds(s));
 
         sqlx::query(
             r#"
@@ -817,9 +801,8 @@ impl PgLotRepository {
         }
 
         let new_lot_id = Uuid::new_v4();
-        let new_lot_number = input
-            .new_lot_number
-            .unwrap_or_else(|| format!("{}-SPLIT", original.lot_number));
+        let new_lot_number =
+            input.new_lot_number.unwrap_or_else(|| format!("{}-SPLIT", original.lot_number));
         let now = Utc::now();
 
         sqlx::query(
@@ -839,12 +822,7 @@ impl PgLotRepository {
         .bind(new_lot_id)
         .bind(&new_lot_number)
         .bind(input.quantity)
-        .bind(
-            input
-                .reason
-                .as_ref()
-                .map(|r| format!("Split from {}: {}", original.lot_number, r)),
-        )
+        .bind(input.reason.as_ref().map(|r| format!("Split from {}: {}", original.lot_number, r)))
         .bind(now)
         .bind(input.lot_id)
         .execute(tx.as_mut())
@@ -890,9 +868,7 @@ impl PgLotRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(new_lot_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(new_lot_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn merge_async(&self, input: MergeLots) -> Result<Lot> {
@@ -1013,9 +989,7 @@ impl PgLotRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(new_lot_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(new_lot_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn quarantine_async(&self, id: Uuid, reason: &str) -> Result<Lot> {
@@ -1271,10 +1245,7 @@ impl PgLotRepository {
     }
 
     pub async fn trace_async(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
-        let lot = self
-            .get_async(lot_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let lot = self.get_async(lot_id).await?.ok_or(CommerceError::NotFound)?;
 
         let mut upstream = Vec::new();
         if let Some(po_id) = lot.purchase_order_id {
@@ -1338,11 +1309,7 @@ impl PgLotRepository {
             })
             .collect();
 
-        Ok(TraceabilityResult {
-            lot,
-            upstream,
-            downstream,
-        })
+        Ok(TraceabilityResult { lot, upstream, downstream })
     }
 
     pub async fn count_async(&self, filter: LotFilter) -> Result<u64> {
@@ -1355,11 +1322,8 @@ impl PgLotRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
@@ -1393,11 +1357,8 @@ impl PgLotRepository {
         }
         builder.push(")");
 
-        let rows = builder
-            .build_query_as::<LotRow>()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows =
+            builder.build_query_as::<LotRow>().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         let mut lots = Vec::with_capacity(rows.len());
         for row in rows {

@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    generate_receipt_number, validate_batch_size, BatchResult, CommerceError, CompletePutAway,
-    CreatePutAway, CreateReceipt, CreateReceiptItem, PutAway, PutAwayFilter, PutAwayStatus,
-    Receipt, ReceiptFilter, ReceiptItem, ReceiptItemStatus, ReceiptStatus, ReceiptType,
-    ReceiveItems, ReceivingRepository, Result, UpdateReceipt,
+    BatchResult, CommerceError, CompletePutAway, CreatePutAway, CreateReceipt, CreateReceiptItem,
+    PutAway, PutAwayFilter, PutAwayStatus, Receipt, ReceiptFilter, ReceiptItem, ReceiptItemStatus,
+    ReceiptStatus, ReceiptType, ReceiveItems, ReceivingRepository, Result, UpdateReceipt,
+    generate_receipt_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -375,9 +375,7 @@ impl PgReceivingRepository {
             builder.push(" AND warehouse_id = ").push_bind(warehouse_id);
         }
         if let Some(receipt_type) = filter.receipt_type {
-            builder
-                .push(" AND receipt_type = ")
-                .push_bind(receipt_type.to_string());
+            builder.push(" AND receipt_type = ").push_bind(receipt_type.to_string());
         }
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
@@ -410,16 +408,11 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_receipt)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_receipt).collect::<Result<Vec<_>>>()
     }
 
     pub async fn delete_receipt_async(&self, id: Uuid) -> Result<()> {
-        let existing = self
-            .get_receipt_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if existing.status != ReceiptStatus::Expected {
             return Err(CommerceError::ValidationError(
@@ -437,10 +430,7 @@ impl PgReceivingRepository {
     }
 
     pub async fn start_receiving_async(&self, id: Uuid) -> Result<Receipt> {
-        let existing = self
-            .get_receipt_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if existing.status != ReceiptStatus::Expected {
             return Err(CommerceError::ValidationError(
@@ -465,10 +455,8 @@ impl PgReceivingRepository {
     pub async fn receive_items_async(&self, input: ReceiveItems) -> Result<Receipt> {
         let now = Utc::now();
 
-        let existing = self
-            .get_receipt_async(input.receipt_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let existing =
+            self.get_receipt_async(input.receipt_id).await?.ok_or(CommerceError::NotFound)?;
 
         if existing.status != ReceiptStatus::InProgress
             && existing.status != ReceiptStatus::Expected
@@ -529,10 +517,7 @@ impl PgReceivingRepository {
     }
 
     pub async fn complete_receiving_async(&self, id: Uuid) -> Result<Receipt> {
-        let existing = self
-            .get_receipt_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if existing.status != ReceiptStatus::InProgress {
             return Err(CommerceError::ValidationError(
@@ -555,15 +540,10 @@ impl PgReceivingRepository {
     }
 
     pub async fn cancel_receipt_async(&self, id: Uuid) -> Result<Receipt> {
-        let existing = self
-            .get_receipt_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let existing = self.get_receipt_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if existing.status == ReceiptStatus::Received {
-            return Err(CommerceError::ValidationError(
-                "Cannot cancel a received receipt".into(),
-            ));
+            return Err(CommerceError::ValidationError("Cannot cancel a received receipt".into()));
         }
 
         sqlx::query("UPDATE receipts SET status = $1 WHERE id = $2")
@@ -587,9 +567,7 @@ impl PgReceivingRepository {
         .await
         .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_receipt_item)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_receipt_item).collect::<Result<Vec<_>>>()
     }
 
     pub async fn count_receipts_async(&self, filter: ReceiptFilter) -> Result<u64> {
@@ -599,9 +577,7 @@ impl PgReceivingRepository {
             builder.push(" AND warehouse_id = ").push_bind(warehouse_id);
         }
         if let Some(receipt_type) = filter.receipt_type {
-            builder
-                .push(" AND receipt_type = ")
-                .push_bind(receipt_type.to_string());
+            builder.push(" AND receipt_type = ").push_bind(receipt_type.to_string());
         }
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
@@ -619,11 +595,8 @@ impl PgReceivingRepository {
             builder.push(" AND created_at <= ").push_bind(to_date);
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
@@ -698,9 +671,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_put_away)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_put_away).collect::<Result<Vec<_>>>()
     }
 
     pub async fn assign_put_away_async(&self, id: Uuid, assigned_to: &str) -> Result<PutAway> {
@@ -735,10 +706,8 @@ impl PgReceivingRepository {
 
     pub async fn complete_put_away_async(&self, input: CompletePutAway) -> Result<PutAway> {
         let now = Utc::now();
-        let existing = self
-            .get_put_away_async(input.put_away_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let existing =
+            self.get_put_away_async(input.put_away_id).await?.ok_or(CommerceError::NotFound)?;
         let to_location = input.actual_location_id.unwrap_or(existing.to_location_id);
 
         sqlx::query(
@@ -805,11 +774,8 @@ impl PgReceivingRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
@@ -904,9 +870,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_receipt)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_receipt).collect::<Result<Vec<_>>>()
     }
 }
 

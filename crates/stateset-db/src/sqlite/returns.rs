@@ -10,8 +10,9 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateReturn, Result, Return, ReturnFilter,
-    ReturnItem, ReturnRepository, ReturnStatus, UpdateReturn,
+    BatchResult, CommerceError, CreateReturn, CustomerId, OrderId, OrderItemId, Result, Return,
+    ReturnFilter, ReturnId, ReturnItem, ReturnRepository, ReturnStatus, UpdateReturn,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -26,20 +27,18 @@ impl SqliteReturnRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_return(row: &rusqlite::Row) -> rusqlite::Result<Return> {
+    fn row_to_return(row: &rusqlite::Row<'_>) -> rusqlite::Result<Return> {
         Ok(Return {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "return", "id")?,
-            order_id: parse_uuid_row(&row.get::<_, String>("order_id")?, "return", "order_id")?,
-            customer_id: parse_uuid_row(
+            id: ReturnId::from(parse_uuid_row(&row.get::<_, String>("id")?, "return", "id")?),
+            order_id: OrderId::from(parse_uuid_row(&row.get::<_, String>("order_id")?, "return", "order_id")?),
+            customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "return",
                 "customer_id",
-            )?,
+            )?),
             status: parse_enum_row(&row.get::<_, String>("status")?, "return", "status")?,
             reason: parse_enum_row(&row.get::<_, String>("reason")?, "return", "reason")?,
             reason_details: row.get("reason_details")?,
@@ -81,16 +80,16 @@ impl SqliteReturnRepository {
             .query_map([return_id.to_string()], |row| {
                 Ok(ReturnItem {
                     id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                    return_id: parse_uuid_row(
+                    return_id: ReturnId::from(parse_uuid_row(
                         &row.get::<_, String>("return_id")?,
                         "return_item",
                         "return_id",
-                    )?,
-                    order_item_id: parse_uuid_row(
+                    )?),
+                    order_item_id: OrderItemId::from(parse_uuid_row(
                         &row.get::<_, String>("order_item_id")?,
                         "return_item",
                         "order_item_id",
-                    )?,
+                    )?),
                     sku: row.get("sku")?,
                     name: row.get("name")?,
                     quantity: row.get("quantity")?,
@@ -118,13 +117,9 @@ impl SqliteReturnRepository {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
-        tx.execute(
-            "DELETE FROM return_items WHERE return_id = ?",
-            [id.to_string()],
-        )
-        .map_err(map_db_error)?;
-        tx.execute("DELETE FROM returns WHERE id = ?", [id.to_string()])
+        tx.execute("DELETE FROM return_items WHERE return_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
+        tx.execute("DELETE FROM returns WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
@@ -150,16 +145,16 @@ impl SqliteReturnRepository {
                     .query_map([ret.id.to_string()], |row| {
                         Ok(ReturnItem {
                             id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                            return_id: parse_uuid_row(
+                            return_id: ReturnId::from(parse_uuid_row(
                                 &row.get::<_, String>("return_id")?,
                                 "return_item",
                                 "return_id",
-                            )?,
-                            order_item_id: parse_uuid_row(
+                            )?),
+                            order_item_id: OrderItemId::from(parse_uuid_row(
                                 &row.get::<_, String>("order_item_id")?,
                                 "return_item",
                                 "order_item_id",
-                            )?,
+                            )?),
                             sku: row.get("sku")?,
                             name: row.get("name")?,
                             quantity: row.get("quantity")?,
@@ -224,7 +219,7 @@ impl ReturnRepository for SqliteReturnRepository {
                 [input.order_id.to_string()],
                 |row| row.get(0),
             )
-            .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
+            .map_err(|_| CommerceError::OrderNotFound(input.order_id.into()))?;
 
         tx.execute(
             "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, idempotency_key, notes, created_at, updated_at)
@@ -295,11 +290,7 @@ impl ReturnRepository for SqliteReturnRepository {
 
         // Build the return with items using the same transaction.
         let mut ret = tx
-            .query_row(
-                "SELECT * FROM returns WHERE id = ?",
-                [id.to_string()],
-                Self::row_to_return,
-            )
+            .query_row("SELECT * FROM returns WHERE id = ?", [id.to_string()], Self::row_to_return)
             .map_err(map_db_error)?;
 
         {
@@ -314,16 +305,16 @@ impl ReturnRepository for SqliteReturnRepository {
                 .query_map([id.to_string()], |row| {
                     Ok(ReturnItem {
                         id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                        return_id: parse_uuid_row(
+                        return_id: ReturnId::from(parse_uuid_row(
                             &row.get::<_, String>("return_id")?,
                             "return_item",
                             "return_id",
-                        )?,
-                        order_item_id: parse_uuid_row(
+                        )?),
+                        order_item_id: OrderItemId::from(parse_uuid_row(
                             &row.get::<_, String>("order_item_id")?,
                             "return_item",
                             "order_item_id",
-                        )?,
+                        )?),
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
@@ -349,7 +340,7 @@ impl ReturnRepository for SqliteReturnRepository {
         Ok(ret)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Return>> {
+    fn get(&self, id: ReturnId) -> Result<Option<Return>> {
         let conn = self.conn()?;
         let result = conn.query_row(
             "SELECT * FROM returns WHERE id = ?",
@@ -371,16 +362,16 @@ impl ReturnRepository for SqliteReturnRepository {
                     .query_map([id.to_string()], |row| {
                         Ok(ReturnItem {
                             id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                            return_id: parse_uuid_row(
+                            return_id: ReturnId::from(parse_uuid_row(
                                 &row.get::<_, String>("return_id")?,
                                 "return_item",
                                 "return_id",
-                            )?,
-                            order_item_id: parse_uuid_row(
+                            )?),
+                            order_item_id: OrderItemId::from(parse_uuid_row(
                                 &row.get::<_, String>("order_item_id")?,
                                 "return_item",
                                 "order_item_id",
-                            )?,
+                            )?),
                             sku: row.get("sku")?,
                             name: row.get("name")?,
                             quantity: row.get("quantity")?,
@@ -407,7 +398,7 @@ impl ReturnRepository for SqliteReturnRepository {
         }
     }
 
-    fn update(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
+    fn update(&self, id: ReturnId, input: UpdateReturn) -> Result<Return> {
         let conn = self.conn()?;
         let now = Utc::now();
 
@@ -440,8 +431,7 @@ impl ReturnRepository for SqliteReturnRepository {
         let sql = format!("UPDATE returns SET {} WHERE id = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Inline the get logic to avoid connection pool deadlock
         let result = conn.query_row(
@@ -450,6 +440,7 @@ impl ReturnRepository for SqliteReturnRepository {
             Self::row_to_return,
         );
 
+        let raw_id: Uuid = id.into();
         match result {
             Ok(mut ret) => {
                 // Inline load_return_items to use same connection
@@ -464,16 +455,16 @@ impl ReturnRepository for SqliteReturnRepository {
                     .query_map([id.to_string()], |row| {
                         Ok(ReturnItem {
                             id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                            return_id: parse_uuid_row(
+                            return_id: ReturnId::from(parse_uuid_row(
                                 &row.get::<_, String>("return_id")?,
                                 "return_item",
                                 "return_id",
-                            )?,
-                            order_item_id: parse_uuid_row(
+                            )?),
+                            order_item_id: OrderItemId::from(parse_uuid_row(
                                 &row.get::<_, String>("order_item_id")?,
                                 "return_item",
                                 "order_item_id",
-                            )?,
+                            )?),
                             sku: row.get("sku")?,
                             name: row.get("name")?,
                             quantity: row.get("quantity")?,
@@ -495,7 +486,7 @@ impl ReturnRepository for SqliteReturnRepository {
 
                 Ok(ret)
             }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Err(CommerceError::ReturnNotFound(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Err(CommerceError::ReturnNotFound(raw_id)),
             Err(e) => Err(map_db_error(e)),
         }
     }
@@ -513,29 +504,9 @@ impl ReturnRepository for SqliteReturnRepository {
             sql.push_str(" AND customer_id = ?");
             params.push(Box::new(customer_id.to_string()));
         }
-        if let Some(order_id) = &filter.order_id {
-            sql.push_str(" AND order_id = ?");
-            params.push(Box::new(order_id.to_string()));
-        }
-        if let Some(customer_id) = &filter.customer_id {
-            sql.push_str(" AND customer_id = ?");
-            params.push(Box::new(customer_id.to_string()));
-        }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
-        }
-        if let Some(reason) = &filter.reason {
-            sql.push_str(" AND reason = ?");
-            params.push(Box::new(reason.to_string()));
-        }
-        if let Some(from) = &filter.from_date {
-            sql.push_str(" AND created_at >= ?");
-            params.push(Box::new(from.to_rfc3339()));
-        }
-        if let Some(to) = &filter.to_date {
-            sql.push_str(" AND created_at <= ?");
-            params.push(Box::new(to.to_rfc3339()));
         }
         if let Some(reason) = &filter.reason {
             sql.push_str(" AND reason = ?");
@@ -582,16 +553,16 @@ impl ReturnRepository for SqliteReturnRepository {
                 .query_map([ret.id.to_string()], |row| {
                     Ok(ReturnItem {
                         id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                        return_id: parse_uuid_row(
+                        return_id: ReturnId::from(parse_uuid_row(
                             &row.get::<_, String>("return_id")?,
                             "return_item",
                             "return_id",
-                        )?,
-                        order_item_id: parse_uuid_row(
+                        )?),
+                        order_item_id: OrderItemId::from(parse_uuid_row(
                             &row.get::<_, String>("order_item_id")?,
                             "return_item",
                             "order_item_id",
-                        )?,
+                        )?),
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
@@ -617,31 +588,21 @@ impl ReturnRepository for SqliteReturnRepository {
         Ok(result)
     }
 
-    fn approve(&self, id: Uuid) -> Result<Return> {
-        let ret = self.get(id)?.ok_or(CommerceError::ReturnNotFound(id))?;
+    fn approve(&self, id: ReturnId) -> Result<Return> {
+        let ret = self.get(id)?.ok_or(CommerceError::ReturnNotFound(id.into()))?;
 
         if ret.status != ReturnStatus::Requested {
-            return Err(CommerceError::ReturnCannotBeApproved(
-                ret.status.to_string(),
-            ));
+            return Err(CommerceError::ReturnCannotBeApproved(ret.status.to_string()));
         }
 
-        self.update(
-            id,
-            UpdateReturn {
-                status: Some(ReturnStatus::Approved),
-                ..Default::default()
-            },
-        )
+        self.update(id, UpdateReturn { status: Some(ReturnStatus::Approved), ..Default::default() })
     }
 
-    fn reject(&self, id: Uuid, reason: &str) -> Result<Return> {
-        let ret = self.get(id)?.ok_or(CommerceError::ReturnNotFound(id))?;
+    fn reject(&self, id: ReturnId, reason: &str) -> Result<Return> {
+        let ret = self.get(id)?.ok_or(CommerceError::ReturnNotFound(id.into()))?;
 
         if ret.status != ReturnStatus::Requested {
-            return Err(CommerceError::ReturnCannotBeApproved(
-                ret.status.to_string(),
-            ));
+            return Err(CommerceError::ReturnCannotBeApproved(ret.status.to_string()));
         }
 
         self.update(
@@ -654,8 +615,8 @@ impl ReturnRepository for SqliteReturnRepository {
         )
     }
 
-    fn complete(&self, id: Uuid) -> Result<Return> {
-        let ret = self.get(id)?.ok_or(CommerceError::ReturnNotFound(id))?;
+    fn complete(&self, id: ReturnId) -> Result<Return> {
+        let ret = self.get(id)?.ok_or(CommerceError::ReturnNotFound(id.into()))?;
 
         if !ret.can_complete() {
             return Err(CommerceError::NotPermitted(format!(
@@ -666,20 +627,14 @@ impl ReturnRepository for SqliteReturnRepository {
 
         self.update(
             id,
-            UpdateReturn {
-                status: Some(ReturnStatus::Completed),
-                ..Default::default()
-            },
+            UpdateReturn { status: Some(ReturnStatus::Completed), ..Default::default() },
         )
     }
 
-    fn cancel(&self, id: Uuid) -> Result<Return> {
+    fn cancel(&self, id: ReturnId) -> Result<Return> {
         self.update(
             id,
-            UpdateReturn {
-                status: Some(ReturnStatus::Cancelled),
-                ..Default::default()
-            },
+            UpdateReturn { status: Some(ReturnStatus::Cancelled), ..Default::default() },
         )
     }
 
@@ -694,9 +649,8 @@ impl ReturnRepository for SqliteReturnRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
         Ok(count as u64)
     }
@@ -738,7 +692,7 @@ impl ReturnRepository for SqliteReturnRepository {
                     [input.order_id.to_string()],
                     |row| row.get(0),
                 )
-                .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
+                .map_err(|_| CommerceError::OrderNotFound(input.order_id.into()))?;
 
             tx.execute(
                 "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, idempotency_key, notes, created_at, updated_at)
@@ -792,7 +746,7 @@ impl ReturnRepository for SqliteReturnRepository {
 
                 items.push(ReturnItem {
                     id: item_id,
-                    return_id: id,
+                    return_id: ReturnId::from(id),
                     order_item_id: item.order_item_id,
                     sku,
                     name,
@@ -820,9 +774,9 @@ impl ReturnRepository for SqliteReturnRepository {
             .map_err(map_db_error)?;
 
             results.push(Return {
-                id,
+                id: ReturnId::from(id),
                 order_id: input.order_id,
-                customer_id: parse_uuid(&customer_id, "return", "customer_id")?,
+                customer_id: CustomerId::from(parse_uuid(&customer_id, "return", "customer_id")?),
                 status: ReturnStatus::Requested,
                 reason: input.reason,
                 reason_details: input.reason_details,
@@ -842,7 +796,7 @@ impl ReturnRepository for SqliteReturnRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<BatchResult<Return>> {
+    fn update_batch(&self, updates: Vec<(ReturnId, UpdateReturn)>) -> Result<BatchResult<Return>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -856,7 +810,7 @@ impl ReturnRepository for SqliteReturnRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<Vec<Return>> {
+    fn update_batch_atomic(&self, updates: Vec<(ReturnId, UpdateReturn)>) -> Result<Vec<Return>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -895,18 +849,13 @@ impl ReturnRepository for SqliteReturnRepository {
 
             params.push(Box::new(id.to_string()));
 
-            let sql = format!(
-                "UPDATE returns SET {} WHERE id = ?",
-                update_parts.join(", ")
-            );
+            let sql = format!("UPDATE returns SET {} WHERE id = ?", update_parts.join(", "));
             let params_refs: Vec<&dyn rusqlite::ToSql> =
                 params.iter().map(|p| p.as_ref()).collect();
 
-            let rows_affected = tx
-                .execute(&sql, params_refs.as_slice())
-                .map_err(map_db_error)?;
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
             if rows_affected == 0 {
-                return Err(CommerceError::ReturnNotFound(id));
+                return Err(CommerceError::ReturnNotFound(id.into()));
             }
 
             // Fetch the updated return
@@ -937,16 +886,16 @@ impl ReturnRepository for SqliteReturnRepository {
                 .query_map([ret.id.to_string()], |row| {
                     Ok(ReturnItem {
                         id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                        return_id: parse_uuid_row(
+                        return_id: ReturnId::from(parse_uuid_row(
                             &row.get::<_, String>("return_id")?,
                             "return_item",
                             "return_id",
-                        )?,
-                        order_item_id: parse_uuid_row(
+                        )?),
+                        order_item_id: OrderItemId::from(parse_uuid_row(
                             &row.get::<_, String>("order_item_id")?,
                             "return_item",
                             "order_item_id",
-                        )?,
+                        )?),
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
@@ -970,13 +919,14 @@ impl ReturnRepository for SqliteReturnRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<ReturnId>) -> Result<BatchResult<Uuid>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
         for (index, id) in ids.into_iter().enumerate() {
-            match self.delete(id) {
-                Ok(()) => result.record_success(id),
+            let raw_id: Uuid = id.into();
+            match self.delete(raw_id) {
+                Ok(()) => result.record_success(raw_id),
                 Err(e) => result.record_failure(index, Some(id.to_string()), &e),
             }
         }
@@ -984,7 +934,7 @@ impl ReturnRepository for SqliteReturnRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<ReturnId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -993,38 +943,35 @@ impl ReturnRepository for SqliteReturnRepository {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
         let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         // Delete return items first
-        let sql = format!(
-            "DELETE FROM return_items WHERE return_id IN ({})",
-            placeholders
-        );
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let sql = format!("DELETE FROM return_items WHERE return_id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete returns
         let sql = format!("DELETE FROM returns WHERE id IN ({})", placeholders);
-        tx.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Return>> {
+    fn get_batch(&self, ids: Vec<ReturnId>) -> Result<Vec<Return>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
         }
 
         let conn = self.conn()?;
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM returns WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -1048,16 +995,16 @@ impl ReturnRepository for SqliteReturnRepository {
                 .query_map([ret.id.to_string()], |row| {
                     Ok(ReturnItem {
                         id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
-                        return_id: parse_uuid_row(
+                        return_id: ReturnId::from(parse_uuid_row(
                             &row.get::<_, String>("return_id")?,
                             "return_item",
                             "return_id",
-                        )?,
-                        order_item_id: parse_uuid_row(
+                        )?),
+                        order_item_id: OrderItemId::from(parse_uuid_row(
                             &row.get::<_, String>("order_item_id")?,
                             "return_item",
                             "order_item_id",
-                        )?,
+                        )?),
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,

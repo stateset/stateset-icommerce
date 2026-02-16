@@ -5,11 +5,15 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{CustomerId, OrderId, PaymentId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Payment transaction status in the processing lifecycle
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum PaymentTransactionStatus {
     /// Payment is pending processing
     #[default]
@@ -23,6 +27,7 @@ pub enum PaymentTransactionStatus {
     /// Payment failed
     Failed,
     /// Payment was cancelled
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     /// Payment was refunded (fully)
     Refunded,
@@ -32,44 +37,11 @@ pub enum PaymentTransactionStatus {
     Disputed,
 }
 
-impl std::fmt::Display for PaymentTransactionStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Processing => write!(f, "processing"),
-            Self::RequiresAction => write!(f, "requires_action"),
-            Self::Completed => write!(f, "completed"),
-            Self::Failed => write!(f, "failed"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::Refunded => write!(f, "refunded"),
-            Self::PartiallyRefunded => write!(f, "partially_refunded"),
-            Self::Disputed => write!(f, "disputed"),
-        }
-    }
-}
-
-impl std::str::FromStr for PaymentTransactionStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "processing" => Ok(Self::Processing),
-            "requires_action" => Ok(Self::RequiresAction),
-            "completed" => Ok(Self::Completed),
-            "failed" => Ok(Self::Failed),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            "refunded" => Ok(Self::Refunded),
-            "partially_refunded" => Ok(Self::PartiallyRefunded),
-            "disputed" => Ok(Self::Disputed),
-            _ => Err(format!("Unknown payment transaction status: {}", s)),
-        }
-    }
-}
-
 /// Payment method type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum PaymentMethodType {
     /// Credit card
     #[default]
@@ -77,22 +49,27 @@ pub enum PaymentMethodType {
     /// Debit card
     DebitCard,
     /// Bank transfer / ACH
+    #[strum(serialize = "bank_transfer", serialize = "ach")]
     BankTransfer,
     /// PayPal
+    #[strum(serialize = "paypal")]
     PayPal,
     /// Apple Pay
     ApplePay,
     /// Google Pay
     GooglePay,
     /// Cryptocurrency (native tokens)
+    #[strum(serialize = "crypto", serialize = "cryptocurrency")]
     Crypto,
     /// Stablecoin (USDC, USDT, ssUSD)
+    #[strum(serialize = "stablecoin", serialize = "usdc", serialize = "usdt", serialize = "ssusd")]
     Stablecoin,
     /// Store credit
     StoreCredit,
     /// Gift card
     GiftCard,
     /// Cash on delivery
+    #[strum(serialize = "cash_on_delivery", serialize = "cod")]
     CashOnDelivery,
     /// Invoice / Net terms
     Invoice,
@@ -101,203 +78,89 @@ pub enum PaymentMethodType {
 }
 
 /// Blockchain network for crypto/stablecoin payments
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum BlockchainNetwork {
     /// Solana mainnet
     #[default]
+    #[strum(serialize = "solana", serialize = "solana_mainnet", serialize = "mainnet-beta")]
     Solana,
     /// Solana devnet (testing)
+    #[strum(serialize = "solana_devnet", serialize = "devnet")]
     SolanaDevnet,
     /// SET Chain L2 (StateSet native)
+    #[strum(serialize = "set_chain", serialize = "set", serialize = "ssc")]
     SetChain,
     /// SET Chain testnet
+    #[strum(serialize = "set_chain_testnet", serialize = "set_testnet")]
     SetChainTestnet,
     /// Ethereum mainnet
+    #[strum(serialize = "ethereum", serialize = "eth")]
     Ethereum,
     /// Base L2 (Coinbase)
     Base,
     /// Arbitrum L2
+    #[strum(serialize = "arbitrum", serialize = "arb")]
     Arbitrum,
     /// NEAR Protocol
     Near,
     /// Cosmos Hub
+    #[strum(serialize = "cosmos", serialize = "atom")]
     Cosmos,
 }
 
-impl std::fmt::Display for BlockchainNetwork {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Solana => write!(f, "solana"),
-            Self::SolanaDevnet => write!(f, "solana_devnet"),
-            Self::SetChain => write!(f, "set_chain"),
-            Self::SetChainTestnet => write!(f, "set_chain_testnet"),
-            Self::Ethereum => write!(f, "ethereum"),
-            Self::Base => write!(f, "base"),
-            Self::Arbitrum => write!(f, "arbitrum"),
-            Self::Near => write!(f, "near"),
-            Self::Cosmos => write!(f, "cosmos"),
-        }
-    }
-}
-
-impl std::str::FromStr for BlockchainNetwork {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "solana" | "solana_mainnet" | "mainnet-beta" => Ok(Self::Solana),
-            "solana_devnet" | "devnet" => Ok(Self::SolanaDevnet),
-            "set_chain" | "set" | "ssc" => Ok(Self::SetChain),
-            "set_chain_testnet" | "set_testnet" => Ok(Self::SetChainTestnet),
-            "ethereum" | "eth" => Ok(Self::Ethereum),
-            "base" => Ok(Self::Base),
-            "arbitrum" | "arb" => Ok(Self::Arbitrum),
-            "near" => Ok(Self::Near),
-            "cosmos" | "atom" => Ok(Self::Cosmos),
-            _ => Err(format!("Unknown blockchain network: {}", s)),
-        }
-    }
-}
-
 /// Stablecoin token type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum StablecoinType {
     /// USD Coin
     #[default]
+    #[strum(serialize = "USDC")]
     Usdc,
     /// Tether
+    #[strum(serialize = "USDT", serialize = "TETHER")]
     Usdt,
     /// StateSet USD (native yield-bearing stablecoin)
+    #[strum(serialize = "ssUSD", serialize = "SSUSD", serialize = "SS_USD")]
     SsUsd,
     /// Wrapped StateSet USD (ERC4626)
+    #[strum(serialize = "wssUSD", serialize = "WSSUSD", serialize = "WSS_USD")]
     WssUsd,
     /// DAI
+    #[strum(serialize = "DAI")]
     Dai,
 }
 
-impl std::fmt::Display for StablecoinType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Usdc => write!(f, "USDC"),
-            Self::Usdt => write!(f, "USDT"),
-            Self::SsUsd => write!(f, "ssUSD"),
-            Self::WssUsd => write!(f, "wssUSD"),
-            Self::Dai => write!(f, "DAI"),
-        }
-    }
-}
-
-impl std::str::FromStr for StablecoinType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "USDC" => Ok(Self::Usdc),
-            "USDT" | "TETHER" => Ok(Self::Usdt),
-            "SSUSD" | "SS_USD" => Ok(Self::SsUsd),
-            "WSSUSD" | "WSS_USD" => Ok(Self::WssUsd),
-            "DAI" => Ok(Self::Dai),
-            _ => Err(format!("Unknown stablecoin: {}", s)),
-        }
-    }
-}
-
-impl std::fmt::Display for PaymentMethodType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CreditCard => write!(f, "credit_card"),
-            Self::DebitCard => write!(f, "debit_card"),
-            Self::BankTransfer => write!(f, "bank_transfer"),
-            Self::PayPal => write!(f, "paypal"),
-            Self::ApplePay => write!(f, "apple_pay"),
-            Self::GooglePay => write!(f, "google_pay"),
-            Self::Crypto => write!(f, "crypto"),
-            Self::Stablecoin => write!(f, "stablecoin"),
-            Self::StoreCredit => write!(f, "store_credit"),
-            Self::GiftCard => write!(f, "gift_card"),
-            Self::CashOnDelivery => write!(f, "cash_on_delivery"),
-            Self::Invoice => write!(f, "invoice"),
-            Self::Other => write!(f, "other"),
-        }
-    }
-}
-
-impl std::str::FromStr for PaymentMethodType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "credit_card" => Ok(Self::CreditCard),
-            "debit_card" => Ok(Self::DebitCard),
-            "bank_transfer" | "ach" => Ok(Self::BankTransfer),
-            "paypal" => Ok(Self::PayPal),
-            "apple_pay" => Ok(Self::ApplePay),
-            "google_pay" => Ok(Self::GooglePay),
-            "crypto" | "cryptocurrency" => Ok(Self::Crypto),
-            "stablecoin" | "usdc" | "usdt" | "ssusd" => Ok(Self::Stablecoin),
-            "store_credit" => Ok(Self::StoreCredit),
-            "gift_card" => Ok(Self::GiftCard),
-            "cash_on_delivery" | "cod" => Ok(Self::CashOnDelivery),
-            "invoice" => Ok(Self::Invoice),
-            "other" => Ok(Self::Other),
-            _ => Err(format!("Unknown payment method type: {}", s)),
-        }
-    }
-}
 
 /// Card brand for credit/debit cards
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum CardBrand {
     #[default]
     Unknown,
     Visa,
     Mastercard,
+    #[strum(serialize = "amex", serialize = "american_express")]
     Amex,
     Discover,
+    #[strum(serialize = "diners_club", serialize = "diners")]
     DinersClub,
     Jcb,
+    #[strum(serialize = "union_pay", serialize = "unionpay")]
     UnionPay,
 }
 
-impl std::fmt::Display for CardBrand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unknown => write!(f, "unknown"),
-            Self::Visa => write!(f, "visa"),
-            Self::Mastercard => write!(f, "mastercard"),
-            Self::Amex => write!(f, "amex"),
-            Self::Discover => write!(f, "discover"),
-            Self::DinersClub => write!(f, "diners_club"),
-            Self::Jcb => write!(f, "jcb"),
-            Self::UnionPay => write!(f, "unionpay"),
-        }
-    }
-}
-
-impl std::str::FromStr for CardBrand {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "unknown" => Ok(Self::Unknown),
-            "visa" => Ok(Self::Visa),
-            "mastercard" => Ok(Self::Mastercard),
-            "amex" | "american_express" => Ok(Self::Amex),
-            "discover" => Ok(Self::Discover),
-            "diners_club" | "diners" => Ok(Self::DinersClub),
-            "jcb" => Ok(Self::Jcb),
-            "unionpay" | "union_pay" => Ok(Self::UnionPay),
-            _ => Err(format!("Unknown card brand: {}", s)),
-        }
-    }
-}
-
 /// Refund status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[non_exhaustive]
 pub enum RefundStatus {
     /// Refund is pending
     #[default]
@@ -309,49 +172,23 @@ pub enum RefundStatus {
     /// Refund failed
     Failed,
     /// Refund was cancelled
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
-}
-
-impl std::fmt::Display for RefundStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Processing => write!(f, "processing"),
-            Self::Completed => write!(f, "completed"),
-            Self::Failed => write!(f, "failed"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
-impl std::str::FromStr for RefundStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "processing" => Ok(Self::Processing),
-            "completed" => Ok(Self::Completed),
-            "failed" => Ok(Self::Failed),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown refund status: {}", s)),
-        }
-    }
 }
 
 /// A payment transaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Payment {
     /// Unique payment ID
-    pub id: Uuid,
+    pub id: PaymentId,
     /// Human-readable payment number
     pub payment_number: String,
     /// Associated order ID (optional - can be standalone payment)
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Associated invoice ID (optional)
     pub invoice_id: Option<Uuid>,
     /// Customer ID
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     /// Payment status
     pub status: PaymentTransactionStatus,
     /// Payment method used
@@ -426,11 +263,11 @@ pub struct Payment {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreatePayment {
     /// Associated order ID
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Associated invoice ID
     pub invoice_id: Option<Uuid>,
     /// Customer ID
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     /// Payment method
     pub payment_method: PaymentMethodType,
     /// Payment amount
@@ -507,11 +344,11 @@ pub struct UpdatePayment {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PaymentFilter {
     /// Filter by order ID
-    pub order_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
     /// Filter by invoice ID
     pub invoice_id: Option<Uuid>,
     /// Filter by customer ID
-    pub customer_id: Option<Uuid>,
+    pub customer_id: Option<CustomerId>,
     /// Filter by status
     pub status: Option<PaymentTransactionStatus>,
     /// Filter by payment method
@@ -542,7 +379,7 @@ pub struct Refund {
     /// Human-readable refund number
     pub refund_number: String,
     /// Associated payment ID
-    pub payment_id: Uuid,
+    pub payment_id: PaymentId,
     /// Refund status
     pub status: RefundStatus,
     /// Refund amount
@@ -571,7 +408,7 @@ pub struct Refund {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateRefund {
     /// Payment to refund
-    pub payment_id: Uuid,
+    pub payment_id: PaymentId,
     /// Refund amount (defaults to full payment amount)
     pub amount: Option<Decimal>,
     /// Reason for refund
@@ -590,7 +427,7 @@ pub struct PaymentMethod {
     /// Unique ID
     pub id: Uuid,
     /// Customer ID
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     /// Payment method type
     pub method_type: PaymentMethodType,
     /// Whether this is the default payment method
@@ -633,7 +470,7 @@ pub struct PaymentMethod {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreatePaymentMethod {
     /// Customer ID
-    pub customer_id: Uuid,
+    pub customer_id: CustomerId,
     /// Payment method type
     pub method_type: PaymentMethodType,
     /// Set as default

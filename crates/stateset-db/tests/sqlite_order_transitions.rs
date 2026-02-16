@@ -4,11 +4,10 @@ use rusqlite::params;
 use rust_decimal_macros::dec;
 use stateset_core::{
     CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
-    CustomerRepository, InventoryRepository, OrderRepository, OrderStatus, PaymentStatus,
-    ReservationStatus, UpdateOrder,
+    CustomerId, CustomerRepository, InventoryRepository, OrderId, OrderRepository, OrderStatus,
+    PaymentStatus, ProductId, ReservationStatus, UpdateOrder,
 };
 use stateset_db::SqliteDatabase;
-use uuid::Uuid;
 
 fn create_customer(db: &SqliteDatabase, email: &str) -> stateset_core::Customer {
     db.customers()
@@ -21,12 +20,12 @@ fn create_customer(db: &SqliteDatabase, email: &str) -> stateset_core::Customer 
         .expect("create customer")
 }
 
-fn create_order(db: &SqliteDatabase, customer_id: Uuid) -> stateset_core::Order {
+fn create_order(db: &SqliteDatabase, customer_id: CustomerId) -> stateset_core::Order {
     db.orders()
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: ProductId::new(),
                 sku: "SKU-TRANSITION".to_string(),
                 name: "Widget".to_string(),
                 quantity: 1,
@@ -38,15 +37,9 @@ fn create_order(db: &SqliteDatabase, customer_id: Uuid) -> stateset_core::Order 
         .expect("create order")
 }
 
-fn set_status(db: &SqliteDatabase, order_id: Uuid, status: OrderStatus) {
+fn set_status(db: &SqliteDatabase, order_id: OrderId, status: OrderStatus) {
     db.orders()
-        .update(
-            order_id,
-            UpdateOrder {
-                status: Some(status),
-                ..Default::default()
-            },
-        )
+        .update(order_id, UpdateOrder { status: Some(status), ..Default::default() })
         .expect("update status");
 }
 
@@ -54,27 +47,21 @@ fn set_status(db: &SqliteDatabase, order_id: Uuid, status: OrderStatus) {
 fn sqlite_rejects_invalid_status_transition() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     let customer = create_customer(&db, "transition@example.com");
-    let order = create_order(&db, customer.id);
+    let order = create_order(&db, customer.id.into());
 
     let result = db.orders().update(
         order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Delivered),
-            ..Default::default()
-        },
+        UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
     );
 
-    assert!(matches!(
-        result,
-        Err(CommerceError::InvalidOrderStatusTransition { .. })
-    ));
+    assert!(matches!(result, Err(CommerceError::InvalidOrderStatusTransition { .. })));
 }
 
 #[test]
 fn sqlite_rejects_cancel_after_shipped() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     let customer = create_customer(&db, "cancel@example.com");
-    let order = create_order(&db, customer.id);
+    let order = create_order(&db, customer.id.into());
 
     set_status(&db, order.id, OrderStatus::Confirmed);
     set_status(&db, order.id, OrderStatus::Processing);
@@ -82,23 +69,17 @@ fn sqlite_rejects_cancel_after_shipped() {
 
     let result = db.orders().update(
         order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Cancelled),
-            ..Default::default()
-        },
+        UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
     );
 
-    assert!(matches!(
-        result,
-        Err(CommerceError::OrderCannotBeCancelled(_))
-    ));
+    assert!(matches!(result, Err(CommerceError::OrderCannotBeCancelled(_))));
 }
 
 #[test]
 fn sqlite_requires_payment_for_refund() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     let customer = create_customer(&db, "refund@example.com");
-    let order = create_order(&db, customer.id);
+    let order = create_order(&db, customer.id.into());
 
     set_status(&db, order.id, OrderStatus::Confirmed);
     set_status(&db, order.id, OrderStatus::Processing);
@@ -107,23 +88,17 @@ fn sqlite_requires_payment_for_refund() {
 
     let result = db.orders().update(
         order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Refunded),
-            ..Default::default()
-        },
+        UpdateOrder { status: Some(OrderStatus::Refunded), ..Default::default() },
     );
 
-    assert!(matches!(
-        result,
-        Err(CommerceError::OrderCannotBeRefunded(_))
-    ));
+    assert!(matches!(result, Err(CommerceError::OrderCannotBeRefunded(_))));
 }
 
 #[test]
 fn sqlite_allows_refund_with_payment_status() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     let customer = create_customer(&db, "refund-paid@example.com");
-    let order = create_order(&db, customer.id);
+    let order = create_order(&db, customer.id.into());
 
     set_status(&db, order.id, OrderStatus::Confirmed);
     set_status(&db, order.id, OrderStatus::Processing);
@@ -162,9 +137,9 @@ fn sqlite_ship_fails_when_reservation_expired() {
     let order = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: ProductId::new(),
                 sku: "EXP-SKU-001".to_string(),
                 name: "Expirable Item".to_string(),
                 quantity: 1,
@@ -193,21 +168,13 @@ fn sqlite_ship_fails_when_reservation_expired() {
     )
     .expect("expire reservation");
 
-    let result = db.orders().update(
-        order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Shipped),
-            ..Default::default()
-        },
-    );
+    let result = db
+        .orders()
+        .update(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() });
 
     assert!(matches!(result, Err(CommerceError::ReservationExpired(_))));
 
-    let refreshed = db
-        .orders()
-        .get(order.id)
-        .expect("get order")
-        .expect("order exists");
+    let refreshed = db.orders().get(order.id).expect("get order").expect("order exists");
     assert_eq!(refreshed.status, OrderStatus::Processing);
 
     let status: String = conn
@@ -245,10 +212,10 @@ fn sqlite_ship_does_not_confirm_other_reservations_when_one_expired() {
     let order = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: ProductId::new(),
                     sku: "EXP-SKU-A".to_string(),
                     name: "Expirable Item A".to_string(),
                     quantity: 1,
@@ -256,7 +223,7 @@ fn sqlite_ship_does_not_confirm_other_reservations_when_one_expired() {
                     ..Default::default()
                 },
                 CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: ProductId::new(),
                     sku: "EXP-SKU-B".to_string(),
                     name: "Expirable Item B".to_string(),
                     quantity: 1,
@@ -287,13 +254,9 @@ fn sqlite_ship_does_not_confirm_other_reservations_when_one_expired() {
     )
     .expect("expire reservation");
 
-    let result = db.orders().update(
-        order.id,
-        UpdateOrder {
-            status: Some(OrderStatus::Shipped),
-            ..Default::default()
-        },
-    );
+    let result = db
+        .orders()
+        .update(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() });
 
     assert!(matches!(
         result,
@@ -310,12 +273,6 @@ fn sqlite_ship_does_not_confirm_other_reservations_when_one_expired() {
         .map(|r| (r.id, r.status))
         .collect::<std::collections::HashMap<_, _>>();
 
-    assert_eq!(
-        status_by_id.get(&expire_id),
-        Some(&ReservationStatus::Expired)
-    );
-    assert_eq!(
-        status_by_id.get(&keep_id),
-        Some(&ReservationStatus::Pending)
-    );
+    assert_eq!(status_by_id.get(&expire_id), Some(&ReservationStatus::Expired));
+    assert_eq!(status_by_id.get(&keep_id), Some(&ReservationStatus::Pending));
 }

@@ -25,11 +25,7 @@ fn main() -> Result<(), CommerceError> {
         accepts_marketing: Some(true),
         ..Default::default()
     })?;
-    println!(
-        "   Created customer: {} ({})",
-        customer.full_name(),
-        customer.email
-    );
+    println!("   Created customer: {} ({})", customer.full_name(), customer.email);
 
     // 2. Create products
     println!("\n2. Creating products...");
@@ -45,10 +41,7 @@ fn main() -> Result<(), CommerceError> {
         }]),
         ..Default::default()
     })?;
-    println!(
-        "   Created product: {} (slug: {})",
-        widget.name, widget.slug
-    );
+    println!("   Created product: {} (slug: {})", widget.name, widget.slug);
 
     let gadget = commerce.products().create(CreateProduct {
         name: "Super Gadget".into(),
@@ -60,10 +53,7 @@ fn main() -> Result<(), CommerceError> {
         }]),
         ..Default::default()
     })?;
-    println!(
-        "   Created product: {} (slug: {})",
-        gadget.name, gadget.slug
-    );
+    println!("   Created product: {} (slug: {})", gadget.name, gadget.slug);
 
     // 3. Create inventory
     println!("\n3. Setting up inventory...");
@@ -87,28 +77,19 @@ fn main() -> Result<(), CommerceError> {
 
     // Check stock
     if let Some(stock) = commerce.inventory().get_stock("WIDGET-001")? {
-        println!(
-            "   Stock check WIDGET-001: {} available",
-            stock.total_available
-        );
+        println!("   Stock check WIDGET-001: {} available", stock.total_available);
     }
 
     // 4. Create an order
     println!("\n4. Creating order...");
-    let widget_variant = commerce
-        .products()
-        .get_variant_by_sku("WIDGET-001")?
-        .unwrap();
-    let gadget_variant = commerce
-        .products()
-        .get_variant_by_sku("GADGET-001")?
-        .unwrap();
+    let widget_variant = commerce.products().get_variant_by_sku("WIDGET-001")?.unwrap();
+    let gadget_variant = commerce.products().get_variant_by_sku("GADGET-001")?.unwrap();
 
     let order = commerce.orders().create(CreateOrder {
-        customer_id: customer.id,
+        customer_id: customer.id.into(),
         items: vec![
             CreateOrderItem {
-                product_id: widget.id,
+                product_id: widget.id.into(),
                 variant_id: Some(widget_variant.id),
                 sku: "WIDGET-001".into(),
                 name: "Premium Widget".into(),
@@ -117,7 +98,7 @@ fn main() -> Result<(), CommerceError> {
                 ..Default::default()
             },
             CreateOrderItem {
-                product_id: gadget.id,
+                product_id: gadget.id.into(),
                 variant_id: Some(gadget_variant.id),
                 sku: "GADGET-001".into(),
                 name: "Super Gadget".into(),
@@ -128,10 +109,7 @@ fn main() -> Result<(), CommerceError> {
         ],
         ..Default::default()
     })?;
-    println!(
-        "   Created order {} (total: ${})",
-        order.order_number, order.total_amount
-    );
+    println!("   Created order {} (total: ${})", order.order_number, order.total_amount);
 
     // 5. Process the order
     println!("\n5. Processing order...");
@@ -147,18 +125,12 @@ fn main() -> Result<(), CommerceError> {
     println!("   Reserved 2x WIDGET-001 for order");
 
     // Update order status
-    let order = commerce
-        .orders()
-        .update_status(order.id, OrderStatus::Confirmed)?;
+    let order = commerce.orders().update_status(order.id, OrderStatus::Confirmed)?;
     println!("   Order status: {:?}", order.status);
 
     // Adjust inventory (fulfill)
-    commerce
-        .inventory()
-        .adjust("WIDGET-001", dec!(-2), "Order fulfillment")?;
-    commerce
-        .inventory()
-        .adjust("GADGET-001", dec!(-1), "Order fulfillment")?;
+    commerce.inventory().adjust("WIDGET-001", dec!(-2), "Order fulfillment")?;
+    commerce.inventory().adjust("GADGET-001", dec!(-1), "Order fulfillment")?;
     println!("   Inventory adjusted");
 
     // Confirm reservation
@@ -167,36 +139,21 @@ fn main() -> Result<(), CommerceError> {
 
     // Ship the order
     let order = commerce.orders().ship(order.id, Some("TRACK123456"))?;
-    println!(
-        "   Order shipped with tracking: {:?}",
-        order.tracking_number
-    );
+    println!("   Order shipped with tracking: {:?}", order.tracking_number);
 
     // 6. Check final inventory
     println!("\n6. Final inventory check...");
     if let Some(stock) = commerce.inventory().get_stock("WIDGET-001")? {
-        println!(
-            "   WIDGET-001: {} available (was 100)",
-            stock.total_available
-        );
+        println!("   WIDGET-001: {} available (was 100)", stock.total_available);
     }
     if let Some(stock) = commerce.inventory().get_stock("GADGET-001")? {
-        println!(
-            "   GADGET-001: {} available (was 50)",
-            stock.total_available
-        );
+        println!("   GADGET-001: {} available (was 50)", stock.total_available);
     }
 
     // 7. Summary
     println!("\n=== Summary ===");
-    println!(
-        "Customers: {}",
-        commerce.customers().count(Default::default())?
-    );
-    println!(
-        "Products: {}",
-        commerce.products().count(Default::default())?
-    );
+    println!("Customers: {}", commerce.customers().count(Default::default())?);
+    println!("Products: {}", commerce.products().count(Default::default())?);
     println!("Orders: {}", commerce.orders().count(Default::default())?);
 
     println!("\n✓ Example completed successfully!");

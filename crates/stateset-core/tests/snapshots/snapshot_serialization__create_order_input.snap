@@ -1,0 +1,33 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+assertion_line: 92
+expression: input
+---
+{
+  "customer_id": "fededcba-9876-5432-fede-dcba98765432",
+  "items": [
+    {
+      "product_id": "aaaabbbb-cccc-dddd-eeee-ffff00001111",
+      "variant_id": null,
+      "sku": "TEST-SKU-001",
+      "name": "Test Widget",
+      "quantity": 2,
+      "unit_price": "29.99",
+      "discount": "5.00",
+      "tax_amount": "4.50"
+    }
+  ],
+  "currency": "USD",
+  "shipping_address": {
+    "line1": "123 Main St",
+    "line2": "Apt 4B",
+    "city": "San Francisco",
+    "state": "CA",
+    "postal_code": "94102",
+    "country": "US"
+  },
+  "billing_address": null,
+  "notes": "Please gift wrap",
+  "payment_method": "credit_card",
+  "shipping_method": "standard"
+}

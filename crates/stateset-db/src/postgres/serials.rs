@@ -1,15 +1,15 @@
 //! PostgreSQL implementation of serial number repository
 
-use super::{block_on, map_db_error, PgLotRepository, PgWarrantyRepository};
+use super::{PgLotRepository, PgWarrantyRepository, block_on, map_db_error};
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    validate_batch_size, BatchResult, ChangeSerialStatus, CommerceError, CreateSerialNumber,
-    CreateSerialNumbersBulk, MoveSerial, ReserveSerialNumber, Result, SerialEventType,
-    SerialFilter, SerialHistory, SerialHistoryFilter, SerialLookupResult, SerialNumber,
-    SerialRepository, SerialReservation, SerialStatus, SerialValidation, TransferSerialOwnership,
-    UpdateSerialNumber, WarrantyLookupStatus,
+    BatchResult, ChangeSerialStatus, CommerceError, CreateSerialNumber, CreateSerialNumbersBulk,
+    MoveSerial, ReserveSerialNumber, Result, SerialEventType, SerialFilter, SerialHistory,
+    SerialHistoryFilter, SerialLookupResult, SerialNumber, SerialRepository, SerialReservation,
+    SerialStatus, SerialValidation, TransferSerialOwnership, UpdateSerialNumber,
+    WarrantyLookupStatus, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -370,9 +370,7 @@ impl PgSerialRepository {
             builder.push(" AND serial = ").push_bind(serial);
         }
         if let Some(prefix) = &filter.serial_prefix {
-            builder
-                .push(" AND serial LIKE ")
-                .push_bind(format!("{}%", prefix));
+            builder.push(" AND serial LIKE ").push_bind(format!("{}%", prefix));
         }
         if let Some(sku) = &filter.sku {
             builder.push(" AND sku = ").push_bind(sku);
@@ -399,17 +397,13 @@ impl PgSerialRepository {
             builder.push(" AND lot_number = ").push_bind(lot_number);
         }
         if let Some(loc_id) = filter.location_id {
-            builder
-                .push(" AND current_location_id = ")
-                .push_bind(loc_id);
+            builder.push(" AND current_location_id = ").push_bind(loc_id);
         }
         if let Some(owner_id) = &filter.owner_id {
             builder.push(" AND current_owner_id = ").push_bind(owner_id);
         }
         if let Some(owner_type) = &filter.owner_type {
-            builder
-                .push(" AND current_owner_type = ")
-                .push_bind(owner_type);
+            builder.push(" AND current_owner_type = ").push_bind(owner_type);
         }
         if let Some(warranty_id) = &filter.warranty_id {
             builder.push(" AND warranty_id = ").push_bind(warranty_id);
@@ -542,9 +536,7 @@ impl PgSerialRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(input.serial_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(input.serial_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn reserve_async(&self, input: ReserveSerialNumber) -> Result<SerialReservation> {
@@ -586,9 +578,7 @@ impl PgSerialRepository {
         }
 
         let id = Uuid::new_v4();
-        let expires_at = input
-            .expires_in_seconds
-            .map(|secs| now + chrono::Duration::seconds(secs));
+        let expires_at = input.expires_in_seconds.map(|secs| now + chrono::Duration::seconds(secs));
 
         sqlx::query(
             r#"
@@ -777,9 +767,7 @@ impl PgSerialRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(input.serial_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(input.serial_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn transfer_ownership_async(
@@ -835,9 +823,7 @@ impl PgSerialRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(input.serial_id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(input.serial_id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn mark_sold_async(
@@ -1073,9 +1059,7 @@ impl PgSerialRepository {
         let serial = Self::row_to_serial(serial_row)?;
 
         if serial.status != SerialStatus::Quarantined {
-            return Err(CommerceError::ValidationError(
-                "Serial is not quarantined".to_string(),
-            ));
+            return Err(CommerceError::ValidationError("Serial is not quarantined".to_string()));
         }
 
         sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
@@ -1166,14 +1150,10 @@ impl PgSerialRepository {
         builder.push_bind(serial_id);
 
         if let Some(event_type) = &filter.event_type {
-            builder
-                .push(" AND event_type = ")
-                .push_bind(event_type.to_string());
+            builder.push(" AND event_type = ").push_bind(event_type.to_string());
         }
         if let Some(reference_type) = &filter.reference_type {
-            builder
-                .push(" AND reference_type = ")
-                .push_bind(reference_type);
+            builder.push(" AND reference_type = ").push_bind(reference_type);
         }
         if let Some(from_date) = &filter.from_date {
             builder.push(" AND created_at >= ").push_bind(from_date);
@@ -1210,10 +1190,7 @@ impl PgSerialRepository {
         let recent_history = self
             .get_history_async(
                 serial_number.id,
-                SerialHistoryFilter {
-                    limit: Some(10),
-                    ..Default::default()
-                },
+                SerialHistoryFilter { limit: Some(10), ..Default::default() },
             )
             .await?;
 
@@ -1345,9 +1322,7 @@ impl PgSerialRepository {
             builder.push(" AND serial = ").push_bind(serial);
         }
         if let Some(prefix) = &filter.serial_prefix {
-            builder
-                .push(" AND serial LIKE ")
-                .push_bind(format!("{}%", prefix));
+            builder.push(" AND serial LIKE ").push_bind(format!("{}%", prefix));
         }
         if let Some(sku) = &filter.sku {
             builder.push(" AND sku = ").push_bind(sku);
@@ -1374,17 +1349,13 @@ impl PgSerialRepository {
             builder.push(" AND lot_number = ").push_bind(lot_number);
         }
         if let Some(loc_id) = filter.location_id {
-            builder
-                .push(" AND current_location_id = ")
-                .push_bind(loc_id);
+            builder.push(" AND current_location_id = ").push_bind(loc_id);
         }
         if let Some(owner_id) = &filter.owner_id {
             builder.push(" AND current_owner_id = ").push_bind(owner_id);
         }
         if let Some(owner_type) = &filter.owner_type {
-            builder
-                .push(" AND current_owner_type = ")
-                .push_bind(owner_type);
+            builder.push(" AND current_owner_type = ").push_bind(owner_type);
         }
         if let Some(warranty_id) = &filter.warranty_id {
             builder.push(" AND warranty_id = ").push_bind(warranty_id);
@@ -1409,11 +1380,8 @@ impl PgSerialRepository {
             builder.push(" AND sold_at <= ").push_bind(before);
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }

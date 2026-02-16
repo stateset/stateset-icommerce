@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::ProductId;
 use uuid::Uuid;
 
 // ============================================================================
@@ -14,6 +15,7 @@ use uuid::Uuid;
 /// Time period for analytics queries
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TimePeriod {
     Today,
     Yesterday,
@@ -85,6 +87,7 @@ pub struct RevenueByPeriod {
 /// Granularity for time-series data
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TimeGranularity {
     Hour,
     Day,
@@ -108,7 +111,7 @@ impl Default for TimeGranularity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopProduct {
     /// Product ID
-    pub product_id: Option<Uuid>,
+    pub product_id: Option<ProductId>,
     /// SKU
     pub sku: String,
     /// Product name
@@ -126,7 +129,7 @@ pub struct TopProduct {
 /// Product performance metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductPerformance {
-    pub product_id: Uuid,
+    pub product_id: ProductId,
     pub sku: String,
     pub name: String,
     /// Units sold in current period
@@ -269,6 +272,7 @@ pub struct DemandForecast {
 /// Trend direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Trend {
     Rising,
     Stable,
@@ -403,10 +407,7 @@ impl AnalyticsQuery {
     /// Set a custom date range and switch to custom period
     pub fn date_range(mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Self {
         self.period = Some(TimePeriod::Custom);
-        self.date_range = Some(DateRange {
-            start: Some(start),
-            end: Some(end),
-        });
+        self.date_range = Some(DateRange { start: Some(start), end: Some(end) });
         self
     }
 

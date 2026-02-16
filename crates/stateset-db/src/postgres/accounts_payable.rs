@@ -6,12 +6,12 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
+    AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem,
+    BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem,
+    CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentMethodAP, PaymentRun,
+    PaymentRunFilter, PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary, UpdateBill,
     generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
-    validate_batch_size, AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter,
-    BillItem, BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill,
-    CreateBillItem, CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentMethodAP,
-    PaymentRun, PaymentRunFilter, PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary,
-    UpdateBill,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -430,22 +430,16 @@ impl PgAccountsPayableRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(purchase_order_id) = filter.purchase_order_id {
-            builder
-                .push(" AND purchase_order_id = ")
-                .push_bind(purchase_order_id);
+            builder.push(" AND purchase_order_id = ").push_bind(purchase_order_id);
         }
         if filter.overdue_only == Some(true) {
             builder.push(" AND due_date < CURRENT_DATE AND status NOT IN ('paid', 'cancelled')");
         }
         if let Some(from_date) = filter.from_date {
-            builder
-                .push(" AND bill_date >= ")
-                .push_bind(to_date(from_date));
+            builder.push(" AND bill_date >= ").push_bind(to_date(from_date));
         }
         if let Some(to_date_value) = filter.to_date {
-            builder
-                .push(" AND bill_date <= ")
-                .push_bind(to_date(to_date_value));
+            builder.push(" AND bill_date <= ").push_bind(to_date(to_date_value));
         }
         if let Some(min_amount) = filter.min_amount {
             builder.push(" AND total_amount >= ").push_bind(min_amount);
@@ -469,21 +463,14 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_bill)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()
     }
 
     pub async fn delete_bill_async(&self, id: Uuid) -> Result<()> {
-        let bill = self
-            .get_bill_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        let bill = self.get_bill_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if bill.status != BillStatus::Draft {
-            return Err(CommerceError::ValidationError(
-                "Can only delete draft bills".into(),
-            ));
+            return Err(CommerceError::ValidationError("Can only delete draft bills".into()));
         }
 
         sqlx::query("DELETE FROM ap_bills WHERE id = $1")
@@ -565,10 +552,8 @@ impl PgAccountsPayableRepository {
         .map_err(map_db_error)?;
 
         let amount = item.quantity * item.unit_price;
-        let tax_amount = item
-            .tax_rate
-            .map(|r| amount * r / Decimal::from(100))
-            .unwrap_or(Decimal::ZERO);
+        let tax_amount =
+            item.tax_rate.map(|r| amount * r / Decimal::from(100)).unwrap_or(Decimal::ZERO);
 
         sqlx::query(
             r#"
@@ -641,21 +626,14 @@ impl PgAccountsPayableRepository {
             builder.push(" AND due_date < CURRENT_DATE AND status NOT IN ('paid', 'cancelled')");
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
 
     pub async fn get_overdue_bills_async(&self) -> Result<Vec<Bill>> {
-        self.list_bills_async(BillFilter {
-            overdue_only: Some(true),
-            ..Default::default()
-        })
-        .await
+        self.list_bills_async(BillFilter { overdue_only: Some(true), ..Default::default() }).await
     }
 
     pub async fn get_bills_due_soon_async(&self, days: i32) -> Result<Vec<Bill>> {
@@ -667,9 +645,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_bill)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()
     }
 
     pub async fn create_payment_async(&self, input: CreateBillPayment) -> Result<BillPayment> {
@@ -737,10 +713,7 @@ impl PgAccountsPayableRepository {
         for alloc in allocations {
             self.recalculate_bill(alloc.bill_id).await?;
 
-            let bill = self
-                .get_bill_async(alloc.bill_id)
-                .await?
-                .ok_or(CommerceError::NotFound)?;
+            let bill = self.get_bill_async(alloc.bill_id).await?.ok_or(CommerceError::NotFound)?;
             let new_status = if bill.amount_due <= Decimal::ZERO {
                 BillStatus::Paid
             } else if bill.amount_paid > Decimal::ZERO {
@@ -793,19 +766,13 @@ impl PgAccountsPayableRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(method) = filter.payment_method {
-            builder
-                .push(" AND payment_method = ")
-                .push_bind(method.to_string());
+            builder.push(" AND payment_method = ").push_bind(method.to_string());
         }
         if let Some(from_date) = filter.from_date {
-            builder
-                .push(" AND payment_date >= ")
-                .push_bind(to_date(from_date));
+            builder.push(" AND payment_date >= ").push_bind(to_date(from_date));
         }
         if let Some(to_date_value) = filter.to_date {
-            builder
-                .push(" AND payment_date <= ")
-                .push_bind(to_date(to_date_value));
+            builder.push(" AND payment_date <= ").push_bind(to_date(to_date_value));
         }
 
         builder.push(" ORDER BY payment_date DESC");
@@ -823,9 +790,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_payment)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_payment).collect::<Result<Vec<_>>>()
     }
 
     pub async fn void_payment_async(&self, id: Uuid) -> Result<BillPayment> {
@@ -866,10 +831,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
-            .map(Self::row_to_payment_allocation)
-            .collect())
+        Ok(rows.into_iter().map(Self::row_to_payment_allocation).collect())
     }
 
     pub async fn get_payments_for_bill_async(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
@@ -881,9 +843,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_payment)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_payment).collect::<Result<Vec<_>>>()
     }
 
     pub async fn count_payments_async(&self, filter: BillPaymentFilter) -> Result<u64> {
@@ -897,16 +857,11 @@ impl PgAccountsPayableRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(method) = filter.payment_method {
-            builder
-                .push(" AND payment_method = ")
-                .push_bind(method.to_string());
+            builder.push(" AND payment_method = ").push_bind(method.to_string());
         }
 
-        let row = builder
-            .build_query_as::<(i64,)>()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(row.0 as u64)
     }
@@ -978,14 +933,10 @@ impl PgAccountsPayableRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(from_date) = filter.from_date {
-            builder
-                .push(" AND payment_date >= ")
-                .push_bind(to_date(from_date));
+            builder.push(" AND payment_date >= ").push_bind(to_date(from_date));
         }
         if let Some(to_date_value) = filter.to_date {
-            builder
-                .push(" AND payment_date <= ")
-                .push_bind(to_date(to_date_value));
+            builder.push(" AND payment_date <= ").push_bind(to_date(to_date_value));
         }
 
         builder.push(" ORDER BY created_at DESC");
@@ -1003,9 +954,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_payment_run)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_payment_run).collect::<Result<Vec<_>>>()
     }
 
     pub async fn approve_payment_run_async(
@@ -1069,9 +1018,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_bill)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_aging_summary_async(&self) -> Result<ApAgingSummary> {
@@ -1201,9 +1148,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        rows.into_iter()
-            .map(Self::row_to_bill)
-            .collect::<Result<Vec<_>>>()
+        rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()
     }
 }
 

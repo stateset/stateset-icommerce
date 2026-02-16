@@ -10,11 +10,11 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
+    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
+    CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
+    OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, UpdateOrder,
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
-    validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
-    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, FulfillmentStatus, Order,
-    OrderFilter, OrderItem, OrderRepository, OrderStatus, PaymentStatus, ReserveInventory, Result,
-    UpdateOrder,
+    validate_required_text, validate_required_uuid, validate_sku,
 };
 use uuid::Uuid;
 
@@ -67,7 +67,7 @@ impl PgOrderRepository {
     }
 
     fn validate_order_item_input(item: &CreateOrderItem) -> Result<()> {
-        validate_required_uuid("order_item.product_id", item.product_id)?;
+        validate_required_uuid("order_item.product_id", item.product_id.into_uuid())?;
         if let Some(variant_id) = item.variant_id {
             validate_required_uuid("order_item.variant_id", variant_id)?;
         }
@@ -125,16 +125,14 @@ impl PgOrderRepository {
     }
 
     fn validate_order_input(input: &CreateOrder) -> Result<()> {
-        validate_required_uuid("order.customer_id", input.customer_id)?;
+        validate_required_uuid("order.customer_id", input.customer_id.into_uuid())?;
 
         if let Some(ref currency) = input.currency {
             validate_currency_code(currency)?;
         }
 
         if input.items.is_empty() {
-            return Err(CommerceError::ValidationError(
-                "Order must have at least one item".into(),
-            ));
+            return Err(CommerceError::ValidationError("Order must have at least one item".into()));
         }
 
         for item in &input.items {
@@ -169,21 +167,15 @@ impl PgOrderRepository {
                 ))
             })?;
 
-        let shipping_address = row
-            .shipping_address
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
+        let shipping_address =
+            row.shipping_address.map(serde_json::from_value).transpose().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for order.shipping_address: {}",
                     e
                 ))
             })?;
-        let billing_address = row
-            .billing_address
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| {
+        let billing_address =
+            row.billing_address.map(serde_json::from_value).transpose().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for order.billing_address: {}",
                     e
@@ -191,9 +183,9 @@ impl PgOrderRepository {
             })?;
 
         Ok(Order {
-            id: row.id,
+            id: OrderId::from(row.id),
             order_number: row.order_number,
-            customer_id: row.customer_id,
+            customer_id: CustomerId::from(row.customer_id),
             status,
             order_date: row.order_date,
             total_amount: row.total_amount,
@@ -215,9 +207,9 @@ impl PgOrderRepository {
 
     fn row_to_item(row: OrderItemRow) -> OrderItem {
         OrderItem {
-            id: row.id,
-            order_id: row.order_id,
-            product_id: row.product_id,
+            id: OrderItemId::from(row.id),
+            order_id: OrderId::from(row.order_id),
+            product_id: ProductId::from(row.product_id),
             variant_id: row.variant_id,
             sku: row.sku,
             name: row.name,
@@ -369,7 +361,7 @@ impl PgOrderRepository {
             )
             .bind(id)
             .bind(&order_number)
-            .bind(input.customer_id)
+            .bind(input.customer_id.into_uuid())
             .bind("pending")
             .bind(now)
             .bind(total)
@@ -399,7 +391,7 @@ impl PgOrderRepository {
             )
             .bind(id)
             .bind(&order_number)
-            .bind(input.customer_id)
+            .bind(input.customer_id.into_uuid())
             .bind("pending")
             .bind(now)
             .bind(total)
@@ -422,10 +414,7 @@ impl PgOrderRepository {
 
         if !inserted {
             tx.rollback().await.map_err(map_db_error)?;
-            return self
-                .get_async(order_id)
-                .await?
-                .ok_or(CommerceError::OrderNotFound(order_id));
+            return self.get_async(order_id).await?.ok_or(CommerceError::OrderNotFound(order_id));
         }
 
         // Insert order items
@@ -450,7 +439,7 @@ impl PgOrderRepository {
             )
             .bind(item_id)
             .bind(order_id)
-            .bind(item_input.product_id)
+            .bind(item_input.product_id.into_uuid())
             .bind(item_input.variant_id)
             .bind(&item_input.sku)
             .bind(&item_input.name)
@@ -465,8 +454,8 @@ impl PgOrderRepository {
             .map_err(map_db_error)?;
 
             items.push(OrderItem {
-                id: item_id,
-                order_id,
+                id: OrderItemId::from(item_id),
+                order_id: OrderId::from(order_id),
                 product_id: item_input.product_id,
                 variant_id: item_input.variant_id,
                 sku: item_input.sku.clone(),
@@ -509,11 +498,8 @@ impl PgOrderRepository {
             .map_err(map_db_error)?;
 
             let requested = Decimal::from(item.quantity);
-            let reserve_qty = if available > Decimal::ZERO {
-                requested.min(available)
-            } else {
-                Decimal::ZERO
-            };
+            let reserve_qty =
+                if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
 
             let mut reserved = Decimal::ZERO;
             if reserve_qty > Decimal::ZERO {
@@ -544,8 +530,8 @@ impl PgOrderRepository {
             if remaining > Decimal::ZERO {
                 let backorder_input = CreateBackorder {
                     order_id,
-                    order_line_id: Some(item.id),
-                    customer_id: input.customer_id,
+                    order_line_id: Some(item.id.into_uuid()),
+                    customer_id: input.customer_id.into_uuid(),
                     sku: item.sku.clone(),
                     quantity: remaining,
                     priority: None,
@@ -554,16 +540,14 @@ impl PgOrderRepository {
                     source_location_id: None,
                     notes: Some("Auto backorder: insufficient stock".to_string()),
                 };
-                backorder_repo
-                    .create_backorder_in_tx(&mut tx, &backorder_input)
-                    .await?;
+                backorder_repo.create_backorder_in_tx(&mut tx, &backorder_input).await?;
             }
         }
 
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(Order {
-            id: order_id,
+            id: OrderId::from(order_id),
             order_number: order_number.clone(),
             customer_id: input.customer_id,
             status: OrderStatus::Pending,
@@ -730,16 +714,12 @@ impl PgOrderRepository {
 
         let new_status = input.status.unwrap_or(current_status);
         let new_payment_status = input.payment_status.unwrap_or(current_payment_status);
-        let new_fulfillment_status = input
-            .fulfillment_status
-            .unwrap_or(current_fulfillment_status);
+        let new_fulfillment_status = input.fulfillment_status.unwrap_or(current_fulfillment_status);
         let now = Utc::now();
 
         if !current_status.can_transition_to(new_status) {
             if new_status == OrderStatus::Cancelled {
-                return Err(CommerceError::OrderCannotBeCancelled(
-                    current_status.to_string(),
-                ));
+                return Err(CommerceError::OrderCannotBeCancelled(current_status.to_string()));
             }
 
             return Err(CommerceError::InvalidOrderStatusTransition {
@@ -757,9 +737,7 @@ impl PgOrderRepository {
                     | PaymentStatus::PartiallyRefunded
             )
         {
-            return Err(CommerceError::OrderCannotBeRefunded(
-                new_payment_status.to_string(),
-            ));
+            return Err(CommerceError::OrderCannotBeRefunded(new_payment_status.to_string()));
         }
 
         if matches!(input.status, Some(OrderStatus::Shipped)) {
@@ -845,20 +823,14 @@ impl PgOrderRepository {
                 .list_reservation_ids_by_reference_in_tx(&mut tx, "order", &id.to_string())
                 .await?;
             for reservation_id in reservation_ids {
-                inventory_repo
-                    .release_reservation_in_tx(&mut tx, reservation_id)
-                    .await?;
+                inventory_repo.release_reservation_in_tx(&mut tx, reservation_id).await?;
             }
-            backorder_repo
-                .cancel_backorders_for_order_in_tx(&mut tx, id)
-                .await?;
+            backorder_repo.cancel_backorders_for_order_in_tx(&mut tx, id).await?;
         }
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::OrderNotFound(id))
+        self.get_async(id).await?.ok_or(CommerceError::OrderNotFound(id))
     }
 
     /// List orders (async)
@@ -877,20 +849,16 @@ impl PgOrderRepository {
         let mut builder = QueryBuilder::new("SELECT * FROM orders WHERE 1=1");
 
         if let Some(customer_id) = customer_id {
-            builder.push(" AND customer_id = ").push_bind(customer_id);
+            builder.push(" AND customer_id = ").push_bind(customer_id.into_uuid());
         }
         if let Some(status) = status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(payment_status) = payment_status {
-            builder
-                .push(" AND payment_status = ")
-                .push_bind(payment_status.to_string());
+            builder.push(" AND payment_status = ").push_bind(payment_status.to_string());
         }
         if let Some(fulfillment_status) = fulfillment_status {
-            builder
-                .push(" AND fulfillment_status = ")
-                .push_bind(fulfillment_status.to_string());
+            builder.push(" AND fulfillment_status = ").push_bind(fulfillment_status.to_string());
         }
         if let Some(from) = from_date {
             builder.push(" AND order_date >= ").push_bind(from);
@@ -955,7 +923,7 @@ impl PgOrderRepository {
         )
         .bind(id)
         .bind(order_id)
-        .bind(item.product_id)
+        .bind(item.product_id.into_uuid())
         .bind(item.variant_id)
         .bind(&item.sku)
         .bind(&item.name)
@@ -973,8 +941,8 @@ impl PgOrderRepository {
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(OrderItem {
-            id,
-            order_id,
+            id: OrderItemId::from(id),
+            order_id: OrderId::from(order_id),
             product_id: item.product_id,
             variant_id: item.variant_id,
             sku: item.sku,
@@ -1019,20 +987,16 @@ impl PgOrderRepository {
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM orders WHERE 1=1");
 
         if let Some(customer_id) = customer_id {
-            builder.push(" AND customer_id = ").push_bind(customer_id);
+            builder.push(" AND customer_id = ").push_bind(customer_id.into_uuid());
         }
         if let Some(status) = status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(payment_status) = payment_status {
-            builder
-                .push(" AND payment_status = ")
-                .push_bind(payment_status.to_string());
+            builder.push(" AND payment_status = ").push_bind(payment_status.to_string());
         }
         if let Some(fulfillment_status) = fulfillment_status {
-            builder
-                .push(" AND fulfillment_status = ")
-                .push_bind(fulfillment_status.to_string());
+            builder.push(" AND fulfillment_status = ").push_bind(fulfillment_status.to_string());
         }
         if let Some(from) = from_date {
             builder.push(" AND order_date >= ").push_bind(from);
@@ -1041,11 +1005,8 @@ impl PgOrderRepository {
             builder.push(" AND order_date <= ").push_bind(to);
         }
 
-        let count: (i64,) = builder
-            .build_query_as()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }
@@ -1132,7 +1093,7 @@ impl PgOrderRepository {
             )
             .bind(id)
             .bind(&order_number)
-            .bind(input.customer_id)
+            .bind(input.customer_id.into_uuid())
             .bind("pending")
             .bind(now)
             .bind(total)
@@ -1172,7 +1133,7 @@ impl PgOrderRepository {
                 )
                 .bind(item_id)
                 .bind(id)
-                .bind(item_input.product_id)
+                .bind(item_input.product_id.into_uuid())
                 .bind(item_input.variant_id)
                 .bind(&item_input.sku)
                 .bind(&item_input.name)
@@ -1187,8 +1148,8 @@ impl PgOrderRepository {
                 .map_err(map_db_error)?;
 
                 items.push(OrderItem {
-                    id: item_id,
-                    order_id: id,
+                    id: OrderItemId::from(item_id),
+                    order_id: OrderId::from(id),
                     product_id: item_input.product_id,
                     variant_id: item_input.variant_id,
                     sku: item_input.sku.clone(),
@@ -1202,7 +1163,7 @@ impl PgOrderRepository {
             }
 
             orders.push(Order {
-                id,
+                id: OrderId::from(id),
                 order_number,
                 customer_id: input.customer_id,
                 status: OrderStatus::Pending,
@@ -1281,9 +1242,8 @@ impl PgOrderRepository {
 
             let new_status = input.status.unwrap_or(existing.status);
             let new_payment_status = input.payment_status.unwrap_or(existing.payment_status);
-            let new_fulfillment_status = input
-                .fulfillment_status
-                .unwrap_or(existing.fulfillment_status);
+            let new_fulfillment_status =
+                input.fulfillment_status.unwrap_or(existing.fulfillment_status);
             let new_tracking = input.tracking_number.or(existing.tracking_number);
             let new_notes = input.notes.or(existing.notes);
             let new_shipping = input.shipping_address.clone().or(existing.shipping_address);
@@ -1291,9 +1251,7 @@ impl PgOrderRepository {
 
             if !existing.status.can_transition_to(new_status) {
                 if new_status == OrderStatus::Cancelled {
-                    return Err(CommerceError::OrderCannotBeCancelled(
-                        existing.status.to_string(),
-                    ));
+                    return Err(CommerceError::OrderCannotBeCancelled(existing.status.to_string()));
                 }
 
                 return Err(CommerceError::InvalidOrderStatusTransition {
@@ -1311,9 +1269,7 @@ impl PgOrderRepository {
                         | PaymentStatus::PartiallyRefunded
                 )
             {
-                return Err(CommerceError::OrderCannotBeRefunded(
-                    new_payment_status.to_string(),
-                ));
+                return Err(CommerceError::OrderCannotBeRefunded(new_payment_status.to_string()));
             }
 
             if let Some(address) = &input.shipping_address {
@@ -1464,32 +1420,32 @@ impl OrderRepository for PgOrderRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Order>> {
-        super::block_on(self.get_async(id))
+    fn get(&self, id: OrderId) -> Result<Option<Order>> {
+        super::block_on(self.get_async(id.into_uuid()))
     }
 
     fn get_by_number(&self, order_number: &str) -> Result<Option<Order>> {
         super::block_on(self.get_by_number_async(order_number))
     }
 
-    fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>> {
         super::block_on(self.list_async(filter))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
-        super::block_on(self.delete_async(id))
+    fn delete(&self, id: OrderId) -> Result<()> {
+        super::block_on(self.delete_async(id.into_uuid()))
     }
 
-    fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
-        super::block_on(self.add_item_async(order_id, item))
+    fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem> {
+        super::block_on(self.add_item_async(order_id.into_uuid(), item))
     }
 
-    fn remove_item(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
-        super::block_on(self.remove_item_async(order_id, item_id))
+    fn remove_item(&self, order_id: OrderId, item_id: OrderItemId) -> Result<()> {
+        super::block_on(self.remove_item_async(order_id.into_uuid(), item_id.into_uuid()))
     }
 
     fn count(&self, filter: OrderFilter) -> Result<u64> {
@@ -1504,23 +1460,36 @@ impl OrderRepository for PgOrderRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<BatchResult<Order>> {
-        super::block_on(self.update_batch_async(updates))
+    fn update_batch(&self, updates: Vec<(OrderId, UpdateOrder)>) -> Result<BatchResult<Order>> {
+        let raw_updates: Vec<(Uuid, UpdateOrder)> = updates.into_iter().map(|(id, u)| (id.into_uuid(), u)).collect();
+        super::block_on(self.update_batch_async(raw_updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<Vec<Order>> {
-        super::block_on(self.update_batch_atomic_async(updates))
+    fn update_batch_atomic(&self, updates: Vec<(OrderId, UpdateOrder)>) -> Result<Vec<Order>> {
+        let raw_updates: Vec<(Uuid, UpdateOrder)> = updates.into_iter().map(|(id, u)| (id.into_uuid(), u)).collect();
+        super::block_on(self.update_batch_atomic_async(raw_updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
-        super::block_on(self.delete_batch_async(ids))
+    fn delete_batch(&self, ids: Vec<OrderId>) -> Result<BatchResult<OrderId>> {
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
+        let result = super::block_on(self.delete_batch_async(raw_ids))?;
+        // Convert BatchResult<Uuid> to BatchResult<OrderId>
+        Ok(BatchResult {
+            succeeded: result.succeeded.into_iter().map(OrderId::from).collect(),
+            failed: result.failed,
+            total_attempted: result.total_attempted,
+            success_count: result.success_count,
+            failure_count: result.failure_count,
+        })
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
-        super::block_on(self.delete_batch_atomic_async(ids))
+    fn delete_batch_atomic(&self, ids: Vec<OrderId>) -> Result<()> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.delete_batch_atomic_async(raw_ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Order>> {
-        super::block_on(self.get_batch_async(ids))
+    fn get_batch(&self, ids: Vec<OrderId>) -> Result<Vec<Order>> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.get_batch_async(raw_ids))
     }
 }

@@ -21,6 +21,7 @@ use uuid::Uuid;
 /// AR aging bucket classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AgingBucket {
     #[default]
     Current,
@@ -59,6 +60,7 @@ impl FromStr for AgingBucket {
 /// Collection status for an invoice
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CollectionStatus {
     #[default]
     None,
@@ -109,6 +111,7 @@ impl FromStr for CollectionStatus {
 /// Dunning letter template type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DunningLetterType {
     #[default]
     Reminder1,
@@ -147,6 +150,7 @@ impl FromStr for DunningLetterType {
 /// Write-off reason code
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum WriteOffReason {
     #[default]
     Uncollectible,
@@ -191,6 +195,7 @@ impl FromStr for WriteOffReason {
 /// Credit memo reason
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CreditMemoReason {
     #[default]
     ReturnedGoods,
@@ -235,6 +240,7 @@ impl FromStr for CreditMemoReason {
 /// Credit memo status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CreditMemoStatus {
     #[default]
     Open,
@@ -270,6 +276,7 @@ impl FromStr for CreditMemoStatus {
 /// Collection activity type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CollectionActivityType {
     #[default]
     DunningLetterSent,
@@ -326,6 +333,7 @@ impl FromStr for CollectionActivityType {
 /// Statement transaction type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum StatementTransactionType {
     Invoice,
     Payment,

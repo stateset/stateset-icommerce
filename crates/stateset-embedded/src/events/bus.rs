@@ -14,10 +14,7 @@ impl EventBus {
     /// Create a new event bus with the specified channel capacity
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity);
-        Self {
-            sender,
-            events_published: AtomicU64::new(0),
-        }
+        Self { sender, events_published: AtomicU64::new(0) }
     }
 
     /// Publish an event to all subscribers
@@ -30,9 +27,7 @@ impl EventBus {
 
     /// Subscribe to events from this bus
     pub fn subscribe(&self) -> EventSubscription {
-        EventSubscription {
-            receiver: EventReceiver::new(self.sender.subscribe()),
-        }
+        EventSubscription { receiver: EventReceiver::new(self.sender.subscribe()) }
     }
 
     /// Get the number of active receivers
@@ -131,8 +126,8 @@ mod tests {
         let mut sub2 = bus.subscribe();
 
         let event = CommerceEvent::OrderCreated {
-            order_id: Uuid::new_v4(),
-            customer_id: Uuid::new_v4(),
+            order_id: stateset_core::OrderId::new(),
+            customer_id: stateset_core::CustomerId::new(),
             total_amount: dec!(100.00),
             item_count: 2,
             timestamp: Utc::now(),
@@ -155,7 +150,7 @@ mod tests {
         let bus = EventBus::new(16);
 
         let event = CommerceEvent::CustomerCreated {
-            customer_id: Uuid::new_v4(),
+            customer_id: stateset_core::CustomerId::new(),
             email: "test@example.com".to_string(),
             timestamp: Utc::now(),
         };

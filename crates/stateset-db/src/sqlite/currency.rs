@@ -15,7 +15,7 @@ use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_row,
     parse_enum_row, parse_json_row, parse_uuid_row, uuid_params,
 };
-use stateset_core::{validate_batch_size, BatchResult};
+use stateset_core::{BatchResult, validate_batch_size};
 
 /// SQLite currency repository
 pub struct SqliteCurrencyRepository {
@@ -27,7 +27,7 @@ impl SqliteCurrencyRepository {
         Self { pool }
     }
 
-    fn row_to_exchange_rate(row: &rusqlite::Row) -> rusqlite::Result<ExchangeRate> {
+    fn row_to_exchange_rate(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExchangeRate> {
         Ok(ExchangeRate {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "exchange_rate", "id")?,
             base_currency: parse_enum_row(
@@ -63,10 +63,7 @@ impl SqliteCurrencyRepository {
 
 impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
     fn get_rate(&self, from: Currency, to: Currency) -> Result<Option<ExchangeRate>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Same currency = rate of 1
         if from == to {
@@ -132,10 +129,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
     }
 
     fn get_rates_for(&self, base: Currency) -> Result<Vec<ExchangeRate>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -150,15 +144,11 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
             .query_map(params![base.code()], Self::row_to_exchange_rate)
             .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
     fn list_rates(&self, filter: ExchangeRateFilter) -> Result<Vec<ExchangeRate>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut query = String::from(
             "SELECT id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at
@@ -184,17 +174,13 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         query.push_str(" ORDER BY base_currency, quote_currency");
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
-        let params: Vec<&dyn rusqlite::ToSql> = params_vec
-            .iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
 
-        let rows = stmt
-            .query_map(params.as_slice(), Self::row_to_exchange_rate)
-            .map_err(map_db_error)?;
+        let rows =
+            stmt.query_map(params.as_slice(), Self::row_to_exchange_rate).map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
     }
 
     fn set_rate(&self, input: SetExchangeRate) -> Result<ExchangeRate> {
@@ -203,10 +189,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         let source = input.source.unwrap_or_else(|| "manual".into());
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             // Upsert the rate
             conn.execute(
@@ -247,8 +230,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         }
 
         // Fetch and return the rate
-        self.get_rate(input.base_currency, input.quote_currency)?
-            .ok_or(CommerceError::NotFound)
+        self.get_rate(input.base_currency, input.quote_currency)?.ok_or(CommerceError::NotFound)
     }
 
     fn set_rates(&self, rates: Vec<SetExchangeRate>) -> Result<Vec<ExchangeRate>> {
@@ -256,23 +238,13 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
     }
 
     fn delete_rate(&self, id: Uuid) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let affected = conn
-            .execute(
-                "DELETE FROM exchange_rates WHERE id = ?",
-                params![id.to_string()],
-            )
+            .execute("DELETE FROM exchange_rates WHERE id = ?", params![id.to_string()])
             .map_err(map_db_error)?;
 
-        if affected == 0 {
-            Err(CommerceError::NotFound)
-        } else {
-            Ok(())
-        }
+        if affected == 0 { Err(CommerceError::NotFound) } else { Ok(()) }
     }
 
     fn convert(&self, input: ConvertCurrency) -> Result<ConversionResult> {
@@ -289,19 +261,13 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
             });
         }
 
-        let rate = self
-            .get_rate(input.from, input.to)?
-            .ok_or(CommerceError::ValidationError(format!(
-                "No exchange rate found for {} to {}",
-                input.from, input.to
-            )))?;
+        let rate = self.get_rate(input.from, input.to)?.ok_or(CommerceError::ValidationError(
+            format!("No exchange rate found for {} to {}", input.from, input.to),
+        ))?;
 
         let converted_amount = input.amount * rate.rate;
-        let inverse_rate = if rate.rate.is_zero() {
-            Decimal::ZERO
-        } else {
-            Decimal::ONE / rate.rate
-        };
+        let inverse_rate =
+            if rate.rate.is_zero() { Decimal::ZERO } else { Decimal::ONE / rate.rate };
 
         Ok(ConversionResult {
             original_amount: input.amount,
@@ -315,10 +281,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
     }
 
     fn get_settings(&self) -> Result<StoreCurrencySettings> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT base_currency, enabled_currencies, auto_convert, rounding_mode
@@ -366,10 +329,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         let rounding_str = settings.rounding_mode.to_string();
 
         {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             conn.execute(
                 "INSERT INTO store_currency_settings (id, base_currency, enabled_currencies, auto_convert, rounding_mode, updated_at)
@@ -402,10 +362,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
             return Ok(Vec::new());
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let now = Utc::now();
@@ -490,10 +447,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
             return Ok(());
         }
 
-        let mut conn = self
-            .pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let in_clause = build_in_clause(ids.len());
@@ -502,9 +456,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         let params = uuid_params(&ids);
         let params_ref = params_refs(&params);
 
-        let affected = tx
-            .execute(&query, params_ref.as_slice())
-            .map_err(map_db_error)?;
+        let affected = tx.execute(&query, params_ref.as_slice()).map_err(map_db_error)?;
 
         if affected != ids.len() {
             // Not all rates were found - rollback by not committing

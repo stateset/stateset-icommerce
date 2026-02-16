@@ -61,41 +61,31 @@ impl Commerce {
             PyRuntimeError::new_err(format!("Failed to initialize commerce: {}", e))
         })?;
 
-        Ok(Self {
-            inner: Arc::new(Mutex::new(commerce)),
-        })
+        Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
     }
 
     /// Get the customers API.
     #[getter]
     fn customers(&self) -> Customers {
-        Customers {
-            commerce: self.inner.clone(),
-        }
+        Customers { commerce: self.inner.clone() }
     }
 
     /// Get the orders API.
     #[getter]
     fn orders(&self) -> Orders {
-        Orders {
-            commerce: self.inner.clone(),
-        }
+        Orders { commerce: self.inner.clone() }
     }
 
     /// Get the products API.
     #[getter]
     fn products(&self) -> Products {
-        Products {
-            commerce: self.inner.clone(),
-        }
+        Products { commerce: self.inner.clone() }
     }
 
     /// Get the custom objects API (custom states / metaobjects).
     #[getter]
     fn custom_objects(&self) -> CustomObjectsApi {
-        CustomObjectsApi {
-            commerce: self.inner.clone(),
-        }
+        CustomObjectsApi { commerce: self.inner.clone() }
     }
 
     /// Alias for `custom_objects` (for users who prefer the "custom states" name).
@@ -107,217 +97,163 @@ impl Commerce {
     /// Get the inventory API.
     #[getter]
     fn inventory(&self) -> Inventory {
-        Inventory {
-            commerce: self.inner.clone(),
-        }
+        Inventory { commerce: self.inner.clone() }
     }
 
     /// Get the returns API.
     #[getter]
     fn returns(&self) -> Returns {
-        Returns {
-            commerce: self.inner.clone(),
-        }
+        Returns { commerce: self.inner.clone() }
     }
 
     /// Get the payments API.
     #[getter]
     fn payments(&self) -> Payments {
-        Payments {
-            commerce: self.inner.clone(),
-        }
+        Payments { commerce: self.inner.clone() }
     }
 
     /// Get the shipments API.
     #[getter]
     fn shipments(&self) -> Shipments {
-        Shipments {
-            commerce: self.inner.clone(),
-        }
+        Shipments { commerce: self.inner.clone() }
     }
 
     /// Get the warranties API.
     #[getter]
     fn warranties(&self) -> Warranties {
-        Warranties {
-            commerce: self.inner.clone(),
-        }
+        Warranties { commerce: self.inner.clone() }
     }
 
     /// Get the purchase orders API.
     #[getter]
     fn purchase_orders(&self) -> PurchaseOrders {
-        PurchaseOrders {
-            commerce: self.inner.clone(),
-        }
+        PurchaseOrders { commerce: self.inner.clone() }
     }
 
     /// Get the invoices API.
     #[getter]
     fn invoices(&self) -> Invoices {
-        Invoices {
-            commerce: self.inner.clone(),
-        }
+        Invoices { commerce: self.inner.clone() }
     }
 
     /// Get the bill of materials API.
     #[getter]
     fn bom(&self) -> BomApi {
-        BomApi {
-            commerce: self.inner.clone(),
-        }
+        BomApi { commerce: self.inner.clone() }
     }
 
     /// Get the work orders API.
     #[getter]
     fn work_orders(&self) -> WorkOrders {
-        WorkOrders {
-            commerce: self.inner.clone(),
-        }
+        WorkOrders { commerce: self.inner.clone() }
     }
 
     /// Get the carts API.
     #[getter]
     fn carts(&self) -> Carts {
-        Carts {
-            commerce: self.inner.clone(),
-        }
+        Carts { commerce: self.inner.clone() }
     }
 
     /// Get the analytics API.
     #[getter]
     fn analytics(&self) -> Analytics {
-        Analytics {
-            commerce: self.inner.clone(),
-        }
+        Analytics { commerce: self.inner.clone() }
     }
 
     /// Get the currency API.
     #[getter]
     fn currency(&self) -> CurrencyOperations {
-        CurrencyOperations {
-            commerce: self.inner.clone(),
-        }
+        CurrencyOperations { commerce: self.inner.clone() }
     }
 
     /// Get the subscriptions API.
     #[getter]
     fn subscriptions(&self) -> Subscriptions {
-        Subscriptions {
-            commerce: self.inner.clone(),
-        }
+        Subscriptions { commerce: self.inner.clone() }
     }
 
     /// Get the promotions API.
     #[getter]
     fn promotions(&self) -> PromotionsApi {
-        PromotionsApi {
-            commerce: self.inner.clone(),
-        }
+        PromotionsApi { commerce: self.inner.clone() }
     }
 
     /// Get the tax API.
     #[getter]
     fn tax(&self) -> TaxApi {
-        TaxApi {
-            commerce: self.inner.clone(),
-        }
+        TaxApi { commerce: self.inner.clone() }
     }
 
     /// Get the quality control API.
     #[getter]
     fn quality(&self) -> QualityApi {
-        QualityApi {
-            commerce: self.inner.clone(),
-        }
+        QualityApi { commerce: self.inner.clone() }
     }
 
     /// Get the lots/batch tracking API.
     #[getter]
     fn lots(&self) -> LotsApi {
-        LotsApi {
-            commerce: self.inner.clone(),
-        }
+        LotsApi { commerce: self.inner.clone() }
     }
 
     /// Get the serial numbers API.
     #[getter]
     fn serials(&self) -> SerialsApi {
-        SerialsApi {
-            commerce: self.inner.clone(),
-        }
+        SerialsApi { commerce: self.inner.clone() }
     }
 
     /// Get the warehouse API.
     #[getter]
     fn warehouse(&self) -> WarehouseApi {
-        WarehouseApi {
-            commerce: self.inner.clone(),
-        }
+        WarehouseApi { commerce: self.inner.clone() }
     }
 
     /// Get the receiving API.
     #[getter]
     fn receiving(&self) -> ReceivingApi {
-        ReceivingApi {
-            commerce: self.inner.clone(),
-        }
+        ReceivingApi { commerce: self.inner.clone() }
     }
 
     /// Get the fulfillment API.
     #[getter]
     fn fulfillment(&self) -> FulfillmentApi {
-        FulfillmentApi {
-            commerce: self.inner.clone(),
-        }
+        FulfillmentApi { commerce: self.inner.clone() }
     }
 
     /// Get the accounts payable API.
     #[getter]
     fn accounts_payable(&self) -> AccountsPayableApi {
-        AccountsPayableApi {
-            commerce: self.inner.clone(),
-        }
+        AccountsPayableApi { commerce: self.inner.clone() }
     }
 
     /// Get the accounts receivable API.
     #[getter]
     fn accounts_receivable(&self) -> AccountsReceivableApi {
-        AccountsReceivableApi {
-            commerce: self.inner.clone(),
-        }
+        AccountsReceivableApi { commerce: self.inner.clone() }
     }
 
     /// Get the cost accounting API.
     #[getter]
     fn cost_accounting(&self) -> CostAccountingApi {
-        CostAccountingApi {
-            commerce: self.inner.clone(),
-        }
+        CostAccountingApi { commerce: self.inner.clone() }
     }
 
     /// Get the credit management API.
     #[getter]
     fn credit(&self) -> CreditApi {
-        CreditApi {
-            commerce: self.inner.clone(),
-        }
+        CreditApi { commerce: self.inner.clone() }
     }
 
     /// Get the backorder management API.
     #[getter]
     fn backorder(&self) -> BackorderApi {
-        BackorderApi {
-            commerce: self.inner.clone(),
-        }
+        BackorderApi { commerce: self.inner.clone() }
     }
 
     /// Get the general ledger API.
     #[getter]
     fn general_ledger(&self) -> GeneralLedgerApi {
-        GeneralLedgerApi {
-            commerce: self.inner.clone(),
-        }
+        GeneralLedgerApi { commerce: self.inner.clone() }
     }
 
     /// Get the vector search API for semantic search operations.
@@ -328,10 +264,7 @@ impl Commerce {
     ///     vector = commerce.vector("sk-...")
     ///     results = vector.search_products("wireless bluetooth headphones", limit=10)
     fn vector(&self, openai_api_key: String) -> PyResult<VectorSearch> {
-        Ok(VectorSearch {
-            commerce: self.inner.clone(),
-            api_key: openai_api_key,
-        })
+        Ok(VectorSearch { commerce: self.inner.clone(), api_key: openai_api_key })
     }
 }
 
@@ -460,9 +393,7 @@ impl Customers {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let customer = commerce
             .customers()
@@ -555,10 +486,7 @@ pub struct OrderItem {
 #[pymethods]
 impl OrderItem {
     fn __repr__(&self) -> String {
-        format!(
-            "OrderItem(sku='{}', qty={}, price={})",
-            self.sku, self.quantity, self.unit_price
-        )
+        format!("OrderItem(sku='{}', qty={}, price={})", self.sku, self.quantity, self.unit_price)
     }
 }
 
@@ -671,14 +599,7 @@ impl CreateOrderItemInput {
         product_id: Option<String>,
         variant_id: Option<String>,
     ) -> Self {
-        Self {
-            sku,
-            name,
-            quantity,
-            unit_price,
-            product_id,
-            variant_id,
-        }
+        Self { sku, name, quantity, unit_price, product_id, variant_id }
     }
 }
 
@@ -717,17 +638,13 @@ impl Orders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let cust_uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let cust_uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
 
         let order_items: Vec<stateset_core::CreateOrderItem> = items
             .into_iter()
             .map(|i| {
-                let product_id = i
-                    .product_id
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_default();
+                let product_id = i.product_id.and_then(|s| s.parse().ok()).unwrap_or_default();
                 let variant_id = i.variant_id.and_then(|s| s.parse().ok());
 
                 stateset_core::CreateOrderItem {
@@ -769,9 +686,7 @@ impl Orders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let order = commerce
             .orders()
@@ -813,9 +728,7 @@ impl Orders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let order_status = match status.to_lowercase().as_str() {
             "pending" => stateset_core::OrderStatus::Pending,
@@ -851,9 +764,7 @@ impl Orders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let order = commerce
             .orders()
@@ -876,9 +787,7 @@ impl Orders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let order = commerce
             .orders()
@@ -934,10 +843,7 @@ pub struct Product {
 #[pymethods]
 impl Product {
     fn __repr__(&self) -> String {
-        format!(
-            "Product(name='{}', slug='{}', status='{}')",
-            self.name, self.slug, self.status
-        )
+        format!("Product(name='{}', slug='{}', status='{}')", self.name, self.slug, self.status)
     }
 }
 
@@ -1015,12 +921,7 @@ impl CreateProductVariantInput {
     #[new]
     #[pyo3(signature = (sku, price, name=None, compare_at_price=None))]
     fn new(sku: String, price: f64, name: Option<String>, compare_at_price: Option<f64>) -> Self {
-        Self {
-            sku,
-            name,
-            price,
-            compare_at_price,
-        }
+        Self { sku, name, price, compare_at_price }
     }
 }
 
@@ -1095,9 +996,7 @@ impl Products {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let product = commerce
             .products()
@@ -1224,13 +1123,7 @@ impl CustomFieldDefinitionInput {
         list: bool,
         description: Option<String>,
     ) -> Self {
-        Self {
-            key,
-            field_type,
-            required,
-            list,
-            description,
-        }
+        Self { key, field_type, required, list, description }
     }
 }
 
@@ -1383,9 +1276,7 @@ impl CustomObjectsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let ty = commerce.custom_objects().get_type(uuid).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to get custom object type: {}", e))
@@ -1401,12 +1292,9 @@ impl CustomObjectsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let ty = commerce
-            .custom_objects()
-            .get_type_by_handle(&handle)
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to get custom object type: {}", e))
-            })?;
+        let ty = commerce.custom_objects().get_type_by_handle(&handle).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get custom object type: {}", e))
+        })?;
 
         Ok(ty.map(|t| t.into()))
     }
@@ -1425,9 +1313,7 @@ impl CustomObjectsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let fields = if let Some(fields) = fields {
             let mut out = Vec::with_capacity(fields.len());
@@ -1449,11 +1335,7 @@ impl CustomObjectsApi {
             .custom_objects()
             .update_type(
                 uuid,
-                stateset_core::UpdateCustomObjectType {
-                    display_name,
-                    description,
-                    fields,
-                },
+                stateset_core::UpdateCustomObjectType { display_name, description, fields },
             )
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to update custom object type: {}", e))
@@ -1477,11 +1359,7 @@ impl CustomObjectsApi {
 
         let list = commerce
             .custom_objects()
-            .list_types(stateset_core::CustomObjectTypeFilter {
-                search,
-                limit,
-                offset,
-            })
+            .list_types(stateset_core::CustomObjectTypeFilter { search, limit, offset })
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to list custom object types: {}", e))
             })?;
@@ -1496,9 +1374,7 @@ impl CustomObjectsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce.custom_objects().delete_type(uuid).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to delete custom object type: {}", e))
@@ -1552,9 +1428,7 @@ impl CustomObjectsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let obj = commerce
             .custom_objects()
@@ -1598,9 +1472,7 @@ impl CustomObjectsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let values = if let Some(values_json) = values_json {
             Some(
@@ -1615,12 +1487,7 @@ impl CustomObjectsApi {
             .custom_objects()
             .update_object(
                 uuid,
-                stateset_core::UpdateCustomObject {
-                    handle,
-                    owner_type,
-                    owner_id,
-                    values,
-                },
+                stateset_core::UpdateCustomObject { handle, owner_type, owner_id, values },
             )
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to update custom object: {}", e))
@@ -1669,9 +1536,7 @@ impl CustomObjectsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce.custom_objects().delete_object(uuid).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to delete custom object: {}", e))
@@ -1742,10 +1607,7 @@ pub struct StockLevel {
 #[pymethods]
 impl StockLevel {
     fn __repr__(&self) -> String {
-        format!(
-            "StockLevel(sku='{}', available={})",
-            self.sku, self.total_available
-        )
+        format!("StockLevel(sku='{}', available={})", self.sku, self.total_available)
     }
 }
 
@@ -1778,10 +1640,7 @@ pub struct Reservation {
 #[pymethods]
 impl Reservation {
     fn __repr__(&self) -> String {
-        format!(
-            "Reservation(id='{}', qty={}, status='{}')",
-            self.id, self.quantity, self.status
-        )
+        format!("Reservation(id='{}', qty={}, status='{}')", self.id, self.quantity, self.status)
     }
 }
 
@@ -1924,13 +1783,7 @@ impl Inventory {
 
         let reservation = commerce
             .inventory()
-            .reserve(
-                &sku,
-                qty,
-                &reference_type,
-                &reference_id,
-                expires_in_seconds,
-            )
+            .reserve(&sku, qty, &reference_type, &reference_id, expires_in_seconds)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to reserve inventory: {}", e)))?;
 
         Ok(reservation.into())
@@ -1946,16 +1799,11 @@ impl Inventory {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = reservation_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = reservation_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
-        commerce
-            .inventory()
-            .confirm_reservation(uuid)
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to confirm reservation: {}", e))
-            })?;
+        commerce.inventory().confirm_reservation(uuid).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to confirm reservation: {}", e))
+        })?;
 
         Ok(())
     }
@@ -1970,16 +1818,11 @@ impl Inventory {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = reservation_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = reservation_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
-        commerce
-            .inventory()
-            .release_reservation(uuid)
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to release reservation: {}", e))
-            })?;
+        commerce.inventory().release_reservation(uuid).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to release reservation: {}", e))
+        })?;
 
         Ok(())
     }
@@ -2012,10 +1855,7 @@ pub struct Return {
 #[pymethods]
 impl Return {
     fn __repr__(&self) -> String {
-        format!(
-            "Return(id='{}', status='{}', reason='{}')",
-            self.id, self.status, self.reason
-        )
+        format!("Return(id='{}', status='{}', reason='{}')", self.id, self.status, self.reason)
     }
 }
 
@@ -2047,10 +1887,7 @@ pub struct CreateReturnItemInput {
 impl CreateReturnItemInput {
     #[new]
     fn new(order_item_id: String, quantity: i32) -> Self {
-        Self {
-            order_item_id,
-            quantity,
-        }
+        Self { order_item_id, quantity }
     }
 }
 
@@ -2090,9 +1927,7 @@ impl Returns {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let ord_uuid = order_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
+        let ord_uuid = order_id.parse().map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
 
         let return_reason = match reason.to_lowercase().as_str() {
             "defective" => stateset_core::ReturnReason::Defective,
@@ -2145,9 +1980,7 @@ impl Returns {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let ret = commerce
             .returns()
@@ -2170,9 +2003,7 @@ impl Returns {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let ret = commerce
             .returns()
@@ -2196,9 +2027,7 @@ impl Returns {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let ret = commerce
             .returns()
@@ -2334,10 +2163,7 @@ pub struct Refund {
 #[pymethods]
 impl Refund {
     fn __repr__(&self) -> String {
-        format!(
-            "Refund(id='{}', amount={}, status='{}')",
-            self.id, self.amount, self.status
-        )
+        format!("Refund(id='{}', amount={}, status='{}')", self.id, self.amount, self.status)
     }
 }
 
@@ -2437,9 +2263,7 @@ impl Payments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let payment = commerce
             .payments()
@@ -2471,9 +2295,7 @@ impl Payments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let payment = commerce
             .payments()
@@ -2491,9 +2313,7 @@ impl Payments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let payment = commerce
             .payments()
@@ -2517,9 +2337,7 @@ impl Payments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = payment_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid payment UUID"))?;
+        let uuid = payment_id.parse().map_err(|_| PyValueError::new_err("Invalid payment UUID"))?;
 
         let refund = commerce
             .payments()
@@ -2645,9 +2463,8 @@ impl Shipments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let order_uuid = order_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
+        let order_uuid =
+            order_id.parse().map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
 
         let carrier_type = carrier.and_then(|c| match c.to_lowercase().as_str() {
             "ups" => Some(stateset_core::ShippingCarrier::Ups),
@@ -2688,9 +2505,7 @@ impl Shipments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
@@ -2723,9 +2538,7 @@ impl Shipments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
@@ -2742,9 +2555,7 @@ impl Shipments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
@@ -2761,9 +2572,7 @@ impl Shipments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
@@ -2869,10 +2678,7 @@ pub struct WarrantyClaim {
 #[pymethods]
 impl WarrantyClaim {
     fn __repr__(&self) -> String {
-        format!(
-            "WarrantyClaim(number='{}', status='{}')",
-            self.claim_number, self.status
-        )
+        format!("WarrantyClaim(number='{}', status='{}')", self.claim_number, self.status)
     }
 }
 
@@ -2916,9 +2722,8 @@ impl Warranties {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let cust_uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let cust_uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
 
         let prod_uuid = product_id
             .map(|id| id.parse())
@@ -2951,9 +2756,7 @@ impl Warranties {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let warranty = commerce
             .warranties()
@@ -2991,9 +2794,8 @@ impl Warranties {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let warranty_uuid = warranty_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid warranty UUID"))?;
+        let warranty_uuid =
+            warranty_id.parse().map_err(|_| PyValueError::new_err("Invalid warranty UUID"))?;
 
         let claim = commerce
             .warranties()
@@ -3015,9 +2817,7 @@ impl Warranties {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let claim = commerce
             .warranties()
@@ -3034,9 +2834,7 @@ impl Warranties {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let claim = commerce
             .warranties()
@@ -3053,9 +2851,7 @@ impl Warranties {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let res = match resolution.to_lowercase().as_str() {
             "repair" => stateset_core::ClaimResolution::Repair,
@@ -3117,10 +2913,7 @@ pub struct Supplier {
 #[pymethods]
 impl Supplier {
     fn __repr__(&self) -> String {
-        format!(
-            "Supplier(name='{}', code='{}')",
-            self.name, self.supplier_code
-        )
+        format!("Supplier(name='{}', code='{}')", self.name, self.supplier_code)
     }
 }
 
@@ -3227,9 +3020,7 @@ impl PurchaseOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let supplier = commerce
             .purchase_orders()
@@ -3261,9 +3052,8 @@ impl PurchaseOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let supp_uuid = supplier_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid supplier UUID"))?;
+        let supp_uuid =
+            supplier_id.parse().map_err(|_| PyValueError::new_err("Invalid supplier UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -3284,9 +3074,7 @@ impl PurchaseOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -3318,9 +3106,7 @@ impl PurchaseOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -3337,9 +3123,7 @@ impl PurchaseOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -3356,9 +3140,7 @@ impl PurchaseOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -3375,9 +3157,7 @@ impl PurchaseOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -3493,9 +3273,8 @@ impl Invoices {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let cust_uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let cust_uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
 
         let order_uuid = order_id
             .map(|id| id.parse())
@@ -3523,9 +3302,7 @@ impl Invoices {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
@@ -3557,9 +3334,7 @@ impl Invoices {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
@@ -3583,9 +3358,7 @@ impl Invoices {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
@@ -3610,9 +3383,7 @@ impl Invoices {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
@@ -3679,10 +3450,7 @@ pub struct Bom {
 #[pymethods]
 impl Bom {
     fn __repr__(&self) -> String {
-        format!(
-            "Bom(number='{}', name='{}', status='{}')",
-            self.bom_number, self.name, self.status
-        )
+        format!("Bom(number='{}', name='{}', status='{}')", self.bom_number, self.name, self.status)
     }
 }
 
@@ -3764,9 +3532,8 @@ impl BomApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let prod_uuid = product_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
+        let prod_uuid =
+            product_id.parse().map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
 
         let bom = commerce
             .bom()
@@ -3789,9 +3556,7 @@ impl BomApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let bom = commerce
             .bom()
@@ -3831,9 +3596,7 @@ impl BomApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = bom_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid BOM UUID"))?;
+        let uuid = bom_id.parse().map_err(|_| PyValueError::new_err("Invalid BOM UUID"))?;
 
         let component = commerce
             .bom()
@@ -3859,9 +3622,7 @@ impl BomApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = bom_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid BOM UUID"))?;
+        let uuid = bom_id.parse().map_err(|_| PyValueError::new_err("Invalid BOM UUID"))?;
 
         let components = commerce
             .bom()
@@ -3878,9 +3639,7 @@ impl BomApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let bom = commerce
             .bom()
@@ -3993,9 +3752,8 @@ impl WorkOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let prod_uuid = product_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
+        let prod_uuid =
+            product_id.parse().map_err(|_| PyValueError::new_err("Invalid product UUID"))?;
 
         let bom_uuid = bom_id
             .map(|id| id.parse())
@@ -4032,9 +3790,7 @@ impl WorkOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
@@ -4066,9 +3822,7 @@ impl WorkOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
@@ -4085,16 +3839,11 @@ impl WorkOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
-            .complete(
-                uuid,
-                Decimal::from_f64_retain(quantity_completed).unwrap_or_default(),
-            )
+            .complete(uuid, Decimal::from_f64_retain(quantity_completed).unwrap_or_default())
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to complete work order: {}", e))
             })?;
@@ -4109,9 +3858,7 @@ impl WorkOrders {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
@@ -4202,10 +3949,7 @@ impl CartAddress {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "CartAddress(name='{} {}', city='{}')",
-            self.first_name, self.last_name, self.city
-        )
+        format!("CartAddress(name='{} {}', city='{}')", self.first_name, self.last_name, self.city)
     }
 }
 
@@ -4286,10 +4030,7 @@ pub struct CartItem {
 #[pymethods]
 impl CartItem {
     fn __repr__(&self) -> String {
-        format!(
-            "CartItem(sku='{}', qty={}, total={})",
-            self.sku, self.quantity, self.total
-        )
+        format!("CartItem(sku='{}', qty={}, total={})", self.sku, self.quantity, self.total)
     }
 }
 
@@ -4653,9 +4394,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -4715,9 +4454,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -4769,9 +4506,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let carts = commerce
             .carts()
@@ -4791,9 +4526,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce
             .carts()
@@ -4819,9 +4552,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = cart_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let prod_uuid = item
             .product_id
@@ -4879,19 +4610,11 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = item_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = item_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart_item = commerce
             .carts()
-            .update_item(
-                uuid,
-                stateset_core::UpdateCartItem {
-                    quantity,
-                    ..Default::default()
-                },
-            )
+            .update_item(uuid, stateset_core::UpdateCartItem { quantity, ..Default::default() })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to update item: {}", e)))?;
 
         Ok(cart_item.into())
@@ -4907,9 +4630,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = item_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = item_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce
             .carts()
@@ -4932,9 +4653,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = cart_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let items = commerce
             .carts()
@@ -4954,9 +4673,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = cart_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce
             .carts()
@@ -4982,16 +4699,11 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
-        let cart = commerce
-            .carts()
-            .set_shipping_address(uuid, (&address).into())
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to set shipping address: {}", e))
-            })?;
+        let cart = commerce.carts().set_shipping_address(uuid, (&address).into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to set shipping address: {}", e))
+        })?;
 
         Ok(cart.into())
     }
@@ -5010,16 +4722,11 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
-        let cart = commerce
-            .carts()
-            .set_billing_address(uuid, (&address).into())
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to set billing address: {}", e))
-            })?;
+        let cart = commerce.carts().set_billing_address(uuid, (&address).into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to set billing address: {}", e))
+        })?;
 
         Ok(cart.into())
     }
@@ -5051,9 +4758,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let amount_dec = match shipping_amount {
             Some(v) => Some(
@@ -5092,9 +4797,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let rates = commerce
             .carts()
@@ -5127,9 +4830,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5162,9 +4863,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5187,9 +4886,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5216,9 +4913,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5241,9 +4936,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5266,9 +4959,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let result = commerce
             .carts()
@@ -5291,9 +4982,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5316,9 +5005,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5341,9 +5028,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5368,9 +5053,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5393,9 +5076,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5418,9 +5099,7 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -5444,16 +5123,11 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
-            .set_tax(
-                uuid,
-                Decimal::from_str_exact(&tax_amount.to_string()).unwrap_or_default(),
-            )
+            .set_tax(uuid, Decimal::from_str_exact(&tax_amount.to_string()).unwrap_or_default())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to set tax: {}", e)))?;
 
         Ok(cart.into())
@@ -6176,12 +5850,9 @@ impl Analytics {
             None => None,
         };
 
-        let rows = commerce
-            .analytics()
-            .low_stock_items(threshold_dec)
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to get low stock items: {}", e))
-            })?;
+        let rows = commerce.analytics().low_stock_items(threshold_dec).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get low stock items: {}", e))
+        })?;
 
         Ok(rows.into_iter().map(|i| i.into()).collect())
     }
@@ -6211,12 +5882,9 @@ impl Analytics {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
         let q = build_analytics_query(period, None, None);
-        let breakdown = commerce
-            .analytics()
-            .order_status_breakdown(q)
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to get order status breakdown: {}", e))
-            })?;
+        let breakdown = commerce.analytics().order_status_breakdown(q).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get order status breakdown: {}", e))
+        })?;
 
         Ok(breakdown.into())
     }
@@ -6266,10 +5934,8 @@ impl Analytics {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let forecasts = commerce
-            .analytics()
-            .demand_forecast(skus, days_ahead.unwrap_or(30))
-            .map_err(|e| {
+        let forecasts =
+            commerce.analytics().demand_forecast(skus, days_ahead.unwrap_or(30)).map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to get demand forecast: {}", e))
             })?;
 
@@ -6293,12 +5959,10 @@ impl Analytics {
             .map(parse_time_granularity)
             .unwrap_or(stateset_core::TimeGranularity::Month);
 
-        let forecasts = commerce
-            .analytics()
-            .revenue_forecast(periods_ahead.unwrap_or(3), gran)
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to get revenue forecast: {}", e))
-            })?;
+        let forecasts =
+            commerce.analytics().revenue_forecast(periods_ahead.unwrap_or(3), gran).map_err(
+                |e| PyRuntimeError::new_err(format!("Failed to get revenue forecast: {}", e)),
+            )?;
 
         Ok(forecasts.into_iter().map(|f| f.into()).collect())
     }
@@ -6423,11 +6087,7 @@ impl From<stateset_core::StoreCurrencySettings> for StoreCurrencySettings {
     fn from(s: stateset_core::StoreCurrencySettings) -> Self {
         Self {
             base_currency: s.base_currency.code().to_string(),
-            enabled_currencies: s
-                .enabled_currencies
-                .iter()
-                .map(|c| c.code().to_string())
-                .collect(),
+            enabled_currencies: s.enabled_currencies.iter().map(|c| c.code().to_string()).collect(),
             auto_convert: s.auto_convert,
             rounding_mode: rounding_mode_to_string(&s.rounding_mode),
         }
@@ -6458,12 +6118,7 @@ impl SetExchangeRateInput {
         rate: f64,
         source: Option<String>,
     ) -> Self {
-        Self {
-            base_currency,
-            quote_currency,
-            rate,
-            source,
-        }
+        Self { base_currency, quote_currency, rate, source }
     }
 }
 
@@ -6488,10 +6143,7 @@ impl CurrencyOperations {
 
         let rate = commerce
             .currency()
-            .get_rate(
-                parse_currency(&from_currency)?,
-                parse_currency(&to_currency)?,
-            )
+            .get_rate(parse_currency(&from_currency)?, parse_currency(&to_currency)?)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get rate: {}", e)))?;
 
         Ok(rate.map(|r| r.into()))
@@ -6610,9 +6262,7 @@ impl CurrencyOperations {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce
             .currency()
@@ -6786,9 +6436,7 @@ impl CurrencyOperations {
         let amount_dec = Decimal::from_f64_retain(amount)
             .ok_or_else(|| PyValueError::new_err("Invalid amount"))?;
 
-        Ok(commerce
-            .currency()
-            .format(amount_dec, parse_currency(&currency_code)?))
+        Ok(commerce.currency().format(amount_dec, parse_currency(&currency_code)?))
     }
 }
 
@@ -6997,10 +6645,7 @@ fn parse_billing_interval(s: &str) -> PyResult<stateset_core::BillingInterval> {
         "monthly" => Ok(stateset_core::BillingInterval::Monthly),
         "quarterly" => Ok(stateset_core::BillingInterval::Quarterly),
         "annual" | "yearly" => Ok(stateset_core::BillingInterval::Annual),
-        _ => Err(PyValueError::new_err(format!(
-            "Invalid billing interval: {}",
-            s
-        ))),
+        _ => Err(PyValueError::new_err(format!("Invalid billing interval: {}", s))),
     }
 }
 
@@ -7047,7 +6692,7 @@ impl Subscriptions {
                     .ok_or_else(|| PyValueError::new_err("Invalid price"))?,
                 currency: Some(currency.unwrap_or_else(|| "USD".to_string())),
                 setup_fee: setup_fee.map(|f| Decimal::from_f64_retain(f).unwrap_or_default()),
-                trial_days: trial_days,
+                trial_days,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create plan: {}", e)))?;
@@ -7062,9 +6707,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let plan = commerce
             .subscriptions()
@@ -7088,10 +6731,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let interval = billing_interval
-            .as_deref()
-            .map(parse_billing_interval)
-            .transpose()?;
+        let interval = billing_interval.as_deref().map(parse_billing_interval).transpose()?;
 
         let plan_status = status.as_deref().map(|s| match s.to_lowercase().as_str() {
             "draft" => stateset_core::PlanStatus::Draft,
@@ -7121,9 +6761,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let plan = commerce
             .subscriptions()
@@ -7140,9 +6778,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let plan = commerce
             .subscriptions()
@@ -7170,12 +6806,9 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let cust_uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
-        let plan_uuid = plan_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid plan UUID"))?;
+        let cust_uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let plan_uuid = plan_id.parse().map_err(|_| PyValueError::new_err("Invalid plan UUID"))?;
 
         let subscription = commerce
             .subscriptions()
@@ -7200,9 +6833,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let subscription = commerce
             .subscriptions()
@@ -7287,19 +6918,11 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let subscription = commerce
             .subscriptions()
-            .pause(
-                uuid,
-                stateset_core::PauseSubscription {
-                    reason,
-                    resume_at: None,
-                },
-            )
+            .pause(uuid, stateset_core::PauseSubscription { reason, resume_at: None })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to pause subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -7312,9 +6935,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let subscription = commerce.subscriptions().resume(uuid).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to resume subscription: {}", e))
@@ -7336,9 +6957,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let subscription = commerce
             .subscriptions()
@@ -7365,9 +6984,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let subscription = commerce
             .subscriptions()
@@ -7435,9 +7052,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cycle = commerce
             .subscriptions()
@@ -7458,9 +7073,7 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = subscription_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = subscription_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let events = commerce
             .subscriptions()
@@ -7818,18 +7431,10 @@ impl PromotionsApi {
             name,
             description: None,
             internal_notes: None,
-            promotion_type: promotion_type
-                .map(|s| parse_promotion_type(&s))
-                .unwrap_or_default(),
-            trigger: trigger
-                .map(|s| parse_promotion_trigger(&s))
-                .unwrap_or_default(),
-            target: target
-                .map(|s| parse_promotion_target(&s))
-                .unwrap_or_default(),
-            stacking: stacking
-                .map(|s| parse_stacking_behavior(&s))
-                .unwrap_or_default(),
+            promotion_type: promotion_type.map(|s| parse_promotion_type(&s)).unwrap_or_default(),
+            trigger: trigger.map(|s| parse_promotion_trigger(&s)).unwrap_or_default(),
+            target: target.map(|s| parse_promotion_target(&s)).unwrap_or_default(),
+            stacking: stacking.map(|s| parse_stacking_behavior(&s)).unwrap_or_default(),
             percentage_off: percentage_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
             fixed_amount_off: fixed_amount_off
                 .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
@@ -7842,14 +7447,10 @@ impl PromotionsApi {
             bundle_product_ids: None,
             bundle_discount: None,
             starts_at: starts_at.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|d| d.with_timezone(&chrono::Utc))
+                chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
             }),
             ends_at: ends_at.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|d| d.with_timezone(&chrono::Utc))
+                chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
             }),
             total_usage_limit,
             per_customer_limit,
@@ -7881,9 +7482,7 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let promo = commerce
             .promotions()
@@ -7948,9 +7547,7 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let promo = commerce
             .promotions()
@@ -7967,9 +7564,7 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let promo = commerce.promotions().deactivate(uuid).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to deactivate promotion: {}", e))
@@ -7985,9 +7580,7 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce
             .promotions()
@@ -8031,9 +7624,8 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let promo_uuid = promotion_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid promotion UUID"))?;
+        let promo_uuid =
+            promotion_id.parse().map_err(|_| PyValueError::new_err("Invalid promotion UUID"))?;
 
         let create = stateset_core::CreateCouponCode {
             promotion_id: promo_uuid,
@@ -8041,14 +7633,10 @@ impl PromotionsApi {
             usage_limit,
             per_customer_limit,
             starts_at: starts_at.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|d| d.with_timezone(&chrono::Utc))
+                chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
             }),
             ends_at: ends_at.and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
-                    .ok()
-                    .map(|d| d.with_timezone(&chrono::Utc))
+                chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
             }),
             metadata: None,
         };
@@ -8068,9 +7656,7 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let coupon = commerce
             .promotions()
@@ -8197,9 +7783,8 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let promo_uuid = promotion_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid promotion UUID"))?;
+        let promo_uuid =
+            promotion_id.parse().map_err(|_| PyValueError::new_err("Invalid promotion UUID"))?;
 
         let usage = commerce
             .promotions()
@@ -8372,11 +7957,7 @@ impl From<stateset_core::TaxExemption> for TaxExemption {
             certificate_number: e.certificate_number,
             issuing_authority: e.issuing_authority,
             jurisdiction_ids: e.jurisdiction_ids.iter().map(|u| u.to_string()).collect(),
-            exempt_categories: e
-                .exempt_categories
-                .iter()
-                .map(|c| c.as_str().to_string())
-                .collect(),
+            exempt_categories: e.exempt_categories.iter().map(|c| c.as_str().to_string()).collect(),
             effective_from: e.effective_from.to_string(),
             expires_at: e.expires_at.map(|d| d.to_string()),
             verified: e.verified,
@@ -8682,9 +8263,7 @@ impl TaxApi {
             parent_id: parent_id.and_then(|s| s.parse().ok()),
             name,
             code,
-            level: level
-                .map(|s| parse_jurisdiction_level(&s))
-                .unwrap_or_default(),
+            level: level.map(|s| parse_jurisdiction_level(&s)).unwrap_or_default(),
             country_code,
             state_code,
             county,
@@ -8705,9 +8284,7 @@ impl TaxApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let jurisdiction = commerce
             .tax()
@@ -8825,9 +8402,7 @@ impl TaxApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let rate = commerce
             .tax()
@@ -8890,9 +8465,8 @@ impl TaxApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let cid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let cid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
 
         let eff_from = chrono::NaiveDate::parse_from_str(&effective_from, "%Y-%m-%d")
             .map_err(|e| PyRuntimeError::new_err(format!("Invalid date format: {}", e)))?;
@@ -8932,9 +8506,7 @@ impl TaxApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let exemption = commerce
             .tax()
@@ -8950,9 +8522,7 @@ impl TaxApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let exemptions = commerce
             .tax()
@@ -8968,9 +8538,7 @@ impl TaxApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let is_exempt = commerce
             .tax()
@@ -9088,10 +8656,7 @@ pub struct Inspection {
 #[pymethods]
 impl Inspection {
     fn __repr__(&self) -> String {
-        format!(
-            "Inspection(number='{}', status='{}')",
-            self.inspection_number, self.status
-        )
+        format!("Inspection(number='{}', status='{}')", self.inspection_number, self.status)
     }
 }
 
@@ -9208,9 +8773,8 @@ impl QualityApi {
             "random" => stateset_core::InspectionType::Random,
             _ => stateset_core::InspectionType::Incoming,
         };
-        let ref_uuid = reference_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid reference UUID"))?;
+        let ref_uuid =
+            reference_id.parse().map_err(|_| PyValueError::new_err("Invalid reference UUID"))?;
         let inspection = commerce
             .quality()
             .create_inspection(stateset_core::CreateInspection {
@@ -9229,9 +8793,7 @@ impl QualityApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let inspection = commerce
             .quality()
             .get_inspection(uuid)
@@ -9256,9 +8818,7 @@ impl QualityApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let inspection = commerce
             .quality()
             .complete_inspection(uuid)
@@ -9352,18 +8912,10 @@ impl QualityApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let hold = commerce
             .quality()
-            .release_hold(
-                uuid,
-                stateset_core::ReleaseQualityHold {
-                    released_by,
-                    release_notes,
-                },
-            )
+            .release_hold(uuid, stateset_core::ReleaseQualityHold { released_by, release_notes })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(hold.into())
     }
@@ -9450,13 +9002,8 @@ impl LotsApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
-        let lot = commerce
-            .lots()
-            .get(uuid)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let lot = commerce.lots().get(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(lot.map(|l| l.into()))
     }
 
@@ -9489,9 +9036,7 @@ impl LotsApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let lot = commerce
             .lots()
             .quarantine(uuid, &reason)
@@ -9562,11 +9107,7 @@ impl SerialsApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let s = commerce
             .serials()
-            .create(stateset_core::CreateSerialNumber {
-                sku,
-                serial,
-                ..Default::default()
-            })
+            .create(stateset_core::CreateSerialNumber { sku, serial, ..Default::default() })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(s.into())
     }
@@ -9600,9 +9141,7 @@ impl SerialsApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let serial_status = match status.to_lowercase().as_str() {
             "available" => stateset_core::SerialStatus::Available,
             "sold" => stateset_core::SerialStatus::Sold,
@@ -9650,10 +9189,7 @@ impl From<stateset_core::Warehouse> for Warehouse {
         let addr_str = if w.address.street1.is_empty() && w.address.city.is_empty() {
             None
         } else {
-            Some(format!(
-                "{}, {}, {}",
-                w.address.street1, w.address.city, w.address.country
-            ))
+            Some(format!("{}, {}, {}", w.address.street1, w.address.city, w.address.country))
         };
         Self {
             id: w.id.to_string(),
@@ -9714,11 +9250,7 @@ impl WarehouseApi {
         let _ = address; // Address is simplified - WarehouseAddress uses Default
         let warehouse = commerce
             .warehouse()
-            .create_warehouse(stateset_core::CreateWarehouse {
-                code,
-                name,
-                ..Default::default()
-            })
+            .create_warehouse(stateset_core::CreateWarehouse { code, name, ..Default::default() })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(warehouse.into())
     }
@@ -9728,9 +9260,7 @@ impl WarehouseApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let wh_id: i32 = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let wh_id: i32 = id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
         let warehouse = commerce
             .warehouse()
             .get_warehouse(wh_id)
@@ -9761,9 +9291,8 @@ impl WarehouseApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let wh_id: i32 = warehouse_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let wh_id: i32 =
+            warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
         let loc_type = location_type
             .map(|t| match t.to_lowercase().as_str() {
                 "pick" | "picking" => stateset_core::LocationType::Pick,
@@ -9795,9 +9324,8 @@ impl WarehouseApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let wh_id: i32 = warehouse_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let wh_id: i32 =
+            warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
         let locations = commerce
             .warehouse()
             .get_locations_for_warehouse(wh_id)
@@ -9900,9 +9428,8 @@ impl ReceivingApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let wh_id: i32 = warehouse_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let wh_id: i32 =
+            warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
         let sup_uuid = supplier_id.and_then(|id| id.parse().ok());
         let receipt = commerce
             .receiving()
@@ -9920,9 +9447,7 @@ impl ReceivingApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let receipt = commerce
             .receiving()
             .get_receipt(uuid)
@@ -9947,9 +9472,7 @@ impl ReceivingApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = receipt_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = receipt_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let items = commerce
             .receiving()
             .get_receipt_items(uuid)
@@ -9962,9 +9485,7 @@ impl ReceivingApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let receipt = commerce
             .receiving()
             .complete_receiving(uuid)
@@ -10053,9 +9574,8 @@ impl FulfillmentApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let wh_id: i32 = warehouse_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let wh_id: i32 =
+            warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
         let order_uuids: Vec<uuid::Uuid> =
             order_ids.iter().filter_map(|id| id.parse().ok()).collect();
         let wave = commerce
@@ -10074,9 +9594,7 @@ impl FulfillmentApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let wave = commerce
             .fulfillment()
             .get_wave(uuid)
@@ -10101,9 +9619,7 @@ impl FulfillmentApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let wave = commerce
             .fulfillment()
             .release_wave(uuid)
@@ -10128,9 +9644,7 @@ impl FulfillmentApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let task = commerce
             .fulfillment()
             .complete_pick(stateset_core::CompletePick {
@@ -10233,9 +9747,7 @@ impl AccountsPayableApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = supplier_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = supplier_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let due = chrono::DateTime::parse_from_rfc3339(&due_date)
             .map_err(|_| PyValueError::new_err("Invalid due_date format"))?
             .with_timezone(&chrono::Utc);
@@ -10255,9 +9767,7 @@ impl AccountsPayableApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
             .get_bill(uuid)
@@ -10282,9 +9792,7 @@ impl AccountsPayableApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
             .approve_bill(uuid)
@@ -10298,9 +9806,7 @@ impl AccountsPayableApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let pm = payment_method
             .map(|s| match s.to_lowercase().as_str() {
                 "check" => stateset_core::PaymentMethodAP::Check,
@@ -10447,9 +9953,7 @@ impl AccountsReceivableApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let r = match reason.to_lowercase().as_str() {
             "returned_goods" | "return" => stateset_core::CreditMemoReason::ReturnedGoods,
             "pricing_error" | "price" => stateset_core::CreditMemoReason::PricingError,
@@ -10733,9 +10237,7 @@ impl CreditApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let account = commerce
             .credit()
             .create_credit_account(stateset_core::CreateCreditAccount {
@@ -10756,9 +10258,7 @@ impl CreditApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let account = commerce
             .credit()
             .get_credit_account_by_customer(uuid)
@@ -10771,15 +10271,10 @@ impl CreditApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let result = commerce
             .credit()
-            .check_credit(
-                uuid,
-                Decimal::from_f64_retain(order_amount).unwrap_or_default(),
-            )
+            .check_credit(uuid, Decimal::from_f64_retain(order_amount).unwrap_or_default())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(result.into())
     }
@@ -10794,9 +10289,7 @@ impl CreditApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let account = commerce
             .credit()
             .adjust_credit_limit(
@@ -10915,12 +10408,9 @@ impl BackorderApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let ord_uuid = order_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
-        let cust_uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let ord_uuid = order_id.parse().map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
+        let cust_uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
         let prio = priority.and_then(|p| match p.to_lowercase().as_str() {
             "low" => Some(stateset_core::BackorderPriority::Low),
             "normal" => Some(stateset_core::BackorderPriority::Normal),
@@ -10951,9 +10441,7 @@ impl BackorderApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let backorder = commerce
             .backorder()
             .get_backorder(uuid)
@@ -10978,9 +10466,7 @@ impl BackorderApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let backorder = commerce
             .backorder()
             .fulfill_backorder(stateset_core::FulfillBackorder {
@@ -11000,9 +10486,7 @@ impl BackorderApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let backorder = commerce
             .backorder()
             .cancel_backorder(uuid)
@@ -11170,9 +10654,7 @@ impl GeneralLedgerApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let account = commerce
             .general_ledger()
             .get_account(uuid)
@@ -11209,9 +10691,7 @@ impl GeneralLedgerApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
             .get_journal_entry(uuid)
@@ -11224,9 +10704,7 @@ impl GeneralLedgerApi {
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-        let uuid = id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
             .post_journal_entry(uuid, &posted_by)
@@ -11403,9 +10881,8 @@ impl VectorSearch {
     /// Args:
     ///     product_id: UUID of the product to index
     fn index_product(&self, product_id: String) -> PyResult<()> {
-        let uuid: uuid::Uuid = product_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let (product, vector) = {
             let commerce = self
@@ -11437,9 +10914,8 @@ impl VectorSearch {
     /// Args:
     ///     customer_id: UUID of the customer to index
     fn index_customer(&self, customer_id: String) -> PyResult<()> {
-        let uuid: uuid::Uuid = customer_id
-            .parse()
-            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let (customer, vector) = {
             let commerce = self
@@ -11539,26 +11015,14 @@ impl VectorSearch {
                 .vector(self.api_key.clone())
                 .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?
         };
-        let stats = vector
-            .stats()
-            .map_err(|e| PyRuntimeError::new_err(format!("Stats failed: {}", e)))?;
+        let stats =
+            vector.stats().map_err(|e| PyRuntimeError::new_err(format!("Stats failed: {}", e)))?;
 
-        let product_count = *stats
-            .counts
-            .get(&stateset_core::EntityType::Product)
-            .unwrap_or(&0);
-        let customer_count = *stats
-            .counts
-            .get(&stateset_core::EntityType::Customer)
-            .unwrap_or(&0);
-        let order_count = *stats
-            .counts
-            .get(&stateset_core::EntityType::Order)
-            .unwrap_or(&0);
-        let inventory_count = *stats
-            .counts
-            .get(&stateset_core::EntityType::InventoryItem)
-            .unwrap_or(&0);
+        let product_count = *stats.counts.get(&stateset_core::EntityType::Product).unwrap_or(&0);
+        let customer_count = *stats.counts.get(&stateset_core::EntityType::Customer).unwrap_or(&0);
+        let order_count = *stats.counts.get(&stateset_core::EntityType::Order).unwrap_or(&0);
+        let inventory_count =
+            *stats.counts.get(&stateset_core::EntityType::InventoryItem).unwrap_or(&0);
 
         Ok(EmbeddingStats {
             product_count,
@@ -11579,9 +11043,8 @@ impl VectorSearch {
     /// Returns:
     ///     Number of embeddings cleared
     fn clear(&self, entity_type: String) -> PyResult<u64> {
-        let et: stateset_core::EntityType = entity_type
-            .parse()
-            .map_err(|e: String| PyValueError::new_err(e))?;
+        let et: stateset_core::EntityType =
+            entity_type.parse().map_err(|e: String| PyValueError::new_err(e))?;
 
         let vector = {
             let commerce = self

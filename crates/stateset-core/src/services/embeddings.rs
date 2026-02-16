@@ -8,6 +8,7 @@ use std::time::Duration;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
 /// Embedding service for generating vector embeddings
+#[derive(Debug)]
 pub struct EmbeddingService {
     client: reqwest::blocking::Client,
     api_key: String,
@@ -58,9 +59,7 @@ impl EmbeddingService {
     fn build_client(
         timeout_secs: u64,
     ) -> std::result::Result<reqwest::blocking::Client, reqwest::Error> {
-        reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(timeout_secs))
-            .build()
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(timeout_secs)).build()
     }
 
     fn build_client_or_default(timeout_secs: u64) -> reqwest::blocking::Client {
@@ -82,12 +81,7 @@ impl EmbeddingService {
         let client = Self::build_client(DEFAULT_TIMEOUT_SECS).map_err(|e| {
             CommerceError::ExternalServiceError(format!("Failed to build HTTP client: {}", e))
         })?;
-        Ok(Self {
-            client,
-            api_key,
-            model: "text-embedding-3-small".to_string(),
-            dimensions: 1536,
-        })
+        Ok(Self { client, api_key, model: "text-embedding-3-small".to_string(), dimensions: 1536 })
     }
 
     /// Create with custom model and dimensions
@@ -105,12 +99,7 @@ impl EmbeddingService {
         let client = Self::build_client(DEFAULT_TIMEOUT_SECS).map_err(|e| {
             CommerceError::ExternalServiceError(format!("Failed to build HTTP client: {}", e))
         })?;
-        Ok(Self {
-            client,
-            api_key,
-            model,
-            dimensions,
-        })
+        Ok(Self { client, api_key, model, dimensions })
     }
 
     /// Generate embeddings for a batch of texts
@@ -206,10 +195,7 @@ impl EmbeddingService {
 
     /// Generate searchable text for a customer
     pub fn customer_text(customer: &Customer) -> String {
-        format!(
-            "{} {} {}",
-            customer.first_name, customer.last_name, customer.email
-        )
+        format!("{} {} {}", customer.first_name, customer.last_name, customer.email)
     }
 
     /// Generate searchable text for an order

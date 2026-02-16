@@ -25,12 +25,10 @@ impl SqliteAgentIdentityRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_agent_identity(row: &rusqlite::Row) -> rusqlite::Result<AgentIdentity> {
+    fn row_to_agent_identity(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentIdentity> {
         let wallet_proof_type = match row.get::<_, Option<String>>("wallet_proof_type")? {
             Some(val) => Some(parse_enum_row(&val, "agent_identity", "wallet_proof_type")?),
             None => None,
@@ -110,8 +108,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get(&input.agent_registry, &input.agent_id)?
-            .ok_or(CommerceError::NotFound)
+        self.get(&input.agent_registry, &input.agent_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get(&self, agent_registry: &str, agent_id: &str) -> Result<Option<AgentIdentity>> {
@@ -131,9 +128,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
             .prepare("SELECT * FROM agent_identities WHERE agent_wallet = ?")
             .map_err(map_db_error)?;
 
-        stmt.query_row([agent_wallet], Self::row_to_agent_identity)
-            .optional()
-            .map_err(map_db_error)
+        stmt.query_row([agent_wallet], Self::row_to_agent_identity).optional().map_err(map_db_error)
     }
 
     fn update(
@@ -143,9 +138,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         input: UpdateAgentIdentity,
     ) -> Result<AgentIdentity> {
         let conn = self.conn()?;
-        let existing = self
-            .get(agent_registry, agent_id)?
-            .ok_or(CommerceError::NotFound)?;
+        let existing = self.get(agent_registry, agent_id)?.ok_or(CommerceError::NotFound)?;
 
         let agent_uri = input.agent_uri.unwrap_or(existing.agent_uri);
         let agent_wallet = input.agent_wallet.or(existing.agent_wallet);
@@ -155,12 +148,8 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         let registration_hash = input.registration_hash.or(existing.registration_hash);
         let wallet_proof_type = input.wallet_proof_type.or(existing.wallet_proof_type);
         let wallet_proof = input.wallet_proof.or(existing.wallet_proof);
-        let wallet_proof_chain_id = input
-            .wallet_proof_chain_id
-            .or(existing.wallet_proof_chain_id);
-        let wallet_proof_deadline = input
-            .wallet_proof_deadline
-            .or(existing.wallet_proof_deadline);
+        let wallet_proof_chain_id = input.wallet_proof_chain_id.or(existing.wallet_proof_chain_id);
+        let wallet_proof_deadline = input.wallet_proof_deadline.or(existing.wallet_proof_deadline);
         let active = input.active.unwrap_or(existing.active);
 
         conn.execute(
@@ -189,8 +178,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get(agent_registry, agent_id)?
-            .ok_or(CommerceError::NotFound)
+        self.get(agent_registry, agent_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn set_agent_wallet(
@@ -223,8 +211,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get(agent_registry, agent_id)?
-            .ok_or(CommerceError::NotFound)
+        self.get(agent_registry, agent_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn clear_agent_wallet(&self, agent_registry: &str, agent_id: &str) -> Result<AgentIdentity> {
@@ -239,8 +226,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get(agent_registry, agent_id)?
-            .ok_or(CommerceError::NotFound)
+        self.get(agent_registry, agent_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn list(&self, filter: AgentIdentityFilter) -> Result<Vec<AgentIdentity>> {
@@ -286,10 +272,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
-            .query_map(
-                rusqlite::params_from_iter(param_refs),
-                Self::row_to_agent_identity,
-            )
+            .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_agent_identity)
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
@@ -329,16 +312,12 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
             params.push(Box::new(active as i32));
         }
 
-        let sql = format!(
-            "SELECT COUNT(*) FROM agent_identities WHERE {}",
-            conditions.join(" AND ")
-        );
+        let sql =
+            format!("SELECT COUNT(*) FROM agent_identities WHERE {}", conditions.join(" AND "));
 
         let param_refs = params_refs(&params);
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| {
-                row.get(0)
-            })
+            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| row.get(0))
             .map_err(map_db_error)?;
 
         Ok(count as u64)

@@ -8,10 +8,12 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::ToSql;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast,
-    FulfillmentMetrics, InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown,
-    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast,
-    SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
+    AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast, FulfillmentMetrics,
+    InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductId,
+    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod,
+    RevenueForecast, SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct,
+    TopReturnedProduct, Trend,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -25,9 +27,7 @@ impl SqliteAnalyticsRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
     }
 
     fn start_of_day(date: NaiveDate) -> DateTime<Utc> {
@@ -82,10 +82,7 @@ impl SqliteAnalyticsRepository {
                 let this_month_start = Self::first_day_of_month(now.date_naive());
                 let last_month_end = this_month_start - Duration::days(1);
                 let last_month_start = Self::first_day_of_month(last_month_end);
-                (
-                    Self::start_of_day(last_month_start),
-                    Self::end_of_day(last_month_end),
-                )
+                (Self::start_of_day(last_month_start), Self::end_of_day(last_month_end))
             }
             TimePeriod::ThisQuarter | TimePeriod::LastQuarter => {
                 // Simplified: just use 90 days
@@ -99,14 +96,12 @@ impl SqliteAnalyticsRepository {
             TimePeriod::AllTime => (Self::all_time_start(), now),
             TimePeriod::Custom => {
                 if let Some(ref range) = query.date_range {
-                    (
-                        range.start.unwrap_or(now - Duration::days(30)),
-                        range.end.unwrap_or(now),
-                    )
+                    (range.start.unwrap_or(now - Duration::days(30)), range.end.unwrap_or(now))
                 } else {
                     (now - Duration::days(30), now)
                 }
             }
+            _ => (now - Duration::days(30), now),
         }
     }
 }
@@ -235,6 +230,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 "strftime('%Y', created_at) || '-Q' || ((CAST(strftime('%m', created_at) AS INTEGER) - 1) / 3 + 1)".to_string()
             }
             TimeGranularity::Year => "strftime('%Y', created_at)".to_string(),
+            _ => "strftime('%Y-%m-%d', created_at)".to_string(),
         };
 
         let mut stmt = conn
@@ -312,27 +308,16 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map(
-                [&start_str as &dyn rusqlite::ToSql, &end_str, &limit],
-                |row| {
-                    let product_id: Option<String> = row.get(0)?;
-                    let sku: String = row.get(1)?;
-                    let name: String = row.get(2)?;
-                    let units_sold: i64 = row.get(3)?;
-                    let revenue: String = row.get(4)?;
-                    let order_count: i64 = row.get(5)?;
-                    let avg_price: String = row.get(6)?;
-                    Ok((
-                        product_id,
-                        sku,
-                        name,
-                        units_sold,
-                        revenue,
-                        order_count,
-                        avg_price,
-                    ))
-                },
-            )
+            .query_map([&start_str as &dyn rusqlite::ToSql, &end_str, &limit], |row| {
+                let product_id: Option<String> = row.get(0)?;
+                let sku: String = row.get(1)?;
+                let name: String = row.get(2)?;
+                let units_sold: i64 = row.get(3)?;
+                let revenue: String = row.get(4)?;
+                let order_count: i64 = row.get(5)?;
+                let avg_price: String = row.get(6)?;
+                Ok((product_id, sku, name, units_sold, revenue, order_count, avg_price))
+            })
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
@@ -342,7 +327,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             let revenue = parse_decimal_value(&revenue, "revenue")?;
             let average_price = parse_decimal_value(&avg_price, "average_price")?;
             results.push(TopProduct {
-                product_id: product_id.and_then(|s| Uuid::parse_str(&s).ok()),
+                product_id: product_id.and_then(|s| Uuid::parse_str(&s).ok().map(ProductId::from)),
                 sku,
                 name,
                 units_sold: units_sold as u64,
@@ -381,9 +366,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let end_str = end.to_rfc3339();
 
         // Total customers
-        let total_customers: i64 = conn
-            .query_row("SELECT COUNT(*) FROM customers", [], |row| row.get(0))
-            .unwrap_or(0);
+        let total_customers: i64 =
+            conn.query_row("SELECT COUNT(*) FROM customers", [], |row| row.get(0)).unwrap_or(0);
 
         // New customers in period
         let new_customers: i64 = conn
@@ -485,29 +469,17 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map(
-                [&start_str as &dyn rusqlite::ToSql, &end_str, &limit],
-                |row| {
-                    let id: String = row.get(0)?;
-                    let email: String = row.get(1)?;
-                    let name: String = row.get(2)?;
-                    let total_spent: String = row.get(3)?;
-                    let order_count: i64 = row.get(4)?;
-                    let avg_order: String = row.get(5)?;
-                    let first_order: Option<String> = row.get(6)?;
-                    let last_order: Option<String> = row.get(7)?;
-                    Ok((
-                        id,
-                        email,
-                        name,
-                        total_spent,
-                        order_count,
-                        avg_order,
-                        first_order,
-                        last_order,
-                    ))
-                },
-            )
+            .query_map([&start_str as &dyn rusqlite::ToSql, &end_str, &limit], |row| {
+                let id: String = row.get(0)?;
+                let email: String = row.get(1)?;
+                let name: String = row.get(2)?;
+                let total_spent: String = row.get(3)?;
+                let order_count: i64 = row.get(4)?;
+                let avg_order: String = row.get(5)?;
+                let first_order: Option<String> = row.get(6)?;
+                let last_order: Option<String> = row.get(7)?;
+                Ok((id, email, name, total_spent, order_count, avg_order, first_order, last_order))
+            })
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
@@ -625,9 +597,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             let on_hand = parse_decimal_value(&on_hand, "on_hand")?;
             let allocated = parse_decimal_value(&allocated, "allocated")?;
             let available = parse_decimal_value(&available, "available")?;
-            let reorder_point = reorder_point
-                .map(|s| parse_decimal_value(&s, "reorder_point"))
-                .transpose()?;
+            let reorder_point =
+                reorder_point.map(|s| parse_decimal_value(&s, "reorder_point")).transpose()?;
             results.push(LowStockItem {
                 sku,
                 name,
@@ -850,11 +821,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             } else {
                 Decimal::ZERO
             };
-            by_reason.push(ReturnReasonCount {
-                reason,
-                count: count as u64,
-                percentage,
-            });
+            by_reason.push(ReturnReasonCount { reason, count: count as u64, percentage });
         }
 
         // Get top returned products
@@ -979,11 +946,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 Decimal::from_f64_retain(current_stock).unwrap_or(Decimal::ZERO);
             let forecasted = avg_daily_dec * Decimal::from(days_ahead);
 
-            let days_until_stockout = if avg_daily > 0.0 {
-                Some((current_stock / avg_daily) as i32)
-            } else {
-                None
-            };
+            let days_until_stockout =
+                if avg_daily > 0.0 { Some((current_stock / avg_daily) as i32) } else { None };
 
             // Simple trend detection
             let trend = if avg_daily > 1.0 {

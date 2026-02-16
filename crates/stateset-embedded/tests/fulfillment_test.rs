@@ -10,8 +10,9 @@ use rust_decimal_macros::dec;
 use stateset_embedded::{
     AddCarton, AddCartonItem, Commerce, CreateCustomer, CreateLocation, CreateOrder,
     CreateOrderItem, CreatePackTask, CreatePickTask, CreateProduct, CreateShipTask,
-    CreateWarehouse, CreateWave, LocationType, PackStatus, PackTaskFilter, PackageType, PickStatus,
-    PickTaskFilter, ShipStatus, ShipTaskFilter, WarehouseType, Wave, WaveFilter, WaveStatus,
+    CreateWarehouse, CreateWave, FulfillmentId, LocationType, OrderId, OrderItemId, PackStatus,
+    PackTaskFilter, PackageType, PickStatus, PickTaskFilter, ShipStatus, ShipTaskFilter,
+    ShipmentId, WarehouseType, Wave, WaveFilter, WaveStatus,
 };
 use uuid::Uuid;
 
@@ -28,8 +29,8 @@ struct TestContext {
     commerce: Commerce,
     warehouse_id: i32,
     location_id: i32,
-    customer_id: Uuid,
-    product_id: Uuid,
+    customer_id: stateset_core::CustomerId,
+    product_id: stateset_core::ProductId,
 }
 
 impl TestContext {
@@ -75,10 +76,7 @@ impl TestContext {
         // Create product
         let product = commerce
             .products()
-            .create(CreateProduct {
-                name: "Test Product".into(),
-                ..Default::default()
-            })
+            .create(CreateProduct { name: "Test Product".into(), ..Default::default() })
             .expect("Failed to create test product");
 
         Self {
@@ -90,13 +88,13 @@ impl TestContext {
         }
     }
 
-    fn create_order(&self) -> Uuid {
+    fn create_order(&self) -> OrderId {
         self.commerce
             .orders()
             .create(CreateOrder {
-                customer_id: self.customer_id,
+                customer_id: self.customer_id.into(),
                 items: vec![CreateOrderItem {
-                    product_id: self.product_id,
+                    product_id: self.product_id.into(),
                     sku: "TEST-SKU-001".into(),
                     name: "Test Product".into(),
                     quantity: 2,
@@ -110,12 +108,12 @@ impl TestContext {
     }
 
     #[allow(dead_code)]
-    fn create_order_with_items(&self, items: Vec<CreateOrderItem>) -> Uuid {
+    fn create_order_with_items(&self, items: Vec<CreateOrderItem>) -> OrderId {
         let items = items
             .into_iter()
             .map(|mut item| {
                 if item.product_id.is_nil() {
-                    item.product_id = self.product_id;
+                    item.product_id = self.product_id.into();
                 }
                 item
             })
@@ -123,16 +121,12 @@ impl TestContext {
 
         self.commerce
             .orders()
-            .create(CreateOrder {
-                customer_id: self.customer_id,
-                items,
-                ..Default::default()
-            })
+            .create(CreateOrder { customer_id: self.customer_id.into(), items, ..Default::default() })
             .expect("Failed to create order")
             .id
     }
 
-    fn create_wave(&self, order_ids: Vec<Uuid>) -> Wave {
+    fn create_wave(&self, order_ids: Vec<OrderId>) -> Wave {
         self.commerce
             .fulfillment()
             .create_wave(CreateWave {
@@ -147,8 +141,8 @@ impl TestContext {
 
     fn create_pick(
         &self,
-        wave_id: Option<Uuid>,
-        order_id: Uuid,
+        wave_id: Option<FulfillmentId>,
+        order_id: OrderId,
         sku: &str,
         quantity: rust_decimal::Decimal,
     ) -> stateset_embedded::PickTask {
@@ -157,7 +151,7 @@ impl TestContext {
             .create_pick(CreatePickTask {
                 wave_id,
                 order_id,
-                order_item_id: Uuid::new_v4(),
+                order_item_id: OrderItemId::new(),
                 warehouse_id: self.warehouse_id,
                 sku: sku.into(),
                 product_name: Some(format!("Product {}", sku)),
@@ -204,10 +198,7 @@ fn test_create_wave() {
     assert_eq!(wave.status, WaveStatus::Draft);
     assert_eq!(wave.order_count, 3);
     assert_eq!(wave.priority, 1);
-    assert_eq!(
-        wave.notes,
-        Some("Priority wave for same-day shipping".into())
-    );
+    assert_eq!(wave.notes, Some("Priority wave for same-day shipping".into()));
     assert_eq!(wave.created_by, Some("warehouse_manager".into()));
 }
 
@@ -255,7 +246,7 @@ fn test_get_wave_not_found() {
     let result = ctx
         .commerce
         .fulfillment()
-        .get_wave(Uuid::new_v4())
+        .get_wave(FulfillmentId::new())
         .expect("Should not error for missing wave");
 
     assert!(result.is_none());
@@ -274,11 +265,8 @@ fn test_add_orders_to_wave() {
     assert_eq!(wave.order_count, 2);
 
     // Get wave orders to verify
-    let orders = ctx
-        .commerce
-        .fulfillment()
-        .get_wave_orders(wave.id)
-        .expect("Failed to get wave orders");
+    let orders =
+        ctx.commerce.fulfillment().get_wave_orders(wave.id).expect("Failed to get wave orders");
 
     assert_eq!(orders.len(), 2);
     assert!(orders.contains(&order1));
@@ -304,11 +292,8 @@ fn test_list_waves() {
             .expect("Failed to create wave");
     }
 
-    let waves = ctx
-        .commerce
-        .fulfillment()
-        .list_waves(WaveFilter::default())
-        .expect("Failed to list waves");
+    let waves =
+        ctx.commerce.fulfillment().list_waves(WaveFilter::default()).expect("Failed to list waves");
 
     assert!(waves.len() >= 5);
 }
@@ -331,10 +316,7 @@ fn test_list_waves_by_status() {
     let draft_waves = ctx
         .commerce
         .fulfillment()
-        .list_waves(WaveFilter {
-            status: Some(WaveStatus::Draft),
-            ..Default::default()
-        })
+        .list_waves(WaveFilter { status: Some(WaveStatus::Draft), ..Default::default() })
         .expect("Failed to list draft waves");
 
     assert!(draft_waves.len() >= 3);
@@ -479,7 +461,7 @@ fn test_create_pick_task() {
         .create_pick(CreatePickTask {
             wave_id: Some(wave.id),
             order_id,
-            order_item_id: Uuid::new_v4(),
+            order_item_id: OrderItemId::new(),
             warehouse_id: ctx.warehouse_id,
             sku: "TEST-SKU-001".into(),
             product_name: Some("Test Product".into()),
@@ -576,7 +558,7 @@ fn test_get_picks_for_wave() {
             .create_pick(CreatePickTask {
                 wave_id: Some(wave.id),
                 order_id,
-                order_item_id: Uuid::new_v4(),
+                order_item_id: OrderItemId::new(),
                 warehouse_id: ctx.warehouse_id,
                 sku: format!("SKU-{:03}", i),
                 product_name: None,
@@ -667,10 +649,7 @@ fn test_get_pack_task() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: None,
-        })
+        .create_pack(CreatePackTask { order_id, notes: None })
         .expect("Failed to create pack task");
 
     let retrieved = ctx
@@ -693,10 +672,7 @@ fn test_list_pack_tasks() {
         let order_id = ctx.create_order();
         ctx.commerce
             .fulfillment()
-            .create_pack(CreatePackTask {
-                order_id,
-                notes: None,
-            })
+            .create_pack(CreatePackTask { order_id, notes: None })
             .expect("Failed to create pack task");
     }
 
@@ -741,10 +717,7 @@ fn test_count_pack_tasks() {
         let order_id = ctx.create_order();
         ctx.commerce
             .fulfillment()
-            .create_pack(CreatePackTask {
-                order_id,
-                notes: None,
-            })
+            .create_pack(CreatePackTask { order_id, notes: None })
             .expect("Failed to create pack task");
     }
 
@@ -765,10 +738,7 @@ fn test_add_carton_to_pack_task() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: None,
-        })
+        .create_pack(CreatePackTask { order_id, notes: None })
         .expect("Failed to create pack task");
 
     // Add a carton
@@ -792,11 +762,7 @@ fn test_add_carton_to_pack_task() {
     assert_eq!(carton.weight_kg, Some(dec!(2.5)));
 
     // Get cartons for the pack task
-    let cartons = ctx
-        .commerce
-        .fulfillment()
-        .get_cartons(pack.id)
-        .expect("Failed to get cartons");
+    let cartons = ctx.commerce.fulfillment().get_cartons(pack.id).expect("Failed to get cartons");
 
     assert_eq!(cartons.len(), 1);
 }
@@ -809,10 +775,7 @@ fn test_add_multiple_cartons() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: None,
-        })
+        .create_pack(CreatePackTask { order_id, notes: None })
         .expect("Failed to create pack task");
 
     // Add multiple cartons
@@ -830,11 +793,7 @@ fn test_add_multiple_cartons() {
             .expect("Failed to add carton");
     }
 
-    let cartons = ctx
-        .commerce
-        .fulfillment()
-        .get_cartons(pack.id)
-        .expect("Failed to get cartons");
+    let cartons = ctx.commerce.fulfillment().get_cartons(pack.id).expect("Failed to get cartons");
 
     assert_eq!(cartons.len(), 3);
 }
@@ -847,10 +806,7 @@ fn test_add_carton_item() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: None,
-        })
+        .create_pack(CreatePackTask { order_id, notes: None })
         .expect("Failed to create pack task");
 
     let carton = ctx
@@ -885,11 +841,8 @@ fn test_add_carton_item() {
     assert_eq!(carton_item.quantity, dec!(2));
 
     // Get items in carton
-    let items = ctx
-        .commerce
-        .fulfillment()
-        .get_carton_items(carton.id)
-        .expect("Failed to get carton items");
+    let items =
+        ctx.commerce.fulfillment().get_carton_items(carton.id).expect("Failed to get carton items");
 
     assert_eq!(items.len(), 1);
 }
@@ -902,10 +855,7 @@ fn test_mark_label_printed() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: None,
-        })
+        .create_pack(CreatePackTask { order_id, notes: None })
         .expect("Failed to create pack task");
 
     let carton = ctx
@@ -940,10 +890,7 @@ fn test_multiple_carton_types() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: None,
-        })
+        .create_pack(CreatePackTask { order_id, notes: None })
         .expect("Failed to create pack task");
 
     // Add different types of packages
@@ -990,11 +937,7 @@ fn test_multiple_carton_types() {
     assert_eq!(envelope.package_type, PackageType::Envelope);
     assert_eq!(pallet.package_type, PackageType::Pallet);
 
-    let cartons = ctx
-        .commerce
-        .fulfillment()
-        .get_cartons(pack.id)
-        .expect("Failed to get cartons");
+    let cartons = ctx.commerce.fulfillment().get_cartons(pack.id).expect("Failed to get cartons");
 
     assert_eq!(cartons.len(), 3);
 }
@@ -1012,10 +955,7 @@ fn test_create_ship_task() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: None,
-        })
+        .create_pack(CreatePackTask { order_id, notes: None })
         .expect("Failed to create pack task");
 
     let ship = ctx
@@ -1023,7 +963,7 @@ fn test_create_ship_task() {
         .fulfillment()
         .create_ship(CreateShipTask {
             order_id,
-            shipment_id: Uuid::new_v4(),
+            shipment_id: ShipmentId::new(),
             pack_task_id: pack.id,
             carrier: Some("USPS".into()),
             service_level: Some("Priority Mail".into()),
@@ -1046,10 +986,7 @@ fn test_get_ship_task() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: None,
-        })
+        .create_pack(CreatePackTask { order_id, notes: None })
         .expect("Failed to create pack task");
 
     let ship = ctx
@@ -1057,7 +994,7 @@ fn test_get_ship_task() {
         .fulfillment()
         .create_ship(CreateShipTask {
             order_id,
-            shipment_id: Uuid::new_v4(),
+            shipment_id: ShipmentId::new(),
             pack_task_id: pack.id,
             carrier: Some("FedEx".into()),
             service_level: None,
@@ -1085,17 +1022,14 @@ fn test_list_ship_tasks() {
         let pack = ctx
             .commerce
             .fulfillment()
-            .create_pack(CreatePackTask {
-                order_id,
-                notes: None,
-            })
+            .create_pack(CreatePackTask { order_id, notes: None })
             .expect("Failed to create pack task");
 
         ctx.commerce
             .fulfillment()
             .create_ship(CreateShipTask {
                 order_id,
-                shipment_id: Uuid::new_v4(),
+                shipment_id: ShipmentId::new(),
                 pack_task_id: pack.id,
                 carrier: None,
                 service_level: None,
@@ -1133,7 +1067,7 @@ fn test_list_ship_tasks() {
 //         .fulfillment()
 //         .create_ship(CreateShipTask {
 //             order_id,
-//             shipment_id: Uuid::new_v4(),
+//             shipment_id: ShipmentId::new(),
 //             pack_task_id: pack.id,
 //             carrier: None,
 //             service_level: None,
@@ -1159,17 +1093,14 @@ fn test_count_ship_tasks() {
         let pack = ctx
             .commerce
             .fulfillment()
-            .create_pack(CreatePackTask {
-                order_id,
-                notes: None,
-            })
+            .create_pack(CreatePackTask { order_id, notes: None })
             .expect("Failed to create pack task");
 
         ctx.commerce
             .fulfillment()
             .create_ship(CreateShipTask {
                 order_id,
-                shipment_id: Uuid::new_v4(),
+                shipment_id: ShipmentId::new(),
                 pack_task_id: pack.id,
                 carrier: None,
                 service_level: None,
@@ -1338,10 +1269,7 @@ fn test_pack_and_carton_workflow() {
     let pack = ctx
         .commerce
         .fulfillment()
-        .create_pack(CreatePackTask {
-            order_id,
-            notes: Some("Handle with care".into()),
-        })
+        .create_pack(CreatePackTask { order_id, notes: Some("Handle with care".into()) })
         .expect("Failed to create pack");
 
     assert_eq!(pack.status, PackStatus::Pending);
@@ -1373,19 +1301,13 @@ fn test_pack_and_carton_workflow() {
         .expect("Failed to add item");
 
     // Mark label printed
-    let printed = ctx
-        .commerce
-        .fulfillment()
-        .mark_label_printed(carton1.id)
-        .expect("Failed to mark printed");
+    let printed =
+        ctx.commerce.fulfillment().mark_label_printed(carton1.id).expect("Failed to mark printed");
     assert!(printed.label_printed);
 
     // Verify carton items
-    let items = ctx
-        .commerce
-        .fulfillment()
-        .get_carton_items(carton1.id)
-        .expect("Failed to get items");
+    let items =
+        ctx.commerce.fulfillment().get_carton_items(carton1.id).expect("Failed to get items");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].sku, "TEST-SKU-001");
 }
@@ -1415,11 +1337,8 @@ fn test_multi_order_wave() {
     assert_eq!(wave.order_count, 3);
 
     // Get wave orders
-    let orders = ctx
-        .commerce
-        .fulfillment()
-        .get_wave_orders(wave.id)
-        .expect("Failed to get wave orders");
+    let orders =
+        ctx.commerce.fulfillment().get_wave_orders(wave.id).expect("Failed to get wave orders");
     assert_eq!(orders.len(), 3);
 
     // NOTE: Status transitions (release_wave, complete_wave) commented out due to

@@ -1,0 +1,24 @@
+[package]
+name = "stateset-test-utils"
+description = "Shared test fixtures and helpers for StateSet iCommerce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# This crate is never published — it exists only for dev/test use.
+publish = false
+
+[dependencies]
+stateset-primitives = { workspace = true }
+stateset-core = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

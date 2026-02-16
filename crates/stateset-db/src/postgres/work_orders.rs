@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    validate_batch_size, AddWorkOrderMaterial, BatchResult, CommerceError, CreateWorkOrder,
-    CreateWorkOrderTask, Result, TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder,
-    WorkOrderFilter, WorkOrderMaterial, WorkOrderPriority, WorkOrderRepository, WorkOrderStatus,
-    WorkOrderTask,
+    AddWorkOrderMaterial, BatchResult, CommerceError, CreateWorkOrder, CreateWorkOrderTask, Result,
+    TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder, WorkOrderFilter,
+    WorkOrderMaterial, WorkOrderPriority, WorkOrderRepository, WorkOrderStatus, WorkOrderTask,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -407,17 +407,13 @@ impl PgWorkOrderRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(priority) = priority {
-            builder
-                .push(" AND priority = ")
-                .push_bind(priority.to_string());
+            builder.push(" AND priority = ").push_bind(priority.to_string());
         }
         if let Some(assigned_to) = assigned_to {
             builder.push(" AND assigned_to = ").push_bind(assigned_to);
         }
         if let Some(work_center_id) = work_center_id {
-            builder
-                .push(" AND work_center_id = ")
-                .push_bind(work_center_id);
+            builder.push(" AND work_center_id = ").push_bind(work_center_id);
         }
         if overdue_only.unwrap_or(false) {
             let now = Utc::now();
@@ -508,10 +504,7 @@ impl PgWorkOrderRepository {
     pub async fn hold_async(&self, id: Uuid) -> Result<WorkOrder> {
         self.update_async(
             id,
-            UpdateWorkOrder {
-                status: Some(WorkOrderStatus::OnHold),
-                ..Default::default()
-            },
+            UpdateWorkOrder { status: Some(WorkOrderStatus::OnHold), ..Default::default() },
         )
         .await
     }
@@ -520,10 +513,7 @@ impl PgWorkOrderRepository {
     pub async fn resume_async(&self, id: Uuid) -> Result<WorkOrder> {
         self.update_async(
             id,
-            UpdateWorkOrder {
-                status: Some(WorkOrderStatus::InProgress),
-                ..Default::default()
-            },
+            UpdateWorkOrder { status: Some(WorkOrderStatus::InProgress), ..Default::default() },
         )
         .await
     }
@@ -532,10 +522,7 @@ impl PgWorkOrderRepository {
     pub async fn cancel_async(&self, id: Uuid) -> Result<WorkOrder> {
         self.update_async(
             id,
-            UpdateWorkOrder {
-                status: Some(WorkOrderStatus::Cancelled),
-                ..Default::default()
-            },
+            UpdateWorkOrder { status: Some(WorkOrderStatus::Cancelled), ..Default::default() },
         )
         .await
     }
@@ -761,17 +748,13 @@ impl PgWorkOrderRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(priority) = priority {
-            builder
-                .push(" AND priority = ")
-                .push_bind(priority.to_string());
+            builder.push(" AND priority = ").push_bind(priority.to_string());
         }
         if let Some(assigned_to) = assigned_to {
             builder.push(" AND assigned_to = ").push_bind(assigned_to);
         }
         if let Some(work_center_id) = work_center_id {
-            builder
-                .push(" AND work_center_id = ")
-                .push_bind(work_center_id);
+            builder.push(" AND work_center_id = ").push_bind(work_center_id);
         }
         if overdue_only.unwrap_or(false) {
             let now = Utc::now();
@@ -781,11 +764,8 @@ impl PgWorkOrderRepository {
                 .push(" AND status NOT IN ('completed', 'cancelled')");
         }
 
-        let count: (i64,) = builder
-            .build_query_as()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }
@@ -1025,11 +1005,7 @@ impl PgWorkOrderRepository {
                 task_models.push(Self::row_to_task(task)?);
             }
             let material_models = materials.into_iter().map(Self::row_to_material).collect();
-            work_orders.push(Self::row_to_work_order(
-                updated_row,
-                task_models,
-                material_models,
-            )?);
+            work_orders.push(Self::row_to_work_order(updated_row, task_models, material_models)?);
         }
 
         tx.commit().await.map_err(map_db_error)?;

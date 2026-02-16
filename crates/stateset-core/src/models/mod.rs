@@ -40,7 +40,16 @@ pub mod warranty;
 pub mod x402;
 
 pub use a2a::*;
-pub use a2a_skill::*;
+// Re-export a2a_skill items individually to avoid name collisions with the a2a
+// module (both define `A2AQuote` and `A2AQuoteFilter` with different schemas).
+// Use the module path `a2a_skill::A2AQuote` when you need the skill-commerce variant.
+pub use a2a_skill::{
+    A2APurchase, A2APurchaseFilter, A2AQuote as SkillQuote, A2AQuoteFilter as SkillQuoteFilter,
+    ConfirmDeliveryInput, ConfirmDeliveryOutput, CreateA2APurchase, CreateA2AQuote,
+    DiscoverSellersInput, DiscoverSellersOutput, InitiatePurchaseInput, InitiatePurchaseOutput,
+    ItemAvailability, PurchaseStatus, QuoteItem, QuoteStatus, QuotedItem, RequestQuoteInput,
+    RequestQuoteOutput, SellerInfo,
+};
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
 pub use agent_card::*;

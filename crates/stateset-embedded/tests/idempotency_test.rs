@@ -7,7 +7,9 @@ use stateset_embedded::{
 };
 use uuid::Uuid;
 
-fn create_order_with_item(commerce: &Commerce) -> (Uuid, Uuid) {
+fn create_order_with_item(
+    commerce: &Commerce,
+) -> (stateset_embedded::OrderId, stateset_embedded::OrderItemId) {
     let customer = commerce
         .customers()
         .create(CreateCustomer {
@@ -21,9 +23,9 @@ fn create_order_with_item(commerce: &Commerce) -> (Uuid, Uuid) {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id,
+            customer_id: customer.id.into(),
             items: vec![CreateOrderItem {
-                product_id: Uuid::new_v4(),
+                product_id: Uuid::new_v4().into(),
                 sku: "IDEM-001".into(),
                 name: "Idempotent Widget".into(),
                 quantity: 1,
@@ -102,10 +104,7 @@ fn test_refund_idempotency_key() {
         .expect("Failed to retry refund");
 
     assert_eq!(refund.id, retry.id);
-    assert_eq!(
-        commerce.payments().get_refunds(payment.id).unwrap().len(),
-        1
-    );
+    assert_eq!(commerce.payments().get_refunds(payment.id).unwrap().len(), 1);
 }
 
 #[test]
@@ -118,11 +117,7 @@ fn test_return_idempotency_key() {
         .create(CreateReturn {
             order_id,
             reason: ReturnReason::Other,
-            items: vec![CreateReturnItem {
-                order_item_id,
-                quantity: 1,
-                ..Default::default()
-            }],
+            items: vec![CreateReturnItem { order_item_id, quantity: 1, ..Default::default() }],
             idempotency_key: Some("return-idem-1".into()),
             ..Default::default()
         })
@@ -133,11 +128,7 @@ fn test_return_idempotency_key() {
         .create(CreateReturn {
             order_id,
             reason: ReturnReason::Damaged,
-            items: vec![CreateReturnItem {
-                order_item_id,
-                quantity: 1,
-                ..Default::default()
-            }],
+            items: vec![CreateReturnItem { order_item_id, quantity: 1, ..Default::default() }],
             idempotency_key: Some("return-idem-1".into()),
             ..Default::default()
         })

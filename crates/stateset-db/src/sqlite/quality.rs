@@ -28,9 +28,7 @@ impl SqliteQualityRepository {
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn generate_inspection_number() -> String {
@@ -41,7 +39,7 @@ impl SqliteQualityRepository {
         format!("NCR-{}", Utc::now().format("%Y%m%d%H%M%S"))
     }
 
-    fn row_to_inspection(row: &rusqlite::Row) -> rusqlite::Result<Inspection> {
+    fn row_to_inspection(row: &rusqlite::Row<'_>) -> rusqlite::Result<Inspection> {
         Ok(Inspection {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "inspection", "id")?,
             inspection_number: row.get("inspection_number")?,
@@ -88,7 +86,7 @@ impl SqliteQualityRepository {
         })
     }
 
-    fn row_to_inspection_item(row: &rusqlite::Row) -> rusqlite::Result<InspectionItem> {
+    fn row_to_inspection_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<InspectionItem> {
         Ok(InspectionItem {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "inspection_item", "id")?,
             inspection_id: parse_uuid_row(
@@ -124,11 +122,7 @@ impl SqliteQualityRepository {
                 "inspection_item",
                 "measurements",
             )?,
-            result: parse_enum_row(
-                &row.get::<_, String>("result")?,
-                "inspection_item",
-                "result",
-            )?,
+            result: parse_enum_row(&row.get::<_, String>("result")?, "inspection_item", "result")?,
             notes: row.get("notes")?,
             created_at: parse_datetime_row(
                 &row.get::<_, String>("created_at")?,
@@ -138,7 +132,7 @@ impl SqliteQualityRepository {
         })
     }
 
-    fn row_to_ncr(row: &rusqlite::Row) -> rusqlite::Result<NonConformance> {
+    fn row_to_ncr(row: &rusqlite::Row<'_>) -> rusqlite::Result<NonConformance> {
         let disposition = match row.get::<_, Option<String>>("disposition")? {
             Some(value) => Some(parse_enum_row(&value, "non_conformance", "disposition")?),
             None => None,
@@ -152,21 +146,13 @@ impl SqliteQualityRepository {
                 "non_conformance",
                 "inspection_id",
             )?,
-            source: parse_enum_row(
-                &row.get::<_, String>("source")?,
-                "non_conformance",
-                "source",
-            )?,
+            source: parse_enum_row(&row.get::<_, String>("source")?, "non_conformance", "source")?,
             severity: parse_enum_row(
                 &row.get::<_, String>("severity")?,
                 "non_conformance",
                 "severity",
             )?,
-            status: parse_enum_row(
-                &row.get::<_, String>("status")?,
-                "non_conformance",
-                "status",
-            )?,
+            status: parse_enum_row(&row.get::<_, String>("status")?, "non_conformance", "status")?,
             sku: row.get("sku")?,
             lot_number: row.get("lot_number")?,
             serial_number: row.get("serial_number")?,
@@ -204,7 +190,7 @@ impl SqliteQualityRepository {
         })
     }
 
-    fn row_to_hold(row: &rusqlite::Row) -> rusqlite::Result<QualityHold> {
+    fn row_to_hold(row: &rusqlite::Row<'_>) -> rusqlite::Result<QualityHold> {
         Ok(QualityHold {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "quality_hold", "id")?,
             sku: row.get("sku")?,
@@ -253,7 +239,7 @@ impl SqliteQualityRepository {
         })
     }
 
-    fn row_to_defect_code(row: &rusqlite::Row) -> rusqlite::Result<DefectCode> {
+    fn row_to_defect_code(row: &rusqlite::Row<'_>) -> rusqlite::Result<DefectCode> {
         Ok(DefectCode {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "defect_code", "id")?,
             code: row.get("code")?,
@@ -446,8 +432,7 @@ impl QualityRepository for SqliteQualityRepository {
         let sql = format!("UPDATE inspections SET {} WHERE id = ?", updates.join(", "));
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         self.get_inspection(id)?.ok_or(CommerceError::NotFound)
     }
@@ -562,9 +547,8 @@ impl QualityRepository for SqliteQualityRepository {
         let now = Utc::now();
 
         let defect_codes_json = serde_json::to_string(&input.defect_codes).unwrap_or_default();
-        let measurements_json = input
-            .measurements
-            .map(|m| serde_json::to_string(&m).unwrap_or_default());
+        let measurements_json =
+            input.measurements.map(|m| serde_json::to_string(&m).unwrap_or_default());
 
         conn.execute(
             "UPDATE inspection_items SET quantity_passed = ?, quantity_failed = ?, result = ?,
@@ -617,10 +601,7 @@ impl QualityRepository for SqliteQualityRepository {
             params.push(Box::new(status.to_string()));
         }
 
-        let sql = format!(
-            "SELECT COUNT(*) FROM inspections WHERE {}",
-            conditions.join(" AND ")
-        );
+        let sql = format!("SELECT COUNT(*) FROM inspections WHERE {}", conditions.join(" AND "));
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
@@ -755,14 +736,10 @@ impl QualityRepository for SqliteQualityRepository {
 
         params.push(Box::new(id.to_string()));
 
-        let sql = format!(
-            "UPDATE non_conformances SET {} WHERE id = ?",
-            updates.join(", ")
-        );
+        let sql = format!("UPDATE non_conformances SET {} WHERE id = ?", updates.join(", "));
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         self.get_ncr(id)?.ok_or(CommerceError::NotFound)
     }
@@ -845,11 +822,7 @@ impl QualityRepository for SqliteQualityRepository {
 
         conn.execute(
             "UPDATE non_conformances SET status = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                NcrStatus::Cancelled.to_string(),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
+            rusqlite::params![NcrStatus::Cancelled.to_string(), now.to_rfc3339(), id.to_string(),],
         )
         .map_err(map_db_error)?;
 
@@ -871,10 +844,8 @@ impl QualityRepository for SqliteQualityRepository {
             params.push(Box::new(severity.to_string()));
         }
 
-        let sql = format!(
-            "SELECT COUNT(*) FROM non_conformances WHERE {}",
-            conditions.join(" AND ")
-        );
+        let sql =
+            format!("SELECT COUNT(*) FROM non_conformances WHERE {}", conditions.join(" AND "));
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
@@ -1031,11 +1002,9 @@ impl QualityRepository for SqliteQualityRepository {
 
     fn count_active_holds(&self) -> Result<u64> {
         let conn = self.conn()?;
-        conn.query_row(
-            "SELECT COUNT(*) FROM quality_holds WHERE released_at IS NULL",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
+        conn.query_row("SELECT COUNT(*) FROM quality_holds WHERE released_at IS NULL", [], |row| {
+            row.get::<_, i64>(0)
+        })
         .map(|c| c as u64)
         .map_err(map_db_error)
     }
@@ -1097,10 +1066,7 @@ impl QualityRepository for SqliteQualityRepository {
                 vec![Box::new(cat.to_string())],
             )
         } else {
-            (
-                "SELECT * FROM defect_codes WHERE is_active = 1 ORDER BY code".to_string(),
-                vec![],
-            )
+            ("SELECT * FROM defect_codes WHERE is_active = 1 ORDER BY code".to_string(), vec![])
         };
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -1117,11 +1083,8 @@ impl QualityRepository for SqliteQualityRepository {
 
     fn deactivate_defect_code(&self, id: Uuid) -> Result<()> {
         let conn = self.conn()?;
-        conn.execute(
-            "UPDATE defect_codes SET is_active = 0 WHERE id = ?",
-            [id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        conn.execute("UPDATE defect_codes SET is_active = 0 WHERE id = ?", [id.to_string()])
+            .map_err(map_db_error)?;
         Ok(())
     }
 }

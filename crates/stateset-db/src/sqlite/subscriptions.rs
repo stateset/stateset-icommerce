@@ -6,13 +6,13 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
-    generate_plan_code, generate_subscription_number, BillingCycle, BillingCycleFilter,
-    BillingCycleStatus, BillingInterval, CancelSubscription, CreateBillingCycle,
-    CreateSubscription, CreateSubscriptionItem, CreateSubscriptionPlan, CreateSubscriptionPlanItem,
-    PauseSubscription, PlanStatus, Result, SkipBillingCycle, Subscription, SubscriptionEvent,
-    SubscriptionEventType, SubscriptionFilter, SubscriptionItem, SubscriptionPlan,
+    BillingCycle, BillingCycleFilter, BillingCycleStatus, BillingInterval, CancelSubscription,
+    CreateBillingCycle, CreateSubscription, CreateSubscriptionItem, CreateSubscriptionPlan,
+    CreateSubscriptionPlanItem, CustomerId, OrderId, PauseSubscription, PlanStatus, ProductId,
+    Result, SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType,
+    SubscriptionFilter, SubscriptionId, SubscriptionItem, SubscriptionPlan,
     SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus,
-    UpdateSubscription, UpdateSubscriptionPlan,
+    UpdateSubscription, UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
 };
 use uuid::Uuid;
 
@@ -36,10 +36,7 @@ impl SqliteSubscriptionRepository {
 
     pub fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan> {
         let id = Uuid::new_v4();
-        let code = input
-            .code
-            .clone()
-            .unwrap_or_else(|| generate_plan_code(&input.name));
+        let code = input.code.clone().unwrap_or_else(|| generate_plan_code(&input.name));
         let now = Utc::now();
         let items = input.items.clone();
 
@@ -82,10 +79,7 @@ impl SqliteSubscriptionRepository {
                     input.max_cycles,
                     input.discount_percent.map(|d| d.to_string()),
                     input.discount_amount.map(|d| d.to_string()),
-                    input
-                        .metadata
-                        .as_ref()
-                        .map(|m| serde_json::to_string(m).unwrap_or_default()),
+                    input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
@@ -256,10 +250,7 @@ impl SqliteSubscriptionRepository {
                     input.max_cycles,
                     input.discount_percent.map(|d| d.to_string()),
                     input.discount_amount.map(|d| d.to_string()),
-                    input
-                        .metadata
-                        .as_ref()
-                        .map(|m| serde_json::to_string(m).unwrap_or_default()),
+                    input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
@@ -269,27 +260,20 @@ impl SqliteSubscriptionRepository {
             })?;
         } // Connection dropped here
 
-        self.get_plan(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_plan(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     pub fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
         self.update_plan(
             id,
-            UpdateSubscriptionPlan {
-                status: Some(PlanStatus::Active),
-                ..Default::default()
-            },
+            UpdateSubscriptionPlan { status: Some(PlanStatus::Active), ..Default::default() },
         )
     }
 
     pub fn archive_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
         self.update_plan(
             id,
-            UpdateSubscriptionPlan {
-                status: Some(PlanStatus::Archived),
-                ..Default::default()
-            },
+            UpdateSubscriptionPlan { status: Some(PlanStatus::Archived), ..Default::default() },
         )
     }
 
@@ -356,11 +340,11 @@ impl SqliteSubscriptionRepository {
                         "subscription_plan_item",
                         "plan_id",
                     )?,
-                    product_id: parse_uuid_row(
+                    product_id: ProductId::from(parse_uuid_row(
                         &row.get::<_, String>(2)?,
                         "subscription_plan_item",
                         "product_id",
-                    )?,
+                    )?),
                     variant_id: parse_uuid_opt_row(
                         row.get::<_, Option<String>>(3)?,
                         "subscription_plan_item",
@@ -391,17 +375,13 @@ impl SqliteSubscriptionRepository {
 
     pub fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
         // Get the plan first (uses its own connection)
-        let plan = self
-            .get_plan(input.plan_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let plan = self.get_plan(input.plan_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if plan.status != PlanStatus::Active {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Plan is not active".into(),
-            ));
+            return Err(stateset_core::CommerceError::ValidationError("Plan is not active".into()));
         }
 
-        let id = Uuid::new_v4();
+        let id = SubscriptionId::new();
         let subscription_number = generate_subscription_number();
         let now = input.start_date.unwrap_or_else(Utc::now);
 
@@ -425,11 +405,8 @@ impl SqliteSubscriptionRepository {
             now + Duration::days(interval_days)
         };
 
-        let next_billing_date = if trial_ends_at.is_some() {
-            trial_ends_at
-        } else {
-            Some(current_period_end)
-        };
+        let next_billing_date =
+            if trial_ends_at.is_some() { trial_ends_at } else { Some(current_period_end) };
 
         let status = if trial_ends_at.is_some() {
             SubscriptionStatus::Trial
@@ -568,7 +545,7 @@ impl SqliteSubscriptionRepository {
         })
     }
 
-    pub fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {
+    pub fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
         // Get subscription - connection scoped to this block
         let subscription = {
             let conn = self.pool.get().map_err(|e| {
@@ -694,7 +671,7 @@ impl SqliteSubscriptionRepository {
         Ok(subscriptions)
     }
 
-    pub fn update_subscription(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription> {
+    pub fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription> {
         // Update subscription - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
@@ -733,10 +710,7 @@ impl SqliteSubscriptionRepository {
                     input.discount_percent.map(|d| d.to_string()),
                     input.discount_amount.map(|d| d.to_string()),
                     input.coupon_code,
-                    input
-                        .metadata
-                        .as_ref()
-                        .map(|m| serde_json::to_string(m).unwrap_or_default()),
+                    input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
@@ -746,18 +720,15 @@ impl SqliteSubscriptionRepository {
             })?;
         } // Connection dropped here
 
-        self.get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     // ========================================================================
     // Subscription Lifecycle Operations
     // ========================================================================
 
-    pub fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription> {
-        let sub = self
-            .get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+    pub fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription> {
+        let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_pause() {
             return Err(stateset_core::CommerceError::ValidationError(format!(
@@ -800,14 +771,11 @@ impl SqliteSubscriptionRepository {
 
         self.record_event(id, SubscriptionEventType::Paused, &description, None, None)?;
 
-        self.get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    pub fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
-        let sub = self
-            .get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+    pub fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription> {
+        let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_resume() {
             return Err(stateset_core::CommerceError::ValidationError(format!(
@@ -856,22 +824,13 @@ impl SqliteSubscriptionRepository {
             })?;
         } // Connection dropped here
 
-        self.record_event(
-            id,
-            SubscriptionEventType::Resumed,
-            "Subscription resumed",
-            None,
-            None,
-        )?;
+        self.record_event(id, SubscriptionEventType::Resumed, "Subscription resumed", None, None)?;
 
-        self.get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    pub fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription> {
-        let sub = self
-            .get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+    pub fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription> {
+        let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_cancel() {
             return Err(stateset_core::CommerceError::ValidationError(format!(
@@ -880,14 +839,8 @@ impl SqliteSubscriptionRepository {
             )));
         }
 
-        let reason = input
-            .reason
-            .clone()
-            .unwrap_or_else(|| "Cancelled by customer".to_string());
-        let data = input
-            .feedback
-            .clone()
-            .map(|f| serde_json::json!({"feedback": f}));
+        let reason = input.reason.clone().unwrap_or_else(|| "Cancelled by customer".to_string());
+        let data = input.feedback.clone().map(|f| serde_json::json!({"feedback": f}));
 
         // Update subscription - connection scoped to this block
         {
@@ -898,11 +851,8 @@ impl SqliteSubscriptionRepository {
             let now = Utc::now();
             let immediate = input.immediate.unwrap_or(false);
 
-            let (new_status, ends_at) = if immediate {
-                ("expired", now)
-            } else {
-                ("cancelled", sub.current_period_end)
-            };
+            let (new_status, ends_at) =
+                if immediate { ("expired", now) } else { ("cancelled", sub.current_period_end) };
 
             conn.execute(
                 "UPDATE subscriptions SET
@@ -927,14 +877,11 @@ impl SqliteSubscriptionRepository {
 
         self.record_event(id, SubscriptionEventType::Cancelled, &reason, data, None)?;
 
-        self.get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    pub fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
-        let sub = self
-            .get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
+    pub fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
+        let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if sub.status != SubscriptionStatus::Active {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -942,10 +889,8 @@ impl SqliteSubscriptionRepository {
             ));
         }
 
-        let reason = input
-            .reason
-            .clone()
-            .unwrap_or_else(|| "Customer skipped billing cycle".to_string());
+        let reason =
+            input.reason.clone().unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
         let interval_days = if sub.billing_interval == BillingInterval::Custom {
             sub.custom_interval_days.unwrap_or(30) as i64
@@ -983,8 +928,7 @@ impl SqliteSubscriptionRepository {
 
         self.record_event(id, SubscriptionEventType::Skipped, &reason, None, None)?;
 
-        self.get_subscription(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     // ========================================================================
@@ -994,14 +938,13 @@ impl SqliteSubscriptionRepository {
     fn create_subscription_item_with_conn(
         &self,
         conn: &rusqlite::Connection,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         input: CreateSubscriptionItem,
         plan: &SubscriptionPlan,
     ) -> Result<SubscriptionItem> {
         let id = Uuid::new_v4();
-        let unit_price = input
-            .unit_price
-            .unwrap_or(plan.price / Decimal::from(plan.items.len().max(1)));
+        let unit_price =
+            input.unit_price.unwrap_or(plan.price / Decimal::from(plan.items.len().max(1)));
         let line_total = unit_price * Decimal::from(input.quantity);
 
         conn.execute(
@@ -1033,7 +976,7 @@ impl SqliteSubscriptionRepository {
         })
     }
 
-    fn get_subscription_items(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionItem>> {
+    fn get_subscription_items(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionItem>> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
@@ -1047,16 +990,16 @@ impl SqliteSubscriptionRepository {
             .query_map([subscription_id.to_string()], |row| {
                 Ok(SubscriptionItem {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_item", "id")?,
-                    subscription_id: parse_uuid_row(
+                    subscription_id: SubscriptionId::from(parse_uuid_row(
                         &row.get::<_, String>(1)?,
                         "subscription_item",
                         "subscription_id",
-                    )?,
-                    product_id: parse_uuid_row(
+                    )?),
+                    product_id: ProductId::from(parse_uuid_row(
                         &row.get::<_, String>(2)?,
                         "subscription_item",
                         "product_id",
-                    )?,
+                    )?),
                     variant_id: parse_uuid_opt_row(
                         row.get::<_, Option<String>>(3)?,
                         "subscription_item",
@@ -1088,12 +1031,7 @@ impl SqliteSubscriptionRepository {
     // ========================================================================
 
     pub fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
-        let CreateBillingCycle {
-            subscription_id,
-            cycle_number,
-            period_start,
-            period_end,
-        } = input;
+        let CreateBillingCycle { subscription_id, cycle_number, period_start, period_end } = input;
         // Get subscription first (uses its own connection)
         let sub = self
             .get_subscription(subscription_id)?
@@ -1251,8 +1189,7 @@ impl SqliteSubscriptionRepository {
             })?;
         } // Connection dropped here
 
-        self.get_billing_cycle(id)?
-            .ok_or(stateset_core::CommerceError::NotFound)
+        self.get_billing_cycle(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     // ========================================================================
@@ -1261,7 +1198,7 @@ impl SqliteSubscriptionRepository {
 
     pub fn record_event(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         description: &str,
         data: Option<serde_json::Value>,
@@ -1284,7 +1221,7 @@ impl SqliteSubscriptionRepository {
     fn record_event_with_conn(
         &self,
         conn: &rusqlite::Connection,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         description: &str,
         data: Option<serde_json::Value>,
@@ -1320,7 +1257,7 @@ impl SqliteSubscriptionRepository {
 
     pub fn get_subscription_events(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         limit: Option<u32>,
     ) -> Result<Vec<SubscriptionEvent>> {
         let conn = self.pool.get().map_err(|e| {
@@ -1342,11 +1279,11 @@ impl SqliteSubscriptionRepository {
             .query_map([subscription_id.to_string()], |row| {
                 Ok(SubscriptionEvent {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_event", "id")?,
-                    subscription_id: parse_uuid_row(
+                    subscription_id: SubscriptionId::from(parse_uuid_row(
                         &row.get::<_, String>(1)?,
                         "subscription_event",
                         "subscription_id",
-                    )?,
+                    )?),
                     event_type: parse_enum_row(
                         &row.get::<_, String>(2)?,
                         "subscription_event",
@@ -1376,7 +1313,7 @@ impl SqliteSubscriptionRepository {
     // Helper Methods
     // ========================================================================
 
-    fn row_to_plan(&self, row: &rusqlite::Row) -> rusqlite::Result<SubscriptionPlan> {
+    fn row_to_plan(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<SubscriptionPlan> {
         Ok(SubscriptionPlan {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_plan", "id")?,
             code: row.get(1)?,
@@ -1429,11 +1366,11 @@ impl SqliteSubscriptionRepository {
         })
     }
 
-    fn row_to_subscription(&self, row: &rusqlite::Row) -> rusqlite::Result<Subscription> {
+    fn row_to_subscription(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<Subscription> {
         Ok(Subscription {
-            id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription", "id")?,
+            id: SubscriptionId::from(parse_uuid_row(&row.get::<_, String>(0)?, "subscription", "id")?),
             subscription_number: row.get(1)?,
-            customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "subscription", "customer_id")?,
+            customer_id: CustomerId::from(parse_uuid_row(&row.get::<_, String>(2)?, "subscription", "customer_id")?),
             plan_id: parse_uuid_row(&row.get::<_, String>(3)?, "subscription", "plan_id")?,
             plan_name: row.get(4)?,
             status: parse_enum_row(&row.get::<_, String>(5)?, "subscription", "status")?,
@@ -1533,14 +1470,14 @@ impl SqliteSubscriptionRepository {
         })
     }
 
-    fn row_to_billing_cycle(&self, row: &rusqlite::Row) -> rusqlite::Result<BillingCycle> {
+    fn row_to_billing_cycle(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<BillingCycle> {
         Ok(BillingCycle {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "billing_cycle", "id")?,
-            subscription_id: parse_uuid_row(
+            subscription_id: SubscriptionId::from(parse_uuid_row(
                 &row.get::<_, String>(1)?,
                 "billing_cycle",
                 "subscription_id",
-            )?,
+            )?),
             cycle_number: row.get(2)?,
             status: parse_enum_row(&row.get::<_, String>(3)?, "billing_cycle", "status")?,
             period_start: parse_datetime_row(
@@ -1568,7 +1505,7 @@ impl SqliteSubscriptionRepository {
                 row.get::<_, Option<String>>(13)?,
                 "billing_cycle",
                 "order_id",
-            )?,
+            )?.map(OrderId::from),
             invoice_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>(14)?,
                 "billing_cycle",
@@ -1632,7 +1569,7 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         SqliteSubscriptionRepository::create_subscription(self, input)
     }
 
-    fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {
+    fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
         SqliteSubscriptionRepository::get_subscription(self, id)
     }
 
@@ -1644,19 +1581,19 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         SqliteSubscriptionRepository::list_subscriptions(self, filter)
     }
 
-    fn update_subscription(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription> {
+    fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription> {
         SqliteSubscriptionRepository::update_subscription(self, id, input)
     }
 
-    fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription> {
+    fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription> {
         SqliteSubscriptionRepository::cancel_subscription(self, id, input)
     }
 
-    fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription> {
+    fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription> {
         SqliteSubscriptionRepository::pause_subscription(self, id, input)
     }
 
-    fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
+    fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription> {
         SqliteSubscriptionRepository::resume_subscription(self, id)
     }
 
@@ -1680,13 +1617,13 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         SqliteSubscriptionRepository::update_billing_cycle_status(self, id, status, None, None)
     }
 
-    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
+    fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
         SqliteSubscriptionRepository::skip_billing_cycle(self, id, input)
     }
 
     fn record_event(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         notes: Option<String>,
     ) -> Result<SubscriptionEvent> {
@@ -1701,7 +1638,7 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         )
     }
 
-    fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {
+    fn get_subscription_events(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionEvent>> {
         SqliteSubscriptionRepository::get_subscription_events(self, subscription_id, None)
     }
 }
