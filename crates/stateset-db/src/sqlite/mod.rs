@@ -38,6 +38,7 @@ mod warranties;
 mod work_orders;
 mod x402_credits;
 mod x402_payment_intents;
+mod a2a;
 
 #[cfg(feature = "vector")]
 mod vector;
@@ -81,6 +82,7 @@ pub use warranties::*;
 pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
+pub use a2a::*;
 
 use crate::DatabaseConfig;
 use crate::migrations;
@@ -338,6 +340,16 @@ impl SqliteDatabase {
     /// Get x402 credit ledger repository
     pub fn x402_credits(&self) -> SqliteX402CreditRepository {
         SqliteX402CreditRepository::new(self.pool.clone())
+    }
+
+    /// Get A2A quote/purchase repository
+    pub fn a2a_quotes(&self) -> SqliteA2ARepository {
+        SqliteA2ARepository::new(self.pool.clone())
+    }
+
+    /// Get A2A quote/purchase repository
+    pub fn a2a_purchases(&self) -> SqliteA2ARepository {
+        SqliteA2ARepository::new(self.pool.clone())
     }
 
     /// Get agent card repository

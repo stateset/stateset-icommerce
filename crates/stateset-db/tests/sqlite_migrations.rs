@@ -103,7 +103,14 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
         .expect("query store_currency_settings default row");
     assert_eq!(defaults, 1, "expected a default store_currency_settings row");
 
-    for table in ["x402_credit_accounts", "x402_credit_transactions"] {
+    for table in [
+        "x402_payment_intents",
+        "agent_cards",
+        "a2a_quotes",
+        "a2a_purchases",
+        "x402_credit_accounts",
+        "x402_credit_transactions",
+    ] {
         assert!(has_table(&conn, table), "missing table `{table}`");
     }
 

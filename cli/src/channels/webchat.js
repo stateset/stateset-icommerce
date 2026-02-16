@@ -708,6 +708,8 @@ export function startWebChatChannel(config = {}) {
         model,
         maxTurns,
         agent,
+        channel: 'webchat',
+        senderId: sessionId,
         verbose,
       });
 

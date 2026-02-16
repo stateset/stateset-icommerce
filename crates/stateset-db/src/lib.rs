@@ -62,8 +62,9 @@ pub use postgres::PostgresDatabase;
 use stateset_core::{
     AccountsPayableRepository, AccountsReceivableRepository, AgentCardRepository,
     AgentIdentityRepository, AgentReputationRepository, AgentValidationRepository,
-    AnalyticsRepository, BackorderRepository, BomRepository, CartRepository,
-    CostAccountingRepository, CreditRepository, CurrencyRepository, CustomObjectRepository,
+    A2ACommerceRepository, AnalyticsRepository, BackorderRepository, BomRepository,
+    CartRepository, CostAccountingRepository, CreditRepository, CurrencyRepository,
+    CustomObjectRepository,
     CustomerRepository, FulfillmentRepository, GeneralLedgerRepository, InventoryRepository,
     InvoiceRepository, LotRepository, OrderRepository, PaymentRepository, ProductRepository,
     PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result,
@@ -222,6 +223,10 @@ pub trait Database: Send + Sync {
     fn x402_payment_intents(&self) -> Box<dyn X402PaymentIntentRepository + '_>;
     /// Get the x402 credit ledger repository
     fn x402_credits(&self) -> Box<dyn X402CreditRepository + '_>;
+    /// Get the agent-to-agent commerce repository (quotes and purchases)
+    fn a2a_quotes(&self) -> Box<dyn A2ACommerceRepository + '_>;
+    /// Get the agent-to-agent commerce repository (quotes and purchases)
+    fn a2a_purchases(&self) -> Box<dyn A2ACommerceRepository + '_>;
     /// Get the agent card repository
     fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_>;
     /// Get the agent identity registry repository (ERC-8004)
@@ -464,6 +469,14 @@ macro_rules! impl_database_accessors {
 
             fn x402_credits(&self) -> Box<dyn X402CreditRepository + '_> {
                 Box::new(self.x402_credits())
+            }
+
+            fn a2a_quotes(&self) -> Box<dyn A2ACommerceRepository + '_> {
+                Box::new(self.a2a_quotes())
+            }
+
+            fn a2a_purchases(&self) -> Box<dyn A2ACommerceRepository + '_> {
+                Box::new(self.a2a_purchases())
             }
 
             fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_> {

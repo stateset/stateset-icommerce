@@ -72,6 +72,52 @@ function getCommerceCtor() {
 export { AGENTS };
 export { routeToAgent, routeToAgentWithConfidence } from './agent-router.js';
 
+let _sdkArgvGate = Promise.resolve();
+
+function __withSerializedArgvLock() {
+  const previous = _sdkArgvGate;
+  let release;
+  const nextGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  _sdkArgvGate = nextGate;
+
+  return {
+    previous,
+    release,
+  };
+}
+
+async function __runWithCleanArgv(fn) {
+  const { previous, release } = __withSerializedArgvLock();
+  await previous;
+  const previousArgv = process.argv;
+
+  try {
+    process.argv = previousArgv.slice(0, 2);
+    return await fn();
+  } finally {
+    process.argv = previousArgv;
+    release();
+  }
+}
+
+async function* __runQueryWithCleanArgv(generatorFactory) {
+  const { previous, release } = __withSerializedArgvLock();
+  await previous;
+  const previousArgv = process.argv;
+
+  try {
+    process.argv = previousArgv.slice(0, 2);
+    for await (const message of generatorFactory()) {
+      yield message;
+    }
+  } finally {
+    process.argv = previousArgv;
+    release();
+  }
+}
+
 // ============================================================================
 // Main Agent Loop
 // ============================================================================
@@ -744,224 +790,219 @@ export async function runAgentLoop({
   let sessionId = resumeSessionId;
   let response = '';
 
-  // Save process.argv to restore later (prevent our CLI args from being passed to Claude Code)
-  const savedArgv = process.argv;
-
   try {
     // If resuming, add session ID to options
     if (resumeSessionId) {
       options.resume = resumeSessionId;
     }
 
-    // Clean process.argv before SDK call
-    process.argv = process.argv.slice(0, 2); // Keep only node and script path
-
     // v0.2.8: Non-Claude provider path
     if (effectiveProvider !== 'claude') {
-      const { getProviderRegistry } = await import('./providers/base.js');
-      const providerInstance = getProviderRegistry().get(effectiveProvider);
-      if (!providerInstance) {
-        throw new Error(
-          `Unknown provider: ${effectiveProvider}. Available: ${getProviderRegistry().list().join(', ')}`,
-        );
-      }
-      if (!(await providerInstance.isAvailable())) {
-        const providerConfig = (await import('./config.js')).PROVIDERS[effectiveProvider];
-        throw new Error(
-          `Provider "${effectiveProvider}" is not available. ${providerConfig?.envKey ? `Set ${providerConfig.envKey} environment variable.` : ''}`,
-        );
-      }
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: requestWithHistory },
-      ];
-      let providerApiKey = apiKey;
-      if (!providerApiKey && typeof getApiKey === 'function') {
-        providerApiKey = await getApiKey(effectiveProvider);
-      }
-      let providerMaxTokens = null;
-      let treasuryBudgetUsd = null;
-      if (treasuryState?.enabled) {
-        treasuryBudgetUsd = effectiveMaxBudgetUsd ?? treasuryState.balanceUsd;
-        if (!Number.isFinite(treasuryBudgetUsd) || treasuryBudgetUsd <= 0) {
+      return __runWithCleanArgv(async () => {
+        const { getProviderRegistry } = await import('./providers/base.js');
+        const providerInstance = getProviderRegistry().get(effectiveProvider);
+        if (!providerInstance) {
           throw new Error(
-            `Treasury balance is empty for ${treasuryState.token.symbol} on ${treasuryState.chainId}.`,
+            `Unknown provider: ${effectiveProvider}. Available: ${getProviderRegistry().list().join(', ')}`,
           );
         }
-
-        if (typeof providerInstance.estimateCost === 'function') {
-          const inputEstimate =
-            estimateTokensFromText(systemPrompt) + estimateTokensFromText(requestWithHistory);
-          const inputTokensEstimate = Math.ceil(inputEstimate * 1.3) + 32;
-          const safetyBudget = treasuryBudgetUsd * 0.95;
-          const defaultMaxTokens = 4096;
-
-          const estimateCost = (outputTokens) =>
-            providerInstance.estimateCost(
-              { inputTokens: inputTokensEstimate, outputTokens },
-              effectiveModel,
+        if (!(await providerInstance.isAvailable())) {
+          const providerConfig = (await import('./config.js')).PROVIDERS[effectiveProvider];
+          throw new Error(
+            `Provider "${effectiveProvider}" is not available. ${providerConfig?.envKey ? `Set ${providerConfig.envKey} environment variable.` : ''}`,
+          );
+        }
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: requestWithHistory },
+        ];
+        let providerApiKey = apiKey;
+        if (!providerApiKey && typeof getApiKey === 'function') {
+          providerApiKey = await getApiKey(effectiveProvider);
+        }
+        let providerMaxTokens = null;
+        let treasuryBudgetUsd = null;
+        if (treasuryState?.enabled) {
+          treasuryBudgetUsd = effectiveMaxBudgetUsd ?? treasuryState.balanceUsd;
+          if (!Number.isFinite(treasuryBudgetUsd) || treasuryBudgetUsd <= 0) {
+            throw new Error(
+              `Treasury balance is empty for ${treasuryState.token.symbol} on ${treasuryState.chainId}.`,
             );
+          }
 
-          const baseCost = estimateCost(0);
-          if (baseCost === null || baseCost === undefined) {
+          if (typeof providerInstance.estimateCost === 'function') {
+            const inputEstimate =
+              estimateTokensFromText(systemPrompt) + estimateTokensFromText(requestWithHistory);
+            const inputTokensEstimate = Math.ceil(inputEstimate * 1.3) + 32;
+            const safetyBudget = treasuryBudgetUsd * 0.95;
+            const defaultMaxTokens = 4096;
+
+            const estimateCost = (outputTokens) =>
+              providerInstance.estimateCost(
+                { inputTokens: inputTokensEstimate, outputTokens },
+                effectiveModel,
+              );
+
+            const baseCost = estimateCost(0);
+            if (baseCost === null || baseCost === undefined) {
+              telem.logCustomEvent('treasury_llm_estimate_unavailable', {
+                provider: effectiveProvider,
+                model: effectiveModel,
+              });
+            } else if (baseCost > safetyBudget) {
+              throw new Error(
+                `Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for estimated input tokens.`,
+              );
+            } else {
+              let low = 0;
+              let high = defaultMaxTokens;
+              let best = 0;
+              while (low <= high) {
+                const mid = Math.floor((low + high) / 2);
+                const cost = estimateCost(mid);
+                if (cost === null || cost === undefined) break;
+                if (cost <= safetyBudget) {
+                  best = mid;
+                  low = mid + 1;
+                } else {
+                  high = mid - 1;
+                }
+              }
+              if (best <= 0) {
+                const oneTokenCost = estimateCost(1);
+                if (
+                  oneTokenCost !== null &&
+                  oneTokenCost !== undefined &&
+                  oneTokenCost <= safetyBudget
+                ) {
+                  providerMaxTokens = 1;
+                } else {
+                  throw new Error(
+                    `Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for any output tokens.`,
+                  );
+                }
+              } else {
+                providerMaxTokens = best;
+              }
+            }
+          } else {
             telem.logCustomEvent('treasury_llm_estimate_unavailable', {
               provider: effectiveProvider,
               model: effectiveModel,
             });
-          } else if (baseCost > safetyBudget) {
-            throw new Error(
-              `Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for estimated input tokens.`,
-            );
-          } else {
-            let low = 0;
-            let high = defaultMaxTokens;
-            let best = 0;
-            while (low <= high) {
-              const mid = Math.floor((low + high) / 2);
-              const cost = estimateCost(mid);
-              if (cost === null || cost === undefined) break;
-              if (cost <= safetyBudget) {
-                best = mid;
-                low = mid + 1;
-              } else {
-                high = mid - 1;
-              }
-            }
-            if (best <= 0) {
-              const oneTokenCost = estimateCost(1);
-              if (
-                oneTokenCost !== null &&
-                oneTokenCost !== undefined &&
-                oneTokenCost <= safetyBudget
-              ) {
-                providerMaxTokens = 1;
-              } else {
-                throw new Error(
-                  `Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for any output tokens.`,
-                );
-              }
-            } else {
-              providerMaxTokens = best;
-            }
           }
-        } else {
-          telem.logCustomEvent('treasury_llm_estimate_unavailable', {
-            provider: effectiveProvider,
-            model: effectiveModel,
-          });
         }
-      }
-      let assistantStarted = false;
-      let partialText = '';
-      const handlePartialMessage = (data) => {
+        let assistantStarted = false;
+        let partialText = '';
+        const handlePartialMessage = (data) => {
+          if (!assistantStarted) {
+            assistantStarted = true;
+            emitEvent(onEvent, {
+              type: 'message_start',
+              message: { role: 'assistant', content: '' },
+            });
+          }
+          if (data?.text) {
+            partialText += data.text;
+            emitEvent(onEvent, {
+              type: 'message_update',
+              message: { role: 'assistant', content: redactEventText(partialText) },
+              delta: redactEventText(data.text),
+            });
+          }
+          if (onPartialMessage) onPartialMessage(data);
+        };
+
+        const providerResult = await providerInstance.chat(messages, {
+          model: effectiveModel,
+          stream: streaming,
+          onPartialMessage: streaming ? handlePartialMessage : onPartialMessage,
+          apiKey: providerApiKey,
+          signal: effectiveSignal,
+          ...(providerMaxTokens ? { maxTokens: providerMaxTokens } : {}),
+        });
+        let providerResponse = providerResult.text;
+        let budgetExceeded = false;
+        if (
+          treasuryState?.enabled &&
+          providerResult.cost !== null &&
+          providerResult.cost !== undefined &&
+          treasuryBudgetUsd !== null &&
+          treasuryBudgetUsd !== undefined
+        ) {
+          budgetExceeded = providerResult.cost > treasuryBudgetUsd;
+        }
+        if (hooks?.hasHooks?.('before_send')) {
+          const hookResult = await hooks.run('before_send', {
+            request: effectiveRequest,
+            response: providerResponse,
+            agent: agentName,
+            model: effectiveModel,
+            provider: effectiveProvider,
+            toolResults: [],
+          });
+          if (hookResult?.response) {
+            providerResponse = hookResult.response;
+          }
+        }
+        const responseForUser = privacySettings.redactResponse
+          ? redactSensitive(providerResponse, privacySettings)
+          : providerResponse;
+        if (onMessage) {
+          onMessage(responseForUser);
+        }
         if (!assistantStarted) {
-          assistantStarted = true;
           emitEvent(onEvent, {
             type: 'message_start',
             message: { role: 'assistant', content: '' },
           });
         }
-        if (data?.text) {
-          partialText += data.text;
-          emitEvent(onEvent, {
-            type: 'message_update',
-            message: { role: 'assistant', content: redactEventText(partialText) },
-            delta: redactEventText(data.text),
-          });
-        }
-        if (onPartialMessage) onPartialMessage(data);
-      };
-
-      const providerResult = await providerInstance.chat(messages, {
-        model: effectiveModel,
-        stream: streaming,
-        onPartialMessage: streaming ? handlePartialMessage : onPartialMessage,
-        apiKey: providerApiKey,
-        signal: effectiveSignal,
-        ...(providerMaxTokens ? { maxTokens: providerMaxTokens } : {}),
-      });
-      process.argv = savedArgv;
-      let providerResponse = providerResult.text;
-      let budgetExceeded = false;
-      if (
-        treasuryState?.enabled &&
-        providerResult.cost !== null &&
-        providerResult.cost !== undefined &&
-        treasuryBudgetUsd !== null &&
-        treasuryBudgetUsd !== undefined
-      ) {
-        budgetExceeded = providerResult.cost > treasuryBudgetUsd;
-      }
-      if (hooks?.hasHooks?.('before_send')) {
-        const hookResult = await hooks.run('before_send', {
-          request: effectiveRequest,
-          response: providerResponse,
-          agent: agentName,
-          model: effectiveModel,
-          provider: effectiveProvider,
+        emitEvent(onEvent, {
+          type: 'message_end',
+          message: { role: 'assistant', content: redactEventText(providerResponse) },
+        });
+        emitEvent(onEvent, {
+          type: 'turn_end',
+          response: redactEventText(providerResponse),
           toolResults: [],
         });
-        if (hookResult?.response) {
-          providerResponse = hookResult.response;
-        }
-      }
-      const responseForUser = privacySettings.redactResponse
-        ? redactSensitive(providerResponse, privacySettings)
-        : providerResponse;
-      if (onMessage) {
-        onMessage(responseForUser);
-      }
-      if (!assistantStarted) {
         emitEvent(onEvent, {
-          type: 'message_start',
-          message: { role: 'assistant', content: '' },
+          type: 'agent_end',
+          response: redactEventText(providerResponse),
+          toolResults: [],
+          sessionId: null,
+          agent: agentName,
+          provider: effectiveProvider,
+          model: effectiveModel,
+          cost: providerResult.cost || null,
+          budgetExceeded,
         });
-      }
-      emitEvent(onEvent, {
-        type: 'message_end',
-        message: { role: 'assistant', content: redactEventText(providerResponse) },
+        treasuryCharge = await recordTreasuryLlmCharge({
+          costUsd: providerResult.cost,
+          sessionId: null,
+          provider: effectiveProvider,
+          model: providerResult.model || effectiveModel,
+          usage: providerResult.usage,
+        });
+        return {
+          response: responseForUser,
+          toolResults: [],
+          sessionId: null,
+          agent: agentName,
+          routing: routingResult,
+          provider: effectiveProvider,
+          cost: providerResult.cost || null,
+          thinkLevel: effectiveThinkLevel,
+          budgetExceeded,
+          treasury: treasuryState
+            ? {
+                requestId: treasuryState.requestId,
+                charge: treasuryCharge,
+                identity: treasuryState.erc8004Identity,
+              }
+            : undefined,
+        };
       });
-      emitEvent(onEvent, {
-        type: 'turn_end',
-        response: redactEventText(providerResponse),
-        toolResults: [],
-      });
-      emitEvent(onEvent, {
-        type: 'agent_end',
-        response: redactEventText(providerResponse),
-        toolResults: [],
-        sessionId: null,
-        agent: agentName,
-        provider: effectiveProvider,
-        model: effectiveModel,
-        cost: providerResult.cost || null,
-        budgetExceeded,
-      });
-      treasuryCharge = await recordTreasuryLlmCharge({
-        costUsd: providerResult.cost,
-        sessionId: null,
-        provider: effectiveProvider,
-        model: providerResult.model || effectiveModel,
-        usage: providerResult.usage,
-      });
-      return {
-        response: responseForUser,
-        toolResults: [],
-        sessionId: null,
-        agent: agentName,
-        routing: routingResult,
-        provider: effectiveProvider,
-        cost: providerResult.cost || null,
-        thinkLevel: effectiveThinkLevel,
-        budgetExceeded,
-        treasury: treasuryState
-          ? {
-              requestId: treasuryState.requestId,
-              charge: treasuryCharge,
-              identity: treasuryState.erc8004Identity,
-            }
-          : undefined,
-      };
     }
 
     // -------------------------------------------------------------------------
@@ -988,7 +1029,9 @@ export async function runAgentLoop({
       let assistantStarted = false;
       let assistantText = '';
 
-      for await (const message of query({ prompt: requestWithHistory, options: queryOptions })) {
+      for await (const message of __runQueryWithCleanArgv(() =>
+        query({ prompt: requestWithHistory, options: queryOptions }),
+      )) {
         // Capture session ID
         if (message.sessionId && !results.sessionId) {
           results.sessionId = message.sessionId;
@@ -1196,9 +1239,6 @@ export async function runAgentLoop({
     if (querySessionId) sessionId = querySessionId;
     budgetExceeded = queryBudgetExceeded;
     totalCost = queryTotalCost;
-
-    // Restore process.argv
-    process.argv = savedArgv;
 
     if (hooks?.hasHooks?.('before_send')) {
       const hookResult = await hooks.run('before_send', {
@@ -1421,8 +1461,6 @@ export async function runAgentLoop({
           : null,
     };
   } catch (error) {
-    // Restore process.argv on error
-    process.argv = savedArgv;
     // Cleanup sync engine on error
     if (syncEngine) {
       try {
@@ -1721,7 +1759,7 @@ export async function* runAgentStream({
   let assistantText = '';
 
   try {
-    for await (const message of query({ prompt: input, options })) {
+    for await (const message of __runQueryWithCleanArgv(() => query({ prompt: input, options }))) {
       if (message.sessionId && !streamSessionId) {
         streamSessionId = message.sessionId;
       }
@@ -2072,7 +2110,9 @@ export function createAgentStreamSession(options = {}) {
     };
 
     try {
-      for await (const message of query({ prompt: inputStream(), options: optionsForQuery })) {
+      for await (const message of __runQueryWithCleanArgv(() =>
+        query({ prompt: inputStream(), options: optionsForQuery }),
+      )) {
         if (message.sessionId && !sessionId) {
           sessionId = message.sessionId;
         }
@@ -2354,10 +2394,31 @@ export async function runAgentLoopQueued(options) {
       return runAgentLoop(loopOptions);
     },
     {
-      request: options.request?.slice(0, 50),
+      request: typeof options.request === 'string' ? options.request.slice(0, 50) : '',
       agent: options.agent,
     },
   );
+}
+
+/**
+ * Remove a specific queue lane.
+ *
+ * @param {string} laneId
+ * @param {{ force?: boolean }} [options]
+ */
+export function removeQueueLane(laneId, options = {}) {
+  const queue = getCommandQueue();
+  return queue.removeLane(laneId, options);
+}
+
+/**
+ * Clear queue lanes.
+ *
+ * @param {{ force?: boolean }} [options]
+ */
+export function clearQueueLanes(options = {}) {
+  const queue = getCommandQueue();
+  return queue.clearLanes(options);
 }
 
 /**
@@ -2371,15 +2432,17 @@ export async function runAgentLoopParallel(requests) {
   const queue = getCommandQueue();
 
   return Promise.all(
-    requests.map((options, index) =>
-      queue.enqueueParallel(
-        'parallel',
+    requests.map((options, index) => {
+      const laneId =
+        options?.laneId || options?.resumeSessionId || options?.sessionId || `parallel:${index}`;
+      return queue.enqueueParallel(
+        laneId,
         async () => {
           return runAgentLoop(options);
         },
-        { index },
-      ),
-    ),
+        { index, resumeSessionId: options?.resumeSessionId || null },
+      );
+    }),
   );
 }
 
@@ -2387,8 +2450,15 @@ export async function runAgentLoopParallel(requests) {
  * Get queue statistics for monitoring.
  * @returns {Object}
  */
-export function getQueueStats() {
-  return getCommandQueue().getStats();
+export function getQueueStats(laneId = null) {
+  const queue = getCommandQueue();
+  if (!laneId) {
+    return queue.getStats();
+  }
+
+  const laneStats = queue.getLaneStats(laneId);
+  if (!laneStats) return null;
+  return { laneId, ...laneStats };
 }
 
 // ============================================================================

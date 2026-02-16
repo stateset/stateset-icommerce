@@ -42,6 +42,7 @@ export const ROUTE_PERMISSIONS = {
   '/metrics': { level: 'read' },
   '/commands': { level: 'read' },
   '/skills': { level: 'read' },
+  '/agent/queue': { level: 'admin' },
 
   // Plugin management
   '/plugins': { level: 'read', methods: { POST: 'admin' } },

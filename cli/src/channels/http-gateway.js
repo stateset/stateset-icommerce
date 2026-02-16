@@ -571,6 +571,62 @@ export class HttpGateway {
         return sendJson(res, 200, metrics.getSummary());
       }
 
+      if (method === 'GET' && pathname === '/agent/queue') {
+        const laneId = url.searchParams.get('lane')?.trim() || null;
+        try {
+          const { getQueueStats } = await import('../claude-harness.js');
+          const stats = getQueueStats(laneId);
+          if (laneId && !stats) {
+            return sendJson(res, 404, { error: `No queue lane found: ${laneId}` });
+          }
+          return sendJson(res, 200, stats);
+        } catch {
+          return sendJson(res, 501, { error: 'Agent queue stats are not available' });
+        }
+      }
+
+      if (method === 'DELETE' && pathname === '/agent/queue') {
+        const laneId = url.searchParams.get('lane')?.trim() || null;
+        const force =
+          url.searchParams.get('force') === '1' || url.searchParams.get('force') === 'true';
+
+        try {
+          const { removeQueueLane, clearQueueLanes } = await import('../claude-harness.js');
+
+          if (laneId) {
+            const result = removeQueueLane(laneId, { force });
+            if (!result.found) {
+              return sendJson(res, 404, {
+                error: `Queue lane not found: ${laneId}`,
+                removed: false,
+              });
+            }
+            if (!result.removed) {
+              return sendJson(res, 409, {
+                error: `Queue lane is not idle: ${laneId}. Use force=true to remove it.`,
+                removed: false,
+                lane: result,
+              });
+            }
+            return sendJson(res, 200, {
+              removed: true,
+              lane: result,
+            });
+          }
+
+          const result = clearQueueLanes({ force });
+          return sendJson(res, 200, {
+            removed: true,
+            queue: result,
+          });
+        } catch (error) {
+          return sendJson(res, 501, {
+            error: 'Agent queue controls are not available',
+            message: error?.message,
+          });
+        }
+      }
+
       if (method === 'GET' && pathname === '/plugins') {
         const plugins = getPluginRegistry().listPlugins();
         return sendJson(res, 200, { plugins });

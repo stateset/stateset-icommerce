@@ -18,14 +18,31 @@ import { parseArgs } from 'node:util';
 // IMPORTANT: Save and clean argv BEFORE importing SDK modules
 // The Claude Agent SDK reads process.argv and passes it to the spawned process
 const __savedArgv = [...process.argv];
-process.argv = process.argv.slice(0, 2);
+let runAgentLoopMod = null;
+let configMod = null;
+let outputMod = null;
+let confirmMod = null;
+let stateConfigMod = null;
 
-// Use dynamic imports after cleaning argv
-const { runAgentLoop, RichOutput, ICONS, AGENTS } = await import('../src/claude-harness.js');
-const { DEFAULT_MODEL, CLI_VERSION } = await import('../src/config.js');
-const { formatStructuredOutput } = await import('../src/output.js');
-const { createConfirmHandler } = await import('../src/utils/confirm.js');
-const { getProfileConfig } = await import('./stateset-config.js');
+try {
+  process.argv = __savedArgv.slice(0, 2);
+
+  // Use dynamic imports after cleaning argv
+  runAgentLoopMod = await import('../src/claude-harness.js');
+  configMod = await import('../src/config.js');
+  outputMod = await import('../src/output.js');
+  confirmMod = await import('../src/utils/confirm.js');
+  stateConfigMod = await import('./stateset-config.js');
+} finally {
+  process.argv = __savedArgv;
+}
+
+const { runAgentLoop, getQueueStats, removeQueueLane, clearQueueLanes, RichOutput, ICONS, AGENTS } =
+  runAgentLoopMod;
+const { DEFAULT_MODEL, CLI_VERSION } = configMod;
+const { formatStructuredOutput } = outputMod;
+const { createConfirmHandler } = confirmMod;
+const { getProfileConfig } = stateConfigMod;
 
 // Available agent names for validation
 const AVAILABLE_AGENTS = Object.keys(AGENTS);
@@ -82,11 +99,16 @@ OPTIONS:
   --treasury-erc8004-registry <uri>  ERC-8004 registry URI
   --treasury-erc8004-db <path>       ERC-8004 db path (defaults to --db)
   --resume <id>      Resume a previous session
+  --queue-status       Show current agent queue state and exit
+  --queue-clear        Clear queue lanes and exit
+  --queue-lane <id>    Queue lane ID to inspect/remove
+  --queue-force        Force clear/remove busy queue lanes (admin)
   --json             Output as JSON
   --format <fmt>     Output format: table, json, csv, yaml (default: table)
   --output <file>    Write output to file instead of stdout
   --verbose, -V      Enable verbose output with telemetry
   --stats            Show execution statistics after completion
+  --timeout <ms>     Abort requests that exceed this duration
   --yes, -y          Skip confirmation prompts
   --quiet, -q        Minimal output (for scripting)
   --help, -h         Show this help message
@@ -267,6 +289,32 @@ async function readStdin() {
 }
 
 /**
+ * Run agent loop with optional abort timeout.
+ * @param {object} options
+ * @param {number|null} timeoutMs
+ */
+async function runAgentLoopWithTimeout(options, timeoutMs) {
+  if (!timeoutMs) {
+    return runAgentLoop(options);
+  }
+
+  const abortController = new AbortController();
+  const timer = setTimeout(() => {
+    abortController.abort(new Error(`Request timeout exceeded: ${timeoutMs}ms`));
+  }, timeoutMs);
+
+  try {
+    return await runAgentLoop({
+      ...options,
+      abortController,
+      signal: abortController.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Process a single request in batch mode
  */
 async function processBatchRequest(
@@ -282,17 +330,20 @@ async function processBatchRequest(
   const startTime = Date.now();
 
   try {
-    const result = await runAgentLoop({
-      request,
-      dbPath: config.db,
-      model: config.model,
-      allowApply: config.apply,
-      agent: values.agent,
-      verbose: false,
-      treasury: treasuryConfig,
-      onConfirmRequired,
-      enableX402: values.x402,
-    });
+    const result = await runAgentLoopWithTimeout(
+      {
+        request,
+        dbPath: config.db,
+        model: config.model,
+        allowApply: config.apply,
+        agent: values.agent,
+        verbose: false,
+        treasury: treasuryConfig,
+        onConfirmRequired,
+        enableX402: values.x402,
+      },
+      config.timeoutMs,
+    );
 
     const duration = Date.now() - startTime;
 
@@ -343,18 +394,21 @@ async function processSequential(
     const startTime = Date.now();
 
     try {
-      const result = await runAgentLoop({
-        request,
-        dbPath: config.db,
-        model: config.model,
-        allowApply: config.apply,
-        resumeSessionId: sessionId,
-        agent: values.agent,
-        verbose: false,
-        treasury: treasuryConfig,
-        onConfirmRequired,
-        enableX402: values.x402,
-      });
+      const result = await runAgentLoopWithTimeout(
+        {
+          request,
+          dbPath: config.db,
+          model: config.model,
+          allowApply: config.apply,
+          resumeSessionId: sessionId,
+          agent: values.agent,
+          verbose: false,
+          treasury: treasuryConfig,
+          onConfirmRequired,
+          enableX402: values.x402,
+        },
+        config.timeoutMs,
+      );
 
       // Chain session IDs for sequential operations
       sessionId = result.sessionId;
@@ -481,7 +535,17 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
   const fs = await import('node:fs/promises');
   const isJsonOutput = values.json || values.format === 'json';
   const isQuiet = values.quiet || isJsonOutput;
-  const parallelism = values.parallel ? parseInt(values.parallel, 10) : 0;
+  let parallelism = values.parallel ? parseInt(values.parallel, 10) : 0;
+  if (values.parallel && (!Number.isFinite(parallelism) || parallelism < 1)) {
+    console.error('Error: --parallel must be a positive integer');
+    process.exit(1);
+  }
+  if (!parallelism) parallelism = 0;
+  if (values.resume && parallelism > 0) {
+    console.error('Error: --resume is not compatible with --parallel.');
+    console.error('Use --resume with sequential batch mode for session continuity.');
+    process.exit(1);
+  }
   const onConfirmRequired = createConfirmHandler({
     output,
     assumeYes: values.yes,
@@ -638,6 +702,10 @@ async function main() {
       json: { type: 'boolean', default: false },
       format: { type: 'string', default: 'table' },
       output: { type: 'string' },
+      queueStatus: { type: 'boolean', default: false },
+      queueClear: { type: 'boolean', default: false },
+      queueLane: { type: 'string' },
+      queueForce: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'V', default: false },
       stats: { type: 'boolean', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
@@ -645,6 +713,7 @@ async function main() {
       stdin: { type: 'boolean', default: false },
       batch: { type: 'string' },
       parallel: { type: 'string' },
+      timeout: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -653,11 +722,17 @@ async function main() {
 
   // Load profile config and merge with CLI args (CLI args take precedence)
   const profileConfig = loadConfigWithProfile(values.profile);
+  const timeoutMs = values.timeout ? Number(values.timeout) : null;
+  if (timeoutMs !== null && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+    console.error('Error: --timeout must be a positive integer');
+    process.exit(1);
+  }
   const config = {
     db: values.db || profileConfig.db || './store.db',
     model: values.model || profileConfig.model || DEFAULT_MODEL,
     apply: values.apply || profileConfig.apply || false,
     verbose: values.verbose || profileConfig.verbose || false,
+    timeoutMs,
   };
 
   const isJsonOutput = values.json || values.format === 'json';
@@ -697,6 +772,52 @@ async function main() {
   if (values.version) {
     console.log(`@stateset/cli v${CLI_VERSION}`);
     process.exit(0);
+  }
+
+  if (values.queueStatus || values.queueClear) {
+    const outputQueueError = (message, code = 1) => {
+      console.error(message);
+      process.exit(code);
+    };
+
+    if (values.queueClear) {
+      if (values.queueLane) {
+        const result = removeQueueLane(values.queueLane, { force: values.queueForce });
+        if (!result.found) {
+          outputQueueError(`Queue lane not found: ${values.queueLane}`);
+        }
+        if (!result.removed) {
+          outputQueueError(
+            `Queue lane is busy: ${values.queueLane}. Use --queue-force to remove it.`,
+          );
+        }
+        if (!isQuiet && !isJsonOutput) {
+          console.log(formatOutput({ lane: result }, values.format));
+        } else {
+          console.log(JSON.stringify({ lane: result }, null, 2));
+        }
+        return;
+      }
+
+      const result = clearQueueLanes({ force: values.queueForce });
+      if (!isQuiet && !isJsonOutput) {
+        console.log(formatOutput(result, values.format));
+      } else {
+        console.log(JSON.stringify(result, null, 2));
+      }
+      return;
+    }
+
+    const stats = values.queueLane ? getQueueStats(values.queueLane) : getQueueStats();
+    if (values.queueLane && !stats) {
+      outputQueueError(`Queue lane not found: ${values.queueLane}`);
+    }
+    if (!isQuiet && !isJsonOutput) {
+      console.log(formatOutput(stats, values.format));
+    } else {
+      console.log(JSON.stringify(stats, null, 2));
+    }
+    return;
   }
 
   if (values.stream && isJsonOutput) {
@@ -763,6 +884,9 @@ async function main() {
     if (values.budget) {
       console.log(`   ${output.dim('Budget:')}   ${output.cyan('$' + values.budget)}`);
     }
+    if (config.timeoutMs) {
+      console.log(`   ${output.dim('Timeout:')}  ${output.cyan(config.timeoutMs + 'ms')}`);
+    }
     if (memoryOverride !== null) {
       console.log(
         `   ${output.dim('Memory:')}   ${memoryOverride ? output.cyan('Enabled') : output.yellow('Disabled')}`,
@@ -785,52 +909,65 @@ async function main() {
   });
 
   try {
-    const result = await runAgentLoop({
-      request,
-      dbPath: config.db,
-      model: config.model,
-      allowApply: config.apply,
-      resumeSessionId: values.resume,
-      agent: values.agent,
-      verbose: config.verbose,
-      treasury: treasuryConfig,
-      onConfirmRequired,
-      // v0.2.8: Extended thinking, streaming, budget, provider
-      thinkLevel,
-      streaming: values.stream,
-      maxBudgetUsd: values.budget || null,
-      provider: providerName,
-      enableMemory: memoryOverride === null ? null : memoryOverride,
-      enableX402: values.x402,
-      onPartialMessage: values.stream
-        ? (event) => {
-            // Write partial text to stdout for streaming display
-            if (event?.content) {
-              process.stdout.write(event.content);
-            } else if (event?.delta?.text) {
-              process.stdout.write(event.delta.text);
-            } else if (typeof event?.text === 'string') {
-              process.stdout.write(event.text);
-            }
-          }
-        : null,
-      onThinkingBlock:
-        thinkLevel !== 'off'
-          ? (block) => {
-              if (!isQuiet && config.verbose) {
-                const preview = (block.thinking || block.text || '').slice(0, 200);
-                console.log(
-                  output.dim(`\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`),
-                );
+    const result = await runAgentLoopWithTimeout(
+      {
+        request,
+        dbPath: config.db,
+        model: config.model,
+        allowApply: config.apply,
+        resumeSessionId: values.resume,
+        agent: values.agent,
+        verbose: config.verbose,
+        treasury: treasuryConfig,
+        onConfirmRequired,
+        // v0.2.8: Extended thinking, streaming, budget, provider
+        thinkLevel,
+        streaming: values.stream,
+        maxBudgetUsd: values.budget || null,
+        provider: providerName,
+        enableMemory: memoryOverride === null ? null : memoryOverride,
+        enableX402: values.x402,
+        onPartialMessage: values.stream
+          ? (event) => {
+              // Write partial text to stdout for streaming display
+              if (event?.content) {
+                process.stdout.write(event.content);
+              } else if (event?.delta?.text) {
+                process.stdout.write(event.delta.text);
+              } else if (typeof event?.text === 'string') {
+                process.stdout.write(event.text);
               }
             }
           : null,
-      onToolCall: (toolCall) => {
-        if (!isQuiet && !config.verbose) {
-          console.log(output.toolCall(toolCall.name, toolCall.input));
-        }
+        onThinkingBlock:
+          thinkLevel !== 'off'
+            ? (block) => {
+                if (!isQuiet && config.verbose) {
+                  const preview = (block.thinking || block.text || '').slice(0, 200);
+                  const message = output.dim(
+                    `\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`,
+                  );
+                  if (values.stream) {
+                    process.stderr.write(`${message}\n`);
+                  } else {
+                    console.log(message);
+                  }
+                }
+              }
+            : null,
+        onToolCall: (toolCall) => {
+          if (!isQuiet && !config.verbose) {
+            const message = output.toolCall(toolCall.name, toolCall.input);
+            if (values.stream) {
+              process.stderr.write(`${message}\n`);
+            } else {
+              console.log(message);
+            }
+          }
+        },
       },
-    });
+      config.timeoutMs,
+    );
 
     // Prepare output data
     const outputData = {

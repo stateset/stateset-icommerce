@@ -228,6 +228,7 @@ pub use async_commerce::{
     AsyncAnalytics, AsyncBom, AsyncCarts, AsyncCommerce, AsyncCurrency, AsyncCustomObjects,
     AsyncCustomers, AsyncInventory, AsyncInvoices, AsyncOrders, AsyncPayments, AsyncProducts,
     AsyncPurchaseOrders, AsyncReturns, AsyncShipments, AsyncWarranties, AsyncWorkOrders,
+    AsyncX402,
 };
 
 // Re-export Database trait for advanced users who want to bring their own database
@@ -239,6 +240,8 @@ pub use stateset_observability::{Metrics, MetricsConfig, MetricsSnapshot};
 pub use stateset_core::{
     A2APurchase,
     A2APurchaseFilter,
+    SkillQuote,
+    SkillQuoteFilter,
     A2AQuote,
     A2AQuoteFilter,
     // A2A Skill types

@@ -40,6 +40,7 @@ mod warranties;
 mod work_orders;
 mod x402_credits;
 mod x402_payment_intents;
+mod a2a;
 
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
@@ -79,6 +80,7 @@ pub use warranties::*;
 pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
+pub use a2a::*;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use stateset_core::CommerceError;
@@ -372,6 +374,16 @@ impl PostgresDatabase {
     /// Get x402 credit ledger repository
     pub fn x402_credits(&self) -> PgX402CreditRepository {
         PgX402CreditRepository::new(self.pool.clone())
+    }
+
+    /// Get A2A quote/purchase repository
+    pub fn a2a_quotes(&self) -> PgA2ARepository {
+        PgA2ARepository::new(self.pool.clone())
+    }
+
+    /// Get A2A quote/purchase repository
+    pub fn a2a_purchases(&self) -> PgA2ARepository {
+        PgA2ARepository::new(self.pool.clone())
     }
 
     /// Get agent card repository

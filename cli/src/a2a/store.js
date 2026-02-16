@@ -427,7 +427,7 @@ export class A2AStore {
     for (const [name, type] of columns) {
       try {
         this.db.exec(`ALTER TABLE a2a_quotes ADD COLUMN ${name} ${type}`);
-      } catch (_err) {
+      } catch {
         // Column already exists — ignore
       }
     }
@@ -1568,7 +1568,7 @@ export class A2AStore {
     for (const [name, type] of columns) {
       try {
         this.db.exec(`ALTER TABLE a2a_escrows ADD COLUMN ${name} ${type}`);
-      } catch (_err) {
+      } catch {
         // Column already exists — ignore
       }
     }

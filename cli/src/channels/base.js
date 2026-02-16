@@ -8,7 +8,7 @@
  */
 
 import crypto from 'crypto';
-import { runAgentLoop } from '../claude-harness.js';
+import { runAgentLoopQueued } from '../claude-harness.js';
 import { runMiddleware } from './middleware.js';
 import { getMetrics } from './metrics.js';
 import { getHandoffQueue } from './handoff.js';
@@ -606,11 +606,21 @@ export async function handleBotCommand(
  * @param {string}  [opts.model]
  * @param {number}  [opts.maxTurns]
  * @param {string}  [opts.agent]
+ * @param {string}  [opts.channel]
  * @param {boolean} [opts.verbose]
  * @returns {Promise<{ response: string, agent?: string }>}
  */
 export async function processWithAgent(text, session, opts) {
-  const { dbPath, allowApply, model, maxTurns = 10, agent, verbose } = opts;
+  const {
+    dbPath,
+    allowApply,
+    model,
+    maxTurns = 10,
+    agent,
+    verbose,
+    senderId = null,
+    channel = 'default',
+  } = opts;
 
   // Resolve extended thinking level from session override or shared config
   const thinkLevel = session.thinkLevel || opts.thinkLevel || 'off';
@@ -641,7 +651,10 @@ export async function processWithAgent(text, session, opts) {
 
   // Primary path: Claude Agent SDK with full MCP tools + extended thinking
   try {
-    const result = await runAgentLoop({
+    const laneSuffix = senderId ? `${channel}:${senderId}` : `${channel}:anonymous`;
+    const laneId = session.sessionId || `sender:${laneSuffix}`;
+
+    const result = await runAgentLoopQueued({
       request: text,
       dbPath,
       model,
@@ -651,6 +664,7 @@ export async function processWithAgent(text, session, opts) {
       agent: agent || session.agent,
       verbose,
       thinkLevel,
+      laneId,
     });
 
     if (result.sessionId) session.sessionId = result.sessionId;
@@ -1008,6 +1022,8 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
       thinkLevel,
       provider,
       enableFallback,
+      senderId,
+      channel,
     });
 
     // Fire agent_end hook (parallel)

@@ -49,7 +49,9 @@ use stateset_core::{
     AgentCard, AgentCardFilter, CreateAgentCard, CreateX402PaymentIntent, Result,
     SignX402PaymentIntent, TrustLevel, UpdateAgentCard, X402Asset, X402CreditAccount,
     X402CreditAdjustment, X402CreditDirection, X402CreditTransaction, X402CreditTransactionFilter,
-    X402IntentStatus, X402Network, X402PaymentIntent, X402PaymentIntentFilter,
+    A2APurchase, A2APurchaseFilter, CreateA2APurchase, CreateA2AQuote, PurchaseStatus, QuoteStatus,
+    SkillQuote, SkillQuoteFilter, X402IntentStatus, X402Network, X402PaymentIntent,
+    X402PaymentIntentFilter,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -229,6 +231,88 @@ impl X402 {
     /// Get settled intents
     pub fn settled_intents(&self) -> Result<Vec<X402PaymentIntent>> {
         self.intents_by_status(X402IntentStatus::Settled)
+    }
+
+    // ========================================================================
+    // A2A Commerce Operations
+    // ========================================================================
+
+    /// Create a new A2A quote
+    pub fn create_quote(&self, input: CreateA2AQuote) -> Result<SkillQuote> {
+        self.db.a2a_quotes().create_quote(input)
+    }
+
+    /// Get an A2A quote by ID
+    pub fn get_quote(&self, id: Uuid) -> Result<Option<SkillQuote>> {
+        self.db.a2a_quotes().get_quote(id)
+    }
+
+    /// Get an A2A quote by quote number
+    pub fn get_quote_by_number(&self, quote_number: &str) -> Result<Option<SkillQuote>> {
+        self.db.a2a_quotes().get_quote_by_number(quote_number)
+    }
+
+    /// Update A2A quote status
+    pub fn update_quote_status(&self, id: Uuid, status: QuoteStatus) -> Result<SkillQuote> {
+        self.db.a2a_quotes().update_quote_status(id, status)
+    }
+
+    /// List A2A quotes with filter
+    pub fn list_quotes(&self, filter: SkillQuoteFilter) -> Result<Vec<SkillQuote>> {
+        self.db.a2a_quotes().list_quotes(filter)
+    }
+
+    /// Count A2A quotes matching filter
+    pub fn count_quotes(&self, filter: SkillQuoteFilter) -> Result<u64> {
+        self.db.a2a_quotes().count_quotes(filter)
+    }
+
+    /// Create a new A2A purchase
+    pub fn create_purchase(&self, input: CreateA2APurchase) -> Result<A2APurchase> {
+        self.db.a2a_purchases().create_purchase(input)
+    }
+
+    /// Get an A2A purchase by ID
+    pub fn get_purchase(&self, id: Uuid) -> Result<Option<A2APurchase>> {
+        self.db.a2a_purchases().get_purchase(id)
+    }
+
+    /// Get an A2A purchase by purchase number
+    pub fn get_purchase_by_number(&self, purchase_number: &str) -> Result<Option<A2APurchase>> {
+        self.db.a2a_purchases().get_purchase_by_number(purchase_number)
+    }
+
+    /// Update A2A purchase status
+    pub fn update_purchase_status(&self, id: Uuid, status: PurchaseStatus) -> Result<A2APurchase> {
+        self.db.a2a_purchases().update_purchase_status(id, status)
+    }
+
+    /// Link A2A purchase to an order
+    pub fn link_purchase_to_order(&self, purchase_id: Uuid, order_id: Uuid) -> Result<A2APurchase> {
+        self.db.a2a_purchases().link_purchase_to_order(purchase_id, order_id)
+    }
+
+    /// Confirm delivery for an A2A purchase
+    pub fn confirm_delivery(
+        &self,
+        purchase_id: Uuid,
+        signature: &str,
+        rating: Option<u8>,
+        feedback: Option<&str>,
+    ) -> Result<A2APurchase> {
+        self.db
+            .a2a_purchases()
+            .confirm_delivery(purchase_id, signature, rating, feedback)
+    }
+
+    /// List A2A purchases with filter
+    pub fn list_purchases(&self, filter: A2APurchaseFilter) -> Result<Vec<A2APurchase>> {
+        self.db.a2a_purchases().list_purchases(filter)
+    }
+
+    /// Count A2A purchases matching filter
+    pub fn count_purchases(&self, filter: A2APurchaseFilter) -> Result<u64> {
+        self.db.a2a_purchases().count_purchases(filter)
     }
 
     // ========================================================================
@@ -536,7 +620,7 @@ impl X402 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stateset_core::A2ASkill;
+    use stateset_core::{A2ASkill, ItemAvailability};
 
     fn setup_commerce() -> crate::Commerce {
         crate::Commerce::in_memory().unwrap()
@@ -814,5 +898,564 @@ mod tests {
 
         let verified = commerce.x402().verify_agent(card.id).unwrap();
         assert_eq!(verified.trust_level, TrustLevel::Verified);
+    }
+
+    #[test]
+    fn test_create_and_track_cart_payment() {
+        let commerce = setup_commerce();
+        let cart_id = Uuid::new_v4();
+
+        let intent = commerce
+            .x402()
+            .create_cart_payment(
+                cart_id,
+                "0xPayerCart",
+                "0xPayeeCart",
+                rust_decimal_macros::dec!(12.50),
+                X402Network::SetChain,
+                X402Asset::Usdc,
+            )
+            .unwrap();
+
+        assert_eq!(intent.cart_id, Some(cart_id));
+        assert_eq!(intent.status, X402IntentStatus::Created);
+
+        let intents = commerce.x402().intents_for_cart(cart_id).unwrap();
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].id, intent.id);
+
+        let active = commerce.x402().active_intent_for_cart(cart_id).unwrap();
+        assert!(active.is_some());
+        assert_eq!(active.expect("active intent").id, intent.id);
+    }
+
+    #[test]
+    fn test_a2a_quote_and_purchase_flow() {
+        let commerce = setup_commerce();
+
+        let seller = commerce
+            .x402()
+            .register_agent(CreateAgentCard {
+                name: "A2A Seller".into(),
+                wallet_address: "0xSellerA2A".into(),
+                public_key: "seller_pub".into(),
+                supported_networks: Some(vec![X402Network::SetChain]),
+                supported_assets: Some(vec![X402Asset::Usdc]),
+                a2a_skills: Some(vec![A2ASkill::Sell]),
+                trust_level: Some(TrustLevel::Verified),
+                endpoint_url: Some("https://agent.example.com/".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let buyer_id = Uuid::new_v4();
+        let quote = commerce
+            .x402()
+            .create_quote(CreateA2AQuote {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                items: vec![QuotedItem {
+                    line_number: 1,
+                    sku: Some("SKU-1".to_string()),
+                    name: "Service Plan".to_string(),
+                    quantity: 1,
+                    unit_price: rust_decimal_macros::dec!(19.99),
+                    total: rust_decimal_macros::dec!(19.99),
+                    availability: ItemAvailability::InStock,
+                    lead_time_days: Some(1),
+                }],
+                subtotal: rust_decimal_macros::dec!(19.99),
+                total: rust_decimal_macros::dec!(19.99),
+                currency: Some("USD".to_string()),
+                tax_amount: Some(rust_decimal::Decimal::ZERO),
+                shipping_amount: Some(rust_decimal::Decimal::ZERO),
+                discount_amount: Some(rust_decimal::Decimal::ZERO),
+                valid_until: chrono::Utc::now() + chrono::Duration::hours(1),
+                payment_network: Some(X402Network::SetChain),
+                payment_asset: Some(X402Asset::Usdc),
+                notes: Some("unit test quote".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(quote.status, QuoteStatus::Pending);
+
+        let quoted = commerce.x402().update_quote_status(quote.id, QuoteStatus::Quoted).unwrap();
+        assert_eq!(quoted.status, QuoteStatus::Quoted);
+
+        let no_op_quote = commerce
+            .x402()
+            .update_quote_status(quote.id, QuoteStatus::Quoted)
+            .unwrap();
+        assert_eq!(no_op_quote.status, QuoteStatus::Quoted);
+
+        let purchase = commerce
+            .x402()
+            .create_purchase(CreateA2APurchase {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                quote_id: Some(quoted.id),
+                items: quoted.items,
+                total: quoted.total,
+                currency: quoted.currency.clone(),
+                fulfillment_type: Some("digital".to_string()),
+                notes: Some("unit test purchase".into()),
+                metadata: None,
+                payment_intent_id: None,
+            })
+            .unwrap();
+
+        assert_eq!(purchase.status, PurchaseStatus::Initiated);
+        assert_eq!(purchase.quote_id, Some(quoted.id));
+
+        let payment_pending =
+            commerce.x402().update_purchase_status(purchase.id, PurchaseStatus::PaymentPending).unwrap();
+        assert_eq!(payment_pending.status, PurchaseStatus::PaymentPending);
+
+        let shipped =
+            commerce.x402().update_purchase_status(purchase.id, PurchaseStatus::Shipped).unwrap();
+        assert_eq!(shipped.status, PurchaseStatus::Shipped);
+
+        let refreshed_quote = commerce.x402().get_quote(quote.id).unwrap();
+        assert!(matches!(refreshed_quote.as_ref(), Some(value) if value.status == QuoteStatus::Purchased));
+
+        let listed_quotes = commerce
+            .x402()
+            .list_quotes(SkillQuoteFilter { buyer_agent_id: Some(buyer_id), ..Default::default() })
+            .unwrap();
+        assert!(listed_quotes.iter().any(|item| item.id == quoted.id));
+
+        let quote_by_number = commerce
+            .x402()
+            .get_quote_by_number(&quoted.quote_number)
+            .unwrap()
+            .expect("quote by number");
+        assert_eq!(quote_by_number.id, quoted.id);
+
+        let counted_quotes = commerce
+            .x402()
+            .count_quotes(SkillQuoteFilter { seller_agent_id: Some(seller.id), ..Default::default() })
+            .unwrap();
+        assert!(counted_quotes >= 1);
+
+        let completed = commerce
+            .x402()
+            .confirm_delivery(purchase.id, "delivery_signature", Some(5), Some("good"))
+            .unwrap();
+        assert_eq!(completed.status, PurchaseStatus::Completed);
+        assert_eq!(completed.delivery_confirmation_signature, Some("delivery_signature".to_string()));
+
+        let no_op_purchase = commerce
+            .x402()
+            .update_purchase_status(purchase.id, PurchaseStatus::Completed)
+            .unwrap();
+        assert_eq!(no_op_purchase.status, PurchaseStatus::Completed);
+
+        let listed_purchases = commerce
+            .x402()
+            .list_purchases(A2APurchaseFilter { buyer_agent_id: Some(buyer_id), ..Default::default() })
+            .unwrap();
+        assert!(listed_purchases.iter().any(|item| item.id == purchase.id));
+
+        let counted_purchases = commerce
+            .x402()
+            .count_purchases(A2APurchaseFilter { buyer_agent_id: Some(buyer_id), ..Default::default() })
+            .unwrap();
+        assert!(counted_purchases >= 1);
+    }
+
+    #[test]
+    fn test_a2a_quote_and_purchase_state_guards() {
+        let commerce = setup_commerce();
+
+        let seller = commerce
+            .x402()
+            .register_agent(CreateAgentCard {
+                name: "A2A Guard Seller".into(),
+                wallet_address: "0xSellerA2AGuard".into(),
+                public_key: "seller_guard_pub".into(),
+                supported_networks: Some(vec![X402Network::SetChain]),
+                supported_assets: Some(vec![X402Asset::Usdc]),
+                a2a_skills: Some(vec![A2ASkill::Sell]),
+                trust_level: Some(TrustLevel::Verified),
+                endpoint_url: Some("https://agent.example.com/guard".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let other_seller = commerce
+            .x402()
+            .register_agent(CreateAgentCard {
+                name: "A2A Wrong Seller".into(),
+                wallet_address: "0xSellerWrong".into(),
+                public_key: "wrong_seller_pub".into(),
+                supported_networks: Some(vec![X402Network::SetChain]),
+                supported_assets: Some(vec![X402Asset::Usdc]),
+                a2a_skills: Some(vec![A2ASkill::Sell]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let buyer_id = Uuid::new_v4();
+        let quote = commerce
+            .x402()
+            .create_quote(CreateA2AQuote {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                items: vec![QuotedItem {
+                    line_number: 1,
+                    sku: Some("SKU-2".to_string()),
+                    name: "Guarded service".to_string(),
+                    quantity: 1,
+                    unit_price: rust_decimal_macros::dec!(30.00),
+                    total: rust_decimal_macros::dec!(30.00),
+                    availability: ItemAvailability::InStock,
+                    lead_time_days: Some(2),
+                }],
+                subtotal: rust_decimal_macros::dec!(30.00),
+                total: rust_decimal_macros::dec!(30.00),
+                currency: Some("USD".to_string()),
+                tax_amount: Some(rust_decimal::Decimal::ZERO),
+                shipping_amount: Some(rust_decimal::Decimal::ZERO),
+                discount_amount: Some(rust_decimal::Decimal::ZERO),
+                valid_until: chrono::Utc::now() + chrono::Duration::hours(1),
+                payment_network: Some(X402Network::SetChain),
+                payment_asset: Some(X402Asset::Usdc),
+                notes: Some("guard quote".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert!(commerce
+            .x402()
+            .update_quote_status(quote.id, QuoteStatus::Accepted)
+            .is_err());
+
+        let quoted = commerce
+            .x402()
+            .update_quote_status(quote.id, QuoteStatus::Quoted)
+            .unwrap();
+
+        assert!(commerce
+            .x402()
+            .create_purchase(CreateA2APurchase {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: other_seller.id,
+                quote_id: Some(quoted.id),
+                items: quoted.items.clone(),
+                total: quoted.total,
+                currency: Some("USD".to_string()),
+                fulfillment_type: Some("digital".to_string()),
+                notes: Some("mismatched seller".into()),
+                metadata: None,
+                payment_intent_id: None,
+            })
+            .is_err());
+
+        assert!(commerce
+            .x402()
+            .create_purchase(CreateA2APurchase {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                quote_id: Some(quoted.id),
+                items: quoted.items.clone(),
+                total: quoted.total,
+                currency: Some("EUR".to_string()),
+                fulfillment_type: Some("digital".to_string()),
+                notes: Some("mismatched currency".into()),
+                metadata: None,
+                payment_intent_id: None,
+            })
+            .is_err());
+
+        assert!(commerce
+            .x402()
+            .create_purchase(CreateA2APurchase {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                quote_id: Some(quoted.id),
+                items: quoted.items.clone(),
+                total: quoted.total + rust_decimal::Decimal::ONE,
+                currency: Some("USD".to_string()),
+                fulfillment_type: Some("digital".to_string()),
+                notes: Some("mismatched total".into()),
+                metadata: None,
+                payment_intent_id: None,
+            })
+            .is_err());
+
+        let purchase = commerce
+            .x402()
+            .create_purchase(CreateA2APurchase {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                quote_id: Some(quoted.id),
+                items: quoted.items,
+                total: quoted.total,
+                currency: quoted.currency.clone(),
+                fulfillment_type: Some("digital".to_string()),
+                notes: Some("valid purchase".into()),
+                metadata: None,
+                payment_intent_id: None,
+            })
+            .unwrap();
+
+        assert_eq!(purchase.status, PurchaseStatus::Initiated);
+
+        assert!(commerce
+            .x402()
+            .update_purchase_status(purchase.id, PurchaseStatus::Completed)
+            .is_err());
+
+        assert!(commerce
+            .x402()
+            .confirm_delivery(purchase.id, "delivery_signature", Some(5), Some("blocked"))
+            .is_err());
+    }
+
+    #[test]
+    fn test_a2a_purchase_rejected_for_expired_quote() {
+        let commerce = setup_commerce();
+
+        let seller = commerce
+            .x402()
+            .register_agent(CreateAgentCard {
+                name: "Expired Quote Seller".into(),
+                wallet_address: "0xSellerA2AExpired".into(),
+                public_key: "expired_seller_pub".into(),
+                supported_networks: Some(vec![X402Network::SetChain]),
+                supported_assets: Some(vec![X402Asset::Usdc]),
+                a2a_skills: Some(vec![A2ASkill::Sell]),
+                trust_level: Some(TrustLevel::Verified),
+                endpoint_url: Some("https://agent.example.com/".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let buyer_id = Uuid::new_v4();
+        assert!(commerce
+            .x402()
+            .create_quote(CreateA2AQuote {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                items: vec![QuotedItem {
+                    line_number: 1,
+                    sku: Some("SKU-EX".to_string()),
+                    name: "Expired service".to_string(),
+                    quantity: 1,
+                    unit_price: rust_decimal_macros::dec!(15.00),
+                    total: rust_decimal_macros::dec!(15.00),
+                    availability: ItemAvailability::InStock,
+                    lead_time_days: Some(1),
+                }],
+                subtotal: rust_decimal_macros::dec!(15.00),
+                total: rust_decimal_macros::dec!(15.00),
+                currency: Some("USD".to_string()),
+                tax_amount: Some(rust_decimal::Decimal::ZERO),
+                shipping_amount: Some(rust_decimal::Decimal::ZERO),
+                discount_amount: Some(rust_decimal::Decimal::ZERO),
+                valid_until: chrono::Utc::now() - chrono::Duration::hours(1),
+                payment_network: Some(X402Network::SetChain),
+                payment_asset: Some(X402Asset::Usdc),
+                notes: Some("expired quote".into()),
+                ..Default::default()
+            })
+            .is_err());
+
+        let quote = commerce
+            .x402()
+            .create_quote(CreateA2AQuote {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                items: vec![QuotedItem {
+                    line_number: 1,
+                    sku: Some("SKU-EX".to_string()),
+                    name: "Expired service".to_string(),
+                    quantity: 1,
+                    unit_price: rust_decimal_macros::dec!(15.00),
+                    total: rust_decimal_macros::dec!(15.00),
+                    availability: ItemAvailability::InStock,
+                    lead_time_days: Some(1),
+                }],
+                subtotal: rust_decimal_macros::dec!(15.00),
+                total: rust_decimal_macros::dec!(15.00),
+                currency: Some("USD".to_string()),
+                tax_amount: Some(rust_decimal::Decimal::ZERO),
+                shipping_amount: Some(rust_decimal::Decimal::ZERO),
+                discount_amount: Some(rust_decimal::Decimal::ZERO),
+                valid_until: chrono::Utc::now() + chrono::Duration::hours(1),
+                payment_network: Some(X402Network::SetChain),
+                payment_asset: Some(X402Asset::Usdc),
+                notes: Some("expired quote".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let quoted = commerce
+            .x402()
+            .update_quote_status(quote.id, QuoteStatus::Quoted)
+            .unwrap();
+        let expired = commerce
+            .x402()
+            .update_quote_status(quoted.id, QuoteStatus::Expired)
+            .unwrap();
+        assert_eq!(quoted.status, QuoteStatus::Quoted);
+        assert_eq!(expired.status, QuoteStatus::Expired);
+
+        assert!(commerce
+            .x402()
+            .create_purchase(CreateA2APurchase {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                quote_id: Some(expired.id),
+                items: expired.items,
+                total: expired.total,
+                currency: expired.currency.clone(),
+                fulfillment_type: Some("digital".to_string()),
+                notes: Some("expired quote blocked".into()),
+                metadata: None,
+                payment_intent_id: None,
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn test_a2a_purchase_state_lifecycle_controls() {
+        let commerce = setup_commerce();
+
+        let seller = commerce
+            .x402()
+            .register_agent(CreateAgentCard {
+                name: "A2A Lifecycle Seller".into(),
+                wallet_address: "0xSellerLifecycle".into(),
+                public_key: "lifecycle_pub".into(),
+                supported_networks: Some(vec![X402Network::SetChain]),
+                supported_assets: Some(vec![X402Asset::Usdc]),
+                a2a_skills: Some(vec![A2ASkill::Sell]),
+                trust_level: Some(TrustLevel::Verified),
+                endpoint_url: Some("https://agent.example.com/lifecycle".into()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let buyer_id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+
+        let make_quote = |buyer_id: Uuid, seller_id: Uuid| CreateA2AQuote {
+            buyer_agent_id: buyer_id,
+            seller_agent_id: seller_id,
+            items: vec![QuotedItem {
+                line_number: 1,
+                sku: Some("SKU-LC-1".to_string()),
+                name: "Lifecycle service".to_string(),
+                quantity: 1,
+                unit_price: rust_decimal_macros::dec!(12.00),
+                total: rust_decimal_macros::dec!(12.00),
+                availability: ItemAvailability::InStock,
+                lead_time_days: Some(1),
+            }],
+            subtotal: rust_decimal_macros::dec!(12.00),
+            tax_amount: Some(rust_decimal::Decimal::ZERO),
+            shipping_amount: Some(rust_decimal::Decimal::ZERO),
+            discount_amount: Some(rust_decimal::Decimal::ZERO),
+            total: rust_decimal_macros::dec!(12.00),
+            currency: Some("USD".to_string()),
+            payment_network: Some(X402Network::SetChain),
+            payment_asset: Some(X402Asset::Usdc),
+            shipping_address: None,
+            valid_until: now + chrono::Duration::hours(1),
+            notes: Some("lifecycle quote".to_string()),
+            metadata: None,
+        };
+
+        let cancelled_quote = commerce
+            .x402()
+            .create_quote(make_quote(buyer_id, seller.id))
+            .unwrap();
+        let cancelled_quote = commerce
+            .x402()
+            .update_quote_status(cancelled_quote.id, QuoteStatus::Quoted)
+            .unwrap();
+
+        let cancelled_purchase = commerce
+            .x402()
+            .create_purchase(CreateA2APurchase {
+                buyer_agent_id: buyer_id,
+                seller_agent_id: seller.id,
+                quote_id: Some(cancelled_quote.id),
+                items: cancelled_quote.items.clone(),
+                total: cancelled_quote.total,
+                currency: cancelled_quote.currency.clone(),
+                fulfillment_type: Some("digital".to_string()),
+                notes: Some("cancel path".into()),
+                metadata: None,
+                payment_intent_id: None,
+            })
+            .unwrap();
+
+        let cancelled = commerce
+            .x402()
+            .update_purchase_status(cancelled_purchase.id, PurchaseStatus::Cancelled)
+            .unwrap();
+        assert_eq!(cancelled.status, PurchaseStatus::Cancelled);
+
+        let no_op = commerce
+            .x402()
+            .update_purchase_status(cancelled_purchase.id, PurchaseStatus::Cancelled)
+            .unwrap();
+        assert_eq!(no_op.status, PurchaseStatus::Cancelled);
+
+        assert!(commerce
+            .x402()
+            .update_purchase_status(cancelled_purchase.id, PurchaseStatus::PaymentPending)
+            .is_err());
+        assert!(commerce
+            .x402()
+            .confirm_delivery(cancelled_purchase.id, "sig", Some(4), Some("should fail"))
+            .is_err());
+
+        let disputed_quote = commerce
+            .x402()
+            .create_quote(make_quote(Uuid::new_v4(), seller.id))
+            .unwrap();
+        let disputed_quote = commerce
+            .x402()
+            .update_quote_status(disputed_quote.id, QuoteStatus::Quoted)
+            .unwrap();
+
+        let disputed_purchase = commerce
+            .x402()
+            .create_purchase(CreateA2APurchase {
+                buyer_agent_id: disputed_quote.buyer_agent_id,
+                seller_agent_id: seller.id,
+                quote_id: Some(disputed_quote.id),
+                items: disputed_quote.items.clone(),
+                total: disputed_quote.total,
+                currency: disputed_quote.currency.clone(),
+                fulfillment_type: Some("digital".to_string()),
+                notes: Some("dispute path".into()),
+                metadata: None,
+                payment_intent_id: None,
+            })
+            .unwrap();
+
+        let disputed = commerce
+            .x402()
+            .update_purchase_status(disputed_purchase.id, PurchaseStatus::Disputed)
+            .unwrap();
+        assert_eq!(disputed.status, PurchaseStatus::Disputed);
+
+        assert!(commerce
+            .x402()
+            .update_purchase_status(disputed_purchase.id, PurchaseStatus::Shipped)
+            .is_err());
+        assert!(commerce
+            .x402()
+            .confirm_delivery(disputed_purchase.id, "sig", Some(4), Some("blocked"))
+            .is_err());
+        assert!(commerce
+            .x402()
+            .update_purchase_status(disputed_purchase.id, PurchaseStatus::Disputed)
+            .is_ok());
     }
 }

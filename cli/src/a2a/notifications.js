@@ -191,7 +191,7 @@ export function createNotificationService(store) {
     let status = 'pending';
     let deliveredAt = null;
     let lastError = null;
-    let attempts = 1;
+    const attempts = 1;
 
     try {
       const response = await fetch(endpointUrl, {

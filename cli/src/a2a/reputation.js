@@ -28,7 +28,7 @@
  * ```
  */
 
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 // Transaction types for feedback
 const TRANSACTION_TYPES = ['quote', 'payment', 'escrow', 'service'];
@@ -199,11 +199,8 @@ export function createReputationService(store) {
       throw new Error('agentAddress is required');
     }
 
-    let reputation = await store.getReputationScore(agentAddress);
-
-    if (!reputation) {
-      reputation = defaultReputation(agentAddress);
-    }
+    const reputation =
+      (await store.getReputationScore(agentAddress)) || defaultReputation(agentAddress);
 
     return {
       success: true,
@@ -356,7 +353,7 @@ export function createReputationService(store) {
       throw new Error('agentAddress is required');
     }
 
-    let reputation = await store.getReputationScore(agentAddress);
+    const reputation = await store.getReputationScore(agentAddress);
     if (!reputation) {
       return { promoted: false, previousTier: 'sandbox', currentTier: 'sandbox' };
     }

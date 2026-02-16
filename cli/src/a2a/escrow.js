@@ -39,7 +39,7 @@
 import { randomUUID } from 'node:crypto';
 
 // Valid escrow statuses
-const ESCROW_STATUSES = [
+const _ESCROW_STATUSES = [
   'created',
   'funded',
   'active',

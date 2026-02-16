@@ -37,6 +37,7 @@ class Lane {
     this.id = id;
     this.queue = [];
     this.processing = false;
+    this.createdAt = Date.now();
     this.maxQueueSize = options.maxQueueSize || 100;
     this.timeout = options.timeout || 300000; // 5 minutes default
     this.onError =
@@ -44,11 +45,13 @@ class Lane {
 
     // Metrics
     this.stats = {
+      createdAt: this.createdAt,
       totalProcessed: 0,
       totalErrors: 0,
       avgDuration: 0,
       maxDuration: 0,
       lastActivity: null,
+      lastActivityMs: null,
       queueHighWaterMark: 0,
     };
   }
@@ -115,8 +118,6 @@ class Lane {
 
         const duration = Date.now() - startTime;
         this._updateStats(duration, false);
-        this.stats.lastActivity = new Date().toISOString();
-
         entry.resolve(result);
       } catch (error) {
         const duration = Date.now() - startTime;
@@ -157,6 +158,7 @@ class Lane {
    * @private
    */
   _updateStats(duration, isError) {
+    const now = Date.now();
     this.stats.totalProcessed++;
     if (isError) this.stats.totalErrors++;
 
@@ -165,6 +167,8 @@ class Lane {
     this.stats.avgDuration =
       (this.stats.avgDuration * prevTotal + duration) / this.stats.totalProcessed;
     this.stats.maxDuration = Math.max(this.stats.maxDuration, duration);
+    this.stats.lastActivityMs = now;
+    this.stats.lastActivity = new Date(now).toISOString();
   }
 
   /**
@@ -226,7 +230,6 @@ class ParallelLane extends Lane {
       const result = await this._executeWithTimeout(entry.task, this.timeout);
       const duration = Date.now() - startTime;
       this._updateStats(duration, false);
-      this.stats.lastActivity = new Date().toISOString();
       entry.resolve(result);
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -293,6 +296,7 @@ export class CommandQueue {
 
     // Start idle lane cleanup
     this._cleanupInterval = setInterval(() => this._cleanupIdleLanes(), 60000);
+    this._cleanupInterval.unref?.();
   }
 
   /**
@@ -380,7 +384,12 @@ export class CommandQueue {
     let lane = this.lanes.get(laneId);
     if (!lane) {
       if (this.lanes.size >= this.options.maxLanes) {
-        this._evictOldestLane();
+        const evicted = this._evictOldestLane();
+        if (!evicted && this.lanes.size >= this.options.maxLanes) {
+          throw new Error(
+            `Cannot create new lane '${laneId}': max lanes reached (${this.options.maxLanes})`,
+          );
+        }
       }
       lane = new Lane(laneId, {
         timeout: this.options.laneTimeout,
@@ -398,6 +407,14 @@ export class CommandQueue {
   _getOrCreateParallelLane(laneId) {
     let lane = this.parallelLanes.get(laneId);
     if (!lane) {
+      if (this.parallelLanes.size >= this.options.maxLanes) {
+        const evicted = this._evictOldestParallelLane();
+        if (!evicted && this.parallelLanes.size >= this.options.maxLanes) {
+          throw new Error(
+            `Cannot create parallel lane '${laneId}': max parallel lanes reached (${this.options.maxLanes})`,
+          );
+        }
+      }
       lane = new ParallelLane(laneId, {
         timeout: this.options.laneTimeout,
         maxQueueSize: this.options.maxQueueSize,
@@ -413,12 +430,30 @@ export class CommandQueue {
    * @private
    */
   _evictOldestLane() {
+    const oldestId = this._findOldestLaneId(this.lanes);
+    if (oldestId) {
+      this.lanes.delete(oldestId);
+      return oldestId;
+    }
+    return null;
+  }
+
+  _evictOldestParallelLane() {
+    const oldestId = this._findOldestLaneId(this.parallelLanes);
+    if (oldestId) {
+      this.parallelLanes.delete(oldestId);
+      return oldestId;
+    }
+    return null;
+  }
+
+  _findOldestLaneId(laneMap) {
     let oldestTime = Infinity;
     let oldestId = null;
 
-    for (const [id, lane] of this.lanes.entries()) {
-      if (lane.idle && lane.stats.lastActivity) {
-        const time = new Date(lane.stats.lastActivity).getTime();
+    for (const [id, lane] of laneMap.entries()) {
+      if (lane.idle) {
+        const time = this._getLaneLastActivityMs(lane);
         if (time < oldestTime) {
           oldestTime = time;
           oldestId = id;
@@ -426,9 +461,7 @@ export class CommandQueue {
       }
     }
 
-    if (oldestId) {
-      this.lanes.delete(oldestId);
-    }
+    return oldestId;
   }
 
   /**
@@ -439,22 +472,137 @@ export class CommandQueue {
     const cutoff = Date.now() - this.options.idleCleanupMs;
 
     for (const [id, lane] of this.lanes.entries()) {
-      if (lane.idle && lane.stats.lastActivity) {
-        const lastActivity = new Date(lane.stats.lastActivity).getTime();
-        if (lastActivity < cutoff) {
-          this.lanes.delete(id);
-        }
+      const lastActivity = this._getLaneLastActivityMs(lane);
+      if (lane.idle && lastActivity < cutoff) {
+        this.lanes.delete(id);
       }
     }
 
     for (const [id, lane] of this.parallelLanes.entries()) {
-      if (lane.idle && lane.stats.lastActivity) {
-        const lastActivity = new Date(lane.stats.lastActivity).getTime();
-        if (lastActivity < cutoff) {
-          this.parallelLanes.delete(id);
-        }
+      const lastActivity = this._getLaneLastActivityMs(lane);
+      if (lane.idle && lastActivity < cutoff) {
+        this.parallelLanes.delete(id);
       }
     }
+  }
+
+  _getLaneLastActivityMs(lane) {
+    if (lane.stats.lastActivityMs !== null) {
+      return lane.stats.lastActivityMs;
+    }
+    return lane.stats.createdAt;
+  }
+
+  /**
+   * Remove a specific lane by id.
+   *
+   * @param {string} laneId
+   * @param {{ force?: boolean }} [options]
+   * @returns {{
+   *   laneId: string,
+   *   found: boolean,
+   *   removed: boolean,
+   *   busy: boolean,
+   *   type: 'serial' | 'parallel' | null,
+   * }}
+   */
+  removeLane(laneId, options = {}) {
+    const force = options.force === true;
+    const target = this.lanes.get(laneId);
+    if (target) {
+      const busy = !target.idle;
+      if (busy && !force) {
+        return {
+          laneId,
+          found: true,
+          removed: false,
+          busy,
+          type: 'serial',
+        };
+      }
+      this.lanes.delete(laneId);
+      return {
+        laneId,
+        found: true,
+        removed: true,
+        busy,
+        type: 'serial',
+      };
+    }
+
+    const parallelTarget = this.parallelLanes.get(laneId);
+    if (parallelTarget) {
+      const busy = !parallelTarget.idle;
+      if (busy && !force) {
+        return {
+          laneId,
+          found: true,
+          removed: false,
+          busy,
+          type: 'parallel',
+        };
+      }
+      this.parallelLanes.delete(laneId);
+      return {
+        laneId,
+        found: true,
+        removed: true,
+        busy,
+        type: 'parallel',
+      };
+    }
+
+    return {
+      laneId,
+      found: false,
+      removed: false,
+      busy: false,
+      type: null,
+    };
+  }
+
+  /**
+   * Clear lanes. By default clears only idle lanes; set force=true to clear active lanes too.
+   *
+   * @param {{ force?: boolean }} [options]
+   * @returns {{
+   *   serial: { removed: number, skipped: number },
+   *   parallel: { removed: number, skipped: number },
+   *   totalRemoved: number,
+   *   force: boolean,
+   * }}
+   */
+  clearLanes(options = {}) {
+    const force = options.force === true;
+    let serialRemoved = 0;
+    let serialSkipped = 0;
+    let parallelRemoved = 0;
+    let parallelSkipped = 0;
+
+    for (const [id, lane] of this.lanes.entries()) {
+      if (!lane.idle && !force) {
+        serialSkipped++;
+        continue;
+      }
+      this.lanes.delete(id);
+      serialRemoved++;
+    }
+
+    for (const [id, lane] of this.parallelLanes.entries()) {
+      if (!lane.idle && !force) {
+        parallelSkipped++;
+        continue;
+      }
+      this.parallelLanes.delete(id);
+      parallelRemoved++;
+    }
+
+    return {
+      serial: { removed: serialRemoved, skipped: serialSkipped },
+      parallel: { removed: parallelRemoved, skipped: parallelSkipped },
+      totalRemoved: serialRemoved + parallelRemoved,
+      force,
+    };
   }
 
   /**
@@ -463,12 +611,12 @@ export class CommandQueue {
   getStats() {
     const serialLanes = [];
     for (const [id, lane] of this.lanes.entries()) {
-      serialLanes.push({ id, ...lane.getStats() });
+      serialLanes.push({ id, type: 'serial', ...lane.getStats() });
     }
 
     const parallelLanesStats = [];
     for (const [id, lane] of this.parallelLanes.entries()) {
-      parallelLanesStats.push({ id, ...lane.getStats() });
+      parallelLanesStats.push({ id, type: 'parallel', ...lane.getStats() });
     }
 
     return {
@@ -492,7 +640,13 @@ export class CommandQueue {
    */
   getLaneStats(laneId) {
     const lane = this.lanes.get(laneId) || this.parallelLanes.get(laneId);
-    return lane ? lane.getStats() : null;
+    if (!lane) return null;
+
+    if (this.lanes.has(laneId)) {
+      return { type: 'serial', ...lane.getStats() };
+    }
+
+    return { type: 'parallel', ...lane.getStats() };
   }
 
   /**

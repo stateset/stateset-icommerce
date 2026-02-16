@@ -230,7 +230,7 @@ export function createA2AService(commerce, config) {
         const signedIntent = await commerce.x402().signIntent(intent.id, signingKey);
 
         // Submit to sequencer
-        const submitResult = await sequencerClient.submitPaymentIntent({
+        await sequencerClient.submitPaymentIntent({
           tenant_id: tenantId,
           store_id: storeId,
           agent_id: agentId,
