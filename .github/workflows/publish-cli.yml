@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   # Build native bindings for all platforms
   build-bindings:
@@ -39,15 +42,17 @@ jobs:
     name: Build - ${{ matrix.target }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           targets: ${{ matrix.target }}
 
@@ -64,7 +69,7 @@ jobs:
           npm run build -- --target ${{ matrix.target }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bindings-${{ matrix.target }}
           path: bindings/node/*.node
@@ -75,18 +80,24 @@ jobs:
     needs: build-bindings
     runs-on: ubuntu-latest
     name: Publish @stateset/embedded
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: bindings/node/artifacts
           pattern: bindings-*
@@ -97,9 +108,28 @@ jobs:
           npm install
           npm run artifacts
 
+      - name: Generate release checksums
+        run: |
+          cd bindings/node/artifacts
+          sha256sum *.node > ../release-checksums.txt
+
+      - name: Attest artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            bindings/node/artifacts/*.node
+            bindings/node/release-checksums.txt
+
+      - name: Publish checksums
+        uses: actions/upload-artifact@v6
+        with:
+          name: cli-embedded-release-checksums
+          path: bindings/node/release-checksums.txt
+          if-no-files-found: error
+
       - name: Publish to npm
         working-directory: bindings/node
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -108,12 +138,18 @@ jobs:
     needs: publish-embedded
     runs-on: ubuntu-latest
     name: Publish @stateset/cli
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
@@ -122,28 +158,32 @@ jobs:
         working-directory: cli
         run: npm install
 
+      - name: Create npm package
+        working-directory: cli
+        run: |
+          npm pack --silent
+
+      - name: Generate release checksums
+        run: |
+          cd cli
+          sha256sum *.tgz > ../cli-release-checksums.txt
+
+      - name: Attest package
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            cli/*.tgz
+            cli-release-checksums.txt
+
+      - name: Publish checksums
+        uses: actions/upload-artifact@v6
+        with:
+          name: cli-package-release-checksums
+          path: cli-release-checksums.txt
+          if-no-files-found: error
+
       - name: Publish to npm
         working-directory: cli
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  # Update install.sh on website
-  deploy-install-script:
-    needs: publish-cli
-    runs-on: ubuntu-latest
-    name: Deploy install.sh
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to stateset.com
-        run: |
-          echo "Deploy cli/install.sh to https://stateset.com/install.sh"
-          # This would use your deployment method:
-          # - S3 + CloudFront
-          # - Vercel
-          # - Cloudflare Pages
-          # - Or just commit to your website repo
-        env:
-          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}

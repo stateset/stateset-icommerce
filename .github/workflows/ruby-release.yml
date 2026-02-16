@@ -13,6 +13,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build (${{ matrix.platform }})
@@ -49,7 +52,9 @@ jobs:
             ruby: '3.2'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -59,7 +64,7 @@ jobs:
           working-directory: bindings/ruby
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
 
       - name: Build native gem
         working-directory: bindings/ruby
@@ -68,18 +73,21 @@ jobs:
           bundle exec rake native gem
 
       - name: Upload gem
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gem-${{ matrix.platform }}-ruby${{ matrix.ruby }}
           path: bindings/ruby/pkg/*.gem
           retention-days: 7
+          if-no-files-found: error
 
   # Build source gem (no native extension, compiles on install)
   build-source:
     name: Build Source Gem
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -95,11 +103,12 @@ jobs:
           gem build stateset_embedded.gemspec
 
       - name: Upload source gem
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gem-source
           path: bindings/ruby/*.gem
           retention-days: 7
+          if-no-files-found: error
 
   # Cross-compile for additional platforms using rb-sys-dock
   cross-build:
@@ -112,7 +121,9 @@ jobs:
           - x86_64-linux-musl
           - aarch64-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -128,20 +139,25 @@ jobs:
           rb-sys-dock --platform ${{ matrix.platform }} -r 3.2 -- bundle exec rake native gem
 
       - name: Upload gem
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gem-${{ matrix.platform }}
           path: bindings/ruby/pkg/*.gem
           retention-days: 7
+          if-no-files-found: error
 
   publish:
     name: Publish to RubyGems
-    needs: [build, build-source]
+    needs: [build, build-source, cross-build]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download all gems
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: gems
           pattern: gem-*
@@ -165,11 +181,29 @@ jobs:
         run: |
           for gem in gems/*.gem; do
             echo "Publishing $gem..."
-            gem push "$gem" || true
+            gem push "$gem"
           done
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Generate release checksums
+        run: |
+          sha256sum gems/*.gem > release-checksums.txt
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v3
         with:
-          files: gems/*.gem
+          subject-path: |
+            gems/*.gem
+            release-checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe
+        with:
+          files: |
+            gems/*.gem
+            release-checksums.txt
           generate_release_notes: true
+          body: |
+            ### Release verification
+            ```text
+            sha256sum -c release-checksums.txt
+            ```

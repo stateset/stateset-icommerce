@@ -14,6 +14,9 @@ env:
   CARGO_TERM_COLOR: always
   EXT_NAME: stateset_embedded
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build (${{ matrix.os }}-${{ matrix.php }})
@@ -51,7 +54,9 @@ jobs:
             artifact: darwin-arm64-php83
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -61,7 +66,7 @@ jobs:
           extensions: ffi
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           targets: ${{ matrix.target }}
 
@@ -94,11 +99,12 @@ jobs:
             -C dist .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: php-ext-${{ matrix.artifact }}
           path: bindings/php/${{ env.EXT_NAME }}-${{ matrix.artifact }}.tar.gz
           retention-days: 7
+          if-no-files-found: error
 
   # Windows builds
   build-windows:
@@ -108,7 +114,9 @@ jobs:
       matrix:
         php: ['8.2', '8.3']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -117,7 +125,7 @@ jobs:
           tools: composer
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
 
       - name: Build extension
         working-directory: bindings/php
@@ -134,31 +142,51 @@ jobs:
           Compress-Archive -Path dist\* -DestinationPath "${{ env.EXT_NAME }}-windows-x86_64-php${{ matrix.php }}.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: php-ext-windows-x86_64-php${{ matrix.php }}
           path: bindings/php/${{ env.EXT_NAME }}-windows-x86_64-php${{ matrix.php }}.zip
           retention-days: 7
+          if-no-files-found: error
 
   publish:
     name: Create Release
     needs: [build, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
           pattern: php-ext-*
           merge-multiple: true
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Generate release checksums
+        run: |
+          sha256sum artifacts/* > release-checksums.txt
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v3
         with:
-          files: artifacts/*
+          subject-path: |
+            artifacts/*
+            release-checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe
+        with:
+          files: |
+            artifacts/*
+            release-checksums.txt
           generate_release_notes: true
           body: |
             ## PHP Extension: StateSet Embedded Commerce
@@ -176,12 +204,19 @@ jobs:
             - macOS arm64 (PHP 8.2, 8.3)
             - Windows x86_64 (PHP 8.2, 8.3)
 
+            ### Release verification
+            ```text
+            sha256sum -c release-checksums.txt
+            ```
+
   # Update Packagist
   packagist:
     name: Notify Packagist
     needs: publish
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: read
     steps:
       - name: Notify Packagist
         run: |

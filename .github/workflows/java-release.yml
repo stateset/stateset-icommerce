@@ -13,6 +13,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   build-native:
     name: Build Native (${{ matrix.os }})
@@ -43,10 +46,12 @@ jobs:
             lib: stateset_java.dll
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           targets: ${{ matrix.target }}
 
@@ -72,18 +77,21 @@ jobs:
           tar -czvf stateset-java-native-${{ matrix.artifact }}.tar.gz -C dist .
 
       - name: Upload native library
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: native-${{ matrix.artifact }}
           path: stateset-java-native-${{ matrix.artifact }}.tar.gz
           retention-days: 7
+          if-no-files-found: error
 
   build-jar:
     name: Build JAR
     needs: build-native
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -92,7 +100,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Download all native libraries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: natives
           pattern: native-*
@@ -114,19 +122,26 @@ jobs:
         run: ./gradlew build -x test
 
       - name: Upload JAR
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jar
           path: bindings/java/java/build/libs/*.jar
           retention-days: 7
+          if-no-files-found: error
 
   publish:
     name: Publish to Maven Central
     needs: build-jar
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -135,7 +150,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Download all native libraries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: natives
           pattern: native-*
@@ -162,17 +177,30 @@ jobs:
         run: ./gradlew publish
 
       - name: Download JAR artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: jar
           path: jars
 
+      - name: Generate release checksums
+        run: |
+          sha256sum jars/*.jar natives/*.tar.gz > release-checksums.txt
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            jars/*.jar
+            natives/*.tar.gz
+            release-checksums.txt
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe
         with:
           files: |
             jars/*.jar
             natives/*.tar.gz
+            release-checksums.txt
           generate_release_notes: true
           body: |
             ## Java: StateSet Embedded Commerce
@@ -199,3 +227,8 @@ jobs:
             - macOS x86_64
             - macOS arm64 (Apple Silicon)
             - Windows x86_64
+
+            ### Release verification
+            ```text
+            sha256sum -c release-checksums.txt
+            ```
