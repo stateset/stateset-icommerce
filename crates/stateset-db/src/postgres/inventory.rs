@@ -1180,6 +1180,46 @@ impl PgInventoryRepository {
         Ok(transactions)
     }
 
+    /// Record an inventory transaction (async)
+    pub async fn record_transaction_async(
+        &self,
+        transaction: InventoryTransaction,
+    ) -> Result<InventoryTransaction> {
+        let row: (i64,) = sqlx::query_as(
+            r#"
+            INSERT INTO inventory_transactions (
+                item_id,
+                location_id,
+                transaction_type,
+                quantity,
+                reference_type,
+                reference_id,
+                reason,
+                created_by,
+                created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id
+            "#,
+        )
+        .bind(transaction.item_id)
+        .bind(transaction.location_id)
+        .bind(transaction.transaction_type.to_string())
+        .bind(transaction.quantity)
+        .bind(transaction.reference_type)
+        .bind(transaction.reference_id)
+        .bind(transaction.reason)
+        .bind(transaction.created_by)
+        .bind(transaction.created_at)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(InventoryTransaction {
+            id: row.0,
+            ..transaction
+        })
+    }
+
     // ========================================================================
     // Batch Operations (async)
     // ========================================================================
@@ -1558,9 +1598,9 @@ impl InventoryRepository for PgInventoryRepository {
 
     fn record_transaction(
         &self,
-        _transaction: InventoryTransaction,
+        transaction: InventoryTransaction,
     ) -> Result<InventoryTransaction> {
-        Err(CommerceError::Internal("record_transaction not implemented".to_string()))
+        super::block_on(self.record_transaction_async(transaction))
     }
 
     fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>> {
