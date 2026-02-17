@@ -1,7 +1,7 @@
 use super::Commerce;
 
 #[cfg(feature = "events")]
-use crate::events::{EventSubscription, EventSystem, Webhook};
+use crate::events::{EventSubscription, EventSystem, Webhook, WebhookDelivery};
 
 impl Commerce {
     /// Access the event system for pub/sub and webhook management.
@@ -82,14 +82,24 @@ impl Commerce {
     ///     "https://my-app.com/webhooks/stateset",
     /// ).with_secret("my-webhook-secret");
     ///
-    /// if let Some(id) = commerce.register_webhook(webhook) {
+    /// let id = commerce.register_webhook(webhook);
+    /// if id != uuid::Uuid::nil() {
     ///     println!("Webhook registered: {}", id);
     /// }
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     #[cfg(feature = "events")]
-    pub fn register_webhook(&self, webhook: Webhook) -> Option<uuid::Uuid> {
+    pub fn register_webhook(&self, webhook: Webhook) -> uuid::Uuid {
         self.event_system.register_webhook(webhook)
+    }
+
+    /// Register a webhook endpoint, returning `None` when registration fails validation.
+    ///
+    /// This is the safer API when you need to distinguish between a successful
+    /// registration ID and a blocked/invalid webhook definition.
+    #[cfg(feature = "events")]
+    pub fn try_register_webhook(&self, webhook: Webhook) -> Option<uuid::Uuid> {
+        self.event_system.try_register_webhook(webhook)
     }
 
     /// Unregister a webhook endpoint.
@@ -102,6 +112,12 @@ impl Commerce {
     #[cfg(feature = "events")]
     pub fn list_webhooks(&self) -> Vec<Webhook> {
         self.event_system.list_webhooks()
+    }
+
+    /// Get delivery history for a webhook (newest-first).
+    #[cfg(feature = "events")]
+    pub fn webhook_deliveries(&self, id: uuid::Uuid) -> Vec<WebhookDelivery> {
+        self.event_system.webhook_deliveries(id)
     }
 
     /// Emit a commerce event manually.

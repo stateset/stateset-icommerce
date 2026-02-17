@@ -68,7 +68,17 @@ pub struct EventConfig {
     pub webhook_max_retries: u32,
     /// Webhook timeout in seconds
     pub webhook_timeout_secs: u64,
+    /// Maximum number of webhook requests in flight concurrently
+    /// (values <= 1 are treated as 1 at runtime)
+    pub webhook_max_in_flight: usize,
+    /// Base delay in milliseconds for webhook retry backoff.
+    /// Each retry uses exponential backoff up to a hard cap.
+    pub webhook_retry_delay_ms: u64,
+    /// Maximum webhook delivery records retained per webhook.
+    /// Zero disables history retention for that webhook.
+    pub webhook_max_delivery_history: usize,
 }
+
 
 impl Default for EventConfig {
     fn default() -> Self {
@@ -80,6 +90,9 @@ impl Default for EventConfig {
             enable_webhooks: true,
             webhook_max_retries: 3,
             webhook_timeout_secs: 30,
+            webhook_max_in_flight: 8,
+            webhook_retry_delay_ms: 1000,
+            webhook_max_delivery_history: 1_000,
         }
     }
 }
@@ -94,6 +107,9 @@ impl std::fmt::Debug for EventConfig {
             .field("enable_webhooks", &self.enable_webhooks)
             .field("webhook_max_retries", &self.webhook_max_retries)
             .field("webhook_timeout_secs", &self.webhook_timeout_secs)
+            .field("webhook_max_in_flight", &self.webhook_max_in_flight)
+            .field("webhook_retry_delay_ms", &self.webhook_retry_delay_ms)
+            .field("webhook_max_delivery_history", &self.webhook_max_delivery_history)
             .finish()
     }
 }
@@ -115,10 +131,25 @@ impl EventSystem {
 
     /// Create a new event system with custom configuration
     pub fn with_config(config: EventConfig) -> Self {
+        let config = EventConfig {
+            channel_capacity: config.channel_capacity.max(1),
+            max_in_memory_events: config.max_in_memory_events.max(1),
+            webhook_max_in_flight: config.webhook_max_in_flight.max(1),
+            webhook_timeout_secs: config.webhook_timeout_secs.max(1),
+            webhook_retry_delay_ms: config.webhook_retry_delay_ms.max(1),
+            ..config
+        };
+
         let bus = Arc::new(EventBus::new(config.channel_capacity));
         let emitter = EventEmitter::new(bus.clone());
         let webhook_manager = if config.enable_webhooks {
-            Some(WebhookManager::new(config.webhook_max_retries, config.webhook_timeout_secs))
+            Some(WebhookManager::with_config(WebhookConfig {
+                max_retries: config.webhook_max_retries,
+                timeout_secs: config.webhook_timeout_secs,
+                max_in_flight: config.webhook_max_in_flight,
+                retry_delay_ms: config.webhook_retry_delay_ms,
+                max_delivery_history: config.webhook_max_delivery_history,
+            }))
         } else {
             None
         };
@@ -134,6 +165,13 @@ impl EventSystem {
         Self { bus, emitter, webhook_manager, event_store, config }
     }
 
+    #[cfg(test)]
+    fn is_webhooks_enabled(&self) -> bool {
+        self.webhook_manager.is_some()
+    }
+}
+
+impl EventSystem {
     /// Get the event emitter for publishing events
     pub fn emitter(&self) -> &EventEmitter {
         &self.emitter
@@ -153,8 +191,14 @@ impl EventSystem {
     }
 
     /// Register a webhook endpoint
-    pub fn register_webhook(&self, webhook: Webhook) -> Option<uuid::Uuid> {
-        self.webhook_manager.as_ref().map(|wm| wm.register(webhook))
+    pub fn register_webhook(&self, webhook: Webhook) -> uuid::Uuid {
+        self.try_register_webhook(webhook).unwrap_or_else(uuid::Uuid::nil)
+    }
+
+    /// Register a webhook endpoint.
+    /// Returns `None` when registration is rejected (e.g. unsafe URL).
+    pub fn try_register_webhook(&self, webhook: Webhook) -> Option<uuid::Uuid> {
+        self.webhook_manager.as_ref().and_then(|wm| wm.try_register(webhook))
     }
 
     /// Unregister a webhook
@@ -165,6 +209,14 @@ impl EventSystem {
     /// List all registered webhooks
     pub fn list_webhooks(&self) -> Vec<Webhook> {
         self.webhook_manager.as_ref().map(|wm| wm.list()).unwrap_or_default()
+    }
+
+    /// Get delivery history for a webhook (newest-first).
+    pub fn webhook_deliveries(&self, webhook_id: uuid::Uuid) -> Vec<WebhookDelivery> {
+        self.webhook_manager
+            .as_ref()
+            .map(|wm| wm.deliveries(webhook_id))
+            .unwrap_or_default()
     }
 
     /// Get the event bus for advanced usage
@@ -215,6 +267,46 @@ impl EventSystem {
 impl Default for EventSystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_event_system_config_normalizes_zero_limits() {
+        let event_system = EventSystem::with_config(EventConfig {
+            channel_capacity: 0,
+            max_in_memory_events: 0,
+            webhook_max_in_flight: 0,
+            webhook_timeout_secs: 0,
+            webhook_retry_delay_ms: 0,
+            persist_events: false,
+            enable_webhooks: false,
+            ..Default::default()
+        });
+
+        let config = event_system.config();
+        assert_eq!(config.channel_capacity, 1);
+        assert_eq!(config.max_in_memory_events, 1);
+        assert_eq!(config.webhook_max_in_flight, 1);
+        assert_eq!(config.webhook_timeout_secs, 1);
+        assert_eq!(config.webhook_retry_delay_ms, 1);
+        assert!(!event_system.is_webhooks_enabled());
+        assert!(event_system.event_store().is_none());
+    }
+
+    #[test]
+    fn test_event_system_config_keeps_webhook_disabled() {
+        let event_system = EventSystem::with_config(EventConfig {
+            enable_webhooks: false,
+            persist_events: false,
+            ..Default::default()
+        });
+
+        assert!(!event_system.is_webhooks_enabled());
+        assert!(event_system.event_store().is_none());
     }
 }
 

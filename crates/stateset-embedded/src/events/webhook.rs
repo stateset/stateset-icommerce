@@ -1,10 +1,12 @@
 //! Webhook delivery system for external event notifications
 
 use chrono::{DateTime, Utc};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use stateset_core::CommerceEvent;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
@@ -81,11 +83,19 @@ pub struct WebhookConfig {
     pub timeout_secs: u64,
     pub retry_delay_ms: u64,
     pub max_in_flight: usize,
+    /// Maximum number of delivery records to keep per webhook
+    pub max_delivery_history: usize,
 }
 
 impl Default for WebhookConfig {
     fn default() -> Self {
-        Self { max_retries: 3, timeout_secs: 30, retry_delay_ms: 1000, max_in_flight: 8 }
+        Self {
+            max_retries: 3,
+            timeout_secs: 30,
+            retry_delay_ms: 1000,
+            max_in_flight: 8,
+            max_delivery_history: 1_000,
+        }
     }
 }
 
@@ -169,6 +179,7 @@ pub enum DeliveryStatus {
 /// Webhook manager handles registration and delivery
 pub struct WebhookManager {
     webhooks: Arc<RwLock<HashMap<Uuid, Webhook>>>,
+    delivery_history: Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>,
     config: WebhookConfig,
     client: reqwest::Client,
     runtime: WebhookRuntime,
@@ -177,8 +188,20 @@ pub struct WebhookManager {
 impl WebhookManager {
     /// Create a new webhook manager
     pub fn new(max_retries: u32, timeout_secs: u64) -> Self {
+        Self::with_config(WebhookConfig { max_retries, timeout_secs, ..Default::default() })
+    }
+
+    /// Create a new webhook manager with full configuration.
+    pub fn with_config(config: WebhookConfig) -> Self {
+        let config = WebhookConfig {
+            max_in_flight: config.max_in_flight.max(1),
+            timeout_secs: config.timeout_secs.max(1),
+            retry_delay_ms: config.retry_delay_ms.max(1),
+            ..config
+        };
+
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .build()
             .unwrap_or_else(|err| {
                 tracing::error!("Failed to create HTTP client: {}", err);
@@ -188,7 +211,8 @@ impl WebhookManager {
 
         Self {
             webhooks: Arc::new(RwLock::new(HashMap::new())),
-            config: WebhookConfig { max_retries, timeout_secs, ..Default::default() },
+            delivery_history: Arc::new(RwLock::new(HashMap::new())),
+            config,
             client,
             runtime,
         }
@@ -196,6 +220,20 @@ impl WebhookManager {
 
     /// Register a new webhook
     pub fn register(&self, webhook: Webhook) -> Uuid {
+        self.try_register(webhook).unwrap_or_else(Uuid::nil)
+    }
+
+    /// Register a new webhook, returning `None` when URL validation fails.
+    pub fn try_register(&self, webhook: Webhook) -> Option<Uuid> {
+        if !is_safe_webhook_url(&webhook.url) {
+            tracing::warn!(
+                webhook_id = %webhook.id,
+                webhook_url = %webhook.url,
+                "Rejected webhook registration: unsafe URL"
+            );
+            return None;
+        }
+
         let id = webhook.id;
         let mut webhooks = match self.webhooks.write() {
             Ok(guard) => guard,
@@ -206,7 +244,7 @@ impl WebhookManager {
         };
         webhooks.insert(id, webhook);
         tracing::info!(webhook_id = %id, "Webhook registered");
-        id
+        Some(id)
     }
 
     /// Unregister a webhook
@@ -220,6 +258,14 @@ impl WebhookManager {
         };
         let removed = webhooks.remove(&id).is_some();
         if removed {
+            let mut delivery_history = match self.delivery_history.write() {
+                Ok(guard) => guard,
+                Err(poison) => {
+                    tracing::error!("WebhookManager delivery history lock poisoned (write); recovering");
+                    poison.into_inner()
+                }
+            };
+            delivery_history.remove(&id);
             tracing::info!(webhook_id = %id, "Webhook unregistered");
         }
         removed
@@ -249,6 +295,21 @@ impl WebhookManager {
         webhooks.values().cloned().collect()
     }
 
+    /// Get delivery history for a webhook (newest-first)
+    pub fn deliveries(&self, webhook_id: Uuid) -> Vec<WebhookDelivery> {
+        let history = match self.delivery_history.read() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                tracing::error!("WebhookManager delivery history lock poisoned (read); recovering");
+                poison.into_inner()
+            }
+        };
+        history
+            .get(&webhook_id)
+            .map(|entries| entries.iter().rev().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Update a webhook
     pub fn update(&self, webhook: Webhook) -> bool {
         let id = webhook.id;
@@ -259,6 +320,11 @@ impl WebhookManager {
                 poison.into_inner()
             }
         };
+        if !is_safe_webhook_url(&webhook.url) {
+            tracing::warn!(webhook_id = %webhook.id, webhook_url = %webhook.url, "Rejected webhook update: unsafe URL");
+            return false;
+        }
+
         if let std::collections::hash_map::Entry::Occupied(mut e) = webhooks.entry(id) {
             e.insert(webhook);
             true
@@ -304,6 +370,7 @@ impl WebhookManager {
 
         let client = self.client.clone();
         let config = self.config.clone();
+        let delivery_history = self.delivery_history.clone();
         let max_in_flight = config.max_in_flight.max(1);
 
         self.runtime.spawn(async move {
@@ -311,8 +378,9 @@ impl WebhookManager {
                 let client = client.clone();
                 let event = event.clone();
                 let config = config.clone();
+                let delivery_history = delivery_history.clone();
                 async move {
-                    deliver_to_webhook(&client, &webhook, &event, &config).await;
+                    deliver_to_webhook(&client, &webhook, &event, &config, &delivery_history).await;
                 }
             }));
 
@@ -327,18 +395,49 @@ async fn deliver_to_webhook(
     webhook: &Webhook,
     event: &CommerceEvent,
     config: &WebhookConfig,
+    delivery_history: &Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>,
 ) {
+    let mut delivery = WebhookDelivery {
+        id: Uuid::new_v4(),
+        webhook_id: webhook.id,
+        event_type: event.event_type().to_string(),
+        event_id: Uuid::new_v4(),
+        status: DeliveryStatus::Pending,
+        attempts: 0,
+        last_attempt_at: None,
+        response_status: None,
+        response_body: None,
+        error: None,
+        created_at: Utc::now(),
+    };
+
+    if !is_safe_webhook_url_for_delivery(&webhook.url) {
+        tracing::error!(
+            webhook_id = %webhook.id,
+            webhook_url = %webhook.url,
+            "Skipping webhook delivery: unsafe URL"
+        );
+        delivery.status = DeliveryStatus::Failed;
+        delivery.error = Some("unsafe webhook URL".to_string());
+        append_delivery_record(delivery_history, webhook.id, delivery, config.max_delivery_history);
+        return;
+    }
+
     let payload = WebhookPayload {
         id: Uuid::new_v4(),
         event_type: event.event_type().to_string(),
         timestamp: event.timestamp(),
         data: event.clone(),
     };
+    delivery.event_id = payload.id;
 
     let body = match serde_json::to_string(&payload) {
         Ok(b) => b,
         Err(e) => {
             tracing::error!(error = %e, "Failed to serialize webhook payload");
+            delivery.status = DeliveryStatus::Failed;
+            delivery.error = Some(format!("failed to serialize payload: {e}"));
+            append_delivery_record(delivery_history, webhook.id, delivery, config.max_delivery_history);
             return;
         }
     };
@@ -374,10 +473,15 @@ async fn deliver_to_webhook(
             request = request.header(key, value);
         }
 
+        delivery.attempts = attempt + 1;
+        delivery.last_attempt_at = Some(Utc::now());
+
         match request.body(body.clone()).send().await {
             Ok(response) => {
                 let status = response.status();
+                delivery.response_status = Some(status.as_u16());
                 if status.is_success() {
+                    delivery.status = DeliveryStatus::Delivered;
                     tracing::debug!(
                         webhook_id = %webhook.id,
                         event_type = event.event_type(),
@@ -385,20 +489,33 @@ async fn deliver_to_webhook(
                         attempt = attempt + 1,
                         "Webhook delivered successfully"
                     );
+                    append_delivery_record(delivery_history, webhook.id, delivery, config.max_delivery_history);
                     return;
                 } else {
-                    let body = response.text().await.unwrap_or_default();
+                    let response_body = response.text().await.unwrap_or_default();
+                    delivery.response_body = Some(response_body.clone());
+                    if attempt >= config.max_retries {
+                        delivery.status = DeliveryStatus::Failed;
+                    } else {
+                        delivery.status = DeliveryStatus::Retrying;
+                    }
                     tracing::warn!(
                         webhook_id = %webhook.id,
                         event_type = event.event_type(),
                         status = %status,
                         attempt = attempt + 1,
-                        response = %body,
+                        response = %response_body,
                         "Webhook delivery failed with non-success status"
                     );
                 }
             }
             Err(e) => {
+                delivery.error = Some(e.to_string());
+                if attempt >= config.max_retries {
+                    delivery.status = DeliveryStatus::Failed;
+                } else {
+                    delivery.status = DeliveryStatus::Retrying;
+                }
                 tracing::warn!(
                     webhook_id = %webhook.id,
                     event_type = event.event_type(),
@@ -408,14 +525,160 @@ async fn deliver_to_webhook(
                 );
             }
         }
+
+        if delivery.status == DeliveryStatus::Failed && attempt >= config.max_retries {
+            break;
+        }
     }
 
+    append_delivery_record(delivery_history, webhook.id, delivery, config.max_delivery_history);
     tracing::error!(
         webhook_id = %webhook.id,
         event_type = event.event_type(),
         max_retries = config.max_retries,
         "Webhook delivery exhausted all retries"
     );
+}
+
+fn append_delivery_record(
+    delivery_history: &Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>,
+    webhook_id: Uuid,
+    delivery: WebhookDelivery,
+    max_delivery_history: usize,
+) {
+    let mut history = match delivery_history.write() {
+        Ok(guard) => guard,
+        Err(poison) => {
+            tracing::error!("WebhookManager delivery history lock poisoned (write); recovering");
+            poison.into_inner()
+        }
+    };
+    let entries = history.entry(webhook_id).or_insert_with(VecDeque::new);
+    entries.push_back(delivery);
+
+    while entries.len() > max_delivery_history {
+        entries.pop_front();
+    }
+}
+
+fn is_safe_webhook_url(url: &str) -> bool {
+    is_safe_webhook_url_with_dns_check(url, true)
+}
+
+fn is_safe_webhook_url_for_delivery(url: &str) -> bool {
+    is_safe_webhook_url_with_dns_check(url, false)
+}
+
+fn is_safe_webhook_url_with_dns_check(url: &str, resolve_dns: bool) -> bool {
+    let parsed = match Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            tracing::warn!(webhook_url = %url, error = %err, "Webhook URL parse failed");
+            return false;
+        }
+    };
+
+    if !matches!(parsed.scheme(), "http" | "https") {
+        tracing::warn!(webhook_url = %url, scheme = %parsed.scheme(), "Webhook URL scheme rejected");
+        return false;
+    }
+
+    if parsed.password().is_some() || !parsed.username().is_empty() {
+        tracing::warn!(webhook_url = %url, "Webhook URL userinfo rejected");
+        return false;
+    }
+
+    let host = match parsed.host_str() {
+        Some(host) => host,
+        None => {
+            tracing::warn!(webhook_url = %url, "Webhook URL host missing");
+            return false;
+        }
+    };
+
+    if is_localhostish_host(host) {
+        tracing::warn!(webhook_url = %url, "Webhook URL host rejected (localhost-like)");
+        return false;
+    }
+
+    match host.parse::<IpAddr>() {
+        Ok(ip) => {
+            if is_public_ip(ip) {
+                true
+            } else {
+                tracing::warn!(webhook_url = %url, ip = %ip, "Webhook URL host IP rejected");
+                false
+            }
+        }
+        Err(_) => {
+            if resolve_dns {
+                is_public_hostname(host, parsed.port_or_known_default().unwrap_or(443))
+            } else {
+                true
+            }
+        },
+    }
+}
+
+fn is_localhostish_host(host: &str) -> bool {
+    let normalized = host.trim().trim_end_matches('.').to_ascii_lowercase();
+
+    normalized == "localhost"
+        || normalized == "localhost.localdomain"
+        || normalized.ends_with(".localhost")
+        || normalized.ends_with(".local")
+}
+
+fn is_public_hostname(host: &str, port: u16) -> bool {
+    match (host, port).to_socket_addrs() {
+        Ok(mut addrs) => {
+            let mut resolved = false;
+            let mut has_private_or_local = false;
+
+            for socket_addr in addrs {
+                resolved = true;
+                if !is_public_ip(socket_addr.ip()) {
+                    has_private_or_local = true;
+                }
+            }
+
+            if !resolved {
+                tracing::warn!(webhook_host = %host, "Webhook hostname did not resolve to any address");
+                return false;
+            }
+
+            if has_private_or_local {
+                tracing::warn!(webhook_host = %host, "Webhook hostname resolves to private or local network addresses");
+                return false;
+            }
+
+            true
+        }
+        Err(err) => {
+            tracing::warn!(webhook_host = %host, error = %err, "Webhook hostname DNS resolution failed");
+            false
+        }
+    }
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(addr) => {
+            !addr.is_loopback()
+                && !addr.is_private()
+                && !addr.is_link_local()
+                && !addr.is_multicast()
+                && !addr.is_unspecified()
+                && !addr.is_broadcast()
+                && !addr.is_documentation()
+        }
+        IpAddr::V6(addr) => {
+            !addr.is_loopback()
+                && !addr.is_unspecified()
+                && !addr.is_multicast()
+                && !addr.is_unique_local()
+        }
+    }
 }
 
 /// Webhook payload wrapper
@@ -495,5 +758,203 @@ mod tests {
     fn test_compute_signature() {
         let signature = compute_signature("secret", "test body").expect("signature");
         assert!(signature.starts_with("sha256="));
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_localhost() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("Localhost Hook", "http://localhost:8080/webhook");
+
+        assert!(manager.try_register(webhook).is_none());
+        assert!(manager.list().is_empty());
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_private_ip() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("Private IP Hook", "https://10.0.0.1/callback");
+
+        assert!(manager.try_register(webhook).is_none());
+        assert!(manager.list().is_empty());
+    }
+
+    #[test]
+    fn test_webhook_config_normalizes_runtime_limits() {
+        let manager = WebhookManager::with_config(WebhookConfig {
+            max_retries: 4,
+            timeout_secs: 0,
+            max_in_flight: 0,
+            retry_delay_ms: 0,
+            max_delivery_history: 7,
+        });
+
+        assert_eq!(manager.config.max_retries, 4);
+        assert_eq!(manager.config.timeout_secs, 1);
+        assert_eq!(manager.config.max_in_flight, 1);
+        assert_eq!(manager.config.retry_delay_ms, 1);
+        assert_eq!(manager.config.max_delivery_history, 7);
+    }
+
+    #[test]
+    fn test_webhook_register_accepts_public_ip() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("Public IP Hook", "https://1.1.1.1/callback");
+
+        let id = manager.try_register(webhook).expect("expected public IP to be accepted");
+        let registered = manager.get(id).expect("registered webhook should exist");
+        assert_eq!(registered.url, "https://1.1.1.1/callback");
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_non_http_scheme() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("FTP Hook", "ftp://example.com/webhook");
+
+        assert!(manager.try_register(webhook).is_none());
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_userinfo() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("Userinfo Hook", "https://user:pass@example.com/webhook");
+
+        assert!(manager.try_register(webhook).is_none());
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_invalid_url() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("Bad URL Hook", "not-a-url");
+
+        assert!(manager.try_register(webhook).is_none());
+    }
+
+    #[test]
+    fn test_webhook_deliveries_keeps_newest_first_and_respects_limit() {
+        let manager = WebhookManager::with_config(WebhookConfig {
+            max_delivery_history: 2,
+            ..Default::default()
+        });
+        let webhook = Webhook::new("History Hook", "https://example.com/webhook");
+        let webhook_id = webhook.id;
+
+        let mk_delivery = |record_id: Uuid, status: DeliveryStatus| WebhookDelivery {
+            id: record_id,
+            webhook_id,
+            event_type: "order_created".to_string(),
+            event_id: Uuid::new_v4(),
+            status,
+            attempts: 1,
+            last_attempt_at: None,
+            response_status: None,
+            response_body: None,
+            error: None,
+            created_at: Utc::now(),
+        };
+
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let third = Uuid::new_v4();
+
+        append_delivery_record(
+            &manager.delivery_history,
+            webhook_id,
+            mk_delivery(first, DeliveryStatus::Pending),
+            2,
+        );
+        append_delivery_record(
+            &manager.delivery_history,
+            webhook_id,
+            mk_delivery(second, DeliveryStatus::Delivered),
+            2,
+        );
+        append_delivery_record(
+            &manager.delivery_history,
+            webhook_id,
+            mk_delivery(third, DeliveryStatus::Failed),
+            2,
+        );
+
+        let deliveries = manager.deliveries(webhook_id);
+        assert_eq!(deliveries.len(), 2);
+        assert_eq!(deliveries[0].id, third);
+        assert_eq!(deliveries[1].id, second);
+    }
+
+    #[test]
+    fn test_webhook_deliveries_respects_zero_cap() {
+        let manager = WebhookManager::with_config(WebhookConfig {
+            max_delivery_history: 0,
+            ..Default::default()
+        });
+        let webhook = Webhook::new("No History Hook", "https://example.com/webhook");
+        let webhook_id = webhook.id;
+
+        append_delivery_record(
+            &manager.delivery_history,
+            webhook_id,
+            WebhookDelivery {
+                id: Uuid::new_v4(),
+                webhook_id,
+                event_type: "order_created".to_string(),
+                event_id: Uuid::new_v4(),
+                status: DeliveryStatus::Delivered,
+                attempts: 1,
+                last_attempt_at: None,
+                response_status: None,
+                response_body: None,
+                error: None,
+                created_at: Utc::now(),
+            },
+            0,
+        );
+
+        assert_eq!(manager.deliveries(webhook_id).len(), 0);
+    }
+
+    #[test]
+    fn test_webhook_unregister_clears_delivery_history() {
+        let manager = WebhookManager::with_config(WebhookConfig {
+            max_delivery_history: 3,
+            ..Default::default()
+        });
+        let webhook = Webhook::new("History Hook", "https://example.com/webhook");
+        let webhook_id = webhook.id;
+        manager.try_register(webhook).expect("webhook should register");
+
+        append_delivery_record(
+            &manager.delivery_history,
+            webhook_id,
+            WebhookDelivery {
+                id: Uuid::new_v4(),
+                webhook_id,
+                event_type: "order_created".to_string(),
+                event_id: Uuid::new_v4(),
+                status: DeliveryStatus::Delivered,
+                attempts: 1,
+                last_attempt_at: None,
+                response_status: None,
+                response_body: None,
+                error: None,
+                created_at: Utc::now(),
+            },
+            3,
+        );
+
+        assert_eq!(manager.deliveries(webhook_id).len(), 1);
+
+        assert!(manager.unregister(webhook_id));
+        assert_eq!(manager.deliveries(webhook_id).len(), 0);
+        assert!(manager.list().is_empty());
+    }
+
+    #[test]
+    fn test_webhook_register_fallback_returns_nil() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("Bad URL Hook", "gopher://127.0.0.1/webhook");
+        let id = manager.register(webhook);
+
+        assert_eq!(id, Uuid::nil());
+        assert!(manager.list().is_empty());
     }
 }

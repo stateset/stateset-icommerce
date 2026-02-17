@@ -361,6 +361,11 @@ fn test_event_system_builder() {
         .database(":memory:")
         .event_config(EventConfig {
             channel_capacity: 512,
+            webhook_max_retries: 5,
+            webhook_timeout_secs: 12,
+            webhook_max_in_flight: 4,
+            webhook_retry_delay_ms: 750,
+            webhook_max_delivery_history: 42,
             enable_webhooks: false,
             ..Default::default()
         })
@@ -370,6 +375,39 @@ fn test_event_system_builder() {
     // Verify custom config is applied
     assert_eq!(commerce.events().config().channel_capacity, 512);
     assert!(!commerce.events().config().enable_webhooks);
+    assert_eq!(commerce.events().config().webhook_max_retries, 5);
+    assert_eq!(commerce.events().config().webhook_timeout_secs, 12);
+    assert_eq!(commerce.events().config().webhook_max_in_flight, 4);
+    assert_eq!(commerce.events().config().webhook_retry_delay_ms, 750);
+    assert_eq!(commerce.events().config().webhook_max_delivery_history, 42);
+}
+
+#[test]
+#[cfg(all(feature = "sqlite", feature = "events"))]
+fn test_event_system_builder_normalizes_config() {
+    use crate::events::EventConfig;
+
+    let commerce = Commerce::builder()
+        .database(":memory:")
+        .event_config(EventConfig {
+            channel_capacity: 0,
+            max_in_memory_events: 0,
+            webhook_max_in_flight: 0,
+            webhook_timeout_secs: 0,
+            webhook_retry_delay_ms: 0,
+            persist_events: false,
+            enable_webhooks: false,
+            ..Default::default()
+        })
+        .build()
+        .unwrap();
+
+    let config = commerce.events().config();
+    assert_eq!(config.channel_capacity, 1);
+    assert_eq!(config.max_in_memory_events, 1);
+    assert_eq!(config.webhook_max_in_flight, 1);
+    assert_eq!(config.webhook_timeout_secs, 1);
+    assert_eq!(config.webhook_retry_delay_ms, 1);
 }
 
 #[tokio::test]
@@ -406,13 +444,15 @@ async fn test_event_subscription() {
 #[cfg(all(feature = "sqlite", feature = "events"))]
 fn test_webhook_registration() {
     use crate::events::Webhook;
+    use uuid::Uuid;
 
     let commerce = Commerce::new(":memory:").unwrap();
 
     let webhook = Webhook::new("Test Webhook", "https://example.com/webhook");
 
     // Register webhook
-    let id = commerce.register_webhook(webhook).unwrap();
+    let id = commerce.register_webhook(webhook);
+    assert_ne!(id, Uuid::nil());
 
     // Verify it's registered
     let webhooks = commerce.list_webhooks();
@@ -422,6 +462,61 @@ fn test_webhook_registration() {
     // Unregister
     assert!(commerce.unregister_webhook(id));
     assert!(commerce.list_webhooks().is_empty());
+}
+
+#[test]
+#[cfg(all(feature = "sqlite", feature = "events"))]
+fn test_webhook_registration_disabled() {
+    use crate::events::{EventConfig, Webhook};
+    use uuid::Uuid;
+
+    let commerce = Commerce::builder()
+        .database(":memory:")
+        .event_config(EventConfig {
+            enable_webhooks: false,
+            persist_events: false,
+            ..Default::default()
+        })
+        .build()
+        .unwrap();
+
+    let webhook = Webhook::new("Disabled Webhook", "https://example.com/webhook");
+    let id = commerce.register_webhook(webhook);
+    assert_eq!(id, Uuid::nil());
+    assert_eq!(commerce.try_register_webhook(Webhook::new("Disabled Webhook", "https://example.com/webhook")), None);
+    assert!(commerce.list_webhooks().is_empty());
+    assert!(commerce.webhook_deliveries(id).is_empty());
+}
+
+#[test]
+#[cfg(all(feature = "sqlite", feature = "events"))]
+fn test_webhook_registration_rejects_unsafe_url() {
+    use crate::events::Webhook;
+    use uuid::Uuid;
+
+    let commerce = Commerce::new(":memory:").unwrap();
+
+    let webhook = Webhook::new("Unsafe Webhook", "http://localhost:8080/webhook");
+
+    assert_eq!(commerce.try_register_webhook(webhook), None);
+    let fallback_id = commerce.register_webhook(Webhook::new("Fallback Webhook", "http://localhost:8080/webhook"));
+    assert_eq!(fallback_id, Uuid::nil());
+    assert!(commerce.list_webhooks().is_empty());
+}
+
+#[test]
+#[cfg(all(feature = "sqlite", feature = "events"))]
+fn test_webhook_delivery_history_api() {
+    use crate::events::Webhook;
+
+    let commerce = Commerce::new(":memory:").unwrap();
+    let webhook = Webhook::new("History API", "https://example.com/webhook");
+
+    let id = commerce.register_webhook(webhook);
+
+    assert!(commerce.webhook_deliveries(id).is_empty());
+    assert!(commerce.unregister_webhook(id));
+    assert!(commerce.webhook_deliveries(id).is_empty());
 }
 
 #[test]

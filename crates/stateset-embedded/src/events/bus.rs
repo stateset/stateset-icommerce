@@ -1,7 +1,9 @@
 //! Event bus for in-process pub/sub using tokio broadcast channels
 
 use stateset_core::CommerceEvent;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::{Context, Poll};
 use tokio::sync::broadcast;
 
 /// Event bus for broadcasting events to multiple subscribers
@@ -70,6 +72,20 @@ impl EventReceiver {
     pub fn try_recv(&mut self) -> Option<CommerceEvent> {
         self.inner.try_recv().ok()
     }
+
+    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<CommerceEvent>> {
+        loop {
+            match Pin::new(&mut self.inner).poll_recv(cx) {
+                Poll::Ready(Ok(event)) => return Poll::Ready(Some(event)),
+                Poll::Ready(Err(broadcast::error::RecvError::Lagged(skipped))) => {
+                    tracing::warn!(skipped, "Event receiver lagged, skipped events");
+                    continue;
+                }
+                Poll::Ready(Err(broadcast::error::RecvError::Closed)) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
 }
 
 /// An event subscription that can be used to receive events
@@ -95,19 +111,9 @@ impl futures::Stream for EventSubscription {
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        cx: &mut Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        use std::future::Future;
-        use std::task::Poll;
-
-        // Create a future for recv and poll it
-        let recv_future = self.receiver.recv();
-        tokio::pin!(recv_future);
-
-        match recv_future.poll(cx) {
-            Poll::Ready(result) => Poll::Ready(result),
-            Poll::Pending => Poll::Pending,
-        }
+        self.receiver.poll_recv(cx)
     }
 }
 
@@ -170,5 +176,36 @@ mod tests {
 
         let _sub2 = bus.subscribe();
         assert_eq!(bus.receiver_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_event_subscription_stream_next_wakes_on_publish() {
+        use futures::StreamExt;
+
+        let bus = EventBus::new(16);
+        let mut sub = bus.subscribe();
+        let event = CommerceEvent::OrderCreated {
+            order_id: stateset_core::OrderId::new(),
+            customer_id: stateset_core::CustomerId::new(),
+            total_amount: dec!(100.00),
+            item_count: 2,
+            timestamp: Utc::now(),
+        };
+
+        let bus_for_publish = bus;
+        let publish_task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            bus_for_publish.publish(event.clone());
+        });
+
+        let got = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            sub.next(),
+        )
+        .await
+        .expect("timed out while waiting for published event");
+
+        publish_task.await.expect("publisher task failed");
+        assert!(got.is_some());
     }
 }

@@ -305,7 +305,7 @@ where
     DB: FulfillmentRepository,
 {
     /// Get fulfillment repository (zero-cost, no heap allocation)
-    pub fn returns(&self) -> &DB {
+    pub fn fulfillment(&self) -> &DB {
         &self.inner
     }
 }
@@ -412,5 +412,14 @@ mod tests {
 
         // Clone should work if inner DB is cloneable
         let _backend2 = backend.clone();
+    }
+
+    #[test]
+    fn test_fulfillment_accessor_name() {
+        let db = stateset_db::SqliteDatabase::new(&DatabaseConfig::in_memory())
+            .expect("Failed to create database");
+        let backend = SqliteBackend::new(db);
+
+        let _ = backend.fulfillment();
     }
 }
