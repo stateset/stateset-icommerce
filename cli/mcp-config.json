@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "stateset-commerce": {
+      "command": "npx",
+      "args": ["-y", "@stateset/cli@latest", "stateset-mcp-events"],
+      "env": {
+        "DB_PATH": "./store.db"
+      }
+    }
+  }
+}

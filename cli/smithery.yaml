@@ -1,0 +1,78 @@
+# Smithery Registry Configuration
+# https://smithery.ai/docs/publishing
+
+name: stateset-commerce
+description: >
+  AI-powered commerce engine with 256 MCP tools for orders, inventory,
+  payments, subscriptions, analytics, agent-to-agent commerce, and more.
+  The SQLite of Commerce — embedded, portable, zero-dependency.
+
+version: 0.7.0
+license: MIT OR Apache-2.0
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      DB_PATH:
+        type: string
+        description: Path to SQLite database file
+        default: ./store.db
+    required: []
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', '@stateset/cli@latest', 'stateset-mcp-events', '--db', config.DB_PATH || './store.db'],
+      env: {}
+    })
+
+tools:
+  - list_customers
+  - get_customer
+  - create_customer
+  - update_customer
+  - list_orders
+  - get_order
+  - create_order
+  - update_order_status
+  - ship_order
+  - cancel_order
+  - list_products
+  - get_product
+  - create_product
+  - get_stock
+  - adjust_inventory
+  - reserve_inventory
+  - create_cart
+  - add_cart_item
+  - complete_checkout
+  - get_sales_summary
+  - get_demand_forecast
+  - get_revenue_forecast
+  - create_payment
+  - create_refund
+  - create_stablecoin_payment
+  - x402_create_payment_intent
+  - register_agent_card
+  - discover_agents
+  - a2a_pay
+  - a2a_request_quote
+  # ... and 226 more tools (256 total)
+
+keywords:
+  - commerce
+  - ecommerce
+  - orders
+  - inventory
+  - payments
+  - subscriptions
+  - analytics
+  - ai-agents
+  - a2a
+  - x402
+  - stablecoin
+  - mcp-server
+
+repository: https://github.com/stateset/stateset-icommerce
+homepage: https://stateset.com

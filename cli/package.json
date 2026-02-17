@@ -45,7 +45,8 @@
     "stateset-daemon": "bin/stateset-daemon.js",
     "stateset-install-service": "bin/stateset-install-service.js",
     "stateset-x402-mcp": "bin/stateset-x402-mcp.js",
-    "stateset-x402": "bin/stateset-x402.js"
+    "stateset-x402": "bin/stateset-x402.js",
+    "stateset-init": "bin/stateset-init.js"
   },
   "main": "src/index.js",
   "exports": {
@@ -118,7 +119,14 @@
     "memory",
     "systemd",
     "tailscale",
-    "daemon"
+    "daemon",
+    "mcp-server",
+    "agent-to-agent",
+    "x402",
+    "stablecoin",
+    "payments",
+    "subscriptions",
+    "analytics"
   ],
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",

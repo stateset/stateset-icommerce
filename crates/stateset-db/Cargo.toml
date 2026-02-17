@@ -3,9 +3,13 @@ name = "stateset-db"
 description = "Database implementations for StateSet iCommerce"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["commerce", "ecommerce", "database", "sqlite", "postgresql"]
+categories = ["database"]
 
 [dependencies]
 stateset-core = { workspace = true }

@@ -3,9 +3,13 @@ name = "stateset-embedded"
 description = "Embeddable commerce library - the SQLite of commerce operations"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["commerce", "ecommerce", "embedded", "ai-agents", "sqlite"]
+categories = ["database"]
 autobenches = false
 
 [dependencies]

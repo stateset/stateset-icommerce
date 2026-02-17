@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["commerce", "ecommerce", "types", "newtype", "domain"]
+categories = ["data-structures"]
 
 [lints]
 workspace = true

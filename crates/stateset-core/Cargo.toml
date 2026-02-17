@@ -3,9 +3,13 @@ name = "stateset-core"
 description = "Core domain models and business logic for StateSet iCommerce"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["commerce", "ecommerce", "orders", "inventory", "domain-model"]
+categories = ["data-structures"]
 
 [dependencies]
 stateset-primitives = { workspace = true }

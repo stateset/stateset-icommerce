@@ -20,6 +20,51 @@ npm install -g @stateset/cli@0.7.0      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
+**Quick start with demo data:**
+```bash
+npm install -g @stateset/cli
+stateset init --demo
+stateset "show me all customers"
+stateset "what products are low on stock?"
+stateset "what is my revenue this month?"
+```
+
+---
+
+## MCP Server (Claude Desktop / Cursor / Windsurf)
+
+StateSet exposes **256 commerce tools** via the [Model Context Protocol](https://modelcontextprotocol.io). Add it to your AI editor in one step.
+
+**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "stateset-commerce": {
+      "command": "npx",
+      "args": ["-y", "@stateset/cli@latest", "stateset-mcp-events"],
+      "env": { "DB_PATH": "./store.db" }
+    }
+  }
+}
+```
+
+**Cursor** — add to `.cursor/mcp.json` in your project:
+```json
+{
+  "mcpServers": {
+    "stateset-commerce": {
+      "command": "npx",
+      "args": ["-y", "@stateset/cli@latest", "stateset-mcp-events"],
+      "env": { "DB_PATH": "./store.db" }
+    }
+  }
+}
+```
+
+This gives your AI assistant access to the full commerce stack: orders, inventory, customers, products, payments, returns, subscriptions, analytics, promotions, manufacturing, A2A commerce, stablecoin payments, and more.
+
+---
+
 **Development toolchain (repo root):**
 ```bash
 nvm use                      # uses .nvmrc / .node-version (20.20.0)
