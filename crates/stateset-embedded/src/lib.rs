@@ -178,7 +178,8 @@ pub mod events;
 #[cfg(feature = "events")]
 pub use events::{
     EventBus, EventConfig, EventReceiver, EventSubscription, EventSystem, FilteredSubscription,
-    InMemoryEventStore, Webhook, WebhookConfig, WebhookDelivery, WebhookManager, filters,
+    InMemoryEventStore, Webhook, WebhookConfig, WebhookDelivery, WebhookManager,
+    WebhookRegistrationError, filters,
 };
 
 #[cfg(all(feature = "events", feature = "sqlite-events"))]

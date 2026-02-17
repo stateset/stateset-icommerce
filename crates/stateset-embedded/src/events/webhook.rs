@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use stateset_core::CommerceEvent;
+use std::fmt;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::net::{IpAddr, ToSocketAddrs};
@@ -29,6 +30,29 @@ pub struct Webhook {
     pub headers: HashMap<String, String>,
     /// Created timestamp
     pub created_at: DateTime<Utc>,
+}
+
+/// Reasons webhook registration failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebhookRegistrationError {
+    /// The webhook URL is considered unsafe (e.g. localhost, private network, invalid scheme).
+    UnsafeUrl,
+    /// Webhooks are disabled in the event system configuration.
+    WebhooksDisabled,
+}
+
+impl fmt::Display for WebhookRegistrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsafeUrl => {
+                write!(f, "webhook registration rejected: URL validation failed")
+            }
+            Self::WebhooksDisabled => write!(
+                f,
+                "webhook registration rejected: webhook subsystem is disabled"
+            ),
+        }
+    }
 }
 
 impl Webhook {
@@ -218,20 +242,32 @@ impl WebhookManager {
         }
     }
 
-    /// Register a new webhook
+    /// Register a new webhook using the legacy API.
+    ///
+    /// Returns `Uuid::nil()` on failure to preserve compatibility with
+    /// older call sites. Use [`register_strict`](Self::register_strict) or
+    /// [`try_register`](Self::try_register) for explicit handling.
     pub fn register(&self, webhook: Webhook) -> Uuid {
-        self.try_register(webhook).unwrap_or_else(Uuid::nil)
+        match self.register_strict(webhook) {
+            Ok(id) => id,
+            Err(err) => {
+                tracing::warn!(error = %err, "Webhook registration fallback returned nil");
+                Uuid::nil()
+            }
+        }
     }
 
-    /// Register a new webhook, returning `None` when URL validation fails.
-    pub fn try_register(&self, webhook: Webhook) -> Option<Uuid> {
+    /// Register a new webhook with explicit failure semantics.
+    ///
+    /// Returns a registration error when the URL is rejected.
+    pub fn register_strict(&self, webhook: Webhook) -> Result<Uuid, WebhookRegistrationError> {
         if !is_safe_webhook_url(&webhook.url) {
             tracing::warn!(
                 webhook_id = %webhook.id,
                 webhook_url = %webhook.url,
                 "Rejected webhook registration: unsafe URL"
             );
-            return None;
+            return Err(WebhookRegistrationError::UnsafeUrl);
         }
 
         let id = webhook.id;
@@ -244,7 +280,12 @@ impl WebhookManager {
         };
         webhooks.insert(id, webhook);
         tracing::info!(webhook_id = %id, "Webhook registered");
-        Some(id)
+        Ok(id)
+    }
+
+    /// Register a new webhook, returning `None` when URL validation fails.
+    pub fn try_register(&self, webhook: Webhook) -> Option<Uuid> {
+        self.register_strict(webhook).ok()
     }
 
     /// Unregister a webhook
@@ -765,6 +806,10 @@ mod tests {
         let manager = WebhookManager::new(3, 30);
         let webhook = Webhook::new("Localhost Hook", "http://localhost:8080/webhook");
 
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
         assert!(manager.try_register(webhook).is_none());
         assert!(manager.list().is_empty());
     }
@@ -774,6 +819,10 @@ mod tests {
         let manager = WebhookManager::new(3, 30);
         let webhook = Webhook::new("Private IP Hook", "https://10.0.0.1/callback");
 
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
         assert!(manager.try_register(webhook).is_none());
         assert!(manager.list().is_empty());
     }
@@ -810,6 +859,10 @@ mod tests {
         let manager = WebhookManager::new(3, 30);
         let webhook = Webhook::new("FTP Hook", "ftp://example.com/webhook");
 
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
         assert!(manager.try_register(webhook).is_none());
     }
 
@@ -818,6 +871,10 @@ mod tests {
         let manager = WebhookManager::new(3, 30);
         let webhook = Webhook::new("Userinfo Hook", "https://user:pass@example.com/webhook");
 
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
         assert!(manager.try_register(webhook).is_none());
     }
 
@@ -826,6 +883,10 @@ mod tests {
         let manager = WebhookManager::new(3, 30);
         let webhook = Webhook::new("Bad URL Hook", "not-a-url");
 
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
         assert!(manager.try_register(webhook).is_none());
     }
 
@@ -952,6 +1013,10 @@ mod tests {
     fn test_webhook_register_fallback_returns_nil() {
         let manager = WebhookManager::new(3, 30);
         let webhook = Webhook::new("Bad URL Hook", "gopher://127.0.0.1/webhook");
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
         let id = manager.register(webhook);
 
         assert_eq!(id, Uuid::nil());

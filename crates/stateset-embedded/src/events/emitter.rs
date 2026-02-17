@@ -38,6 +38,11 @@ impl EventEmitter {
     pub fn total_events(&self) -> u64 {
         self.bus.events_published()
     }
+
+    /// Get total publish failures on this emitter's bus.
+    pub fn total_publish_failures(&self) -> u64 {
+        self.bus.events_publish_failures()
+    }
 }
 
 /// Helper macros and builders for creating events

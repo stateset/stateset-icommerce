@@ -467,7 +467,7 @@ fn test_webhook_registration() {
 #[test]
 #[cfg(all(feature = "sqlite", feature = "events"))]
 fn test_webhook_registration_disabled() {
-    use crate::events::{EventConfig, Webhook};
+    use crate::events::{EventConfig, Webhook, WebhookRegistrationError};
     use uuid::Uuid;
 
     let commerce = Commerce::builder()
@@ -481,6 +481,10 @@ fn test_webhook_registration_disabled() {
         .unwrap();
 
     let webhook = Webhook::new("Disabled Webhook", "https://example.com/webhook");
+    assert_eq!(
+        commerce.register_webhook_strict(webhook.clone()),
+        Err(WebhookRegistrationError::WebhooksDisabled)
+    );
     let id = commerce.register_webhook(webhook);
     assert_eq!(id, Uuid::nil());
     assert_eq!(commerce.try_register_webhook(Webhook::new("Disabled Webhook", "https://example.com/webhook")), None);
@@ -491,7 +495,7 @@ fn test_webhook_registration_disabled() {
 #[test]
 #[cfg(all(feature = "sqlite", feature = "events"))]
 fn test_webhook_registration_rejects_unsafe_url() {
-    use crate::events::Webhook;
+    use crate::events::{Webhook, WebhookRegistrationError};
     use uuid::Uuid;
 
     let commerce = Commerce::new(":memory:").unwrap();
@@ -499,6 +503,10 @@ fn test_webhook_registration_rejects_unsafe_url() {
     let webhook = Webhook::new("Unsafe Webhook", "http://localhost:8080/webhook");
 
     assert_eq!(commerce.try_register_webhook(webhook), None);
+    assert_eq!(
+        commerce.register_webhook_strict(Webhook::new("Unsafe Webhook", "http://localhost:8080/webhook")),
+        Err(WebhookRegistrationError::UnsafeUrl)
+    );
     let fallback_id = commerce.register_webhook(Webhook::new("Fallback Webhook", "http://localhost:8080/webhook"));
     assert_eq!(fallback_id, Uuid::nil());
     assert!(commerce.list_webhooks().is_empty());

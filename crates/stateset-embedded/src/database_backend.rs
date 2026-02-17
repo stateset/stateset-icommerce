@@ -295,7 +295,7 @@ where
     DB: ReceivingRepository,
 {
     /// Get receiving repository (zero-cost, no heap allocation)
-    pub fn returns(&self) -> &DB {
+    pub fn receiving(&self) -> &DB {
         &self.inner
     }
 }
@@ -421,5 +421,15 @@ mod tests {
         let backend = SqliteBackend::new(db);
 
         let _ = backend.fulfillment();
+    }
+
+    #[test]
+    fn test_returns_and_receiving_accessors() {
+        let db = stateset_db::SqliteDatabase::new(&DatabaseConfig::in_memory())
+            .expect("Failed to create database");
+        let backend = SqliteBackend::new(db);
+
+        let _ = backend.returns();
+        let _ = backend.receiving();
     }
 }

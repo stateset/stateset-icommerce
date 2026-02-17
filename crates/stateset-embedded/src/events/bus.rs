@@ -10,21 +10,49 @@ use tokio::sync::broadcast;
 pub struct EventBus {
     sender: broadcast::Sender<CommerceEvent>,
     events_published: AtomicU64,
+    events_publish_failures: AtomicU64,
 }
 
 impl EventBus {
     /// Create a new event bus with the specified channel capacity
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity);
-        Self { sender, events_published: AtomicU64::new(0) }
+        Self {
+            sender,
+            events_published: AtomicU64::new(0),
+            events_publish_failures: AtomicU64::new(0),
+        }
     }
 
     /// Publish an event to all subscribers
     pub fn publish(&self, event: CommerceEvent) -> usize {
         self.events_published.fetch_add(1, Ordering::Relaxed);
         // Returns number of receivers that received the message
-        // If no receivers, this returns an error but we ignore it
-        self.sender.send(event).unwrap_or(0)
+        // If no active receivers (for example before any subscribe), this is surfaced as a debug log.
+        let event_type = event.event_type().to_string();
+        let receiver_count = self.sender.receiver_count();
+        match self.sender.send(event) {
+            Ok(receivers) => receivers,
+            Err(error) => {
+                self.events_publish_failures.fetch_add(1, Ordering::Relaxed);
+                if receiver_count == 0 {
+                    tracing::debug!(
+                        event_type,
+                        error = %error,
+                        receiver_count,
+                        "Dropped event publish: no active subscribers"
+                    );
+                } else {
+                    tracing::warn!(
+                        event_type,
+                        error = %error,
+                        receiver_count,
+                        "Failed to publish event to in-process subscribers"
+                    );
+                }
+                0
+            }
+        }
     }
 
     /// Subscribe to events from this bus
@@ -40,6 +68,11 @@ impl EventBus {
     /// Get total number of events published
     pub fn events_published(&self) -> u64 {
         self.events_published.load(Ordering::Relaxed)
+    }
+
+    /// Get the number of events that failed to publish to the in-process bus
+    pub fn events_publish_failures(&self) -> u64 {
+        self.events_publish_failures.load(Ordering::Relaxed)
     }
 }
 
@@ -176,6 +209,22 @@ mod tests {
 
         let _sub2 = bus.subscribe();
         assert_eq!(bus.receiver_count(), 2);
+    }
+
+    #[test]
+    fn test_event_bus_publish_failure_tracking() {
+        let bus = EventBus::new(16);
+
+        let event = CommerceEvent::CustomerCreated {
+            customer_id: stateset_core::CustomerId::new(),
+            email: "test@example.com".to_string(),
+            timestamp: Utc::now(),
+        };
+
+        let receivers = bus.publish(event);
+        assert_eq!(receivers, 0);
+        assert_eq!(bus.events_published(), 1);
+        assert_eq!(bus.events_publish_failures(), 1);
     }
 
     #[tokio::test]

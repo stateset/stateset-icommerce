@@ -40,7 +40,9 @@ mod webhook;
 pub use bus::{EventBus, EventReceiver, EventSubscription};
 pub use emitter::EventEmitter;
 pub use store::InMemoryEventStore;
-pub use webhook::{Webhook, WebhookConfig, WebhookDelivery, WebhookManager};
+pub use webhook::{
+    Webhook, WebhookConfig, WebhookDelivery, WebhookManager, WebhookRegistrationError,
+};
 
 #[cfg(feature = "sqlite-events")]
 pub use store::SqliteEventStore;
@@ -190,13 +192,33 @@ impl EventSystem {
         FilteredSubscription { inner: self.bus.subscribe(), filter }
     }
 
-    /// Register a webhook endpoint
+    /// Register a webhook endpoint.
+    ///
+    /// This is a legacy API that preserves the previous `Uuid`-returning
+    /// contract. Prefer [`register_webhook_strict`](Self::register_webhook_strict) or
+    /// [`try_register_webhook`](Self::try_register_webhook) when you need explicit
+    /// failure handling.
     pub fn register_webhook(&self, webhook: Webhook) -> uuid::Uuid {
-        self.try_register_webhook(webhook).unwrap_or_else(uuid::Uuid::nil)
+        self.register_webhook_strict(webhook).unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "Webhook registration fallback returned nil");
+            uuid::Uuid::nil()
+        })
+    }
+
+    /// Register a webhook endpoint with explicit failure semantics.
+    pub fn register_webhook_strict(
+        &self,
+        webhook: Webhook,
+    ) -> Result<uuid::Uuid, WebhookRegistrationError> {
+        self.webhook_manager
+            .as_ref()
+            .ok_or(WebhookRegistrationError::WebhooksDisabled)
+            .and_then(|wm| wm.register_strict(webhook))
     }
 
     /// Register a webhook endpoint.
-    /// Returns `None` when registration is rejected (e.g. unsafe URL).
+    /// Returns `None` when registration is rejected (e.g. unsafe URL),
+    /// or when webhooks are disabled.
     pub fn try_register_webhook(&self, webhook: Webhook) -> Option<uuid::Uuid> {
         self.webhook_manager.as_ref().and_then(|wm| wm.try_register(webhook))
     }
@@ -261,6 +283,11 @@ impl EventSystem {
     /// Get the number of active subscribers
     pub fn subscriber_count(&self) -> usize {
         self.bus.receiver_count()
+    }
+
+    /// Get total publish failures on the event bus
+    pub fn bus_publish_failures(&self) -> u64 {
+        self.emitter.total_publish_failures()
     }
 }
 

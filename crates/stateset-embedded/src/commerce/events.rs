@@ -1,7 +1,7 @@
 use super::Commerce;
 
 #[cfg(feature = "events")]
-use crate::events::{EventSubscription, EventSystem, Webhook, WebhookDelivery};
+use crate::events::{EventSubscription, EventSystem, Webhook, WebhookDelivery, WebhookRegistrationError};
 
 impl Commerce {
     /// Access the event system for pub/sub and webhook management.
@@ -82,15 +82,25 @@ impl Commerce {
     ///     "https://my-app.com/webhooks/stateset",
     /// ).with_secret("my-webhook-secret");
     ///
-    /// let id = commerce.register_webhook(webhook);
-    /// if id != uuid::Uuid::nil() {
+    /// if let Some(id) = commerce.try_register_webhook(webhook) {
     ///     println!("Webhook registered: {}", id);
+    /// } else {
+    ///     println!("Webhook registration failed");
     /// }
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     #[cfg(feature = "events")]
     pub fn register_webhook(&self, webhook: Webhook) -> uuid::Uuid {
         self.event_system.register_webhook(webhook)
+    }
+
+    /// Register a webhook endpoint with explicit failure semantics.
+    #[cfg(feature = "events")]
+    pub fn register_webhook_strict(
+        &self,
+        webhook: Webhook,
+    ) -> Result<uuid::Uuid, WebhookRegistrationError> {
+        self.event_system.register_webhook_strict(webhook)
     }
 
     /// Register a webhook endpoint, returning `None` when registration fails validation.
