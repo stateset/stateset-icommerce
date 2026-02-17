@@ -516,9 +516,29 @@ describe('generateApiRouteContent', () => {
     assert.ok(content.includes('export async function POST'));
   });
 
-  it('includes the route path in TODO comments', () => {
+  it('references the generated route path in generated content', () => {
     const content = generateApiRouteContent('/api/orders', ['GET']);
     assert.ok(content.includes('/api/orders'));
+  });
+
+  it('contains reusable request dispatcher helpers', () => {
+    const content = generateApiRouteContent('/api/products', ['GET']);
+    assert.ok(content.includes('resolveResourceManager'));
+    assert.ok(content.includes('parseEntityId'));
+    assert.ok(content.includes('routeRequest'));
+  });
+
+  it('includes fallback resource method checks', () => {
+    const content = generateApiRouteContent('/api/products', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+    assert.ok(content.includes('resource.get || resource.getById || resource.findById'));
+    assert.ok(content.includes('resource.create'));
+    assert.ok(content.includes('resource.update || resource.save || resource.patch'));
+    assert.ok(content.includes('resource.delete || resource.remove || resource.destroy'));
+  });
+
+  it('does not include the old TODO marker in generated route handlers', () => {
+    const content = generateApiRouteContent('/api/products', ['GET']);
+    assert.ok(!content.includes('TODO:'));
   });
 
   it('imports NextRequest and NextResponse', () => {

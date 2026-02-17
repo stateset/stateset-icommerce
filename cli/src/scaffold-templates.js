@@ -781,26 +781,193 @@ export function ${customName || hookName}() {
 }
 
 export function generateApiRouteContent(routePath, methods) {
+  const normalizedRoutePath = String(routePath || '').replace(/^\/+|\/+$/g, '');
   const handlers = methods
-    .map((method) => {
-      return `export async function ${method}(request: NextRequest) {
-  const commerce = getCommerce();
-
-  try {
-    // TODO: Implement ${method} handler for ${routePath}
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
-    );
-  }
-}`;
-    })
+    .map(
+      (method) =>
+        `export async function ${method}(request: NextRequest) {\n  return routeRequest(request, '${method.toUpperCase()}');\n}`,
+    )
     .join('\n\n');
 
   return `import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';
+
+const ROUTE_PATH = '${normalizedRoutePath}';
+
+type RouteErrorPayload = {
+  error: string;
+  details?: unknown;
+};
+
+const toPascalCase = (value: string) =>
+  value
+    .split(/[-_/]/g)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join('');
+
+const toCamelCase = (value: string) => {
+  const [first, ...rest] = toPascalCase(value).split(/(?=[A-Z])/g);
+  return first.toLowerCase() + rest.join('');
+};
+
+const resolveResourceManager = (commerce: ReturnType<typeof getCommerce>, route: string) => {
+  const segments = route
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .map((segment) => segment.replace(/\\{\\{.*?\\}\\}/g, '').trim())
+    .filter(Boolean);
+  const resource = segments[segments.length - 1] || route;
+  const direct = commerce?.[resource];
+  if (direct) return direct;
+
+  const singular = resource.endsWith('s') ? resource.slice(0, -1) : resource;
+  if (commerce?.[singular]) return commerce[singular];
+  if (commerce?.[toCamelCase(resource)]) return commerce[toCamelCase(resource)];
+  if (commerce?.[toCamelCase(singular)]) return commerce[toCamelCase(singular)];
+  return null;
+};
+
+const parseEntityId = (request: NextRequest) => {
+  const url = new URL(request.url);
+  const searchParams = url.searchParams;
+  return (
+    searchParams.get('id') ||
+    searchParams.get('slug') ||
+    searchParams.get('sku') ||
+    searchParams.get('key') ||
+    null
+  );
+};
+
+const parseBody = async (request: NextRequest) => {
+  try {
+    const contentType = request.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      return await request.json();
+    }
+    return {};
+  } catch {
+    return {};
+  }
+};
+
+const methodUnavailable = (method: string) => \`Method \${method} is not supported for this generated route.\`;
+
+const formatError = (error: unknown, fallback: string, status = 500): NextResponse<RouteErrorPayload> =>
+  NextResponse.json(
+    {
+      error: error instanceof Error ? error.message : fallback,
+      details: error instanceof Error ? undefined : error,
+    },
+    { status },
+  );
+
+const routeRequest = async (request: NextRequest, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE') => {
+  const commerce = getCommerce();
+  const resource = resolveResourceManager(commerce, ROUTE_PATH);
+
+  if (!resource || typeof resource !== 'object') {
+    return NextResponse.json(
+      {
+        error: \`No Commerce resource found for route: ${normalizedRoutePath}\`,
+      },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const id = parseEntityId(request);
+    const payload = ['POST', 'PUT', 'PATCH'].includes(method) ? await parseBody(request) : {};
+
+    if (method === 'GET') {
+      if (id) {
+        const getMethod = resource.get || resource.getById || resource.findById;
+        if (!getMethod) {
+          return NextResponse.json(
+            {
+              error: methodUnavailable('GET'),
+            },
+            { status: 405 },
+          );
+        }
+        const data = await getMethod(id);
+        return NextResponse.json({ data });
+      }
+
+      const listMethod = resource.list || resource.find || resource.findMany;
+      if (!listMethod) {
+        return NextResponse.json(
+          {
+            error: methodUnavailable('GET'),
+          },
+          { status: 405 },
+        );
+      }
+      const data = await listMethod();
+      return NextResponse.json({ data });
+    }
+
+    if (method === 'POST') {
+      if (!resource.create) {
+        return NextResponse.json(
+          {
+            error: methodUnavailable('POST'),
+          },
+          { status: 405 },
+        );
+      }
+      const data = await resource.create(payload);
+      return NextResponse.json({ data, entity: toCamelCase(ROUTE_PATH) }, { status: 201 });
+    }
+
+    if (method === 'PUT' || method === 'PATCH') {
+      const updateId = id || payload.id || payload.entityId || payload.orderId || payload.productId;
+      if (!updateId) {
+        return NextResponse.json(
+          { error: 'Missing id for update request' },
+          { status: 400 },
+        );
+      }
+
+      const updateMethod = resource.update || resource.save || resource.patch;
+      if (!updateMethod) {
+        return NextResponse.json(
+          {
+            error: methodUnavailable(method),
+          },
+          { status: 405 },
+        );
+      }
+
+      const data = await updateMethod(updateId, payload);
+      return NextResponse.json({ data });
+    }
+
+    if (method === 'DELETE') {
+      const deleteMethod = resource.delete || resource.remove || resource.destroy;
+      if (!deleteMethod) {
+        return NextResponse.json(
+          {
+            error: methodUnavailable('DELETE'),
+          },
+          { status: 405 },
+        );
+      }
+      if (!id && !payload.id) {
+        return NextResponse.json({ error: 'Missing id for delete request' }, { status: 400 });
+      }
+
+      const targetId = id || payload.id;
+      const data = await deleteMethod(targetId);
+      return NextResponse.json({ data });
+    }
+
+    return NextResponse.json({ error: 'Unsupported method ' + method }, { status: 405 });
+  } catch (error) {
+    return formatError(error, \`Failed to handle ${'${method}'} ${normalizedRoutePath}\`, 500);
+  }
+};
 
 ${handlers}
 `;

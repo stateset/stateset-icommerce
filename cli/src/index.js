@@ -21,6 +21,7 @@ export {
 
 // MCP Server
 export { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
+export { createMcpEventStreamer } from './mcp-event-streamer.js';
 
 // Telemetry & Observability
 export { AgentTelemetry, noOpTelemetry, createTelemetry, Span } from './telemetry.js';

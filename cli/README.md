@@ -298,6 +298,7 @@ stateset --apply --batch orders.txt --parallel 3
 | `stateset-install-service` | Install gateway as a system service (systemd/launchd) |
 | `stateset-doctor` | Health check and diagnostics |
 | `stateset-events` | Event management and webhooks |
+| `stateset-mcp-events` | MCP event gateway (SSE + history + subscriptions) |
 | `stateset-sync` | Verifiable Event Sync with sequencer |
 | `stateset-tutorial` | Interactive tutorials and onboarding |
 | `stateset-completion` | Shell completion scripts (bash/zsh/fish) |
@@ -1022,6 +1023,36 @@ Options:
   --output <file>  Write output to file (implies --json)
   --quiet          Only output event data, no headers
   --help           Show help
+```
+
+### `stateset-mcp-events` - MCP Event Stream Gateway
+
+```
+stateset-mcp-events [options]
+
+Options:
+  --db <path>           Database path
+  --host <host>         HTTP bind host (default: 127.0.0.1)
+  --port <n>            HTTP port (default: 8081, 0 picks random)
+  --history-limit <n>    Maximum events kept in memory (default: 500)
+  --stream-name <name>   Stream name for emitted events
+  --help                Show help
+
+Endpoints:
+  GET /events?session=<id>&types=success,error   SSE stream
+  GET /history?session=<id>&types=success&since=<iso>&limit=<n>  Event history
+  GET /subscriptions?session=<id>                          Active subscriptions
+  GET /health                                              Service health
+```
+
+```bash
+stateset-mcp-events --db ./store.db --port 8081
+
+# Watch events for a session
+curl -N "http://127.0.0.1:8081/events?session=session-1"
+
+# Replay event history
+curl "http://127.0.0.1:8081/history?types=success,error&limit=25"
 ```
 
 ### `stateset-channels` - Multi-Channel Gateway

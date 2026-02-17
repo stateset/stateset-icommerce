@@ -174,6 +174,8 @@ SPECIALIZED COMMANDS:
   stateset-sync            VES sync management
   stateset-daemon          Daemon & service management
   stateset-channels        Messaging channel orchestration
+  stateset-events          Legacy event streaming (DB webhooks + feed)
+  stateset-mcp-events      MCP execution event stream gateway
   stateset-skills          Skills marketplace
   stateset-x402            x402 config + key setup
   stateset-x402-mcp        x402 MCP server for paid API calls

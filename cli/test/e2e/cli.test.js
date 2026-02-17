@@ -245,6 +245,23 @@ describe('CLI E2E Tests', () => {
       assert.ok(stdout.includes('USAGE') || stdout.includes('config'));
     });
   });
+
+  describe('stateset-mcp-events', () => {
+    it('should show help', async () => {
+      const { code, stdout } = await execCli('stateset-mcp-events.js', ['--help']);
+
+      assert.strictEqual(code, 0);
+      assert.ok(stdout.includes('USAGE'));
+      assert.ok(stdout.includes('MCP Event Stream Gateway'));
+    });
+
+    it('should show version', async () => {
+      const { code, stdout } = await execCli('stateset-mcp-events.js', ['--version']);
+
+      assert.strictEqual(code, 0);
+      assert.ok(stdout.trim().startsWith('stateset-mcp-events v'));
+    });
+  });
 });
 
 describe('CLI Integration', () => {

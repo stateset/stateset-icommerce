@@ -19,6 +19,7 @@
     "stateset-config": "bin/stateset-config.js",
     "stateset-doctor": "bin/stateset-doctor.js",
     "stateset-events": "bin/stateset-events.js",
+    "stateset-mcp-events": "bin/stateset-mcp-events.js",
     "stateset-sync": "bin/stateset-sync.js",
     "stateset-completion": "bin/stateset-completion.js",
     "stateset-manufacturing": "bin/stateset-manufacturing.js",

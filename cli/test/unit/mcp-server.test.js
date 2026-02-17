@@ -216,6 +216,147 @@ describe('mcp-server', () => {
       assert.strictEqual(server.name, 'stateset-commerce');
       assert.ok(server.instance);
     });
+
+    it('should expose the active MCP event stream on server object', () => {
+      const server = createStatesetMcpServer({ commerce: mockCommerce });
+      assert.ok(server.mcpEventStream);
+      assert.strictEqual(typeof server.mcpEventStream.publish, 'function');
+    });
+
+    it('should accept custom MCP event stream injection', () => {
+      const customStream = {
+        publish: () => {},
+        subscribe: async () => ({ success: true }),
+        unsubscribe: async () => ({ success: true }),
+        listSubscriptions: async () => [],
+        getEventHistory: async () => [],
+      };
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        mcpEventStream: customStream,
+      });
+      assert.strictEqual(server.mcpEventStream, customStream);
+    });
+  });
+
+  describe('Agentic event stream tools', () => {
+    it('agentic_subscribe_events returns stream subscription output', async () => {
+      const subscriptions = [];
+      const customStream = {
+        publish: () => {},
+        subscribe: async ({ sessionId, eventTypes }) => {
+          const result = {
+            success: true,
+            subscription: {
+              id: 'sub-1',
+              sessionId: sessionId || '__global__',
+              eventTypes,
+              active: true,
+              createdAt: new Date().toISOString(),
+              lastEventId: null,
+            },
+          };
+          subscriptions.push(result.subscription);
+          return result;
+        },
+        unsubscribe: async () => ({ success: true }),
+        listSubscriptions: async () => subscriptions,
+        getEventHistory: async () => [],
+      };
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        mcpEventStream: customStream,
+      });
+      const tool = server.instance._registeredTools.agentic_subscribe_events;
+      const res = await tool.handler({ sessionId: 'session-123', eventTypes: ['success', 'error'] });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload.success, true);
+      assert.equal(payload.subscription.sessionId, 'session-123');
+      assert.deepEqual(payload.subscription.eventTypes, ['success', 'error']);
+      assert.equal(payload.subscription.active, true);
+    });
+
+    it('agentic_unsubscribe_events handles missing subscriptions from stream service', async () => {
+      const customStream = {
+        publish: () => {},
+        subscribe: async () => ({ success: true }),
+        unsubscribe: async () => ({ success: false, error: 'Subscription not found' }),
+        listSubscriptions: async () => [],
+        getEventHistory: async () => [],
+      };
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        mcpEventStream: customStream,
+      });
+      const tool = server.instance._registeredTools.agentic_unsubscribe_events;
+      const res = await tool.handler({ subscriptionId: 'missing-id' });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload.success, false);
+      assert.equal(payload.error, 'Subscription not found');
+    });
+
+    it('agentic_list_event_subscriptions forwards to stream service', async () => {
+      const customStream = {
+        publish: () => {},
+        subscribe: async () => ({ success: true }),
+        unsubscribe: async () => ({ success: true }),
+        listSubscriptions: async ({ sessionId } = {}) => [
+          { id: '1', sessionId: sessionId || '__global__', eventTypes: ['success'], active: true },
+        ],
+        getEventHistory: async () => [],
+      };
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        mcpEventStream: customStream,
+      });
+      const tool = server.instance._registeredTools.agentic_list_event_subscriptions;
+      const res = await tool.handler({ sessionId: 'session-1' });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(Array.isArray(payload), true);
+      assert.equal(payload.length, 1);
+      assert.equal(payload[0].sessionId, 'session-1');
+    });
+
+    it('agentic_get_event_history forwards to stream service', async () => {
+      const customStream = {
+        publish: () => {},
+        subscribe: async () => ({ success: true }),
+        unsubscribe: async () => ({ success: true }),
+        listSubscriptions: async () => [],
+        getEventHistory: async ({ sessionId, limit }) => [
+          { id: 'e1', sessionId: sessionId || '__global__', type: 'success', limit },
+        ],
+      };
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        mcpEventStream: customStream,
+      });
+      const tool = server.instance._registeredTools.agentic_get_event_history;
+      const res = await tool.handler({ sessionId: 'session-2', limit: 5 });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(Array.isArray(payload), true);
+      assert.equal(payload.length, 1);
+      assert.equal(payload[0].sessionId, 'session-2');
+      assert.equal(payload[0].type, 'success');
+      assert.equal(payload[0].limit, 5);
+    });
+
+    it('returns unavailable message if mcp event stream is missing', async () => {
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        mcpEventStream: {},
+      });
+      const tool = server.instance._registeredTools.agentic_list_event_subscriptions;
+      const res = await tool.handler({});
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload.success, false);
+      assert.equal(payload.error, 'MCP event stream service is unavailable');
+    });
   });
 
   describe('Server structure', () => {
@@ -338,6 +479,14 @@ describe('mcp-server', () => {
     it('should have tools from subscriptions module', () => {
       const subscriptionTools = TOOL_NAMES.filter((name) => name.includes('subscription'));
       assert.ok(subscriptionTools.length >= 1, `Expected at least 1 subscription tool, got ${subscriptionTools.length}`);
+    });
+
+    it('should include event stream agentic tools', () => {
+      const eventTools = TOOL_NAMES.filter((name) => name.includes('agentic_subscribe_events'));
+      assert.ok(eventTools.length >= 1, `Expected event subscription tool, got ${eventTools.length}`);
+      assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_unsubscribe_events'));
+      assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_list_event_subscriptions'));
+      assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_get_event_history'));
     });
   });
 });

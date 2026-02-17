@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { getSharedRuntime } from './channels/plugin-runtime.js';
 import { A2AStore } from './a2a/store.js';
 import { PolicyEngine } from './policies/engine.js';
+import { createMcpEventStreamer } from './mcp-event-streamer.js';
 
 // Domain tool modules
 import { customerTools } from './tools/customers.js';
@@ -130,6 +131,104 @@ const AGENTIC_RUNTIME_TOOLS = [
         planSignature: params?.planSignature,
         executionSignature: params?.executionSignature,
         status: params?.status,
+      });
+    },
+  },
+  {
+    name: 'agentic_subscribe_events',
+    description: 'Subscribe to MCP execution events for a session or global stream.',
+    inputSchema: {
+      sessionId: z
+        .string()
+        .optional()
+        .describe('Optional session id for filtered subscription; omitted for global stream'),
+      eventTypes: z
+        .array(z.string())
+        .optional()
+        .describe('Optional event types to receive, e.g. ["success", "error"] or ["*"]'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, mcpEventStream }) => {
+      if (!mcpEventStream || typeof mcpEventStream.subscribe !== 'function') {
+        return {
+          success: false,
+          error: 'MCP event stream service is unavailable',
+        };
+      }
+      return mcpEventStream.subscribe({
+        sessionId: params?.sessionId,
+        eventTypes: params?.eventTypes,
+      });
+    },
+  },
+  {
+    name: 'agentic_unsubscribe_events',
+    description: 'Unsubscribe from a previously-created MCP event subscription.',
+    inputSchema: {
+      subscriptionId: z.string().describe('Subscription id returned by agentic_subscribe_events'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, mcpEventStream }) => {
+      if (!mcpEventStream || typeof mcpEventStream.unsubscribe !== 'function') {
+        return {
+          success: false,
+          error: 'MCP event stream service is unavailable',
+        };
+      }
+      return mcpEventStream.unsubscribe(params?.subscriptionId);
+    },
+  },
+  {
+    name: 'agentic_list_event_subscriptions',
+    description: 'List active MCP event subscriptions.',
+    inputSchema: {
+      sessionId: z
+        .string()
+        .optional()
+        .describe('Optional session id filter; omitted returns global stream subscriptions only'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, mcpEventStream }) => {
+      if (!mcpEventStream || typeof mcpEventStream.listSubscriptions !== 'function') {
+        return {
+          success: false,
+          error: 'MCP event stream service is unavailable',
+        };
+      }
+      return mcpEventStream.listSubscriptions({
+        sessionId: params?.sessionId,
+      });
+    },
+  },
+  {
+    name: 'agentic_get_event_history',
+    description: 'Fetch recent MCP event history for debugging and replay.',
+    inputSchema: {
+      sessionId: z.string().optional().describe('Optional session id filter'),
+      eventTypes: z.array(z.string()).optional().describe('Optional event type filters'),
+      since: z
+        .string()
+        .optional()
+        .describe('Optional ISO timestamp to fetch events after this time'),
+      limit: z.number().optional().describe('Max events to return'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, mcpEventStream }) => {
+      if (!mcpEventStream || typeof mcpEventStream.getEventHistory !== 'function') {
+        return {
+          success: false,
+          error: 'MCP event stream service is unavailable',
+        };
+      }
+      return mcpEventStream.getEventHistory({
+        sessionId: params?.sessionId,
+        eventTypes: params?.eventTypes,
+        since: params?.since,
+        limit: params?.limit,
       });
     },
   },
@@ -260,7 +359,7 @@ const extractReplayIdFromSource = (source, keyCandidates) => {
   return undefined;
 };
 
-const extractFirstIdLikeValue = (source) => {
+const _extractFirstIdLikeValue = (source) => {
   if (!source || typeof source !== 'object') return undefined;
   const directId = coerceReplayIdSource(source.id);
   if (directId) return directId;
@@ -722,6 +821,7 @@ function autoIndexEntity(entityType, entity) {
  * @param {string} options.agentConfig.agentId - This agent's ID
  * @param {string} options.agentConfig.walletAddress - This agent's wallet address
  * @param {Object} options.agentConfig.signingKey - Ed25519 signing key { privateKey, publicKey }
+ * @param {Object} options.mcpEventStream - Optional MCP event stream service
  */
 export function createStatesetMcpServer({
   commerce,
@@ -734,6 +834,7 @@ export function createStatesetMcpServer({
   dbPath = './store.db',
   treasury = null,
   agentConfig = null,
+  mcpEventStream = null,
 }) {
   // ---------------------------------------------------------------------------
   // A2A Store initialization
@@ -997,6 +1098,32 @@ export function createStatesetMcpServer({
         })
       : Promise.resolve();
 
+  const activeMcpEventStream = mcpEventStream || createMcpEventStreamer();
+  const publishToEventStream = (event) => {
+    if (!activeMcpEventStream?.publish || typeof activeMcpEventStream.publish !== 'function') {
+      return;
+    }
+    try {
+      activeMcpEventStream.publish({
+        status: event?.status || 'event',
+        tool: event?.tool || null,
+        requestId: event?.requestId || null,
+        sessionId: event?.sessionId || null,
+        timestamp: event?.occurredAt || event?.timestamp || new Date().toISOString(),
+        result: event?.result || null,
+        error: event?.error || null,
+        policy: event?.policy || null,
+        permission: event?.permission || null,
+        charge: event?.charge || null,
+        params: event?.params || null,
+        notes: event?.notes || null,
+        source: event?.source || 'mcp_server',
+      });
+    } catch (error) {
+      console.warn('[MCP Server] Failed to publish event stream event:', error.message);
+    }
+  };
+
   const fallbackAgenticDir = resolvePolicyPath || path.join(process.cwd(), '.stateset');
   const agenticReplayLogPath = path.join(fallbackAgenticDir, AGENTIC_REPLAY_LOG_FILE);
   const agenticReplayRingBuffer = [];
@@ -1026,6 +1153,7 @@ export function createStatesetMcpServer({
     if (agenticReplayRingBuffer.length > AGENTIC_REPLAY_BUFFER_SIZE) {
       agenticReplayRingBuffer.shift();
     }
+    publishToEventStream(sanitized);
     await persistAgenticReplayEvent(sanitized);
   };
 
@@ -3004,6 +3132,7 @@ export function createStatesetMcpServer({
     buildAuditContext,
     buildTreasuryIdentityMetadata,
     agentConfig,
+    mcpEventStream: activeMcpEventStream,
     getAgenticRuntimeContract,
     executeAgenticPlan,
     simulateAgenticPlan,
@@ -3017,7 +3146,7 @@ export function createStatesetMcpServer({
    */
   const adaptTool = (toolDef) => {
     const { name, description, inputSchema, handler } = toolDef;
-    const policyDomain =
+    const _policyDomain =
       toolDef?.policyDomain || TOOL_DOMAIN_BY_TOOL_NAME[name] || inferPolicyDomain(name);
 
     return wrapTool(name, description, inputSchema, async (args, extra) => {
@@ -3042,11 +3171,14 @@ export function createStatesetMcpServer({
   // Build and return the MCP server
   // ---------------------------------------------------------------------------
 
-  return createSdkMcpServer({
+  const server = createSdkMcpServer({
     name: 'stateset-commerce',
     version: '1.0.0',
     tools: ALL_TOOL_DEFS.map(adaptTool),
   });
+
+  server.mcpEventStream = activeMcpEventStream;
+  return server;
 }
 
 /**
