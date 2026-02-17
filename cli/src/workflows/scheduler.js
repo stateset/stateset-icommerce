@@ -17,8 +17,99 @@ import path from 'path';
  * Parse a cron expression into next execution time
  * Supports: minute hour day-of-month month day-of-week
  */
+function parseCronFieldToken(token, min, max, fieldLabel) {
+  if (token.startsWith('*/')) {
+    const stepToken = token.slice(2).trim();
+    if (!/^\d+$/.test(stepToken)) {
+      throw new Error(
+        `Invalid cron field token '${token}' for ${fieldLabel}: step value must be a positive integer`,
+      );
+    }
+
+    const step = Number.parseInt(stepToken, 10);
+
+    if (!Number.isInteger(step) || step <= 0) {
+      throw new Error(
+        `Invalid cron field token '${token}' for ${fieldLabel}: step must be a positive integer`,
+      );
+    }
+
+    return;
+  }
+
+  if (token.includes('-')) {
+    const [startValue, endValue] = token.split('-');
+
+    if (!startValue || !endValue) {
+      throw new Error(`Invalid cron field token '${token}' for ${fieldLabel}: malformed range`);
+    }
+
+    if (!/^\d+$/.test(startValue) || !/^\d+$/.test(endValue)) {
+      throw new Error(
+        `Invalid cron field token '${token}' for ${fieldLabel}: range must be integers`,
+      );
+    }
+
+    const start = Number.parseInt(startValue, 10);
+    const end = Number.parseInt(endValue, 10);
+
+    if (!Number.isInteger(start) || !Number.isInteger(end)) {
+      throw new Error(
+        `Invalid cron field token '${token}' for ${fieldLabel}: range must be integers`,
+      );
+    }
+
+    if (start < min || start > max || end < min || end > max) {
+      throw new Error(
+        `Invalid cron field token '${token}' for ${fieldLabel}: values must be between ${min} and ${max}`,
+      );
+    }
+
+    if (start > end) {
+      throw new Error(`Invalid cron field token '${token}' for ${fieldLabel}: range start > end`);
+    }
+
+    return;
+  }
+
+  if (!/^\d+$/.test(token)) {
+    throw new Error(
+      `Invalid cron field token '${token}' for ${fieldLabel}: value must be a number between ${min} and ${max}`,
+    );
+  }
+
+  const parsed = Number.parseInt(token, 10);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(
+      `Invalid cron field token '${token}' for ${fieldLabel}: value must be between ${min} and ${max}`,
+    );
+  }
+}
+
+function parseCronField(field, min, max, fieldLabel) {
+  const trimmed = `${field}`.trim();
+  if (!trimmed) {
+    throw new Error(`Invalid cron field for ${fieldLabel}: empty value`);
+  }
+
+  if (trimmed === '*') return trimmed;
+
+  const tokens = trimmed.split(',');
+  for (const token of tokens) {
+    parseCronFieldToken(token.trim(), min, max, fieldLabel);
+  }
+
+  return trimmed;
+}
+
 function parseCron(expression) {
-  const parts = expression.trim().split(/\s+/);
+  const trimmedExpression = `${expression}`.trim();
+  const parts = trimmedExpression.split(/\s+/);
+
+  if (!trimmedExpression) {
+    throw new Error('Invalid cron expression: empty expression');
+  }
+
   if (parts.length !== 5) {
     throw new Error(
       `Invalid cron expression: ${expression}. Expected 5 parts (min hour dom month dow)`,
@@ -26,6 +117,12 @@ function parseCron(expression) {
   }
 
   const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+
+  parseCronField(minute, 0, 59, 'minute');
+  parseCronField(hour, 0, 23, 'hour');
+  parseCronField(dayOfMonth, 1, 31, 'day of month');
+  parseCronField(month, 1, 12, 'month');
+  parseCronField(dayOfWeek, 0, 6, 'day of week');
 
   return { minute, hour, dayOfMonth, month, dayOfWeek };
 }
@@ -50,8 +147,7 @@ function cronFieldMatches(field, value, _max) {
 
   // Handle lists: 1,3,5
   if (field.includes(',')) {
-    const values = field.split(',').map((n) => parseInt(n, 10));
-    return values.includes(value);
+    return field.split(',').some((token) => cronFieldMatches(token.trim(), value, _max));
   }
 
   // Direct match
@@ -263,17 +359,25 @@ export class Scheduler extends EventEmitter {
     const historyFile = path.join(this.storePath, 'job-history.json');
 
     try {
-      if (fs.existsSync(jobsFile)) {
-        const data = JSON.parse(fs.readFileSync(jobsFile, 'utf-8'));
+      try {
+        const data = JSON.parse(await fs.promises.readFile(jobsFile, 'utf-8'));
         for (const jobData of data) {
           const job = new Job(jobData);
           this.jobs.set(job.id, job);
         }
         this.emit('loaded', { jobCount: this.jobs.size });
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
       }
 
-      if (fs.existsSync(historyFile)) {
-        this.jobHistory = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
+      try {
+        this.jobHistory = JSON.parse(await fs.promises.readFile(historyFile, 'utf-8'));
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
       }
     } catch (error) {
       this.emit('error', { type: 'load', error });
@@ -287,17 +391,17 @@ export class Scheduler extends EventEmitter {
     if (!this.storePath) return;
 
     try {
-      fs.mkdirSync(this.storePath, { recursive: true });
+      await fs.promises.mkdir(this.storePath, { recursive: true });
 
       const jobsFile = path.join(this.storePath, 'jobs.json');
       const historyFile = path.join(this.storePath, 'job-history.json');
 
       const jobsData = Array.from(this.jobs.values()).map((j) => j.toJSON());
-      fs.writeFileSync(jobsFile, JSON.stringify(jobsData, null, 2));
+      await fs.promises.writeFile(jobsFile, JSON.stringify(jobsData, null, 2));
 
       // Keep last 1000 history entries
       const recentHistory = this.jobHistory.slice(-1000);
-      fs.writeFileSync(historyFile, JSON.stringify(recentHistory, null, 2));
+      await fs.promises.writeFile(historyFile, JSON.stringify(recentHistory, null, 2));
 
       this.emit('saved', { jobCount: this.jobs.size });
     } catch (error) {

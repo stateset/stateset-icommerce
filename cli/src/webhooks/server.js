@@ -225,6 +225,7 @@ export class WebhookServer extends EventEmitter {
     storePath = null,
     executor = null, // Function to execute actions
     autoStart = false,
+    maxPayloadBytes = 1024 * 1024, // 1 MiB default
   }) {
     super();
 
@@ -240,6 +241,7 @@ export class WebhookServer extends EventEmitter {
 
     this.server = null;
     this.isRunning = false;
+    this.maxPayloadBytes = maxPayloadBytes;
 
     if (autoStart) {
       this.start();
@@ -256,19 +258,27 @@ export class WebhookServer extends EventEmitter {
       const sourcesFile = path.join(this.storePath, 'webhook-sources.json');
       const handlersFile = path.join(this.storePath, 'webhook-handlers.json');
 
-      if (fs.existsSync(sourcesFile)) {
-        const data = JSON.parse(fs.readFileSync(sourcesFile, 'utf-8'));
+      try {
+        const data = JSON.parse(await fs.promises.readFile(sourcesFile, 'utf-8'));
         for (const sourceData of data) {
           const source = new WebhookSource(sourceData);
           this.sources.set(source.id, source);
         }
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
       }
 
-      if (fs.existsSync(handlersFile)) {
-        const data = JSON.parse(fs.readFileSync(handlersFile, 'utf-8'));
+      try {
+        const data = JSON.parse(await fs.promises.readFile(handlersFile, 'utf-8'));
         for (const handlerData of data) {
           const handler = new WebhookHandler(handlerData);
           this.handlers.set(handler.id, handler);
+        }
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          throw error;
         }
       }
 
@@ -288,7 +298,7 @@ export class WebhookServer extends EventEmitter {
     if (!this.storePath) return;
 
     try {
-      fs.mkdirSync(this.storePath, { recursive: true });
+      await fs.promises.mkdir(this.storePath, { recursive: true });
 
       const sourcesFile = path.join(this.storePath, 'webhook-sources.json');
       const handlersFile = path.join(this.storePath, 'webhook-handlers.json');
@@ -298,10 +308,10 @@ export class WebhookServer extends EventEmitter {
         ...s.toJSON(),
         secret: null, // Redact
       }));
-      fs.writeFileSync(sourcesFile, JSON.stringify(sourcesData, null, 2));
+      await fs.promises.writeFile(sourcesFile, JSON.stringify(sourcesData, null, 2));
 
       const handlersData = Array.from(this.handlers.values()).map((h) => h.toJSON());
-      fs.writeFileSync(handlersFile, JSON.stringify(handlersData, null, 2));
+      await fs.promises.writeFile(handlersFile, JSON.stringify(handlersData, null, 2));
 
       this.emit('saved');
     } catch (error) {
@@ -480,11 +490,52 @@ export class WebhookServer extends EventEmitter {
       return;
     }
 
-    // Read body
-    let body = '';
-    for await (const chunk of req) {
-      body += chunk;
+    // Optional pre-check for oversized payloads
+    const contentLength = Number.parseInt(req.headers['content-length'], 10);
+    if (Number.isFinite(contentLength) && contentLength > this.maxPayloadBytes) {
+      this.emit('event:rejected', {
+        reason: 'Payload too large (Content-Length)',
+        source: source.name,
+        sizeBytes: contentLength,
+        maxBytes: this.maxPayloadBytes,
+      });
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'Payload too large',
+          maxBytes: this.maxPayloadBytes,
+          sizeBytes: contentLength,
+        }),
+      );
+      return;
     }
+
+    // Read body with streaming size guard
+    const chunks = [];
+    let bodyBytes = 0;
+    for await (const chunk of req) {
+      const chunkSize = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+      bodyBytes += chunkSize;
+      if (bodyBytes > this.maxPayloadBytes) {
+        this.emit('event:rejected', {
+          reason: 'Payload too large',
+          source: source.name,
+          sizeBytes: bodyBytes,
+          maxBytes: this.maxPayloadBytes,
+        });
+        req.destroy();
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: 'Payload too large',
+            maxBytes: this.maxPayloadBytes,
+          }),
+        );
+        return;
+      }
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks).toString();
 
     // Verify signature
     const signature = req.headers[source.signatureHeader.toLowerCase()];

@@ -24,6 +24,43 @@ function signBody(body, secret, algorithm = 'sha256', prefix = '') {
   return prefix + createHmac(algorithm, secret).update(body).digest('hex');
 }
 
+function createMockResponse() {
+  return {
+    statusCode: null,
+    headers: null,
+    body: '',
+    ended: false,
+    writeHead(statusCode, headers) {
+      this.statusCode = statusCode;
+      this.headers = headers;
+    },
+    end(payload = '') {
+      this.ended = true;
+      this.body = typeof payload === 'string' ? payload : String(payload || '');
+    },
+  };
+}
+
+function createMockRequest({
+  method = 'POST',
+  path = '/',
+  headers = {},
+  chunks = [],
+  onDestroy,
+} = {}) {
+  return {
+    method,
+    url: path,
+    headers: { host: 'localhost:3000', ...headers },
+    destroy: onDestroy || (() => {}),
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) {
+        yield chunk;
+      }
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // WebhookSource
 // ---------------------------------------------------------------------------
@@ -445,6 +482,56 @@ describe('WebhookServer', () => {
     it('accepts custom port', () => {
       const s = new WebhookServer({ port: 9999 });
       assert.equal(s.port, 9999);
+    });
+  });
+
+  describe('handleRequest', () => {
+    it('rejects oversized body by content-length', async () => {
+      const maxPayloadBytes = 8;
+      const maxPayloadServer = new WebhookServer({
+        port: 0,
+        autoStart: false,
+        maxPayloadBytes,
+      });
+      maxPayloadServer.registerSource({ id: 'src', name: 'source', path: '/webhooks/ship' });
+
+      const req = createMockRequest({
+        path: '/webhooks/ship',
+        headers: { 'content-length': String(maxPayloadBytes + 1) },
+        chunks: [Buffer.from('123456789')],
+      });
+      const res = createMockResponse();
+
+      await maxPayloadServer.handleRequest(req, res);
+
+      assert.equal(res.statusCode, 413);
+      assert.ok(res.body.includes('Payload too large'));
+    });
+
+    it('rejects oversized body while streaming', async () => {
+      const maxPayloadBytes = 8;
+      let destroyed = false;
+      const maxPayloadServer = new WebhookServer({
+        port: 0,
+        autoStart: false,
+        maxPayloadBytes,
+      });
+      maxPayloadServer.registerSource({ id: 'src', name: 'source', path: '/webhooks/ship' });
+
+      const req = createMockRequest({
+        path: '/webhooks/ship',
+        chunks: [Buffer.from('12345678'), Buffer.from('12')],
+        onDestroy: () => {
+          destroyed = true;
+        },
+      });
+      const res = createMockResponse();
+
+      await maxPayloadServer.handleRequest(req, res);
+
+      assert.equal(res.statusCode, 413);
+      assert.ok(res.body.includes('Payload too large'));
+      assert.equal(destroyed, true);
     });
   });
 

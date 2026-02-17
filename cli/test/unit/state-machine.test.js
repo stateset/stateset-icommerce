@@ -270,6 +270,20 @@ describe('StateMachine', () => {
       );
     });
 
+    it('throws if transition source state is unknown', () => {
+      assert.throws(
+        () =>
+          new StateMachine({
+            name: 'bad',
+            initialState: 'a',
+            states: [{ name: 'a' }],
+            transitions: [{ name: 'go', from: 'missing', to: 'a' }],
+            finalStates: [],
+          }),
+        /Transition 'go' has unknown from state 'missing'/,
+      );
+    });
+
     it('throws if final state not found', () => {
       assert.throws(
         () =>

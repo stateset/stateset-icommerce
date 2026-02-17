@@ -169,8 +169,14 @@ export class StateMachine extends EventEmitter {
     }
 
     // Check all transition targets exist
-    for (const trans of this.transitions.values()) {
-      for (const t of trans) {
+    for (const [fromState, transitions] of this.transitions) {
+      if (!this.states.has(fromState)) {
+        throw new Error(
+          `Transition '${transitions[0].name}' has unknown from state '${fromState}'`,
+        );
+      }
+
+      for (const t of transitions) {
         if (!this.states.has(t.to)) {
           throw new Error(`Transition '${t.name}' targets unknown state '${t.to}'`);
         }
@@ -274,8 +280,8 @@ export class WorkflowEngine extends EventEmitter {
     const instancesFile = path.join(this.storePath, 'workflow-instances.json');
 
     try {
-      if (fs.existsSync(instancesFile)) {
-        const data = JSON.parse(fs.readFileSync(instancesFile, 'utf-8'));
+      try {
+        const data = JSON.parse(await fs.promises.readFile(instancesFile, 'utf-8'));
         for (const instanceData of data) {
           const instance = new WorkflowInstance(instanceData);
           if (instance.status === 'running') {
@@ -285,6 +291,10 @@ export class WorkflowEngine extends EventEmitter {
           }
         }
         this.emit('loaded', { instanceCount: this.instances.size });
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
       }
     } catch (error) {
       this.emit('error', { type: 'load', error });
@@ -298,11 +308,11 @@ export class WorkflowEngine extends EventEmitter {
     if (!this.storePath) return;
 
     try {
-      fs.mkdirSync(this.storePath, { recursive: true });
+      await fs.promises.mkdir(this.storePath, { recursive: true });
 
       const instancesFile = path.join(this.storePath, 'workflow-instances.json');
       const instancesData = Array.from(this.instances.values()).map((i) => i.toJSON());
-      fs.writeFileSync(instancesFile, JSON.stringify(instancesData, null, 2));
+      await fs.promises.writeFile(instancesFile, JSON.stringify(instancesData, null, 2));
 
       this.emit('saved', { instanceCount: this.instances.size });
     } catch (error) {

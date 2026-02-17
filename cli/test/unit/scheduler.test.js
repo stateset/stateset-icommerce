@@ -105,6 +105,46 @@ describe('Job', () => {
     assert.ok(next > from);
   });
 
+  it('throws when cron expression has wrong number of fields', () => {
+    const job = new Job({
+      name: 'bad-cron',
+      type: 'cron',
+      schedule: '*/15 * * *', // missing day-of-week
+      action: { agent: 'test' },
+    });
+    assert.throws(() => job.calculateNextRun(new Date()), /Expected 5 parts/);
+  });
+
+  it('throws when cron expression contains out-of-range values', () => {
+    const job = new Job({
+      name: 'bad-cron-value',
+      type: 'cron',
+      schedule: '60 * * * *', // minute out of range
+      action: { agent: 'test' },
+    });
+    assert.throws(() => job.calculateNextRun(new Date()), /value must be between 0 and 59/);
+  });
+
+  it('throws when cron expression contains malformed ranges', () => {
+    const job = new Job({
+      name: 'bad-cron-range',
+      type: 'cron',
+      schedule: '1- 2 * * *', // malformed range with space
+      action: { agent: 'test' },
+    });
+    assert.throws(() => job.calculateNextRun(new Date()), /malformed range|range must be/);
+  });
+
+  it('throws when cron expression contains invalid step values', () => {
+    const job = new Job({
+      name: 'bad-cron-step',
+      type: 'cron',
+      schedule: '*/0 * * * *', // zero-step invalid
+      action: { agent: 'test' },
+    });
+    assert.throws(() => job.calculateNextRun(new Date()), /step must be a positive integer/);
+  });
+
   it('toJSON includes all fields', () => {
     const job = new Job({ name: 'json-test', action: { agent: 'x' } });
     const json = job.toJSON();
