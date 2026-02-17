@@ -3,7 +3,7 @@
 use rust_decimal_macros::dec;
 use stateset_core::{
     AddressType, CommerceError, CreateCustomer, CreateCustomerAddress, CreateOrder, CreateOrderItem,
-    CreateProduct, ProductId, UpdateCustomer, UpdateProduct,
+    CreateProduct, CreateProductVariant, ProductId, UpdateCustomer, UpdateProduct,
 };
 use stateset_db::PostgresDatabase;
 use std::env;
@@ -362,4 +362,53 @@ async fn postgres_product_update_batch_atomic_rejects_duplicate_slug() {
         Err(other) => panic!("expected DuplicateSlug, got {other:?}"),
         Ok(_) => panic!("expected DuplicateSlug, got success"),
     }
+}
+
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_product_variant_rejects_duplicate_sku() {
+    let Some(db) = setup_db().await else {
+        return;
+    };
+
+    db
+        .products()
+        .create_async(CreateProduct {
+            name: "First product".into(),
+            slug: Some("first-product".into()),
+            variants: Some(vec![CreateProductVariant {
+                sku: "DUP-SKU-POSTGRES".into(),
+                name: Some("Primary".into()),
+                price: rust_decimal_macros::dec!(10.00),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .await
+        .expect("create first product");
+
+    let second = db
+        .products()
+        .create_async(CreateProduct {
+            name: "Second product".into(),
+            slug: Some("second-product".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("create second product");
+
+    let result = db
+        .products()
+        .add_variant_public_async(
+            second.id,
+            CreateProductVariant {
+                sku: "DUP-SKU-POSTGRES".into(),
+                name: Some("Secondary".into()),
+                price: rust_decimal_macros::dec!(12.00),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(matches!(result, Err(CommerceError::DuplicateSku(_))));
 }

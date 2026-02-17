@@ -428,6 +428,24 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
         run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_migrations
 
+      - name: Postgres Validations
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_validations
+
+      - name: Postgres Order Transitions
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_order_transitions
+
+      - name: Postgres Order Versioning
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_order_versioning
+
       - name: Postgres CRUD smoke
         env:
           POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test

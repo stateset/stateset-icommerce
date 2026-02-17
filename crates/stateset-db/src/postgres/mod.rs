@@ -414,7 +414,107 @@ impl PostgresDatabase {
 pub(crate) fn map_db_error(e: sqlx::Error) -> CommerceError {
     match e {
         sqlx::Error::RowNotFound => CommerceError::NotFound,
+        sqlx::Error::Database(db_err) => {
+            let message = db_err.message().to_string();
+            if let Some(code) = db_err.code() {
+                match code.as_ref() {
+                    // 23505: unique_violation
+                    "23505" => {
+                        let constraint = db_err.constraint().unwrap_or("unknown");
+                        if let Some(conflict) = map_unique_constraint_error(constraint, &message) {
+                            return conflict;
+                        }
+
+                        CommerceError::Conflict(format!("{constraint}: {message}"))
+                    }
+                    // 23514: check_violation
+                    "23514" => CommerceError::ValidationError(message),
+                    // 23502: not_null_violation
+                    "23502" => CommerceError::ValidationError(message),
+                    _ => CommerceError::DatabaseError(message),
+                }
+            } else {
+                CommerceError::DatabaseError(message)
+            }
+        }
         _ => CommerceError::DatabaseError(e.to_string()),
+    }
+}
+
+fn map_unique_constraint_error(constraint: &str, message: &str) -> Option<CommerceError> {
+    let lower = constraint.to_ascii_lowercase();
+    if lower.contains("email") {
+        return Some(CommerceError::EmailAlreadyExists(duplicate_key_value(message)));
+    }
+
+    if lower.contains("slug") {
+        return Some(CommerceError::DuplicateSlug(duplicate_key_value(message)));
+    }
+
+    if lower.contains("sku") {
+        return Some(CommerceError::DuplicateSku(duplicate_key_value(message)));
+    }
+
+    None
+}
+
+fn duplicate_key_value(message: &str) -> String {
+    if let Some(start) = message.find(")=(") {
+        let value_and_rest = &message[start + 3..];
+        if let Some(end) = value_and_rest.find(')') {
+            return value_and_rest[..end]
+                .trim_matches(|c| c == '\'' || c == '"')
+                .to_string();
+        }
+    }
+
+    message.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{duplicate_key_value, map_unique_constraint_error};
+    use stateset_core::CommerceError;
+
+    #[test]
+    fn test_duplicate_key_value_extracts_first_value() {
+        let message = "duplicate key value violates unique constraint \"products_sku_key\" Detail: Key (sku)=(DUP-001) already exists.";
+        assert_eq!(duplicate_key_value(message), "DUP-001");
+    }
+
+    #[test]
+    fn test_duplicate_key_value_falls_back_to_message() {
+        let message = "duplicate key value violates unique constraint \"products_sku_key\"";
+        assert_eq!(duplicate_key_value(message), message);
+    }
+
+    #[test]
+    fn test_map_unique_constraint_error_recognizes_email() {
+        let error = map_unique_constraint_error("users_email_key", "duplicate key value violates unique constraint \"users_email_key\"")
+            .expect("expected email error");
+        assert!(matches!(error, CommerceError::EmailAlreadyExists(_)));
+    }
+
+    #[test]
+    fn test_map_unique_constraint_error_recognizes_slug() {
+        let error = map_unique_constraint_error("products_slug_key", "duplicate key value violates unique constraint \"products_slug_key\"")
+            .expect("expected slug error");
+        assert!(matches!(error, CommerceError::DuplicateSlug(_)));
+    }
+
+    #[test]
+    fn test_map_unique_constraint_error_is_case_insensitive() {
+        let error =
+            map_unique_constraint_error("Products_Sku_Key", "duplicate key value violates unique constraint \"Products_Sku_Key\"")
+                .expect("expected sku error");
+        assert!(matches!(error, CommerceError::DuplicateSku(_)));
+    }
+
+    #[test]
+    fn test_map_unique_constraint_error_recognizes_sku() {
+        let error = map_unique_constraint_error("products_variants_sku_key", "duplicate key value violates unique constraint \"products_variants_sku_key\"")
+            .expect("expected sku error");
+        assert!(matches!(error, CommerceError::DuplicateSku(_)));
     }
 }
 
