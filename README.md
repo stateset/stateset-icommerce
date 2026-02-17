@@ -44,9 +44,9 @@ npm run check                # root quality checks
 | **A2A Webhooks** | HMAC-SHA256 signed notifications with SSRF validation and exponential backoff retry |
 | **A2A Event Streaming** | Real-time SSE push with wildcard filtering and persistent event log |
 | **Agent Discovery** | Find agents by capability, reputation scoring, trust-level gating |
-| **232 MCP Tools** | Up from 175 — 53 new A2A tools across 26 modular domain modules |
+| **256 MCP Tools** | Up from 175 — 53 A2A tools + 8 agentic runtime tools across 27 modular domain modules |
 | **Modular MCP Server** | Rewritten from 9,340 to 470 lines (95% reduction) with `adaptTool()` composition |
-| **4,300+ Tests** | 500+ new A2A tests, 60+ test files across the CLI |
+| **4,700+ Tests** | 4,068 CLI + 434 Rust + 261 admin across 60+ test files |
 
 ---
 
@@ -91,10 +91,12 @@ StateSet enables this shift by providing a portable, embeddable commerce engine 
 ```
 stateset-icommerce/
 ├── crates/
+│   ├── stateset-primitives/ # Strongly-typed newtypes (OrderId, Sku, Money)
 │   ├── stateset-core/       # Pure domain models & business logic (no I/O)
 │   ├── stateset-db/         # SQLite + PostgreSQL implementations
 │   ├── stateset-embedded/   # Unified high-level API
-│   └── stateset-observability/ # Metrics + tracing helpers
+│   ├── stateset-observability/ # Metrics + tracing helpers
+│   └── stateset-test-utils/ # Shared test fixtures & assertion macros
 ├── bindings/
 │   ├── node/                # JavaScript/TypeScript (NAPI)
 │   ├── python/              # Python (PyO3)
@@ -107,10 +109,10 @@ stateset-icommerce/
 │   ├── go/                  # Go (cgo)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
-    ├── bin/                 # CLI programs (40 entry points)
-    ├── src/                 # MCP server (232 tools)
+    ├── bin/                 # CLI programs (41 entry points)
+    ├── src/                 # MCP server (256 tools)
     ├── src/a2a/             # Agent-to-Agent commerce (payments, subscriptions, splits, events)
-    ├── src/channels/        # 9-channel messaging gateway
+    ├── src/channels/        # 10-channel messaging gateway
     │   ├── base.js          # Shared sessions, commands, pipeline
     │   ├── webchat.js       # HTTP-based web chat gateway
     │   ├── middleware.js     # Rate limiter, content filter, logger
@@ -128,13 +130,15 @@ stateset-icommerce/
     ├── src/memory/          # Persistent conversation memory
     ├── src/browser/         # Chrome DevTools Protocol automation
     ├── src/skills/          # Skills loader, registry, marketplace
+    ├── src/chains/          # Blockchain integration (Solana, Base, SET Chain, etc.)
+    ├── src/x402/            # x402 AI agent payment protocol
     ├── src/imessage/        # iMessage gateway (BlueBubbles)
     ├── src/matrix/          # Matrix protocol gateway
     ├── src/teams/           # Microsoft Teams gateway
     ├── src/sync/            # VES sync engine, keys, groups
     ├── skills/              # 38 commerce domain skills
     ├── deploy/              # Systemd services, Tailscale, SSH tunnels
-    └── .claude/             # 8 AI agents
+    └── .claude/             # 18 AI agents
 ```
 
 ```
@@ -152,7 +156,7 @@ stateset-icommerce/
 │  │ 254 types   │  │SQLite/Postgres│ │Deterministic│             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │  232 MCP    │  │  8 Agents   │  │  38 Skills  │             │
+│  │  256 MCP    │  │ 18 Agents   │  │  38 Skills  │             │
 │  │   Tools     │  │ Specialized │  │  Knowledge  │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────────────────────────────────────────┐            │
@@ -165,9 +169,9 @@ stateset-icommerce/
 │  │  STT + TTS  │  │ Persistent  │  │  CDP Tools  │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────────────────────────────────────────┐            │
-│  │           9-Channel Messaging Gateway            │            │
+│  │          10-Channel Messaging Gateway            │            │
 │  │  WhatsApp · Telegram · Discord · Slack · Signal  │            │
-│  │  Google Chat · WebChat · iMessage · Teams        │            │
+│  │  Google Chat · WebChat · iMessage · Teams · Matrix│           │
 │  │  Sessions · Middleware · Identity · Handoff       │            │
 │  └─────────────────────────────────────────────────┘            │
 │  ┌─────────────────────────────────────────────────┐            │
@@ -682,7 +686,7 @@ stateset-sync groups:my-groups  # List your group memberships
 
 ### Messaging Channels CLI
 
-Deploy AI commerce agents to 9 messaging platforms. Each channel runs as a thin adapter over the shared base module.
+Deploy AI commerce agents to 10 messaging platforms. Each channel runs as a thin adapter over the shared base module.
 
 ```bash
 # Single-channel gateways
@@ -845,7 +849,7 @@ stateset --provider ollama --model llama3 "check inventory"
 stateset "ship order #12345"
 ```
 
-Non-Claude providers operate in chat-only mode (no MCP tool calls). Claude uses the Agent SDK with full access to all 232 MCP tools.
+Non-Claude providers operate in chat-only mode (no MCP tool calls). Claude uses the Agent SDK with full access to all 256 MCP tools.
 
 ### Validation & Errors
 
@@ -929,9 +933,9 @@ Order status updates enforce the core state machine (cancel before shipment, ref
 
 ---
 
-## MCP Tools (232 Total)
+## MCP Tools (256 Total)
 
-The MCP server exposes 232 tools across 26 domain modules for AI agent integration:
+The MCP server exposes 256 tools (248 domain tools + 8 agentic runtime tools) across 27 domain modules for AI agent integration:
 
 | Domain | Tools | Count |
 |--------|-------|-------|
@@ -967,17 +971,19 @@ The MCP server exposes 232 tools across 26 domain modules for AI agent integrati
 | **Treasury** | treasury tools (budget, allocation, reporting) | 9 |
 | **Custom Objects** | custom_objects CRUD and schema management | 8 |
 | **Vector Search** | vector_upsert, vector_search, vector_delete and more | 6 |
-| **Sync** | sync push, pull, status, verify, rebase and more | 9 |
-| **ERC-8004** | tokenized commerce operations | 8 |
+| **Sync** | sync push, pull, status, verify, rebase and more | 10 |
+| **ERC-8004** | tokenized commerce operations | 5 |
+| **Agentic Runtime** | agentic_runtime_contract, agentic_plan, agentic_replay, agentic_subscribe_events, agentic_unsubscribe_events, agentic_list_event_subscriptions, agentic_get_event_history, agentic_execute_plan | 8 |
 
 ---
 
 ## AI Agents
 
-Eight specialized agents for different commerce domains:
+Eighteen specialized agents for different commerce domains:
 
 | Agent | Description | Use Case |
 |-------|-------------|----------|
+| **customer-service** | Full-service agent | All domains, general queries |
 | **checkout** | Shopping cart & ACP specialist | Cart creation, checkout flow |
 | **orders** | Order lifecycle management | Fulfillment, status updates |
 | **inventory** | Stock management specialist | Reservations, adjustments |
@@ -985,7 +991,16 @@ Eight specialized agents for different commerce domains:
 | **analytics** | Business intelligence | Metrics, forecasting |
 | **promotions** | Promotions & discounts specialist | Campaigns, coupons, discount rules |
 | **subscriptions** | Subscription management specialist | Plans, billing cycles, recurring payments |
-| **customer-service** | Full-service agent | All domains |
+| **storefront** | E-commerce storefront creator | Scaffold Next.js/Vite/Astro storefronts |
+| **sync** | VES sync specialist | Event sync, conflict resolution |
+| **manufacturing** | BOM & work order specialist | Bills of materials, production tracking |
+| **payments** | Payment processing specialist | Payments, refunds, reconciliation |
+| **shipments** | Fulfillment & tracking specialist | Shipment creation, delivery updates |
+| **suppliers** | Procurement specialist | Supplier management, purchase orders |
+| **invoices** | B2B billing specialist | Invoice generation, accounts receivable |
+| **warranties** | Warranty & claims specialist | Coverage, claims processing |
+| **currency** | Multi-currency specialist | Exchange rates, currency conversion |
+| **tax** | Tax compliance specialist | Tax calculation, exemptions, jurisdictions |
 
 ---
 
@@ -1048,7 +1063,7 @@ Eight specialized agents for different commerce domains:
 - Conflict detection and resolution (remote-wins, local-wins, merge)
 
 ### Multi-Channel Messaging Gateway
-- 9 platforms: WhatsApp, Telegram, Discord, Slack, Signal, Google Chat, WebChat, iMessage, Teams
+- 10 platforms: WhatsApp, Telegram, Discord, Slack, Signal, Google Chat, WebChat, iMessage, Teams, Matrix
 - Persistent sessions across gateway restarts (SQLite-backed)
 - Koa-style middleware pipeline (rate limiter, content filter, logger, language detect)
 - Platform-aware rich messages (Embeds, Block Kit, HTML, plain text)
@@ -1111,11 +1126,11 @@ Eight specialized agents for different commerce domains:
 - Real-time SSE event streaming with wildcard/prefix filtering and persistent event log
 - Agent discovery by capability, reputation scoring, and trust-level gating
 - Idempotency keys to prevent duplicate payments
-- 53 dedicated MCP tools for the full A2A lifecycle
+- 53 dedicated A2A domain tools + 8 agentic runtime tools
 
 ### AI-Ready Architecture
 - Deterministic operations for agent reliability
-- MCP protocol integration (232 tools across 26 modules)
+- MCP protocol integration (256 tools across 27 modules)
 - Safety architecture (--apply flag for writes)
 - Event-driven for full auditability
 - Portable state in single database file
@@ -1396,12 +1411,12 @@ stateset --apply "add 50 units to SKU-001"
 
 ## Development
 
-Core checks (matches CI):
+Rust (434+ tests):
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p stateset-core -p stateset-db -p stateset-embedded
+cargo test -p stateset-primitives -p stateset-core -p stateset-db -p stateset-embedded -p stateset-test-utils
 cargo bench -p stateset-core -p stateset-db -p stateset-embedded
 ```
 
@@ -1412,7 +1427,7 @@ cd bindings/node && npm ci && npm test
 cd bindings/python && python -m pip install maturin pytest && maturin develop --release && pytest -q
 ```
 
-CLI (4,300+ tests):
+CLI (4,000+ tests):
 
 ```bash
 cd cli
@@ -1422,6 +1437,14 @@ npm run test:integration    # Integration tests
 npm run test:e2e            # End-to-end tests
 npm run lint                # ESLint
 npm run typecheck           # JSDoc type checking
+npm run test:coverage       # Coverage report
+```
+
+Admin (261 tests):
+
+```bash
+cd admin
+npm test                    # Vitest test suite
 ```
 
 ---
@@ -1432,14 +1455,17 @@ npm run typecheck           # JSDoc type checking
 stateset-icommerce/
 ├── Cargo.toml                 # Workspace manifest
 ├── crates/
+│   ├── stateset-primitives/   # Strongly-typed newtypes (OrderId, Sku, Money, CurrencyCode)
 │   ├── stateset-core/         # Domain models (32 domain modules)
 │   │   └── src/models/        # 254 types
 │   ├── stateset-db/           # Database layer
 │   │   ├── src/sqlite/        # 18 SQLite modules
-│   │   ├── src/postgres/      # 8 PostgreSQL modules
+│   │   ├── src/postgres/      # 37 PostgreSQL modules
 │   │   └── migrations/        # 26 SQL migrations
-│   └── stateset-embedded/     # High-level API
-│       └── src/               # 33 API modules
+│   ├── stateset-embedded/     # High-level API
+│   │   └── src/               # 33 API modules
+│   ├── stateset-observability/ # Metrics + tracing helpers
+│   └── stateset-test-utils/   # Shared test fixtures & assertion macros
 ├── bindings/
 │   ├── node/                  # NAPI bindings (@stateset/embedded)
 │   ├── python/                # PyO3 bindings (stateset-embedded)
@@ -1452,9 +1478,9 @@ stateset-icommerce/
 │   ├── go/                    # cgo bindings (stateset Go module)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
-│   ├── bin/                   # 40 CLI entry points
-│   ├── src/mcp-server.js      # MCP orchestrator (232 tools, 470 lines)
-│   ├── src/tools/             # 26 modular tool modules
+│   ├── bin/                   # 41 CLI entry points
+│   ├── src/mcp-server.js      # MCP orchestrator (256 tools)
+│   ├── src/tools/             # 27 modular tool modules
 │   ├── src/a2a/               # Agent-to-Agent commerce
 │   │   ├── index.js           # Direct payments, quotes, escrow, conditions
 │   │   ├── store.js           # SQLite persistence (7 tables)
@@ -1462,7 +1488,7 @@ stateset-icommerce/
 │   │   ├── subscriptions.js   # Recurring agent subscriptions
 │   │   ├── splits.js          # Multi-party split payments
 │   │   └── event-stream.js    # SSE push, event log, subscriptions
-│   ├── src/channels/          # 9-channel messaging gateway
+│   ├── src/channels/          # 10-channel messaging gateway
 │   ├── src/providers/         # Multi-provider AI (Claude, OpenAI, Gemini, Ollama)
 │   ├── src/voice/             # Voice mode (STT + TTS)
 │   ├── src/memory/            # Persistent conversation memory
@@ -1484,7 +1510,7 @@ stateset-icommerce/
 │   │   └── conflict.js        # Conflict resolution
 │   ├── skills/                # 38 commerce domain skills
 │   ├── deploy/                # Systemd services, Tailscale, SSH tunnels
-│   └── .claude/               # 8 AI agents
+│   └── .claude/               # 18 AI agents
 └── examples/
 ```
 
