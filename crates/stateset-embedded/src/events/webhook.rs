@@ -203,7 +203,7 @@ pub enum DeliveryStatus {
 /// Webhook manager handles registration and delivery
 pub struct WebhookManager {
     webhooks: Arc<RwLock<HashMap<Uuid, Webhook>>>,
-    delivery_history: Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>,
+    delivery_history: Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>>,
     config: WebhookConfig,
     client: reqwest::Client,
     runtime: WebhookRuntime,
@@ -436,7 +436,7 @@ async fn deliver_to_webhook(
     webhook: &Webhook,
     event: &CommerceEvent,
     config: &WebhookConfig,
-    delivery_history: &Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>,
+    delivery_history: &Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>>,
 ) {
     let mut delivery = WebhookDelivery {
         id: Uuid::new_v4(),
@@ -582,7 +582,7 @@ async fn deliver_to_webhook(
 }
 
 fn append_delivery_record(
-    delivery_history: &Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>,
+    delivery_history: &Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>>,
     webhook_id: Uuid,
     delivery: WebhookDelivery,
     max_delivery_history: usize,

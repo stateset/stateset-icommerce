@@ -1137,6 +1137,8 @@ impl Commerce {
         use rust_decimal::Decimal;
         use stateset_core::{ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem};
 
+        let cart_id: stateset_core::CartId = cart_id.into();
+
         // Get the cart
         let cart = self.carts().get(cart_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
@@ -1180,7 +1182,7 @@ impl Commerce {
         let request = TaxCalculationRequest {
             line_items,
             shipping_address: tax_address,
-            customer_id: cart.customer_id,
+            customer_id: cart.customer_id.map(Into::into),
             currency: cart.currency.clone(),
             shipping_amount: Some(cart.shipping_amount),
             ..Default::default()
@@ -1246,6 +1248,8 @@ impl Commerce {
         use stateset_core::{
             ApplyPromotionsRequest, PromotionLineItem, UpdateCart, UpdateCartItem,
         };
+
+        let cart_id: stateset_core::CartId = cart_id.into();
 
         // Get the cart
         let cart = self.carts().get(cart_id)?.ok_or(stateset_core::CommerceError::NotFound)?;

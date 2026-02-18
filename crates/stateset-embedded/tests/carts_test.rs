@@ -1,6 +1,7 @@
 //! Integration tests for Cart management
 
 use rust_decimal_macros::dec;
+use stateset_core::CartId;
 use stateset_embedded::{
     AddCartItem, Cart, CartAddress, CartFilter, CartStatus, CheckoutResult, Commerce, CreateCart,
     CreateCouponCode, CreateCustomer, CreatePromotion, PromotionType, SetCartPayment,
@@ -13,7 +14,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Helper to create a test customer
-fn create_test_customer(commerce: &Commerce) -> Uuid {
+fn create_test_customer(commerce: &Commerce) -> stateset_embedded::CustomerId {
     commerce
         .customers()
         .create(CreateCustomer {
@@ -24,7 +25,6 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
         })
         .expect("Failed to create test customer")
         .id
-        .into_uuid()
 }
 
 /// Helper to create a test cart with default items
@@ -40,7 +40,10 @@ fn create_test_cart(commerce: &Commerce) -> Cart {
 }
 
 /// Helper to create a test cart for a specific customer
-fn create_test_cart_for_customer(commerce: &Commerce, customer_id: Uuid) -> Cart {
+fn create_test_cart_for_customer(
+    commerce: &Commerce,
+    customer_id: stateset_embedded::CustomerId,
+) -> Cart {
     commerce
         .carts()
         .create(CreateCart { customer_id: Some(customer_id), ..Default::default() })
@@ -65,7 +68,7 @@ fn create_test_address() -> CartAddress {
 }
 
 /// Helper to add test item to cart
-fn add_test_item(commerce: &Commerce, cart_id: Uuid) -> stateset_embedded::CartItem {
+fn add_test_item(commerce: &Commerce, cart_id: CartId) -> stateset_embedded::CartItem {
     commerce
         .carts()
         .add_item(
@@ -219,7 +222,10 @@ fn test_get_cart_by_id() {
 fn test_get_cart_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce.carts().get(Uuid::new_v4()).expect("Should not error for missing cart");
+    let result = commerce
+        .carts()
+        .get(Uuid::new_v4().into())
+        .expect("Should not error for missing cart");
 
     assert!(result.is_none());
 }

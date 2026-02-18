@@ -125,7 +125,7 @@ fn test_metrics_record_key_engine_operations() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id.into_uuid()),
+            customer_id: Some(customer.id.into()),
             customer_email: Some(customer.email.clone()),
             items: Some(vec![AddCartItem {
                 sku: "SKU-METRIC-CART".into(),
@@ -171,7 +171,7 @@ fn test_metrics_record_key_engine_operations() {
     commerce
         .subscriptions()
         .subscribe(CreateSubscription {
-            customer_id: customer.id.into_uuid(),
+            customer_id: customer.id,
             plan_id: plan.id,
             ..Default::default()
         })
@@ -415,7 +415,6 @@ fn test_event_system_builder_normalizes_config() {
 async fn test_event_subscription() {
     use chrono::Utc;
     use stateset_core::CommerceEvent;
-    use uuid::Uuid;
 
     let commerce = Commerce::new(":memory:").unwrap();
     let mut subscription = commerce.subscribe_events();
@@ -850,7 +849,8 @@ fn test_cart_promotions_integration() {
     commerce.carts().apply_discount(cart.id, "SAVE25").unwrap();
 
     // Calculate promotions
-    let result = commerce.apply_cart_promotions(cart.id).unwrap();
+    let cart_id: uuid::Uuid = cart.id.into();
+    let result = commerce.apply_cart_promotions(cart_id).unwrap();
 
     // 25% off of $100 = $25 discount
     assert_eq!(result.total_discount, dec!(25.00));
@@ -858,7 +858,7 @@ fn test_cart_promotions_integration() {
     assert_eq!(result.applied_promotions[0].promotion_name, "25% Off Everything");
 
     // Verify cart was updated
-    let updated_cart = commerce.carts().get(cart.id).unwrap().unwrap();
+    let updated_cart = commerce.carts().get(cart_id.into()).unwrap().unwrap();
     assert_eq!(updated_cart.discount_amount, dec!(25.00));
     assert_eq!(updated_cart.grand_total, dec!(75.00)); // $100 - $25
 }

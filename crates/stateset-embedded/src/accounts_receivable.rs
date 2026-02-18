@@ -129,7 +129,7 @@ impl AccountsReceivable {
         invoice_id: Uuid,
         status: CollectionStatus,
     ) -> Result<()> {
-        self.db.accounts_receivable().update_collection_status(invoice_id, status)
+        self.db.accounts_receivable().update_collection_status(invoice_id.into(), status)
     }
 
     // ========================================================================
@@ -164,7 +164,9 @@ impl AccountsReceivable {
         letter_type: DunningLetterType,
         sent_by: Option<&str>,
     ) -> Result<CollectionActivity> {
-        self.db.accounts_receivable().send_dunning_letter(invoice_id, letter_type, sent_by)
+        self.db
+            .accounts_receivable()
+            .send_dunning_letter(invoice_id.into(), letter_type, sent_by)
     }
 
     // ========================================================================

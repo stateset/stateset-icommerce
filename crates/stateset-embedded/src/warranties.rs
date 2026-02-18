@@ -10,9 +10,9 @@
 //!
 //! // Register a warranty for a product
 //! let warranty = commerce.warranties().create(CreateWarranty {
-//!     customer_id: Uuid::new_v4(),
+//!     customer_id: Uuid::new_v4().into(),
 //!     product_id: Some(ProductId::new()),
-//!     order_id: Some(Uuid::new_v4()),
+//!     order_id: Some(Uuid::new_v4().into()),
 //!     warranty_type: Some(WarrantyType::Standard),
 //!     duration_months: Some(12),
 //!     ..Default::default()
@@ -63,7 +63,7 @@ impl Warranties {
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let warranty = commerce.warranties().create(CreateWarranty {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: Uuid::new_v4().into(),
     ///     product_id: Some(ProductId::new()),
     ///     warranty_type: Some(WarrantyType::Extended),
     ///     duration_months: Some(24),
@@ -78,7 +78,7 @@ impl Warranties {
 
     /// Get a warranty by ID
     pub fn get(&self, id: Uuid) -> Result<Option<Warranty>> {
-        self.db.warranties().get(id)
+        self.db.warranties().get(id.into())
     }
 
     /// Get a warranty by warranty number (e.g., "WTY-20231215123456")
@@ -93,7 +93,7 @@ impl Warranties {
 
     /// Update a warranty
     pub fn update(&self, id: Uuid, input: stateset_core::UpdateWarranty) -> Result<Warranty> {
-        self.db.warranties().update(id, input)
+        self.db.warranties().update(id.into(), input)
     }
 
     /// List warranties with optional filtering
@@ -103,27 +103,27 @@ impl Warranties {
 
     /// Get all warranties for a customer
     pub fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Warranty>> {
-        self.db.warranties().for_customer(customer_id)
+        self.db.warranties().for_customer(customer_id.into())
     }
 
     /// Get all warranties for an order
     pub fn for_order(&self, order_id: Uuid) -> Result<Vec<Warranty>> {
-        self.db.warranties().for_order(order_id)
+        self.db.warranties().for_order(order_id.into())
     }
 
     /// Expire a warranty
     pub fn expire(&self, id: Uuid) -> Result<Warranty> {
-        self.db.warranties().expire(id)
+        self.db.warranties().expire(id.into())
     }
 
     /// Void a warranty (e.g., due to terms violation)
     pub fn void(&self, id: Uuid) -> Result<Warranty> {
-        self.db.warranties().void(id)
+        self.db.warranties().void(id.into())
     }
 
     /// Transfer warranty to a new customer
     pub fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
-        self.db.warranties().transfer(id, new_customer_id)
+        self.db.warranties().transfer(id.into(), new_customer_id.into())
     }
 
     /// Check if a warranty is valid (active and not expired)
@@ -142,7 +142,7 @@ impl Warranties {
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let claim = commerce.warranties().create_claim(CreateWarrantyClaim {
-    ///     warranty_id: Uuid::new_v4(),
+    ///     warranty_id: Uuid::new_v4().into(),
     ///     issue_description: "Screen cracked".into(),
     ///     contact_email: Some("customer@example.com".into()),
     ///     contact_phone: Some("555-1234".into()),
@@ -171,7 +171,7 @@ impl Warranties {
 
     /// Get all claims for a warranty
     pub fn get_claims(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>> {
-        self.db.warranties().get_claims(warranty_id)
+        self.db.warranties().get_claims(warranty_id.into())
     }
 
     /// List claims with optional filtering

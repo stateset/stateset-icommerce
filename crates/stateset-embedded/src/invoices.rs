@@ -11,8 +11,8 @@
 //!
 //! // Create an invoice
 //! let invoice = commerce.invoices().create(CreateInvoice {
-//!     customer_id: Uuid::new_v4(),
-//!     order_id: Some(Uuid::new_v4()),
+//!     customer_id: Uuid::new_v4().into(),
+//!     order_id: Some(Uuid::new_v4().into()),
 //!     billing_email: Some("customer@example.com".into()),
 //!     billing_name: Some("Alice Smith".into()),
 //!     billing_address: Some("123 Main St, City, ST 12345".into()),
@@ -26,10 +26,10 @@
 //! })?;
 //!
 //! // Send the invoice
-//! let invoice = commerce.invoices().send(invoice.id)?;
+//! let invoice = commerce.invoices().send(invoice.id.into())?;
 //!
 //! // Record a payment
-//! commerce.invoices().record_payment(invoice.id, stateset_embedded::RecordInvoicePayment {
+//! commerce.invoices().record_payment(invoice.id.into(), stateset_embedded::RecordInvoicePayment {
 //!     amount: dec!(1500.00),
 //!     payment_method: Some("credit_card".into()),
 //!     reference: Some("PAY-12345".into()),
@@ -68,7 +68,7 @@ impl Invoices {
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let invoice = commerce.invoices().create(CreateInvoice {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: Uuid::new_v4().into(),
     ///     invoice_type: Some(InvoiceType::Standard),
     ///     billing_email: Some("billing@company.com".into()),
     ///     billing_name: Some("Acme Corp".into()),
@@ -97,7 +97,7 @@ impl Invoices {
 
     /// Get an invoice by ID
     pub fn get(&self, id: Uuid) -> Result<Option<Invoice>> {
-        self.db.invoices().get(id)
+        self.db.invoices().get(id.into())
     }
 
     /// Get an invoice by invoice number (e.g., "INV-20231215123456")
@@ -107,7 +107,7 @@ impl Invoices {
 
     /// Update an invoice
     pub fn update(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
-        self.db.invoices().update(id, input)
+        self.db.invoices().update(id.into(), input)
     }
 
     /// List invoices with optional filtering
@@ -117,46 +117,46 @@ impl Invoices {
 
     /// Get all invoices for a customer
     pub fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Invoice>> {
-        self.db.invoices().for_customer(customer_id)
+        self.db.invoices().for_customer(customer_id.into())
     }
 
     /// Get all invoices for an order
     pub fn for_order(&self, order_id: Uuid) -> Result<Vec<Invoice>> {
-        self.db.invoices().for_order(order_id)
+        self.db.invoices().for_order(order_id.into())
     }
 
     // === Status Transitions ===
 
     /// Send an invoice to the customer
     pub fn send(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().send(id)
+        self.db.invoices().send(id.into())
     }
 
     /// Mark invoice as viewed by customer
     pub fn mark_viewed(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().mark_viewed(id)
+        self.db.invoices().mark_viewed(id.into())
     }
 
     /// Void an invoice
     pub fn void(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().void(id)
+        self.db.invoices().void(id.into())
     }
 
     /// Write off an uncollectible invoice
     pub fn write_off(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().write_off(id)
+        self.db.invoices().write_off(id.into())
     }
 
     /// Mark invoice as disputed
     pub fn dispute(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().dispute(id)
+        self.db.invoices().dispute(id.into())
     }
 
     // === Line Item Operations ===
 
     /// Add an item to an invoice
     pub fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        self.db.invoices().add_item(invoice_id, item)
+        self.db.invoices().add_item(invoice_id.into(), item)
     }
 
     /// Update a line item
@@ -171,7 +171,7 @@ impl Invoices {
 
     /// Get items for an invoice
     pub fn get_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
-        self.db.invoices().get_items(invoice_id)
+        self.db.invoices().get_items(invoice_id.into())
     }
 
     // === Payment Operations ===
@@ -206,7 +206,7 @@ impl Invoices {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn record_payment(&self, id: Uuid, payment: RecordInvoicePayment) -> Result<Invoice> {
-        self.db.invoices().record_payment(id, payment)
+        self.db.invoices().record_payment(id.into(), payment)
     }
 
     // === Queries ===
@@ -222,7 +222,7 @@ impl Invoices {
     ///
     /// Use this after modifying line items to update subtotal, tax, and total.
     pub fn recalculate(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().recalculate(id)
+        self.db.invoices().recalculate(id.into())
     }
 
     /// Count invoices matching a filter

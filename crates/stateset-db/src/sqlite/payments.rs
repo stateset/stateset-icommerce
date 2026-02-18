@@ -9,7 +9,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Row, params};
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
-    OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentRepository,
+    InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentRepository,
     PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
     generate_payment_number, generate_refund_number, validate_batch_size,
 };
@@ -391,8 +391,8 @@ impl PaymentRepository for SqlitePaymentRepository {
         self.list(PaymentFilter { order_id: Some(order_id), ..Default::default() })
     }
 
-    fn for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
-        self.list(PaymentFilter { invoice_id: Some(invoice_id), ..Default::default() })
+    fn for_invoice(&self, invoice_id: InvoiceId) -> Result<Vec<Payment>> {
+        self.list(PaymentFilter { invoice_id: Some(invoice_id.into()), ..Default::default() })
     }
 
     fn mark_processing(&self, id: PaymentId) -> Result<Payment> {

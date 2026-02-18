@@ -112,7 +112,7 @@ impl Payments {
 
     /// Get all payments for an invoice
     pub fn for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
-        self.db.payments().for_invoice(invoice_id)
+        self.db.payments().for_invoice(invoice_id.into())
     }
 
     /// Mark payment as processing

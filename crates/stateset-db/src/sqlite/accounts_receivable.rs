@@ -18,9 +18,10 @@ use stateset_core::{
     ArAgingSummary, ArPaymentApplication, CollectionActivity, CollectionActivityFilter,
     CollectionActivityType, CollectionStatus, CreateCollectionActivity, CreateCreditMemo,
     CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoStatus, CustomerArAging,
-    CustomerArSummary, CustomerStatement, DunningLetterType, GenerateStatementRequest, Invoice,
-    Result, StatementLineItem, StatementTransactionType, WriteOff, WriteOffFilter,
-    generate_credit_memo_number, generate_write_off_number,
+    CustomerArSummary, CustomerStatement, CustomerId, DunningLetterType, GenerateStatementRequest,
+    OrderId,
+    Invoice, InvoiceId, Result, StatementLineItem, StatementTransactionType, WriteOff,
+    WriteOffFilter, generate_credit_memo_number, generate_write_off_number,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -203,7 +204,7 @@ impl SqliteAccountsReceivableRepository {
         })
     }
 
-    fn get_invoice_customer_id(&self, invoice_id: Uuid) -> Result<Uuid> {
+    fn get_invoice_customer_id(&self, invoice_id: InvoiceId) -> Result<Uuid> {
         let conn = self
             .pool
             .get()
@@ -218,7 +219,7 @@ impl SqliteAccountsReceivableRepository {
         parse_uuid_row(&customer_id, "invoice", "customer_id").map_err(map_db_error)
     }
 
-    fn recalculate_invoice(&self, invoice_id: Uuid) -> Result<()> {
+    fn recalculate_invoice(&self, invoice_id: InvoiceId) -> Result<()> {
         let conn = self
             .pool
             .get()
@@ -585,7 +586,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let customer_id = self.get_invoice_customer_id(input.invoice_id)?;
+        let customer_id = self.get_invoice_customer_id(input.invoice_id.into())?;
 
         conn.execute(
             "INSERT INTO ar_collection_activities (id, invoice_id, customer_id, activity_type, activity_date, dunning_letter_type, notes, contact_method, contact_result, promise_to_pay_date, promise_to_pay_amount, performed_by, created_at)
@@ -662,7 +663,11 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
-    fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()> {
+    fn update_collection_status(
+        &self,
+        invoice_id: InvoiceId,
+        status: CollectionStatus,
+    ) -> Result<()> {
         let conn = self
             .pool
             .get()
@@ -697,18 +702,17 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let rows = stmt
             .query_map([], |row| {
                 Ok(Invoice {
-                    id: parse_uuid_row(&row.get::<_, String>(0)?, "invoice", "id")?,
+                    id: InvoiceId::from(parse_uuid_row(&row.get::<_, String>(0)?, "invoice", "id")?),
                     invoice_number: row.get(1)?,
                     order_id: parse_uuid_opt_row(
                         row.get::<_, Option<String>>(2)?,
                         "invoice",
                         "order_id",
-                    )?,
-                    customer_id: parse_uuid_row(
-                        &row.get::<_, String>(3)?,
-                        "invoice",
-                        "customer_id",
-                    )?,
+                    )?
+                    .map(OrderId::from),
+                    customer_id: CustomerId::from(
+                        parse_uuid_row(&row.get::<_, String>(3)?, "invoice", "customer_id")?,
+                    ),
                     status: parse_enum_row(&row.get::<_, String>(4)?, "invoice", "status")?,
                     invoice_type: stateset_core::InvoiceType::Standard,
                     invoice_date: parse_datetime_row(
@@ -783,7 +787,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
     fn send_dunning_letter(
         &self,
-        invoice_id: Uuid,
+        invoice_id: InvoiceId,
         letter_type: DunningLetterType,
         sent_by: Option<&str>,
     ) -> Result<CollectionActivity> {
@@ -813,7 +817,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
         // Log the activity
         self.log_collection_activity(CreateCollectionActivity {
-            invoice_id,
+            invoice_id: invoice_id.into(),
             activity_type: CollectionActivityType::DunningLetterSent,
             dunning_letter_type: Some(letter_type),
             notes: Some(format!("Sent {} dunning letter", letter_type)),
@@ -831,7 +835,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let write_off_number = generate_write_off_number();
-        let customer_id = self.get_invoice_customer_id(input.invoice_id)?;
+        let customer_id = self.get_invoice_customer_id(input.invoice_id.into())?;
 
         conn.execute(
             "INSERT INTO ar_write_offs (id, write_off_number, invoice_id, customer_id, amount, reason, notes, write_off_date, approved_by, approved_at, created_at)
@@ -1137,7 +1141,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         ).map_err(map_db_error)?;
 
         // Recalculate invoice
-        self.recalculate_invoice(input.invoice_id)?;
+        self.recalculate_invoice(input.invoice_id.into())?;
 
         Ok(CreditMemo {
             applied_amount: new_applied,
@@ -1208,7 +1212,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             ).map_err(map_db_error)?;
 
             // Recalculate invoice
-            self.recalculate_invoice(app.invoice_id)?;
+            self.recalculate_invoice(app.invoice_id.into())?;
 
             applications.push(ArPaymentApplication {
                 id: app_id,
@@ -1267,7 +1271,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         // Recalculate invoice
         let parsed_invoice_id = parse_uuid_row(&invoice_id, "payment_application", "invoice_id")
             .map_err(map_db_error)?;
-        self.recalculate_invoice(parsed_invoice_id)?;
+        self.recalculate_invoice(parsed_invoice_id.into())?;
 
         Ok(())
     }

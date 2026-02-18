@@ -56,10 +56,7 @@ CREATE TABLE IF NOT EXISTS x402_payment_intents (
     -- Metadata
     metadata TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-
-    FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE SET NULL,
-    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
+    updated_at TEXT NOT NULL
 );
 
 -- Indexes for x402 payment intents
@@ -173,8 +170,7 @@ CREATE TABLE IF NOT EXISTS a2a_quotes (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
 
-    FOREIGN KEY (buyer_agent_id) REFERENCES agent_cards(id) ON DELETE CASCADE,
-    FOREIGN KEY (seller_agent_id) REFERENCES agent_cards(id) ON DELETE CASCADE,
+    
     FOREIGN KEY (payment_intent_id) REFERENCES x402_payment_intents(id) ON DELETE SET NULL
 );
 
@@ -227,11 +223,9 @@ CREATE TABLE IF NOT EXISTS a2a_purchases (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
 
-    FOREIGN KEY (buyer_agent_id) REFERENCES agent_cards(id) ON DELETE CASCADE,
-    FOREIGN KEY (seller_agent_id) REFERENCES agent_cards(id) ON DELETE CASCADE,
+    
     FOREIGN KEY (quote_id) REFERENCES a2a_quotes(id) ON DELETE SET NULL,
-    FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE SET NULL,
-    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL,
+    
     FOREIGN KEY (payment_intent_id) REFERENCES x402_payment_intents(id) ON DELETE SET NULL
 );
 

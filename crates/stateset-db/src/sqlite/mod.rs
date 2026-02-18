@@ -618,8 +618,7 @@ impl DatabaseExt for SqliteDatabase {
                     .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, u64>(0))
                     .unwrap_or(fallback_timeout_ms);
 
-                conn.execute_batch(&format!("PRAGMA busy_timeout = {}", timeout_ms))
-                    .map_err(map_db_error)?;
+                conn.execute_batch(&format!("PRAGMA busy_timeout = {}", timeout_ms))?;
 
                 let previous_read_uncommitted = if set_read_uncommitted {
                     let previous: i64 = conn
@@ -632,11 +631,21 @@ impl DatabaseExt for SqliteDatabase {
                     None
                 };
 
-                let tx = conn
-                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-                    .map_err(map_db_error)?;
+                let result = {
+                    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| f(&tx)));
 
-                let result = panic::catch_unwind(AssertUnwindSafe(|| f(&tx)));
+                    match result {
+                        Ok(result) => {
+                            let result = result?;
+                            tx.commit()?;
+                            Ok(result)
+                        }
+                        Err(panic_payload) => {
+                            panic::resume_unwind(panic_payload);
+                        }
+                    }
+                };
 
                 let _ = conn.execute_batch(&format!("PRAGMA busy_timeout = {}", previous_timeout));
                 if let Some(previous_read_uncommitted) = previous_read_uncommitted {
@@ -646,24 +655,10 @@ impl DatabaseExt for SqliteDatabase {
                     ));
                 }
 
-                match result {
-                    Ok(result) => match result {
-                        Ok(result) => {
-                            tx.commit().map_err(map_db_error)?;
-                            Ok(result)
-                        }
-                        Err(e) => {
-                            // Transaction is automatically rolled back on drop
-                            Err(map_db_error(e))
-                        }
-                    },
-                    Err(panic_payload) => {
-                        panic::resume_unwind(panic_payload);
-                    }
-                }
+                result
             },
             retries,
-        )
+        ).map_err(map_db_error)
     }
 }
 
@@ -708,7 +703,7 @@ mod tests {
         }
 
         db.with_transaction_opts(
-            crate::TransactionOptions::new().isolation(TransactionIsolation::ReadUncommitted),
+            crate::TransactionOptions::new().isolation(crate::TransactionIsolation::ReadUncommitted),
             |conn| {
                 conn.execute_batch("PRAGMA read_uncommitted = true")?;
                 Ok(())
@@ -726,7 +721,7 @@ mod tests {
     #[test]
     fn with_retry_respects_zero_retries() {
         let attempts = Cell::new(0u32);
-        let err = with_retry(
+        let err: std::result::Result<(), rusqlite::Error> = with_retry(
             || {
                 attempts.set(attempts.get() + 1);
                 Err(retryable_error())

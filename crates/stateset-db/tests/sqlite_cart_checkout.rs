@@ -3,7 +3,7 @@
 use rust_decimal_macros::dec;
 use stateset_core::{
     AddCartItem, CartAddress, CartRepository, CreateCart, CreateCustomer, CreateOrder,
-    CreateOrderItem, CustomerId, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus,
+    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus,
     ProductId, SetCartPayment,
 };
 use stateset_db::SqliteDatabase;
@@ -44,7 +44,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
 
     let cart = carts
         .create(CreateCart {
-            customer_id: Some(customer.id.into_uuid()),
+            customer_id: Some(customer.id),
             customer_email: Some("checkout-reuse@example.com".into()),
             customer_name: Some("Checkout Reuse".into()),
             ..Default::default()
@@ -98,7 +98,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
 
     let order = orders
         .create_from_cart(
-            cart.id,
+            cart.id.into(),
             CreateOrder {
                 customer_id: customer.id.into(),
                 items: order_items,

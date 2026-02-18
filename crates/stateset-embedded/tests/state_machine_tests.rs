@@ -251,7 +251,11 @@ fn test_subscription_state_machine() {
 
     let mut subscription = commerce
         .subscriptions()
-        .subscribe(CreateSubscription { customer_id, plan_id: plan.id, ..Default::default() })
+        .subscribe(CreateSubscription {
+            customer_id: customer_id.into(),
+            plan_id: plan.id,
+            ..Default::default()
+        })
         .expect("Failed to create subscription");
     assert_eq!(subscription.status, SubscriptionStatus::Active);
 

@@ -1,7 +1,7 @@
 //! Event bus for in-process pub/sub using tokio broadcast channels
 
+use futures::future::FutureExt;
 use stateset_core::CommerceEvent;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use tokio::sync::broadcast;
@@ -108,7 +108,8 @@ impl EventReceiver {
 
     fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<CommerceEvent>> {
         loop {
-            match Pin::new(&mut self.inner).poll_recv(cx) {
+            let mut recv = std::pin::pin!(self.inner.recv());
+            match std::future::Future::poll(recv.as_mut(), cx) {
                 Poll::Ready(Ok(event)) => return Poll::Ready(Some(event)),
                 Poll::Ready(Err(broadcast::error::RecvError::Lagged(skipped))) => {
                     tracing::warn!(skipped, "Event receiver lagged, skipped events");
@@ -155,7 +156,6 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rust_decimal_macros::dec;
-    use uuid::Uuid;
 
     #[tokio::test]
     async fn test_event_bus_publish_subscribe() {

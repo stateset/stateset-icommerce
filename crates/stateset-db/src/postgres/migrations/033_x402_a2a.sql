@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS x402_payment_intents (
     resource_uri TEXT,
     resource_method TEXT,
     description TEXT,
-    cart_id UUID REFERENCES carts(id) ON DELETE SET NULL,
-    order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
+    cart_id UUID,
+    order_id UUID,
     invoice_id UUID REFERENCES invoices(id) ON DELETE SET NULL,
     merchant_id TEXT,
 
@@ -171,8 +171,7 @@ CREATE TABLE IF NOT EXISTS a2a_quotes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    FOREIGN KEY (buyer_agent_id) REFERENCES agent_cards(id) ON DELETE CASCADE,
-    FOREIGN KEY (seller_agent_id) REFERENCES agent_cards(id) ON DELETE CASCADE,
+    
     FOREIGN KEY (payment_intent_id) REFERENCES x402_payment_intents(id) ON DELETE SET NULL
 );
 
@@ -224,11 +223,9 @@ CREATE TABLE IF NOT EXISTS a2a_purchases (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    FOREIGN KEY (buyer_agent_id) REFERENCES agent_cards(id) ON DELETE CASCADE,
-    FOREIGN KEY (seller_agent_id) REFERENCES agent_cards(id) ON DELETE CASCADE,
+    
     FOREIGN KEY (quote_id) REFERENCES a2a_quotes(id) ON DELETE SET NULL,
-    FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE SET NULL,
-    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL,
+    
     FOREIGN KEY (payment_intent_id) REFERENCES x402_payment_intents(id) ON DELETE SET NULL
 );
 

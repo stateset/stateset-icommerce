@@ -91,7 +91,7 @@ impl Carts {
     ///
     /// // Authenticated customer checkout
     /// let cart = commerce.carts().create(CreateCart {
-    ///     customer_id: Some(Uuid::new_v4()),
+    ///     customer_id: Some(Uuid::new_v4().into()),
     ///     currency: Some("USD".into()),
     ///     expires_in_minutes: Some(60),
     ///     ..Default::default()
@@ -147,7 +147,7 @@ impl Carts {
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
-    /// commerce.carts().add_item(Uuid::new_v4(), AddCartItem {
+    /// commerce.carts().add_item(Uuid::new_v4().into(), AddCartItem {
     ///     product_id: Some(ProductId::new()),
     ///     sku: "SKU-001".into(),
     ///     name: "Premium Widget".into(),
@@ -196,7 +196,7 @@ impl Carts {
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
-    /// let cart = commerce.carts().set_shipping_address(Uuid::new_v4(), CartAddress {
+    /// let cart = commerce.carts().set_shipping_address(Uuid::new_v4().into(), CartAddress {
     ///     first_name: "Alice".into(),
     ///     last_name: "Smith".into(),
     ///     company: Some("Acme Corp".into()),
@@ -246,7 +246,7 @@ impl Carts {
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
-    /// let cart = commerce.carts().set_payment(Uuid::new_v4(), SetCartPayment {
+    /// let cart = commerce.carts().set_payment(Uuid::new_v4().into(), SetCartPayment {
     ///     payment_method: "credit_card".into(),
     ///     payment_token: Some("tok_visa".into()),
     ///     ..Default::default()
@@ -293,7 +293,7 @@ impl Carts {
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
-    /// let result = commerce.carts().complete(Uuid::new_v4())?;
+    /// let result = commerce.carts().complete(Uuid::new_v4().into())?;
     /// println!("Order ID: {}", result.order_id);
     /// println!("Order Number: {}", result.order_number);
     /// println!("Total Charged: {} {}", result.total_charged, result.currency);

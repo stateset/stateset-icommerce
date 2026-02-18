@@ -12,8 +12,8 @@ use stateset_core::{
     CreateJournalEntry, GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod,
     GlPeriodFilter, IncomeStatement, IncomeStatementLine, JournalEntry, JournalEntryFilter,
     JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType, PeriodStatus,
-    Result, TrialBalance, TrialBalanceLine, UpdateGlAccount, create_default_chart_of_accounts,
-    generate_journal_entry_number,
+    InvoiceId, Result, TrialBalance, TrialBalanceLine, UpdateGlAccount,
+    create_default_chart_of_accounts, generate_journal_entry_number,
 };
 use uuid::Uuid;
 
@@ -1036,7 +1036,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.get_auto_posting_config()?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry> {
+    fn auto_post_invoice(&self, invoice_id: InvoiceId) -> Result<JournalEntry> {
         let config = self.get_auto_posting_config()?.ok_or_else(|| {
             stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
@@ -1075,7 +1075,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 ),
             ],
             source_document_type: Some("invoice".to_string()),
-            source_document_id: Some(invoice_id),
+            source_document_id: Some(invoice_id.into()),
             auto_post: Some(true),
         })
     }

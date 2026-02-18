@@ -312,7 +312,7 @@ impl GeneralLedger {
 
     /// Auto-post a customer invoice (debit AR, credit Revenue).
     pub fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry> {
-        self.db.general_ledger().auto_post_invoice(invoice_id)
+        self.db.general_ledger().auto_post_invoice(invoice_id.into())
     }
 
     /// Auto-post a payment received (debit Cash, credit AR).

@@ -10,6 +10,7 @@ use stateset_core::{
     MoveSerial, ReserveSerialNumber, SerialEventType, SerialFilter, SerialHistory,
     SerialHistoryFilter, SerialLookupResult, SerialNumber, SerialRepository, SerialReservation,
     SerialStatus, SerialValidation, TransferSerialOwnership, UpdateSerialNumber,
+    WarrantyId,
     WarrantyLookupStatus, WarrantyRepository,
 };
 use uuid::Uuid;
@@ -1394,7 +1395,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         let warranty_status = if let Some(warranty_id) = serial_number.warranty_id {
             let warranty_repo = SqliteWarrantyRepository::new(self.pool.clone());
-            match warranty_repo.get(warranty_id)? {
+            match warranty_repo.get(WarrantyId::from(warranty_id))? {
                 Some(warranty) => Some(WarrantyLookupStatus {
                     warranty_id,
                     is_active: warranty.is_valid(),

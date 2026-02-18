@@ -4,7 +4,7 @@ use super::{
     build_in_clause, i64_params, map_db_error, params_refs, parse_datetime_opt_row,
     parse_datetime_row, parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict,
     parse_enum_row, parse_uuid, parse_uuid_row, string_params, with_immediate_transaction,
-    with_retry,
+    with_retry, MAX_RETRIES,
 };
 use chrono::{DateTime, Utc};
 use r2d2::Pool;

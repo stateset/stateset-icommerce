@@ -3,8 +3,8 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     BillingInterval, CancelSubscription, Commerce, CreateCustomer, CreateSubscription,
-    CreateSubscriptionPlan, PauseSubscription, PlanStatus, SkipBillingCycle, SubscriptionFilter,
-    SubscriptionPlanFilter, SubscriptionStatus, UpdateSubscriptionPlan,
+    CustomerId, CreateSubscriptionPlan, PauseSubscription, PlanStatus, SkipBillingCycle,
+    SubscriptionFilter, SubscriptionPlanFilter, SubscriptionStatus, UpdateSubscriptionPlan,
 };
 use uuid::Uuid;
 
@@ -294,7 +294,7 @@ fn test_plan_with_setup_fee() {
 // Subscription Tests
 // ============================================================================
 
-fn create_test_customer(commerce: &Commerce) -> Uuid {
+fn create_test_customer(commerce: &Commerce) -> CustomerId {
     let customer = commerce
         .customers()
         .create(CreateCustomer {
@@ -304,7 +304,7 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
             ..Default::default()
         })
         .expect("Failed to create customer");
-    customer.id.into_uuid()
+    customer.id
 }
 
 fn create_active_plan(commerce: &Commerce, name: &str, price: rust_decimal::Decimal) -> Uuid {
@@ -1151,7 +1151,7 @@ fn test_subscribe_to_nonexistent_plan_fails() {
 fn test_get_nonexistent_subscription() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce.subscriptions().get(Uuid::new_v4()).expect("Should not error");
+    let result = commerce.subscriptions().get(Uuid::new_v4().into()).expect("Should not error");
 
     assert!(result.is_none());
 }

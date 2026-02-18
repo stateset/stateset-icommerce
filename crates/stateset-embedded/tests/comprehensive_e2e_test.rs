@@ -23,7 +23,7 @@ use stateset_embedded::{
 };
 use uuid::Uuid;
 
-fn create_test_customer(commerce: &Commerce) -> Uuid {
+fn create_test_customer(commerce: &Commerce) -> stateset_embedded::CustomerId {
     commerce
         .customers()
         .create(CreateCustomer {
@@ -34,7 +34,6 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
         })
         .expect("Failed to create test customer")
         .id
-        .into_uuid()
 }
 
 fn setup_test_inventory(
@@ -351,7 +350,7 @@ fn test_supply_chain_workflow() {
     let _item = commerce
         .purchase_orders()
         .add_item(
-            po_id,
+            po_id.into(),
             CreatePurchaseOrderItem {
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
@@ -364,11 +363,11 @@ fn test_supply_chain_workflow() {
 
     // Submit first, then approve
     let purchase_order =
-        commerce.purchase_orders().submit(po_id).expect("Failed to submit purchase order");
+        commerce.purchase_orders().submit(po_id.into()).expect("Failed to submit purchase order");
 
     let purchase_order = commerce
         .purchase_orders()
-        .approve(purchase_order.id, "admin")
+        .approve(purchase_order.id.into(), "admin")
         .expect("Failed to approve purchase order");
 
     assert_eq!(purchase_order.status, PurchaseOrderStatus::Approved);
@@ -423,7 +422,7 @@ fn test_serial_number_tracking_lifecycle() {
 
     let serial = commerce
         .serials()
-        .mark_sold(serial.id, customer_id, None)
+        .mark_sold(serial.id, customer_id.into(), None)
         .expect("Failed to mark serial as sold");
 
     assert_eq!(serial.status, SerialStatus::Sold);
@@ -462,7 +461,7 @@ fn test_backorder_workflow() {
             order_line_id: None,
             sku: "SKU-001".into(),
             quantity: dec!(2),
-            customer_id,
+            customer_id: customer_id.into(),
             priority: None,
             expected_date: None,
             promised_date: None,

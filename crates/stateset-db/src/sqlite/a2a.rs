@@ -7,16 +7,15 @@ use super::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{OptionalExtension, ToSql, TransactionBehavior};
+use rusqlite::{OptionalExtension, ToSql};
 use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use stateset_core::{
-    A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CartAddress, CommerceError,
+    A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CommerceError,
     CreateA2APurchase, CreateA2AQuote, QuoteStatus, Result, SkillQuote, SkillQuoteFilter,
-    PurchaseStatus, validate_batch_size, X402Asset, X402Network,
+    PurchaseStatus, X402Asset, X402Network,
 };
-use std::str::FromStr;
 use uuid::Uuid;
 
 /// SQLite implementation of A2ACommerceRepository
@@ -182,6 +181,7 @@ impl SqliteA2ARepository {
             }
             QuoteStatus::Accepted => matches!(next, QuoteStatus::Purchased),
             QuoteStatus::Rejected | QuoteStatus::Expired | QuoteStatus::Purchased => false,
+            _ => false,
         }
     }
 
@@ -195,7 +195,13 @@ impl SqliteA2ARepository {
                 matches!(next, PurchaseStatus::PaymentPending | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
             }
             PurchaseStatus::PaymentPending => {
-                matches!(next, PurchaseStatus::Paid | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
+                matches!(
+                    next,
+                    PurchaseStatus::Paid
+                        | PurchaseStatus::Shipped
+                        | PurchaseStatus::Cancelled
+                        | PurchaseStatus::Disputed
+                )
             }
             PurchaseStatus::Paid => {
                 matches!(
@@ -220,9 +226,13 @@ impl SqliteA2ARepository {
                 )
             }
             PurchaseStatus::Delivered => {
-                matches!(next, PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
+                matches!(
+                    next,
+                    PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed
+                )
             }
             PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed => false,
+            _ => false,
         }
     }
 
@@ -244,18 +254,12 @@ impl SqliteA2ARepository {
     }
 
     fn parse_tracking_info(
-        value: Option<Value>,
-        entity: &str,
-        field: &str,
+        value: Option<String>,
+        _entity: &str,
+        _field: &str,
     ) -> rusqlite::Result<Option<String>> {
         match value {
-            Some(value) => match value {
-                Value::String(value) => Ok(Some(value)),
-                value => {
-                    let value = Self::parse_json::<String>(value, entity, field)?;
-                    Ok(Some(value))
-                }
-            },
+            Some(value) => Ok(Some(value)),
             None => Ok(None),
         }
     }
@@ -393,7 +397,7 @@ impl SqliteA2ARepository {
             currency: row.get("currency")?,
             fulfillment_type: row.get("fulfillment_type")?,
             tracking_info: Self::parse_tracking_info(
-                row.get::<_, Option<Value>>("tracking_info")?,
+                row.get::<_, Option<String>>("tracking_info")?,
                 "a2a_purchase",
                 "tracking_info",
             )?,
@@ -768,7 +772,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
-            .query_map(params_refs(&params), Self::row_to_quote)
+            .query_map(rusqlite::params_from_iter(params_refs(&params)), Self::row_to_quote)
             .map_err(map_db_error)?;
 
         let mut result = Vec::new();
@@ -1030,7 +1034,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
-            .query_map(params_refs(&params), Self::row_to_purchase)
+            .query_map(rusqlite::params_from_iter(params_refs(&params)), Self::row_to_purchase)
             .map_err(map_db_error)?;
 
         let mut result = Vec::new();

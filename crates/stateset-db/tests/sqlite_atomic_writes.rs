@@ -20,7 +20,7 @@ fn sqlite_invoice_create_rolls_back_when_item_insert_fails() {
 
     let repo = db.invoices();
     repo.create(CreateInvoice {
-        customer_id: Uuid::new_v4(),
+        customer_id: Uuid::new_v4().into(),
         items: vec![CreateInvoiceItem {
             description: "Test item".to_string(),
             quantity: Decimal::ONE,

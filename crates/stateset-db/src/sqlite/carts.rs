@@ -17,7 +17,7 @@ use stateset_core::{
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
     CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, CustomerRepository, OrderId,
     OrderRepository,
-    OrderStatus, PaymentId, PaymentStatus, ProductId, PromotionType, Result, SetCartPayment,
+    OrderStatus, PaymentStatus, ProductId, PromotionType, Result, SetCartPayment,
     SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem, UpdateOrder,
     X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData, X402IntentStatus,
     X402PaymentRequiredData, validate_batch_size, validate_currency_code, validate_price,

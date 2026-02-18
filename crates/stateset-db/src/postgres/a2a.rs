@@ -171,7 +171,13 @@ impl PgA2ARepository {
                 matches!(next, PurchaseStatus::PaymentPending | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
             }
             PurchaseStatus::PaymentPending => {
-                matches!(next, PurchaseStatus::Paid | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
+                matches!(
+                    next,
+                    PurchaseStatus::Paid
+                        | PurchaseStatus::Shipped
+                        | PurchaseStatus::Cancelled
+                        | PurchaseStatus::Disputed
+                )
             }
             PurchaseStatus::Paid => {
                 matches!(

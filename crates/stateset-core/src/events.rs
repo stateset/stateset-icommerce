@@ -32,7 +32,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CartId, CustomerId, OrderId, OrderItemId, PaymentId, ProductId, ReturnId, ShipmentId};
+use stateset_primitives::{CartId, CustomerId, OrderId, OrderItemId, ProductId, ReturnId};
 use uuid::Uuid;
 
 use crate::models::{

@@ -25,8 +25,7 @@ use crate::models::*;
 use chrono::{DateTime, Utc};
 use stateset_primitives::{
     CartId, CreditId, CustomerId, FulfillmentId, InvoiceId, OrderId, OrderItemId, PaymentId,
-    ProductId, PromotionId, PurchaseOrderId, ReturnId, ShipmentId, SubscriptionId, WarehouseId,
-    WarrantyId,
+    ProductId, PromotionId, PurchaseOrderId, ReturnId, ShipmentId, SubscriptionId, WarrantyId,
 };
 use uuid::Uuid;
 

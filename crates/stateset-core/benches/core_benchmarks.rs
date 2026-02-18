@@ -14,12 +14,13 @@ use stateset_core::models::{
     InventoryReservation, Order, OrderItem, OrderStatus, PaymentStatus, ReservationStatus,
 };
 use stateset_core::{BatchResult, CommerceError};
+use stateset_primitives::{CartId, CustomerId, OrderId, OrderItemId, ProductId};
 
 fn create_test_order_item(idx: usize) -> OrderItem {
     OrderItem {
-        id: Uuid::new_v4(),
-        order_id: Uuid::new_v4(),
-        product_id: Uuid::new_v4(),
+        id: OrderItemId::from(Uuid::new_v4()),
+        order_id: OrderId::from(Uuid::new_v4()),
+        product_id: ProductId::from(Uuid::new_v4()),
         variant_id: None,
         sku: format!("SKU-{:04}", idx),
         name: format!("Product {}", idx),
@@ -36,9 +37,9 @@ fn create_test_order(item_count: usize) -> Order {
     let total: Decimal = items.iter().map(|i| i.total).sum();
 
     Order {
-        id: Uuid::new_v4(),
+        id: OrderId::from(Uuid::new_v4()),
         order_number: "ORD-2024-001".to_string(),
-        customer_id: Uuid::new_v4(),
+        customer_id: CustomerId::from(Uuid::new_v4()),
         status: OrderStatus::Pending,
         order_date: Utc::now(),
         total_amount: total,
@@ -69,8 +70,8 @@ fn create_test_cart_item(idx: usize) -> CartItem {
     let now = Utc::now();
     CartItem {
         id: Uuid::new_v4(),
-        cart_id: Uuid::new_v4(),
-        product_id: Some(Uuid::new_v4()),
+        cart_id: CartId::from(Uuid::new_v4()),
+        product_id: Some(ProductId::from(Uuid::new_v4())),
         variant_id: None,
         sku: format!("SKU-{:04}", idx),
         name: format!("Product {}", idx),
@@ -98,9 +99,9 @@ fn create_test_cart(item_count: usize) -> Cart {
     let discount: Decimal = items.iter().map(|i| i.discount_amount).sum();
 
     Cart {
-        id: Uuid::new_v4(),
+        id: CartId::from(Uuid::new_v4()),
         cart_number: "CART-2024-001".to_string(),
-        customer_id: Some(Uuid::new_v4()),
+        customer_id: Some(CustomerId::from(Uuid::new_v4())),
         status: CartStatus::Active,
         currency: "USD".to_string(),
         items,

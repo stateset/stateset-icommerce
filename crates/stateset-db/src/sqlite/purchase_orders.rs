@@ -977,10 +977,10 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         )
         .map_err(map_db_error)?;
 
-        Self::recalculate_totals_with_conn(
-            &tx,
-            parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?,
-        )?;
+            Self::recalculate_totals_with_conn(
+                &tx,
+                parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?.into(),
+            )?;
 
         let item = tx
             .query_row(
@@ -1010,10 +1010,10 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         tx.execute("DELETE FROM purchase_order_items WHERE id = ?", [item_id.to_string()])
             .map_err(map_db_error)?;
 
-        Self::recalculate_totals_with_conn(
-            &tx,
-            parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?,
-        )?;
+            Self::recalculate_totals_with_conn(
+                &tx,
+                parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?.into(),
+            )?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
@@ -1193,7 +1193,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
     fn update_batch_atomic(
         &self,
-        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+        updates: Vec<(PurchaseOrderId, UpdatePurchaseOrder)>,
     ) -> Result<Vec<PurchaseOrder>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
@@ -1252,7 +1252,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Ok(results)
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<PurchaseOrderId>) -> Result<BatchResult<PurchaseOrderId>> {
         validate_batch_size(&ids)?;
         let mut result = BatchResult::with_capacity(ids.len());
 
@@ -1266,7 +1266,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Ok(result)
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<PurchaseOrderId>) -> Result<()> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(());
@@ -1274,6 +1274,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
 
         // Verify all POs are in draft status before deleting
         for id in &ids {
@@ -1299,7 +1300,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         }
 
         let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         // Delete purchase order items first
@@ -1317,17 +1318,18 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Ok(())
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<PurchaseOrder>> {
+    fn get_batch(&self, ids: Vec<PurchaseOrderId>) -> Result<Vec<PurchaseOrder>> {
         validate_batch_size(&ids)?;
         if ids.is_empty() {
             return Ok(vec![]);
         }
 
         let conn = self.conn()?;
+        let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let placeholders = build_in_clause(ids.len());
         let sql = format!("SELECT * FROM purchase_orders WHERE id IN ({})", placeholders);
 
-        let params = uuid_params(&ids);
+        let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;

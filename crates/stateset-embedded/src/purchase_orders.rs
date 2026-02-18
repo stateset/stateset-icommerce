@@ -30,11 +30,11 @@
 //! })?;
 //!
 //! // Submit for approval
-//! let po = commerce.purchase_orders().submit(po.id)?;
+//! let po = commerce.purchase_orders().submit(po.id.into())?;
 //!
 //! // Approve and send to supplier
-//! let po = commerce.purchase_orders().approve(po.id, "admin")?;
-//! let po = commerce.purchase_orders().send(po.id)?;
+//! let po = commerce.purchase_orders().approve(po.id.into(), "admin")?;
+//! let po = commerce.purchase_orders().send(po.id.into())?;
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 
@@ -150,7 +150,7 @@ impl PurchaseOrders {
 
     /// Get a purchase order by ID
     pub fn get(&self, id: Uuid) -> Result<Option<PurchaseOrder>> {
-        self.db.purchase_orders().get(id)
+        self.db.purchase_orders().get(id.into())
     }
 
     /// Get a purchase order by PO number (e.g., "PO-20231215123456")
@@ -160,7 +160,7 @@ impl PurchaseOrders {
 
     /// Update a purchase order
     pub fn update(&self, id: Uuid, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().update(id, input)
+        self.db.purchase_orders().update(id.into(), input)
     }
 
     /// List purchase orders with optional filtering
@@ -177,7 +177,7 @@ impl PurchaseOrders {
 
     /// Submit a draft PO for approval
     pub fn submit(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().submit_for_approval(id)
+        self.db.purchase_orders().submit_for_approval(id.into())
     }
 
     /// Approve a purchase order
@@ -187,12 +187,12 @@ impl PurchaseOrders {
     /// * `id` - Purchase order ID
     /// * `approved_by` - Name/ID of the approver
     pub fn approve(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().approve(id, approved_by)
+        self.db.purchase_orders().approve(id.into(), approved_by)
     }
 
     /// Send a purchase order to the supplier
     pub fn send(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().send(id)
+        self.db.purchase_orders().send(id.into())
     }
 
     /// Acknowledge supplier receipt of the PO
@@ -202,22 +202,22 @@ impl PurchaseOrders {
     /// * `id` - Purchase order ID
     /// * `supplier_reference` - Optional reference number from supplier
     pub fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().acknowledge(id, supplier_reference)
+        self.db.purchase_orders().acknowledge(id.into(), supplier_reference)
     }
 
     /// Put a purchase order on hold
     pub fn hold(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().hold(id)
+        self.db.purchase_orders().hold(id.into())
     }
 
     /// Complete the purchase order (fully received)
     pub fn complete(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().complete(id)
+        self.db.purchase_orders().complete(id.into())
     }
 
     /// Cancel a purchase order
     pub fn cancel(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().cancel(id)
+        self.db.purchase_orders().cancel(id.into())
     }
 
     // === Line Item Operations ===
@@ -228,7 +228,7 @@ impl PurchaseOrders {
         po_id: Uuid,
         item: CreatePurchaseOrderItem,
     ) -> Result<PurchaseOrderItem> {
-        self.db.purchase_orders().add_item(po_id, item)
+        self.db.purchase_orders().add_item(po_id.into(), item)
     }
 
     /// Update a line item
@@ -247,7 +247,7 @@ impl PurchaseOrders {
 
     /// Get items for a purchase order
     pub fn get_items(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>> {
-        self.db.purchase_orders().get_items(po_id)
+        self.db.purchase_orders().get_items(po_id.into())
     }
 
     /// Receive items from a purchase order
@@ -269,7 +269,7 @@ impl PurchaseOrders {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn receive(&self, po_id: Uuid, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().receive(po_id, items)
+        self.db.purchase_orders().receive(po_id.into(), items)
     }
 
     /// Count purchase orders matching a filter
