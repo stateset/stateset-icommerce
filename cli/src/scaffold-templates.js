@@ -116,7 +116,7 @@ export const COMPONENT_TEMPLATES = {
 export function createPackageJson(name, template, features) {
   const base = {
     name: name.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-    version: '0.7.0',
+    version: '0.7.1',
     private: true,
     scripts: {
       dev: 'next dev',
@@ -126,7 +126,7 @@ export function createPackageJson(name, template, features) {
       seed: 'node scripts/seed.js',
     },
     dependencies: {
-      '@stateset/embedded': '^0.7.0',
+      '@stateset/embedded': '^0.7.1',
       next: '14.0.0',
       react: '^18',
       'react-dom': '^18',

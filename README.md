@@ -13,10 +13,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.7.0    # Python
-gem install stateset_embedded -v 0.7.0  # Ruby
-npm install @stateset/embedded@0.7.0    # Node.js
-npm install -g @stateset/cli@0.7.0      # CLI
+pip install stateset-embedded==0.7.1    # Python
+gem install stateset_embedded -v 0.7.1  # Ruby
+npm install @stateset/embedded@0.7.1    # Node.js
+npm install -g @stateset/cli@0.7.1      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -74,7 +74,7 @@ npm run check                # root quality checks
 
 ---
 
-## What's New in v0.7.0
+## What's New in v0.7.1
 
 **Agent-to-Agent (A2A) Commerce** — AI agents can now autonomously pay, quote, subscribe, split payments, and negotiate with each other.
 
@@ -1238,14 +1238,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.7.0</version>
+    <version>0.7.1</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.7.0'
+implementation 'com.stateset:embedded:0.7.1'
 ```
 
 ### Kotlin (Gradle)
@@ -1253,7 +1253,7 @@ implementation 'com.stateset:embedded:0.7.0'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.7.0")
+    implementation("com.stateset:embedded-kotlin:0.7.1")
 }
 ```
 
@@ -1262,32 +1262,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.0")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.1")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.7.0'
+pod 'StateSet', '~> 0.7.1'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.7.0
+dotnet add package StateSet.Embedded --version 0.7.1
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.7.0" />
+<PackageReference Include="StateSet.Embedded" Version="0.7.1" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.0
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.1
 ```
 
 ### CLI

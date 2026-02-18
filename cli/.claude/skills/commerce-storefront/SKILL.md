@@ -723,7 +723,7 @@ export async function POST(
 ```json
 {
   "name": "my-stateset-store",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -733,7 +733,7 @@ export async function POST(
     "seed": "node scripts/seed.js"
   },
   "dependencies": {
-    "@stateset/embedded": "^0.7.0",
+    "@stateset/embedded": "^0.7.1",
     "next": "14.0.0",
     "react": "^18",
     "react-dom": "^18"
