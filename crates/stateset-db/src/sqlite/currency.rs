@@ -18,6 +18,7 @@ use super::{
 use stateset_core::{BatchResult, validate_batch_size};
 
 /// SQLite currency repository
+#[derive(Debug)]
 pub struct SqliteCurrencyRepository {
     pool: Pool<SqliteConnectionManager>,
 }

@@ -87,7 +87,8 @@ async function parsePaymentRequired(response, preferredNetworks = []) {
       version: null,
       raw: body,
     };
-  } catch {
+  } catch (err) {
+    console.debug('[x402-agent] Payment requirements parse failed:', err.message || err);
     return { requirements: null, version: null, raw: null };
   }
 }
@@ -278,8 +279,8 @@ export async function x402Fetch(url, options, config) {
         store_id: storeId,
         network,
       });
-    } catch {
-      // batching is best-effort; receipts may still arrive via worker
+    } catch (err) {
+      console.debug('[x402-agent] Batch creation failed (best-effort):', err.message || err);
     }
   }
 

@@ -739,7 +739,7 @@ describe('configureWebhooks', () => {
     const svc = createNotificationService(makeStore());
     await assert.rejects(
       () => svc.configureWebhooks({ agentAddress: '0xA', endpointUrl: 'ftp://example.com/hook' }),
-      /must start with http/,
+      /Unsupported protocol|must start with http/,
     );
   });
 

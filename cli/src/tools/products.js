@@ -51,7 +51,7 @@ export const productTools = [
       const product = await commerce.products.get(productId);
 
       if (!product) {
-        return { error: 'Product not found' };
+        return { success: false, error: 'Product not found' };
       }
 
       return {
@@ -73,7 +73,7 @@ export const productTools = [
       const variant = await commerce.products.getVariantBySku(sku);
 
       if (!variant) {
-        return { error: `Variant with SKU ${sku} not found` };
+        return { success: false, error: `Variant with SKU ${sku} not found` };
       }
 
       return {
@@ -105,6 +105,7 @@ export const productTools = [
     handler: async ({ commerce, params, allowApply, autoIndexEntity }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,

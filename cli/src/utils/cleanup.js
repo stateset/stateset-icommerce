@@ -106,8 +106,8 @@ export class CleanupListeners {
     for (const { emitter, event, handler } of this._listeners) {
       try {
         emitter.removeListener(event, handler);
-      } catch {
-        // Emitter may already be destroyed
+      } catch (err) {
+        console.debug('[cleanup] Listener removal failed:', err.message || err);
       }
     }
     this._listeners = [];

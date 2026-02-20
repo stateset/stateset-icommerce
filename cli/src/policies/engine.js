@@ -35,7 +35,8 @@ export const Operators = {
     if (pattern.length > 200) return false;
     try {
       return new RegExp(pattern).test(String(a));
-    } catch {
+    } catch (err) {
+      console.debug('[policy-engine] Regex match failed:', err.message || err);
       return false;
     }
   },
@@ -168,6 +169,49 @@ export class Condition {
     return result;
   }
 
+  /**
+   * Evaluate and return detailed result for explainable policy decisions.
+   * @param {Object} context
+   * @returns {{ matched: boolean, field: string, operator: string, expectedValue: *, actualValue: * }}
+   */
+  evaluateWithDetail(context) {
+    const fieldValue = getNestedValue(context, this.field);
+    const operatorFn = Operators[this.operator];
+
+    if (!operatorFn) {
+      throw new Error(`Unknown operator: ${this.operator}`);
+    }
+
+    const isUnary = UnaryOperators.has(this.operator);
+    let compareValue = this.value;
+
+    if (!isUnary) {
+      const { resolved, isDynamicRef } = resolveConditionValue(this.value, context);
+      compareValue = resolved;
+
+      if (isDynamicRef && compareValue === undefined) {
+        return {
+          matched: false,
+          field: this.field,
+          operator: this.operator,
+          expectedValue: this.value,
+          actualValue: fieldValue,
+        };
+      }
+    }
+
+    let result = isUnary ? operatorFn(fieldValue) : operatorFn(fieldValue, compareValue);
+    if (this.negate) result = !result;
+
+    return {
+      matched: result,
+      field: this.field,
+      operator: this.operator,
+      expectedValue: isUnary ? null : compareValue,
+      actualValue: fieldValue,
+    };
+  }
+
   toJSON() {
     return {
       field: this.field,
@@ -208,6 +252,27 @@ export class ConditionGroup {
     }
   }
 
+  /**
+   * Evaluate all conditions and return detail for each.
+   * @param {Object} context
+   * @returns {{ matched: boolean, details: Array }}
+   */
+  evaluateWithDetail(context) {
+    if (this.conditions.length === 0) return { matched: true, details: [] };
+
+    const details = this.conditions.map((c) => {
+      if (typeof c.evaluateWithDetail === 'function') {
+        return c.evaluateWithDetail(context);
+      }
+      return { matched: c.evaluate(context) };
+    });
+
+    const matched =
+      this.logic === 'and' ? details.every((d) => d.matched) : details.some((d) => d.matched);
+
+    return { matched, details };
+  }
+
   toJSON() {
     return {
       logic: this.logic,
@@ -227,6 +292,8 @@ export class PolicyAction {
     workflow = null, // Workflow to start
     notification = null, // Notification to send
     transform = null, // Data transformation
+    reason = null, // Human-readable reason for this action
+    remediation = null, // Suggested fix/workaround when denied
     metadata = {},
   }) {
     this.type = type;
@@ -235,6 +302,8 @@ export class PolicyAction {
     this.workflow = workflow;
     this.notification = notification;
     this.transform = transform;
+    this.reason = reason;
+    this.remediation = remediation;
     this.metadata = metadata;
   }
 
@@ -246,6 +315,8 @@ export class PolicyAction {
       workflow: this.workflow,
       notification: this.notification,
       transform: this.transform,
+      reason: this.reason,
+      remediation: this.remediation,
       metadata: this.metadata,
     };
   }
@@ -297,6 +368,17 @@ export class PolicyRule {
     return this.conditions.evaluate(context);
   }
 
+  /**
+   * Evaluate if the rule matches and return condition details for explanations.
+   * @param {Object} context
+   * @returns {{ matched: boolean, conditionDetails: Array }}
+   */
+  matchesWithDetail(context) {
+    if (!this.enabled) return { matched: false, conditionDetails: [] };
+    const { matched, details } = this.conditions.evaluateWithDetail(context);
+    return { matched, conditionDetails: details };
+  }
+
   toJSON() {
     return {
       id: this.id,
@@ -341,14 +423,31 @@ export class PolicySet {
   }
 
   /**
-   * Evaluate all rules and return matching actions
+   * Evaluate all rules and return matching actions with explanations.
    */
   evaluate(context) {
     const matchedRules = [];
+    const explanations = [];
 
     for (const rule of this.rules) {
-      if (rule.matches(context)) {
+      const { matched, conditionDetails } = rule.matchesWithDetail(context);
+
+      if (matched) {
         matchedRules.push(rule);
+
+        explanations.push(
+          new PolicyExplanation({
+            policySetId: this.id,
+            policySetName: this.name,
+            ruleId: rule.id,
+            ruleName: rule.name,
+            ruleDescription: rule.description,
+            actionType: rule.action.type,
+            reason: rule.action.reason || rule.action.metadata?.reason || rule.description || '',
+            remediation: rule.action.remediation || rule.action.metadata?.remediation || null,
+            conditions: conditionDetails.flatMap((d) => (d.details ? d.details : [d])),
+          }),
+        );
 
         if (rule.stopOnMatch) {
           break;
@@ -360,6 +459,7 @@ export class PolicySet {
       matched: matchedRules.length > 0,
       rules: matchedRules,
       actions: matchedRules.map((r) => r.action),
+      explanations,
       defaultApplied: matchedRules.length === 0,
     };
   }
@@ -402,6 +502,88 @@ export class PolicyResult {
     this.actions = actions;
     this.defaultApplied = defaultApplied;
     this.evaluatedAt = evaluatedAt;
+  }
+}
+
+/**
+ * Structured explanation of a policy evaluation outcome.
+ * Provides the full "why" of a denial/allow/transform decision.
+ */
+export class PolicyExplanation {
+  constructor({
+    policySetId,
+    policySetName,
+    ruleId,
+    ruleName,
+    ruleDescription = '',
+    actionType,
+    reason = '',
+    remediation = null,
+    conditions = [],
+  }) {
+    this.policySetId = policySetId;
+    this.policySetName = policySetName;
+    this.ruleId = ruleId;
+    this.ruleName = ruleName;
+    this.ruleDescription = ruleDescription;
+    this.actionType = actionType;
+    this.reason = reason;
+    this.remediation = remediation;
+    this.conditions = conditions;
+  }
+
+  /** Human-readable summary string */
+  toString() {
+    const parts = [`Policy "${this.policySetName}" / Rule "${this.ruleName}": ${this.actionType}`];
+    if (this.reason) parts.push(`  Reason: ${this.reason}`);
+    for (const c of this.conditions) {
+      parts.push(
+        `  - ${c.field} ${c.operator} ${JSON.stringify(c.expectedValue)} (actual: ${JSON.stringify(c.actualValue)}, matched: ${c.matched})`,
+      );
+    }
+    if (this.remediation) parts.push(`  Remediation: ${this.remediation}`);
+    return parts.join('\n');
+  }
+
+  toJSON() {
+    return {
+      policySetId: this.policySetId,
+      policySetName: this.policySetName,
+      ruleId: this.ruleId,
+      ruleName: this.ruleName,
+      ruleDescription: this.ruleDescription,
+      actionType: this.actionType,
+      reason: this.reason,
+      remediation: this.remediation,
+      conditions: this.conditions,
+    };
+  }
+}
+
+/**
+ * Audit entry for a policy transform — records before/after values.
+ */
+export class TransformAuditEntry {
+  constructor({ ruleId = null, ruleName = null, policySetId = null, field, before, after }) {
+    this.ruleId = ruleId;
+    this.ruleName = ruleName;
+    this.policySetId = policySetId;
+    this.field = field;
+    this.before = before;
+    this.after = after;
+    this.timestamp = new Date().toISOString();
+  }
+
+  toJSON() {
+    return {
+      ruleId: this.ruleId,
+      ruleName: this.ruleName,
+      policySetId: this.policySetId,
+      field: this.field,
+      before: this.before,
+      after: this.after,
+      timestamp: this.timestamp,
+    };
   }
 }
 
@@ -541,12 +723,22 @@ export class PolicyEngine extends EventEmitter {
   }
 
   /**
-   * Evaluate policies for a domain
+   * Evaluate policies for a domain.
+   *
+   * Precedence: explicit deny > explicit allow > default (deny-overrides).
+   *
+   * @param {string} domain
+   * @param {Object} context
+   * @param {Object} [options]
+   * @param {boolean} [options.dryRun=false] - If true, skip history recording
+   * @returns {Promise<Object>}
    */
-  async evaluate(domain, context) {
+  async evaluate(domain, context, options = {}) {
+    const { dryRun = false } = options;
     const policySets = this.getPoliciesForDomain(domain);
     const allResults = [];
     const allActions = [];
+    const allExplanations = [];
 
     for (const policySet of policySets) {
       const evalResult = policySet.evaluate(context);
@@ -555,7 +747,7 @@ export class PolicyEngine extends EventEmitter {
         policySetId: policySet.id,
         policySetName: policySet.name,
         domain,
-        context,
+        context: dryRun ? context : undefined,
         matched: evalResult.matched,
         rules: evalResult.rules.map((r) => ({ id: r.id, name: r.name })),
         actions: evalResult.actions.map((a) => a.toJSON()),
@@ -566,34 +758,55 @@ export class PolicyEngine extends EventEmitter {
 
       if (evalResult.matched) {
         allActions.push(...evalResult.actions);
+        allExplanations.push(...evalResult.explanations);
       } else if (evalResult.defaultApplied) {
         allActions.push(policySet.defaultAction);
       }
     }
 
-    // Store in history
-    this.evaluationHistory.push({
-      timestamp: new Date().toISOString(),
-      domain,
-      context,
-      results: allResults,
-    });
+    // Deny-overrides precedence
+    const hasDeny = allActions.some((a) => a.type === 'deny');
+    const hasAllow = allActions.some((a) => a.type === 'allow');
 
-    // Keep last 1000 evaluations
-    if (this.evaluationHistory.length > 1000) {
-      this.evaluationHistory = this.evaluationHistory.slice(-1000);
+    // Store in history (skip for dry-run)
+    if (!dryRun) {
+      this.evaluationHistory.push({
+        timestamp: new Date().toISOString(),
+        domain,
+        context,
+        results: allResults,
+        explanations: allExplanations.map((e) => e.toJSON()),
+      });
+
+      // Keep last 1000 evaluations
+      if (this.evaluationHistory.length > 1000) {
+        this.evaluationHistory = this.evaluationHistory.slice(-1000);
+      }
     }
 
-    this.emit('evaluated', { domain, context, results: allResults });
+    this.emit('evaluated', { domain, context, results: allResults, explanations: allExplanations });
 
     return {
       domain,
-      context,
+      context: dryRun ? context : undefined,
       results: allResults,
       actions: allActions,
-      shouldAllow: !allActions.some((a) => a.type === 'deny'),
-      shouldDeny: allActions.some((a) => a.type === 'deny'),
+      explanations: allExplanations,
+      shouldAllow: !hasDeny && (hasAllow || allActions.length === 0),
+      shouldDeny: hasDeny,
+      dryRun,
     };
+  }
+
+  /**
+   * Dry-run: evaluate policies without recording history.
+   * Returns the full evaluation result including explanations.
+   * @param {string} domain
+   * @param {Object} context
+   * @returns {Promise<Object>}
+   */
+  async evaluateDryRun(domain, context) {
+    return this.evaluate(domain, context, { dryRun: true });
   }
 
   /**

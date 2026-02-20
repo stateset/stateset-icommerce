@@ -168,8 +168,13 @@ class ProviderRegistry {
         if (await provider.isAvailable()) {
           available.push(name);
         }
-      } catch {
-        // Not available
+      } catch (err) {
+        console.debug(
+          '[providers] Provider',
+          name,
+          'availability check failed:',
+          err.message || err,
+        );
       }
     }
     // Claude is always in the list (handled by Agent SDK)
@@ -245,22 +250,22 @@ async function _autoRegister() {
   try {
     const { OpenAIProvider } = await import('./openai.js');
     _registry.register(new OpenAIProvider());
-  } catch {
-    /* optional */
+  } catch (err) {
+    console.debug('[providers] OpenAI provider not available:', err.message || err);
   }
 
   try {
     const { GeminiProvider } = await import('./gemini.js');
     _registry.register(new GeminiProvider());
-  } catch {
-    /* optional */
+  } catch (err) {
+    console.debug('[providers] Gemini provider not available:', err.message || err);
   }
 
   try {
     const { OllamaProvider } = await import('./ollama.js');
     _registry.register(new OllamaProvider());
-  } catch {
-    /* optional */
+  } catch (err) {
+    console.debug('[providers] Ollama provider not available:', err.message || err);
   }
 }
 
@@ -386,7 +391,7 @@ class FallbackChain {
       // Skip if circuit breaker is open
       if (!this._circuitBreaker.isAvailable(providerName)) {
         if (this._verbose) {
-          console.log(`[FallbackChain] Skipping ${providerName} (circuit open)`);
+          console.debug(`[FallbackChain] Skipping ${providerName} (circuit open)`);
         }
         continue;
       }
@@ -407,7 +412,7 @@ class FallbackChain {
 
         attempted.push(providerName);
         if (this._verbose && attempted.length > 1) {
-          console.log(`[FallbackChain] Failing over to ${providerName}`);
+          console.debug(`[FallbackChain] Failing over to ${providerName}`);
         }
 
         const result = await provider.chat(messages, options);

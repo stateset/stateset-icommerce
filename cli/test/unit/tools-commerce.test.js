@@ -1191,7 +1191,7 @@ describe('Payment Tools', () => {
       });
 
       assertError(result, '--apply');
-      assertHasField(result, 'wouldCreate');
+      assertHasField(result, 'wouldDo');
     });
 
     it('has write permission', () => {

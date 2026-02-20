@@ -28,6 +28,7 @@ struct QuoteValidationRow {
     valid_until: chrono::DateTime<Utc>,
 }
 
+#[derive(Debug)]
 pub struct SqliteA2ARepository {
     pool: Pool<SqliteConnectionManager>,
 }
@@ -236,6 +237,7 @@ impl SqliteA2ARepository {
         }
     }
 
+    #[allow(dead_code)]
     fn parse_json<T: DeserializeOwned>(
         value: Value,
         entity: &str,
@@ -669,7 +671,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let discount_amount = input.discount_amount.unwrap_or(Decimal::ZERO);
         let now_str = now.to_rfc3339();
 
-        let mut conn = self.conn()?;
+        let conn = self.conn()?;
         conn.execute(
             r#"
             INSERT INTO a2a_quotes (
@@ -842,7 +844,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let currency = Self::normalize_currency(input.currency);
 
         let quote_id = input.quote_id;
-        let tx = with_immediate_transaction(&self.pool, |tx| {
+        let _tx = with_immediate_transaction(&self.pool, |tx| {
             tx.execute(
                 r#"
             INSERT INTO a2a_purchases (

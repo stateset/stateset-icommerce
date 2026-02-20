@@ -56,7 +56,7 @@ export const cartTools = [
       } else {
         cart = await commerce.carts.get(identifier);
       }
-      if (!cart) return { error: 'Cart not found' };
+      if (!cart) return { success: false, error: 'Cart not found' };
       return {
         success: true,
         cart: {
@@ -102,6 +102,7 @@ export const cartTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set to create carts.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
@@ -137,6 +138,7 @@ export const cartTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Add item operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldAdd: {
@@ -184,6 +186,7 @@ export const cartTools = [
       const { itemId, quantity } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Update operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldUpdate: { itemId, newQuantity: quantity },
@@ -209,6 +212,7 @@ export const cartTools = [
       const { itemId } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Remove operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldRemove: { itemId },
@@ -239,6 +243,7 @@ export const cartTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Set address operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldSet: {
@@ -270,6 +275,7 @@ export const cartTools = [
       const { cartId, paymentMethod, paymentToken } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Set payment operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldSet: { cartId, paymentMethod },
@@ -296,6 +302,7 @@ export const cartTools = [
       const { cartId, couponCode } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Apply discount operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldApply: { cartId, couponCode },
@@ -351,8 +358,9 @@ export const cartTools = [
       const { cartId } = params;
       if (!allowApply) {
         const cart = await commerce.carts.get(cartId);
-        if (!cart) return { error: 'Cart not found' };
+        if (!cart) return { success: false, error: 'Cart not found' };
         return {
+          success: false,
           error: 'Complete checkout operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCheckout: {
@@ -397,6 +405,7 @@ export const cartTools = [
       const { cartId } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Cancel operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCancel: { cartId },
@@ -422,6 +431,7 @@ export const cartTools = [
       const { cartId } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Abandon operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldAbandon: { cartId },

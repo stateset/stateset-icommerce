@@ -30,6 +30,7 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+#[derive(Debug)]
 pub struct SqlitePurchaseOrderRepository {
     pool: Pool<SqliteConnectionManager>,
 }

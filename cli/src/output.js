@@ -243,7 +243,8 @@ export class RichOutput {
         style: 'currency',
         currency: code,
       }).format(amount);
-    } catch {
+    } catch (err) {
+      console.debug('[output] Currency formatting failed for', code, ':', err.message || err);
       return `${code} ${Number(amount).toFixed(2)}`;
     }
   }

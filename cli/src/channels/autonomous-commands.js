@@ -97,7 +97,8 @@ function createWorkflowHandler() {
       const contextStr = parts.slice(1).join(' ');
       try {
         context = { ...JSON.parse(contextStr), triggeredBy: senderId };
-      } catch {
+      } catch (err) {
+        console.debug('[autonomous-commands] JSON context parse failed:', err.message || err);
         return { response: 'Invalid JSON context. Example: {"orderId": "ORD-123"}' };
       }
     }

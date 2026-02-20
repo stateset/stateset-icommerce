@@ -20,6 +20,7 @@ use stateset_core::{
 };
 
 /// SQLite fulfillment repository
+#[derive(Debug)]
 pub struct SqliteFulfillmentRepository {
     pool: Pool<SqliteConnectionManager>,
 }

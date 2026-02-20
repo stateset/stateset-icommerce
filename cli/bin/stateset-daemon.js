@@ -1470,6 +1470,12 @@ function sshTunnelPersistent(host, port = 8080, reverse = false, name, paths) {
     requireRoot('persistent ssh-tunnel');
   }
 
+  // Validate host to prevent shell injection in systemd env file / bash -c context
+  if (!/^[a-zA-Z0-9._@:[\]-]+$/.test(host)) {
+    console.error('Invalid host: contains disallowed characters. Expected user@hostname format.');
+    process.exit(1);
+  }
+
   const tunnelName = name || host.replace(/[^a-zA-Z0-9-]/g, '-');
   const instanceName = `${SSH_TUNNEL_TEMPLATE}${tunnelName}`;
 

@@ -353,6 +353,7 @@ for (const tool of vectorTools) {
   tool.handler = async ({ commerce, params, allowApply }) => {
     if (!allowApply && ['write', 'delete', 'admin'].includes(tool.permission)) {
       return {
+        success: false,
         error: 'Vector operation not allowed. The --apply flag must be set for write operations.',
         hint: 'Run with --apply to enable vector indexing or clearing.',
       };

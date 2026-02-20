@@ -1,0 +1,6 @@
+Handle,Title,Body (HTML),Vendor,Type,Tags,Status,Option1 Value,Variant SKU,Variant Price,Variant Compare At Price,Variant Grams,Variant Barcode,Id,Variant Id
+classic-widget,Classic Widget,"<p>A <strong>premium</strong> widget.</p>",WidgetCo,Widgets,"bestseller, widget",active,Small,WIDGET-SM,19.99,24.99,100,123456789,2001,3001
+classic-widget,,,,,,,Large,WIDGET-LG,29.99,,200,123456790,,3002
+premium-gadget,Premium Gadget,"No HTML here.",GadgetLab,Gadgets,new,active,Default,GADGET-01,49.99,,350,,,3003
+deluxe-thingamajig,Deluxe Thingamajig,"<h2>Features</h2>",ThingMakers,Things,,draft,Red,THING-RED,99.99,129.99,500,999888777,2003,3004
+deluxe-thingamajig,,,,,,,Blue,THING-BLU,99.99,129.99,500,999888778,,3005

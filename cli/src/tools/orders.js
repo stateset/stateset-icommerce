@@ -58,7 +58,7 @@ export const orderTools = [
       const order = await commerce.orders.get(identifier);
 
       if (!order) {
-        return { error: 'Order not found' };
+        return { success: false, error: 'Order not found' };
       }
 
       return {
@@ -110,6 +110,7 @@ export const orderTools = [
     handler: async ({ commerce, params, allowApply, autoIndexEntity }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set to create orders.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: {
@@ -160,6 +161,7 @@ export const orderTools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Update operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldUpdate: { orderId, newStatus: status },
@@ -193,6 +195,7 @@ export const orderTools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Ship operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldShip: { orderId, trackingNumber },
@@ -226,6 +229,7 @@ export const orderTools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Cancel operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCancel: { orderId },

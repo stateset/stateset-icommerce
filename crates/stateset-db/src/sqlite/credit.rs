@@ -20,6 +20,7 @@ use super::{
     parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
 };
 
+#[derive(Debug)]
 pub struct SqliteCreditRepository {
     pool: Pool<SqliteConnectionManager>,
 }

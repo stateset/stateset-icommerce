@@ -35,6 +35,7 @@ export const agentCardTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Registering agent card requires --apply flag.',
           wouldRegister: { name: params.name, walletAddress: params.walletAddress },
         };
@@ -44,10 +45,11 @@ export const agentCardTools = [
         try {
           const parsed = new URL(params.endpointUrl);
           if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-            return { error: 'endpointUrl must use http or https protocol.' };
+            return { success: false, error: 'endpointUrl must use http or https protocol.' };
           }
-        } catch {
-          return { error: 'endpointUrl is not a valid URL.' };
+        } catch (err) {
+          console.debug('[agent-cards] Endpoint URL validation failed:', err.message || err);
+          return { success: false, error: 'endpointUrl is not a valid URL.' };
         }
       }
 
@@ -129,10 +131,10 @@ export const agentCardTools = [
       } else if (walletAddress) {
         agent = await commerce.x402().getAgentByWallet(walletAddress);
       } else {
-        return { error: 'Must provide agentId or walletAddress' };
+        return { success: false, error: 'Must provide agentId or walletAddress' };
       }
       if (!agent) {
-        return { error: 'Agent not found' };
+        return { success: false, error: 'Agent not found' };
       }
       return {
         success: true,
@@ -165,6 +167,7 @@ export const agentCardTools = [
       const { agentId } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Verifying agent requires --apply flag.',
           wouldVerify: { agentId },
         };

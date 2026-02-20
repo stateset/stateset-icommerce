@@ -26,6 +26,7 @@ use stateset_core::{
 use std::collections::HashMap;
 use uuid::Uuid;
 
+#[derive(Debug)]
 pub struct SqliteAccountsReceivableRepository {
     pool: Pool<SqliteConnectionManager>,
 }

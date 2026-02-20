@@ -203,6 +203,14 @@ export const TOOL_PERMISSIONS = {
   create_warranty_claim: 'write',
   approve_warranty_claim: 'write',
 
+  // Import / Export
+  import_shopify_data: 'write',
+  import_status: 'read',
+  list_id_mappings: 'read',
+  import_csv: 'write',
+  import_json: 'write',
+  export_data: 'read',
+
   // Sync / VES
   sync_status: 'read',
   sync_pull: 'write',

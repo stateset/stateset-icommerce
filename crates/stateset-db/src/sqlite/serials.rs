@@ -22,6 +22,7 @@ use super::{
 };
 
 /// SQLite implementation of SerialRepository
+#[derive(Debug)]
 pub struct SqliteSerialRepository {
     pool: Pool<SqliteConnectionManager>,
 }

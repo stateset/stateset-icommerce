@@ -97,10 +97,13 @@ function isObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
 
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function mergeDeep(target, source) {
   if (!isObject(source)) return target;
   const output = { ...target };
   for (const [key, value] of Object.entries(source)) {
+    if (DANGEROUS_KEYS.has(key)) continue;
     if (isObject(value) && isObject(output[key])) {
       output[key] = mergeDeep(output[key], value);
     } else {
@@ -115,7 +118,8 @@ function loadJson(filePath) {
   try {
     const raw = fs.readFileSync(filePath, 'utf-8');
     return JSON.parse(raw);
-  } catch {
+  } catch (err) {
+    console.warn(`[settings] Failed to parse ${filePath}: ${err.message}`);
     return null;
   }
 }

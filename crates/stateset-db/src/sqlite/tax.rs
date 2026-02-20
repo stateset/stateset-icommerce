@@ -20,6 +20,7 @@ use super::{
 };
 
 /// SQLite tax repository
+#[derive(Debug)]
 pub struct SqliteTaxRepository {
     pool: Pool<SqliteConnectionManager>,
 }

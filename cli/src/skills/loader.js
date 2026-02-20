@@ -78,7 +78,8 @@ export function discoverFromDirectory(dirPath, origin) {
   let entries;
   try {
     entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    console.warn('[skills-loader] Failed to read skills directory:', err.message || err);
     return skills;
   }
 
@@ -145,7 +146,7 @@ export function discoverSkills(opts = {}) {
     for (const skill of discovered) {
       if (seenNames.has(skill.name)) {
         if (verbose) {
-          console.log(
+          console.debug(
             `[SkillLoader] Skipping ${skill.name} from ${origin} (overridden by higher-priority origin)`,
           );
         }
@@ -160,7 +161,7 @@ export function discoverSkills(opts = {}) {
   result.sort((a, b) => a.name.localeCompare(b.name));
 
   if (verbose) {
-    console.log(
+    console.debug(
       `[SkillLoader] Discovered ${result.length} skills from ${new Set(result.map((s) => s.origin)).size} origin(s)`,
     );
   }

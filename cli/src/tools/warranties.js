@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
 
 /**
  * Warranty tool definitions
@@ -36,7 +37,7 @@ export const warrantyTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return { error: 'Create warranty requires --apply flag.' };
+        return applyRequired('Create warranty', params);
       }
 
       const warranty = await commerce.warranties.create({
@@ -61,7 +62,7 @@ export const warrantyTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return { error: 'Create claim requires --apply flag.' };
+        return applyRequired('Create claim', params);
       }
 
       const claim = await commerce.warranties.createClaim({
@@ -83,7 +84,7 @@ export const warrantyTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { claimId } = params;
       if (!allowApply) {
-        return { error: 'Approve claim requires --apply flag.' };
+        return applyRequired('Approve claim', params);
       }
 
       const claim = await commerce.warranties.approveClaim(claimId);

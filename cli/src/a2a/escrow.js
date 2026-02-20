@@ -84,8 +84,13 @@ function formatEscrow(escrow) {
         typeof escrow.release_conditions === 'string'
           ? JSON.parse(escrow.release_conditions)
           : escrow.release_conditions;
-    } catch {
-      console.warn('Failed to parse release_conditions for escrow', escrow.id);
+    } catch (err) {
+      console.warn(
+        '[a2a/escrow] Failed to parse release_conditions for escrow',
+        escrow.id,
+        ':',
+        err.message || err,
+      );
       releaseConditions = [];
     }
   }
@@ -150,8 +155,13 @@ export function createEscrowService(store) {
       return typeof escrow.release_conditions === 'string'
         ? JSON.parse(escrow.release_conditions)
         : escrow.release_conditions;
-    } catch {
-      console.warn('Failed to parse release_conditions for escrow', escrow.id);
+    } catch (err) {
+      console.warn(
+        '[a2a/escrow] Failed to parse release_conditions for escrow',
+        escrow.id,
+        ':',
+        err.message || err,
+      );
       return [];
     }
   }
@@ -463,8 +473,13 @@ export function createEscrowService(store) {
             try {
               const quote = await store.getQuote(quoteId);
               met = quote?.status === 'fulfilled';
-            } catch {
-              console.warn('Failed to check quote status for condition', quoteId);
+            } catch (err) {
+              console.warn(
+                '[a2a/escrow] Failed to check quote status for condition',
+                quoteId,
+                ':',
+                err.message || err,
+              );
               met = false;
             }
           }

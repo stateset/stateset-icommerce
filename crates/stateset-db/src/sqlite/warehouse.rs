@@ -21,6 +21,7 @@ use stateset_core::{
 };
 
 /// SQLite warehouse repository
+#[derive(Debug)]
 pub struct SqliteWarehouseRepository {
     pool: Pool<SqliteConnectionManager>,
 }

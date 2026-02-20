@@ -36,6 +36,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Sending payments requires --apply flag.',
           wouldPay: {
             to: params.to,
@@ -47,6 +48,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured. Set up agent identity first.',
         };
       }
@@ -93,6 +95,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Creating payment requests requires --apply flag.',
           wouldRequest: {
             amount: params.amount,
@@ -103,6 +106,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured. Set up agent identity first.',
         };
       }
@@ -143,6 +147,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Paying requests requires --apply flag.',
           wouldPay: { requestId: params.requestId },
         };
@@ -150,6 +155,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -196,6 +202,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Requesting quotes requires --apply flag.',
           wouldRequest: {
             seller: params.seller,
@@ -206,6 +213,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -248,6 +256,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Providing quotes requires --apply flag.',
           wouldQuote: {
             quoteId: params.quoteId,
@@ -258,6 +267,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -293,6 +303,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Accepting quotes requires --apply flag.',
           wouldAccept: { quoteId: params.quoteId },
         };
@@ -300,6 +311,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -329,12 +341,14 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Declining quotes requires --apply flag.',
         };
       }
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -362,12 +376,14 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Fulfilling quotes requires --apply flag.',
         };
       }
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -406,6 +422,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, agentConfig }) => {
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -445,6 +462,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, agentConfig }) => {
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -485,6 +503,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, agentConfig }) => {
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -518,6 +537,7 @@ export const a2aTools = [
     handler: async ({ commerce, agentConfig }) => {
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -596,6 +616,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Counter-offering quotes requires --apply flag.',
           wouldCounter: {
             quoteId: params.quoteId,
@@ -606,6 +627,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured. Set up agent identity first.',
         };
       }
@@ -642,6 +664,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Revising quotes requires --apply flag.',
           wouldRevise: {
             quoteId: params.quoteId,
@@ -652,6 +675,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured. Set up agent identity first.',
         };
       }
@@ -707,6 +731,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Creating escrows requires --apply flag.',
           wouldCreate: {
             buyerAddress: params.buyerAddress,
@@ -718,6 +743,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured. Set up agent identity first.',
         };
       }
@@ -754,6 +780,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Funding escrows requires --apply flag.',
           wouldFund: { escrowId: params.escrowId },
         };
@@ -761,6 +788,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -788,6 +816,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Releasing escrows requires --apply flag.',
           wouldRelease: { escrowId: params.escrowId },
         };
@@ -795,6 +824,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -806,6 +836,7 @@ export const a2aTools = [
 
       if (!result.success) {
         return {
+          success: false,
           error: result.error,
           unmetConditions: result.unmetConditions,
           conditions: result.conditions,
@@ -830,6 +861,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Refunding escrows requires --apply flag.',
           wouldRefund: { escrowId: params.escrowId },
         };
@@ -837,6 +869,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -871,6 +904,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Disputing escrows requires --apply flag.',
           wouldDispute: { escrowId: params.escrowId, reason: params.reason },
         };
@@ -878,6 +912,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -913,7 +948,7 @@ export const a2aTools = [
       const escrow = await escrowSvc.getEscrow(params.escrowId);
 
       if (!escrow) {
-        return { error: 'Escrow not found' };
+        return { success: false, error: 'Escrow not found' };
       }
 
       return {
@@ -991,6 +1026,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Filing disputes requires --apply flag.',
           wouldFile: { escrowId: params.escrowId, reason: params.reason },
         };
@@ -998,6 +1034,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured. Set up agent identity first.',
         };
       }
@@ -1011,7 +1048,7 @@ export const a2aTools = [
       const escrow = await escrowSvc.getEscrow(params.escrowId);
 
       if (!escrow) {
-        return { error: 'Escrow not found' };
+        return { success: false, error: 'Escrow not found' };
       }
 
       const filedBy = agentConfig.walletAddress;
@@ -1052,6 +1089,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Submitting evidence requires --apply flag.',
           wouldSubmit: { disputeId: params.disputeId, title: params.title },
         };
@@ -1059,6 +1097,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -1098,6 +1137,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Resolving disputes requires --apply flag.',
           wouldResolve: { disputeId: params.disputeId, resolutionType: params.resolutionType },
         };
@@ -1105,6 +1145,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -1146,7 +1187,7 @@ export const a2aTools = [
           dispute: result.dispute,
         };
       } catch (err) {
-        return { error: err.message };
+        return { success: false, error: err.message };
       }
     },
   },
@@ -1212,6 +1253,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Rating agents requires --apply flag.',
           wouldRate: {
             agentAddress: params.agentAddress,
@@ -1222,6 +1264,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured. Set up agent identity first.',
         };
       }
@@ -1279,6 +1322,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Responding to feedback requires --apply flag.',
           wouldRespond: { feedbackId: params.feedbackId },
         };
@@ -1286,6 +1330,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured.',
         };
       }
@@ -1344,6 +1389,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Registering services requires --apply flag.',
           wouldRegister: {
             name: params.name,
@@ -1354,6 +1400,7 @@ export const a2aTools = [
 
       if (!agentConfig?.walletAddress) {
         return {
+          success: false,
           error: 'Agent wallet not configured. Set up agent identity first.',
         };
       }
@@ -1445,7 +1492,7 @@ export const a2aTools = [
       const service = store.getService(params.serviceId);
 
       if (!service) {
-        return { error: 'Service not found' };
+        return { success: false, error: 'Service not found' };
       }
 
       return {
@@ -1486,6 +1533,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Sending notifications requires --apply flag.',
           wouldSend: {
             recipientAddress: params.recipientAddress,
@@ -1558,6 +1606,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Configuring webhooks requires --apply flag.',
           wouldConfigure: {
             agentAddress: params.agentAddress,
@@ -1614,6 +1663,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Creating subscriptions requires --apply flag.',
           wouldCreate: {
             subscriberAddress: params.subscriberAddress,
@@ -1647,6 +1697,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Pausing subscriptions requires --apply flag.',
           wouldPause: { subscriptionId: params.subscriptionId },
         };
@@ -1675,6 +1726,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Resuming subscriptions requires --apply flag.',
           wouldResume: { subscriptionId: params.subscriptionId },
         };
@@ -1708,6 +1760,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Cancelling subscriptions requires --apply flag.',
           wouldCancel: { subscriptionId: params.subscriptionId },
         };
@@ -1746,7 +1799,7 @@ export const a2aTools = [
         const subscription = await subSvc.getSubscription(params.subscriptionId);
         return { success: true, subscription };
       } catch (err) {
-        return { error: err.message };
+        return { success: false, error: err.message };
       }
     },
   },
@@ -1792,6 +1845,7 @@ export const a2aTools = [
     handler: async ({ commerce, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Processing billing requires --apply flag.',
         };
       }
@@ -1848,6 +1902,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Creating split payments requires --apply flag.',
           wouldCreate: {
             senderAddress: params.senderAddress,
@@ -1881,13 +1936,14 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Executing split payments requires --apply flag.',
           wouldExecute: { splitPaymentId: params.splitPaymentId },
         };
       }
 
       if (!agentConfig?.walletAddress) {
-        return { error: 'Agent wallet not configured.' };
+        return { success: false, error: 'Agent wallet not configured.' };
       }
 
       const { createSplitPaymentService } = await import('../a2a/splits.js');
@@ -1928,7 +1984,7 @@ export const a2aTools = [
       const splitPayment = await splitSvc.getSplitPayment(params.splitPaymentId);
 
       if (!splitPayment) {
-        return { error: 'Split payment not found' };
+        return { success: false, error: 'Split payment not found' };
       }
 
       return { success: true, splitPayment };
@@ -2000,6 +2056,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Creating conditional payments requires --apply flag.',
           wouldCreate: {
             buyerAddress: params.buyerAddress,
@@ -2010,7 +2067,7 @@ export const a2aTools = [
       }
 
       if (!agentConfig?.walletAddress) {
-        return { error: 'Agent wallet not configured.' };
+        return { success: false, error: 'Agent wallet not configured.' };
       }
 
       const { createA2AService } = await import('../a2a/index.js');
@@ -2035,7 +2092,7 @@ export const a2aTools = [
     permission: 'read',
     handler: async ({ commerce, params, agentConfig }) => {
       if (!agentConfig?.walletAddress) {
-        return { error: 'Agent wallet not configured.' };
+        return { success: false, error: 'Agent wallet not configured.' };
       }
 
       const { createA2AService } = await import('../a2a/index.js');
@@ -2065,13 +2122,14 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Settling conditional payments requires --apply flag.',
           wouldSettle: { escrowId: params.escrowId },
         };
       }
 
       if (!agentConfig?.walletAddress) {
-        return { error: 'Agent wallet not configured.' };
+        return { success: false, error: 'Agent wallet not configured.' };
       }
 
       const { createA2AService } = await import('../a2a/index.js');
@@ -2112,6 +2170,7 @@ export const a2aTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Subscribing to events requires --apply flag.',
           wouldSubscribe: {
             agentAddress: params.agentAddress,

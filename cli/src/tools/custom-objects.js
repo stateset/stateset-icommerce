@@ -49,7 +49,7 @@ export const customObjectTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const ty = await commerce.customObjects.getType(params.id);
-      if (!ty) return { error: 'Custom object type not found' };
+      if (!ty) return { success: false, error: 'Custom object type not found' };
       return { success: true, type: ty };
     },
   },
@@ -63,7 +63,7 @@ export const customObjectTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const ty = await commerce.customObjects.getTypeByHandle(params.handle);
-      if (!ty) return { error: 'Custom object type not found' };
+      if (!ty) return { success: false, error: 'Custom object type not found' };
       return { success: true, type: ty };
     },
   },
@@ -98,6 +98,7 @@ export const customObjectTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: {
@@ -143,6 +144,7 @@ export const customObjectTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Update operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldUpdate: params,
@@ -169,6 +171,7 @@ export const customObjectTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Delete operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable destructive operations.',
           wouldDelete: { id: params.id },
@@ -217,7 +220,7 @@ export const customObjectTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const obj = await commerce.customObjects.getObject(params.id);
-      if (!obj) return { error: 'Custom object not found' };
+      if (!obj) return { success: false, error: 'Custom object not found' };
       return { success: true, object: obj };
     },
   },
@@ -235,7 +238,7 @@ export const customObjectTools = [
         params.typeHandle,
         params.objectHandle,
       );
-      if (!obj) return { error: 'Custom object not found' };
+      if (!obj) return { success: false, error: 'Custom object not found' };
       return { success: true, object: obj };
     },
   },
@@ -259,6 +262,7 @@ export const customObjectTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: {
@@ -298,6 +302,7 @@ export const customObjectTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Update operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldUpdate: {
@@ -335,6 +340,7 @@ export const customObjectTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Delete operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable destructive operations.',
           wouldDelete: { id: params.id },

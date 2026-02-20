@@ -1,6 +1,5 @@
 //! Event bus for in-process pub/sub using tokio broadcast channels
 
-use futures::future::FutureExt;
 use stateset_core::CommerceEvent;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};

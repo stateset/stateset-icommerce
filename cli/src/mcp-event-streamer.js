@@ -58,7 +58,8 @@ const cloneValue = (value) => {
   if (typeof value !== 'object') return value;
   try {
     return JSON.parse(JSON.stringify(value));
-  } catch {
+  } catch (err) {
+    console.debug('[event-streamer] Deep clone failed:', err.message || err);
     return value;
   }
 };
@@ -371,7 +372,7 @@ export function createMcpEventStreamer(options = {}) {
         try {
           const heartbeat = JSON.stringify({ timestamp: new Date().toISOString() });
           res.write(`event: heartbeat\ndata: ${heartbeat}\n\n`);
-        } catch (_error) {
+        } catch {
           clearInterval(heartbeatInterval);
         }
       }, SSE_HEARTBEAT_INTERVAL_MS);

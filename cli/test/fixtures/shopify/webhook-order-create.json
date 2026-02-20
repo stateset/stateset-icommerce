@@ -1,0 +1,29 @@
+{
+  "id": 9001,
+  "order_number": 2001,
+  "email": "alice@example.com",
+  "customer": { "id": 1001 },
+  "financial_status": "paid",
+  "fulfillment_status": null,
+  "currency": "USD",
+  "total_price": "39.98",
+  "line_items": [
+    {
+      "id": 7001,
+      "name": "Classic Widget - Small",
+      "sku": "WIDGET-SM",
+      "quantity": 2,
+      "price": "19.99",
+      "variant_id": 3001,
+      "product_id": 2001
+    }
+  ],
+  "shipping_address": {
+    "address1": "123 Main St",
+    "address2": "",
+    "city": "Anytown",
+    "province": "CA",
+    "zip": "90210",
+    "country": "US"
+  }
+}

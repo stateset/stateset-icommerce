@@ -138,8 +138,8 @@ export async function resolveIdentity({ channel, senderId, identityStore, commer
     try {
       const customer = await commerce.customers.get(existing.customerId);
       if (customer) return { customer, source: 'linked' };
-    } catch {
-      // Customer may have been deleted — fall through
+    } catch (err) {
+      console.debug('[identity] Linked customer lookup failed:', err.message || err);
     }
   }
 
@@ -154,8 +154,8 @@ export async function resolveIdentity({ channel, senderId, identityStore, commer
           identityStore.link(channel, senderId, match.id, 'auto');
           return { customer: match, source: 'phone' };
         }
-      } catch {
-        // Commerce unavailable
+      } catch (err) {
+        console.debug('[identity] Phone-based customer match failed:', err.message || err);
       }
     }
   }
@@ -202,8 +202,8 @@ export async function buildCustomerContext(customer, commerce) {
           );
         }
       }
-    } catch {
-      // Extra context unavailable
+    } catch (err) {
+      console.debug('[identity] Customer context enrichment failed:', err.message || err);
     }
   }
 

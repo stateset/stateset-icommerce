@@ -21,6 +21,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of OrderRepository
+#[derive(Debug)]
 pub struct SqliteOrderRepository {
     pool: Pool<SqliteConnectionManager>,
 }

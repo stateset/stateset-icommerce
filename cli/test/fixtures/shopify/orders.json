@@ -1,0 +1,151 @@
+{
+  "orders": [
+    {
+      "id": 5001,
+      "order_number": 1001,
+      "email": "alice@example.com",
+      "customer": { "id": 1001 },
+      "financial_status": "paid",
+      "fulfillment_status": null,
+      "currency": "USD",
+      "total_price": "49.98",
+      "line_items": [
+        {
+          "id": 6001,
+          "name": "Classic Widget - Small",
+          "sku": "WIDGET-SM",
+          "quantity": 2,
+          "price": "19.99",
+          "variant_id": 3001,
+          "product_id": 2001
+        },
+        {
+          "id": 6002,
+          "name": "Simple Part",
+          "sku": "PART-001",
+          "quantity": 2,
+          "price": "5.00",
+          "variant_id": 3006,
+          "product_id": 2004
+        }
+      ],
+      "shipping_address": {
+        "address1": "123 Main St",
+        "address2": "Apt 4",
+        "city": "Anytown",
+        "province": "CA",
+        "zip": "90210",
+        "country": "US"
+      }
+    },
+    {
+      "id": 5002,
+      "order_number": 1002,
+      "email": "bob@example.com",
+      "customer": { "id": 1002 },
+      "financial_status": "pending",
+      "fulfillment_status": "partial",
+      "currency": "USD",
+      "total_price": "49.99",
+      "line_items": [
+        {
+          "id": 6003,
+          "name": "Premium Gadget",
+          "sku": "GADGET-01",
+          "quantity": 1,
+          "price": "49.99",
+          "variant_id": 3003,
+          "product_id": 2002
+        }
+      ],
+      "shipping_address": {
+        "address1": "456 Oak Ave",
+        "address2": "",
+        "city": "Springfield",
+        "province": "IL",
+        "zip": "62701",
+        "country": "US"
+      }
+    },
+    {
+      "id": 5003,
+      "order_number": 1003,
+      "email": "charlie@example.com",
+      "customer": { "id": 1003 },
+      "financial_status": "refunded",
+      "fulfillment_status": "fulfilled",
+      "currency": "EUR",
+      "total_price": "199.98",
+      "line_items": [
+        {
+          "id": 6004,
+          "name": "Deluxe Thingamajig - Red",
+          "sku": "THING-RED",
+          "quantity": 2,
+          "price": "99.99",
+          "variant_id": 3004,
+          "product_id": 2003
+        }
+      ],
+      "shipping_address": {
+        "address1": "789 Elm Blvd",
+        "address2": "",
+        "city": "Berlin",
+        "province": "",
+        "zip": "10115",
+        "country": "DE"
+      }
+    },
+    {
+      "id": 5004,
+      "order_number": 1004,
+      "email": "diana@example.com",
+      "customer": { "id": 1004 },
+      "financial_status": "partially_refunded",
+      "fulfillment_status": "restocked",
+      "currency": "USD",
+      "total_price": "25.00",
+      "line_items": [
+        {
+          "id": 6005,
+          "name": "Gift Card & Bundle - $25",
+          "sku": "GIFT-25",
+          "quantity": 1,
+          "price": "25.00",
+          "variant_id": 3007,
+          "product_id": 2005
+        }
+      ],
+      "shipping_address": null
+    },
+    {
+      "id": 5005,
+      "order_number": 1005,
+      "email": "eve@example.com",
+      "customer": { "id": 1005 },
+      "financial_status": "authorized",
+      "fulfillment_status": null,
+      "currency": "GBP",
+      "total_price": "29.99",
+      "line_items": [
+        {
+          "id": 6006,
+          "name": "Classic Widget - Large",
+          "sku": "WIDGET-LG",
+          "quantity": 1,
+          "price": "29.99",
+          "variant_id": 3002,
+          "product_id": 2001
+        }
+      ],
+      "shipping_address": {
+        "address1": "10 Downing St",
+        "address2": "",
+        "city": "London",
+        "province": "",
+        "zip": "SW1A 2AA",
+        "country": "GB"
+      }
+    }
+  ]
+}

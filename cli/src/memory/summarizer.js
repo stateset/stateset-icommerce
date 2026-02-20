@@ -120,11 +120,15 @@ export class ConversationSummarizer {
       summary = text.trim();
     }
 
-    const factsMatch = text.match(/FACTS:\s*(\[.*\])/s);
+    const factsMatch = text.match(/FACTS:\s*(\[.*?\])/s);
     if (factsMatch) {
       try {
         facts = JSON.parse(factsMatch[1]);
-      } catch {
+      } catch (err) {
+        console.debug(
+          '[summarizer] Facts JSON parse failed, falling back to comma split:',
+          err.message || err,
+        );
         // Non-JSON facts line — split by comma
         facts = factsMatch[1]
           .replace(/[[\]"]/g, '')

@@ -21,6 +21,7 @@ use stateset_core::{
 };
 
 /// SQLite receiving repository
+#[derive(Debug)]
 pub struct SqliteReceivingRepository {
     pool: Pool<SqliteConnectionManager>,
 }

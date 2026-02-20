@@ -113,8 +113,11 @@ function formatEvent(row) {
   if (typeof payload === 'string') {
     try {
       payload = JSON.parse(payload);
-    } catch {
-      // leave as string if not valid JSON
+    } catch (err) {
+      console.debug(
+        '[a2a/event-stream] Payload is not valid JSON, leaving as string:',
+        err.message || err,
+      );
     }
   }
 

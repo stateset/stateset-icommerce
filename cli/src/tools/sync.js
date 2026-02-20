@@ -84,11 +84,16 @@ export const syncTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { batchSize = 100, dryRun = false } = params;
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       if (!dryRun && !allowApply) {
         const outbox = createOutbox(commerce.db);
         const pending = outbox.getPending(batchSize);
         return {
+          success: false,
           error: 'Push operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable push, or use dryRun: true to preview.',
           wouldPush: pending.length,
@@ -139,7 +144,11 @@ export const syncTools = [
     handler: async ({ commerce, params }) => {
       const { fromSequence, limit = 1000 } = params;
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       const engine = createSyncEngine({ db: commerce.db, config });
@@ -170,7 +179,11 @@ export const syncTools = [
     handler: async ({ commerce, params }) => {
       const { status = 'all', limit = 20 } = params;
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       const outbox = createOutbox(commerce.db);
       outbox.initialize();
       const stmt =
@@ -204,11 +217,16 @@ export const syncTools = [
     permission: 'write',
     handler: async ({ commerce, params: _params, allowApply }) => {
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       if (!allowApply) {
         const outbox = createOutbox(commerce.db);
         const stats = outbox.getStats();
         return {
+          success: false,
           error: 'Retry operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable retry.',
           failedCount: stats.failed,
@@ -236,7 +254,11 @@ export const syncTools = [
     handler: async ({ params }) => {
       const { entityType, entityId } = params;
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       const client = createSequencerClient(config);
@@ -269,7 +291,11 @@ export const syncTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { pushBatchSize = 100, pullLimit = 1000 } = params;
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       const engine = createSyncEngine({ db: commerce.db, config });
@@ -301,7 +327,11 @@ export const syncTools = [
     permission: 'read',
     handler: async ({ commerce }) => {
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       const engine = createSyncEngine({ db: commerce.db, config });
@@ -344,9 +374,14 @@ export const syncTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { conflictId, strategy } = params;
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       if (!allowApply)
         return {
+          success: false,
           error: 'Resolve operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable conflict resolution.',
           conflictId,
@@ -380,7 +415,11 @@ export const syncTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { strategy = 'remote-wins' } = params;
       if (!isSyncConfigured())
-        return { error: 'Sync not configured', hint: 'Run "stateset-sync init" to set up sync.' };
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
       const rawConfig = loadSyncConfig();
       const config = new SyncConfig(rawConfig);
       const engine = createSyncEngine({ db: commerce.db, config });
@@ -389,6 +428,7 @@ export const syncTools = [
       if (!allowApply) {
         await engine.shutdown();
         return {
+          success: false,
           error: 'Rebase operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable rebase.',
           wouldResolve: conflicts.length,

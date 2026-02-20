@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
 
 /**
  * Payment tool definitions
@@ -52,10 +53,7 @@ export const paymentTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return {
-          error: 'Create payment requires --apply flag.',
-          wouldCreate: params,
-        };
+        return applyRequired('Create payment', params);
       }
 
       const payment = await commerce.payments.create({
@@ -78,7 +76,7 @@ export const paymentTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { paymentId } = params;
       if (!allowApply) {
-        return { error: 'Complete payment requires --apply flag.' };
+        return applyRequired('Complete payment', params);
       }
 
       const payment = await commerce.payments.markCompleted(paymentId);
@@ -97,7 +95,7 @@ export const paymentTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return { error: 'Create refund requires --apply flag.' };
+        return applyRequired('Create refund', params);
       }
 
       const refund = await commerce.payments.createRefund({

@@ -121,7 +121,8 @@ export class GrpcSequencerClient extends EventEmitter {
       grpc = await import('@grpc/grpc-js');
       protoLoader = await import('@grpc/proto-loader');
       this._grpcLoaded = true;
-    } catch {
+    } catch (err) {
+      console.debug('[grpc-client] gRPC import failed:', err.message || err);
       throw new Error(
         'gRPC dependencies not installed. Run: npm install @grpc/grpc-js @grpc/proto-loader',
       );

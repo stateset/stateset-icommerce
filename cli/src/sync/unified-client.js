@@ -20,7 +20,8 @@ async function isGrpcAvailable() {
     await import('@grpc/grpc-js');
     await import('@grpc/proto-loader');
     return true;
-  } catch {
+  } catch (err) {
+    console.debug('[unified-client] gRPC availability check failed:', err.message || err);
     return false;
   }
 }

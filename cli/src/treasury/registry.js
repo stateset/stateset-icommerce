@@ -28,7 +28,8 @@ export async function loadTokenRegistry(registryPath = defaultRegistryPath()) {
       return { tokens: [] };
     }
     return { tokens: parsed.tokens };
-  } catch {
+  } catch (err) {
+    console.debug('[token-registry] Registry load failed:', err.message || err);
     return { tokens: [] };
   }
 }

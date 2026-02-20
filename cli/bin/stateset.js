@@ -18,6 +18,14 @@ import { parseArgs } from 'node:util';
 // IMPORTANT: Save and clean argv BEFORE importing SDK modules
 // The Claude Agent SDK reads process.argv and passes it to the spawned process
 const __savedArgv = [...process.argv];
+
+// Fast path: --version without loading heavy modules
+if (__savedArgv.includes('--version') || __savedArgv.includes('-v')) {
+  const { CLI_VERSION } = await import('../src/config.js');
+  console.log(`@stateset/cli v${CLI_VERSION}`);
+  process.exit(0);
+}
+
 let runAgentLoopMod = null;
 let configMod = null;
 let outputMod = null;

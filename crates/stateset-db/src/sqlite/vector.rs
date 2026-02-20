@@ -18,6 +18,7 @@ use stateset_core::{
 use std::collections::HashMap;
 
 /// SQLite implementation of VectorRepository using pure Rust cosine similarity
+#[derive(Debug)]
 pub struct SqliteVectorRepository {
     pool: Pool<SqliteConnectionManager>,
 }
@@ -145,7 +146,7 @@ impl SqliteVectorRepository {
         let seo_json: Option<String> = row.get("seo")?;
 
         Ok(Product {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "product", "id")?,
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "product", "id")?.into(),
             name: row.get("name")?,
             slug: row.get("slug")?,
             description: row.get("description")?,
@@ -175,7 +176,7 @@ impl SqliteVectorRepository {
         let metadata_json: Option<String> = row.get("metadata")?;
 
         Ok(Customer {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "customer", "id")?,
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "customer", "id")?.into(),
             email: row.get("email")?,
             first_name: row.get("first_name")?,
             last_name: row.get("last_name")?,
@@ -209,13 +210,13 @@ impl SqliteVectorRepository {
         let billing_address_json: Option<String> = row.get("billing_address")?;
 
         Ok(Order {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "order", "id")?,
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "order", "id")?.into(),
             order_number: row.get("order_number")?,
             customer_id: parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "order",
                 "customer_id",
-            )?,
+            )?.into(),
             status: parse_enum_row(&row.get::<_, String>("status")?, "order", "status")?,
             order_date: parse_datetime_row(
                 &row.get::<_, String>("order_date")?,

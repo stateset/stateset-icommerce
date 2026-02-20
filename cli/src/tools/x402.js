@@ -328,6 +328,7 @@ export const x402Tools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Signing x402 intent requires --apply flag.',
           wouldSign: {
             intentId,
@@ -344,6 +345,7 @@ export const x402Tools = [
 
       if (wantsLocalSigning && (signature || publicKey)) {
         return {
+          success: false,
           error:
             'Provide either local signing params (agentId/keyId) or manual signature/publicKey, not both',
         };
@@ -351,6 +353,7 @@ export const x402Tools = [
 
       if (!wantsLocalSigning && (!signature || !publicKey)) {
         return {
+          success: false,
           error:
             'Manual signing requires both signature and publicKey. Omit both to use local agent-key signing.',
         };
@@ -423,7 +426,7 @@ export const x402Tools = [
       const { intentId } = params;
       const intent = await commerce.x402().getIntent(intentId);
       if (!intent) {
-        return { error: 'Payment intent not found' };
+        return { success: false, error: 'Payment intent not found' };
       }
       return {
         success: true,
@@ -528,6 +531,7 @@ export const x402Tools = [
       const { intentId, agentId, payeeAgentId, chain, token } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Settling an x402 intent on-chain requires --apply flag.',
           wouldSettle: {
             intentId,
@@ -542,23 +546,25 @@ export const x402Tools = [
 
       const rawIntent = await commerce.x402().getIntent(intentId);
       if (!rawIntent) {
-        return { error: 'Payment intent not found' };
+        return { success: false, error: 'Payment intent not found' };
       }
 
       const intent = normalizeIntent(rawIntent);
       if (!intent.payerAddress || !intent.payeeAddress) {
-        return { error: 'Intent is missing payer/payee addresses' };
+        return { success: false, error: 'Intent is missing payer/payee addresses' };
       }
       if (!intent.status) {
-        return { error: 'Intent status is missing' };
+        return { success: false, error: 'Intent status is missing' };
       }
       if (!['signed', 'sequenced', 'batched'].includes(String(intent.status).toLowerCase())) {
         return {
+          success: false,
           error: `Intent must be signed, sequenced, or batched before settlement (current: ${intent.status})`,
         };
       }
       if (intent.txHash) {
         return {
+          success: false,
           error: 'Intent already has a transaction hash and appears settled or in-progress',
           intent: {
             id: intent.id,
@@ -597,7 +603,7 @@ export const x402Tools = [
       }
 
       if (!chainId || !getChain(chainId)) {
-        return { error: 'Unable to determine target chain (provide --chain)' };
+        return { success: false, error: 'Unable to determine target chain (provide --chain)' };
       }
 
       const inferredToken = token || normalizeAssetToToken(intent.asset);
@@ -606,6 +612,7 @@ export const x402Tools = [
         : getDefaultStablecoin(chainId);
       if (!tokenConfig) {
         return {
+          success: false,
           error: `Unable to resolve token for intent asset=${intent.asset || 'unknown'} on chain=${chainId}`,
         };
       }
@@ -619,6 +626,7 @@ export const x402Tools = [
         isEvmChain(chainId) ? String(address).toLowerCase() : String(address);
       if (normalizeAddress(payerWallet) !== normalizeAddress(intent.payerAddress)) {
         return {
+          success: false,
           error: 'Agent wallet does not match intent payer address',
           expectedPayer: intent.payerAddress,
           agentWallet: payerWallet,
@@ -632,6 +640,7 @@ export const x402Tools = [
         });
         if (normalizeAddress(payeeWallet) !== normalizeAddress(intent.payeeAddress)) {
           return {
+            success: false,
             error: 'Payee agent wallet does not match intent payee address',
             expectedPayee: intent.payeeAddress,
             payeeAgentWallet: payeeWallet,
@@ -648,11 +657,14 @@ export const x402Tools = [
             ? fromSmallestUnit(BigInt(String(intent.amount)), tokenConfig.decimals)
             : null;
       if (!amount) {
-        return { error: 'Intent amount is missing' };
+        return { success: false, error: 'Intent amount is missing' };
       }
       const numericAmount = Number.parseFloat(String(amount));
       if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-        return { error: `Intent amount must be greater than zero (resolved: ${amount})` };
+        return {
+          success: false,
+          error: `Intent amount must be greater than zero (resolved: ${amount})`,
+        };
       }
 
       const paymentResult = await executePayment(
@@ -916,6 +928,7 @@ export const x402Tools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Executing an end-to-end x402 payment requires --apply flag.',
           wouldExecute: {
             amount,
@@ -937,7 +950,7 @@ export const x402Tools = [
       }
 
       if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
-        return { error: 'amount must be a positive number in smallest unit' };
+        return { success: false, error: 'amount must be a positive number in smallest unit' };
       }
 
       const normalizedNetwork =
@@ -947,13 +960,17 @@ export const x402Tools = [
         'set_chain';
       const chainId = normalizeX402NetworkToChain(chain || normalizedNetwork);
       if (!chainId) {
-        return { error: 'Unable to determine settlement chain from network/chain inputs' };
+        return {
+          success: false,
+          error: 'Unable to determine settlement chain from network/chain inputs',
+        };
       }
 
       if (network && chain) {
         const networkChain = normalizeX402NetworkToChain(network);
         if (networkChain && networkChain !== chainId) {
           return {
+            success: false,
             error: `network=${network} resolves to ${networkChain}, which conflicts with chain=${chain}`,
           };
         }
@@ -962,6 +979,7 @@ export const x402Tools = [
       const { getChain, getWalletAddress, isEvmChain } = await import('../chains/index.js');
       if (!getChain(chainId)) {
         return {
+          success: false,
           error: `Unsupported settlement chain: ${chainId}`,
         };
       }
@@ -979,6 +997,7 @@ export const x402Tools = [
         normalizeAddress(requestedPayerAddress) !== normalizeAddress(derivedPayerWallet)
       ) {
         return {
+          success: false,
           error: 'Provided payerAddress does not match derived payer agent wallet',
           payerAgentId: effectivePayerAgentId,
           providedPayerAddress: requestedPayerAddress,
@@ -997,6 +1016,7 @@ export const x402Tools = [
           normalizeAddress(resolvedPayeeAddress) !== normalizeAddress(derivedPayeeWallet)
         ) {
           return {
+            success: false,
             error: 'Provided payeeAddress does not match derived payee agent wallet',
             payeeAgentId: requestedPayeeAgentId,
             providedPayeeAddress: resolvedPayeeAddress,
@@ -1009,6 +1029,7 @@ export const x402Tools = [
 
       if (!resolvedPayeeAddress) {
         return {
+          success: false,
           error: 'payeeAddress or payeeAgentId is required',
         };
       }
@@ -1026,7 +1047,7 @@ export const x402Tools = [
       });
       const normalizedIntent = normalizeIntent(createdIntent);
       if (!normalizedIntent.id) {
-        return { error: 'x402 createIntent did not return an intent id' };
+        return { success: false, error: 'x402 createIntent did not return an intent id' };
       }
 
       const localSigning = await signIntentWithLocalAgent({
@@ -1133,6 +1154,7 @@ export const x402Tools = [
       const { intentId, payeeAgentId, chain, token } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Recording incoming x402 settlement requires --apply flag.',
           wouldRecord: {
             intentId,
@@ -1146,22 +1168,26 @@ export const x402Tools = [
 
       const rawIntent = await commerce.x402().getIntent(intentId);
       if (!rawIntent) {
-        return { error: 'Payment intent not found' };
+        return { success: false, error: 'Payment intent not found' };
       }
 
       const intent = normalizeIntent(rawIntent);
       if (!intent.payeeAddress) {
-        return { error: 'Intent is missing payee address' };
+        return { success: false, error: 'Intent is missing payee address' };
       }
 
       const status = String(intent.status || '').toLowerCase();
       if (status !== 'settled' && !intent.txHash) {
         return {
+          success: false,
           error: `Intent must be settled or include a transaction hash (current: ${intent.status || 'unknown'})`,
         };
       }
       if (!intent.txHash) {
-        return { error: 'Intent is missing tx hash, cannot record incoming settlement' };
+        return {
+          success: false,
+          error: 'Intent is missing tx hash, cannot record incoming settlement',
+        };
       }
 
       const {
@@ -1192,7 +1218,7 @@ export const x402Tools = [
       }
 
       if (!chainId || !getChain(chainId)) {
-        return { error: 'Unable to determine target chain (provide --chain)' };
+        return { success: false, error: 'Unable to determine target chain (provide --chain)' };
       }
 
       const inferredToken = token || normalizeAssetToToken(intent.asset);
@@ -1201,6 +1227,7 @@ export const x402Tools = [
         : getDefaultStablecoin(chainId);
       if (!tokenConfig) {
         return {
+          success: false,
           error: `Unable to resolve token for intent asset=${intent.asset || 'unknown'} on chain=${chainId}`,
         };
       }
@@ -1212,6 +1239,7 @@ export const x402Tools = [
       });
       if (normalizeAddress(payeeWallet) !== normalizeAddress(intent.payeeAddress)) {
         return {
+          success: false,
           error: 'Payee agent wallet does not match intent payee address',
           expectedPayee: intent.payeeAddress,
           payeeAgentWallet: payeeWallet,
@@ -1227,11 +1255,14 @@ export const x402Tools = [
             ? fromSmallestUnit(BigInt(String(intent.amount)), tokenConfig.decimals)
             : null;
       if (!amount) {
-        return { error: 'Intent amount is missing' };
+        return { success: false, error: 'Intent amount is missing' };
       }
       const numericAmount = Number.parseFloat(String(amount));
       if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-        return { error: `Intent amount must be greater than zero (resolved: ${amount})` };
+        return {
+          success: false,
+          error: `Intent amount must be greater than zero (resolved: ${amount})`,
+        };
       }
 
       const ctx = await loadTreasuryContext(treasuryContextOptions || {});
@@ -1323,6 +1354,7 @@ export const x402Tools = [
       const { intentId, txHash, blockNumber } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Marking settled requires --apply flag.',
           wouldSettle: { intentId, txHash, blockNumber },
         };
@@ -1411,6 +1443,7 @@ export const x402Tools = [
       const { payerAddress, amount, asset, network, reason, referenceId, metadata } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Depositing credit requires --apply flag.',
           wouldDeposit: { payerAddress, amount, asset, network },
         };
@@ -1460,6 +1493,7 @@ export const x402Tools = [
       const { payerAddress, amount, asset, network, reason, referenceId, metadata } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Debiting credit requires --apply flag.',
           wouldDebit: { payerAddress, amount, asset, network },
         };

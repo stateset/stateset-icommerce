@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
 
 /**
  * Invoice tool definitions
@@ -38,10 +39,18 @@ export const invoiceTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return { error: 'Create invoice requires --apply flag.' };
+        return applyRequired('Create invoice', params);
       }
 
-      const items = JSON.parse(params.items);
+      let items;
+      try {
+        items = JSON.parse(params.items);
+      } catch (err) {
+        return {
+          success: false,
+          error: `Invalid items JSON: ${err.message}. Expected format: [{"description":"X","quantity":1,"unitPrice":10.00}]`,
+        };
+      }
       const invoice = await commerce.invoices.create({
         customerId: params.customerId,
         orderId: params.orderId,
@@ -63,7 +72,7 @@ export const invoiceTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { invoiceId } = params;
       if (!allowApply) {
-        return { error: 'Send invoice requires --apply flag.' };
+        return applyRequired('Send invoice', params);
       }
 
       const invoice = await commerce.invoices.send(invoiceId);
@@ -83,7 +92,7 @@ export const invoiceTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return { error: 'Record payment requires --apply flag.' };
+        return applyRequired('Record payment', params);
       }
 
       const invoice = await commerce.invoices.recordPayment(params.invoiceId, {

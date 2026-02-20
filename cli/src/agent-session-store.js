@@ -120,7 +120,8 @@ export class AgentSessionStore {
 function safeJsonParse(value, fallback) {
   try {
     return JSON.parse(value);
-  } catch {
+  } catch (err) {
+    console.debug('[agent-session-store] JSON parse failed:', err.message || err);
     return fallback;
   }
 }

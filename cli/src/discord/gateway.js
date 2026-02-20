@@ -42,8 +42,10 @@ export async function startDiscordGateway({
   try {
     ({ Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } =
       await import('discord.js'));
-  } catch {
-    throw new Error('discord.js is not installed. Install it with: npm install discord.js');
+  } catch (err) {
+    throw new Error(
+      `discord.js is not installed. Install it with: npm install discord.js (${err.message || err})`,
+    );
   }
 
   const token = process.env.DISCORD_BOT_TOKEN;

@@ -25,6 +25,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of CartRepository
+#[derive(Debug)]
 pub struct SqliteCartRepository {
     pool: Pool<SqliteConnectionManager>,
 }

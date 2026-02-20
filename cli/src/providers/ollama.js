@@ -25,7 +25,8 @@ export class OllamaProvider extends ModelProvider {
         signal: AbortSignal.timeout(2000),
       });
       return res.ok;
-    } catch {
+    } catch (err) {
+      console.debug('[ollama] Availability check failed:', err.message || err);
       return false;
     }
   }
@@ -40,7 +41,8 @@ export class OllamaProvider extends ModelProvider {
       if (!res.ok) return [];
       const data = await res.json();
       return (data.models || []).map((m) => m.name);
-    } catch {
+    } catch (err) {
+      console.debug('[ollama] Model discovery failed:', err.message || err);
       return [];
     }
   }

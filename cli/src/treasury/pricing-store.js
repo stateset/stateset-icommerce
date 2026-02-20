@@ -27,7 +27,8 @@ export async function loadPricing(pricingPath = defaultPricingPath()) {
       return { rules: [] };
     }
     return { rules: parsed.rules };
-  } catch {
+  } catch (err) {
+    console.debug('[pricing-store] Pricing config load failed:', err.message || err);
     return { rules: [] };
   }
 }

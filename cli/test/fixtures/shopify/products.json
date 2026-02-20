@@ -1,0 +1,141 @@
+{
+  "products": [
+    {
+      "id": 2001,
+      "title": "Classic Widget",
+      "body_html": "<p>A <strong>premium</strong> widget for everyday use.</p>",
+      "handle": "classic-widget",
+      "status": "active",
+      "product_type": "Widgets",
+      "vendor": "WidgetCo",
+      "tags": "bestseller, widget",
+      "variants": [
+        {
+          "id": 3001,
+          "title": "Small",
+          "sku": "WIDGET-SM",
+          "price": "19.99",
+          "compare_at_price": "24.99",
+          "weight": 100,
+          "weight_unit": "g",
+          "barcode": "123456789",
+          "inventory_item_id": 4001
+        },
+        {
+          "id": 3002,
+          "title": "Large",
+          "sku": "WIDGET-LG",
+          "price": "29.99",
+          "compare_at_price": null,
+          "weight": 200,
+          "weight_unit": "g",
+          "barcode": "123456790",
+          "inventory_item_id": 4002
+        }
+      ]
+    },
+    {
+      "id": 2002,
+      "title": "Premium Gadget",
+      "body_html": "No HTML here, just text.",
+      "handle": "premium-gadget",
+      "status": "active",
+      "product_type": "Gadgets",
+      "vendor": "GadgetLab",
+      "tags": "new",
+      "variants": [
+        {
+          "id": 3003,
+          "title": "Default",
+          "sku": "GADGET-01",
+          "price": "49.99",
+          "compare_at_price": null,
+          "weight": 350,
+          "weight_unit": "g",
+          "barcode": null,
+          "inventory_item_id": 4003
+        }
+      ]
+    },
+    {
+      "id": 2003,
+      "title": "Deluxe Thingamajig",
+      "body_html": "<h2>Features</h2><ul><li>Feature A</li><li>Feature B</li></ul>",
+      "handle": "deluxe-thingamajig",
+      "status": "draft",
+      "product_type": "Things",
+      "vendor": "ThingMakers",
+      "tags": "",
+      "variants": [
+        {
+          "id": 3004,
+          "title": "Red",
+          "sku": "THING-RED",
+          "price": "99.99",
+          "compare_at_price": "129.99",
+          "weight": 500,
+          "weight_unit": "g",
+          "barcode": "999888777",
+          "inventory_item_id": 4004
+        },
+        {
+          "id": 3005,
+          "title": "Blue",
+          "sku": "THING-BLU",
+          "price": "99.99",
+          "compare_at_price": "129.99",
+          "weight": 500,
+          "weight_unit": "g",
+          "barcode": "999888778",
+          "inventory_item_id": 4005
+        }
+      ]
+    },
+    {
+      "id": 2004,
+      "title": "Simple Part",
+      "body_html": "",
+      "handle": "simple-part",
+      "status": "active",
+      "product_type": "",
+      "vendor": "",
+      "tags": "",
+      "variants": [
+        {
+          "id": 3006,
+          "title": "Default",
+          "sku": "PART-001",
+          "price": "5.00",
+          "compare_at_price": null,
+          "weight": null,
+          "weight_unit": null,
+          "barcode": null,
+          "inventory_item_id": 4006
+        }
+      ]
+    },
+    {
+      "id": 2005,
+      "title": "Gift Card &amp; Bundle",
+      "body_html": "<p>A special gift card &amp; bundle with &quot;extras&quot;.</p>",
+      "handle": "gift-card-bundle",
+      "status": "active",
+      "product_type": "Gift Cards",
+      "vendor": "StateSet",
+      "tags": "gift, bundle",
+      "variants": [
+        {
+          "id": 3007,
+          "title": "$25",
+          "sku": "GIFT-25",
+          "price": "25.00",
+          "compare_at_price": null,
+          "weight": 0,
+          "weight_unit": "g",
+          "barcode": null,
+          "inventory_item_id": 4007
+        }
+      ]
+    }
+  ]
+}

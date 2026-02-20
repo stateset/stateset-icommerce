@@ -47,7 +47,7 @@ export const manufacturingTools = [
       const { bomId } = params;
       const bom = await commerce.bom.get(bomId);
       if (!bom) {
-        return { error: 'BOM not found' };
+        return { success: false, error: 'BOM not found' };
       }
       const components = await commerce.bom.getComponents(bomId);
       return {
@@ -71,6 +71,7 @@ export const manufacturingTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create BOM operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
@@ -111,6 +112,7 @@ export const manufacturingTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Add component operation not allowed. The --apply flag must be set.',
           wouldAdd: params,
         };
@@ -142,6 +144,7 @@ export const manufacturingTools = [
       const { bomId } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Activate BOM operation not allowed. The --apply flag must be set.',
           wouldActivate: bomId,
         };
@@ -193,7 +196,7 @@ export const manufacturingTools = [
       const { workOrderId } = params;
       const wo = await commerce.workOrders.get(workOrderId);
       if (!wo) {
-        return { error: 'Work order not found' };
+        return { success: false, error: 'Work order not found' };
       }
       return { success: true, workOrder: wo };
     },
@@ -215,6 +218,7 @@ export const manufacturingTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create work order operation not allowed. The --apply flag must be set.',
           wouldCreate: params,
         };
@@ -253,6 +257,7 @@ export const manufacturingTools = [
       const { workOrderId } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Start work order operation not allowed. The --apply flag must be set.',
           wouldStart: workOrderId,
         };
@@ -283,6 +288,7 @@ export const manufacturingTools = [
       const { workOrderId, quantityCompleted } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Complete work order operation not allowed. The --apply flag must be set.',
           wouldComplete: { workOrderId, quantityCompleted },
         };
@@ -313,6 +319,7 @@ export const manufacturingTools = [
       const { workOrderId } = params;
       if (!allowApply) {
         return {
+          success: false,
           error: 'Cancel work order operation not allowed. The --apply flag must be set.',
           wouldCancel: workOrderId,
         };

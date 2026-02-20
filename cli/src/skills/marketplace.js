@@ -289,7 +289,8 @@ export class MarketplaceClient {
         )
         .map((e) => e.name)
         .sort();
-    } catch {
+    } catch (err) {
+      console.debug('[marketplace] Installed skills listing failed:', err.message || err);
       return [];
     }
   }
@@ -406,7 +407,8 @@ export class MarketplaceClient {
       const installedVersion = versionMatch ? versionMatch[1].trim() : '0.0.0';
       const hasUpdate = entry.version !== installedVersion;
       return { hasUpdate, installed: installedVersion, latest: entry.version };
-    } catch {
+    } catch (err) {
+      console.debug('[marketplace] Skill version check failed:', err.message || err);
       return { hasUpdate: true, installed: null, latest: entry.version };
     }
   }

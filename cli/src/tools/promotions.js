@@ -60,10 +60,14 @@ export const promotionTools = [
       let promotion;
       try {
         promotion = await commerce.promotions().get(identifier);
-      } catch {
+      } catch (err) {
+        console.debug(
+          '[promotions] Promotion get by ID failed, trying code lookup:',
+          err.message || err,
+        );
         promotion = await commerce.promotions().getByCode(identifier);
       }
-      if (!promotion) return { error: 'Promotion not found' };
+      if (!promotion) return { success: false, error: 'Promotion not found' };
       return {
         success: true,
         promotion: {
@@ -122,6 +126,7 @@ export const promotionTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply)
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set to create promotions.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
@@ -171,6 +176,7 @@ export const promotionTools = [
       const { promotionId } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Activate operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldActivate: promotionId,
@@ -192,6 +198,7 @@ export const promotionTools = [
       const { promotionId } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Deactivate operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldDeactivate: promotionId,
@@ -219,6 +226,7 @@ export const promotionTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply)
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set to create coupons.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
@@ -335,6 +343,7 @@ export const promotionTools = [
       const { cartId } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Apply operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldApplyTo: cartId,

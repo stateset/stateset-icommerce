@@ -18,6 +18,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of CustomerRepository
+#[derive(Debug)]
 pub struct SqliteCustomerRepository {
     pool: Pool<SqliteConnectionManager>,
 }

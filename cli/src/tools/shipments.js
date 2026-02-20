@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
 
 /**
  * Shipment tool definitions
@@ -34,7 +35,7 @@ export const shipmentTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return { error: 'Create shipment requires --apply flag.' };
+        return applyRequired('Create shipment', params);
       }
 
       const shipment = await commerce.shipments.create({
@@ -56,7 +57,7 @@ export const shipmentTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { shipmentId } = params;
       if (!allowApply) {
-        return { error: 'Deliver shipment requires --apply flag.' };
+        return applyRequired('Deliver shipment', params);
       }
 
       const shipment = await commerce.shipments.deliver(shipmentId);

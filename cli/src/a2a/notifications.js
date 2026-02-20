@@ -39,8 +39,11 @@ try {
   if (typeof urlValidator.validateFetchUrl === 'function') {
     validateFetchUrl = urlValidator.validateFetchUrl;
   }
-} catch {
-  // url-validator.js not available or does not export validateFetchUrl
+} catch (err) {
+  console.debug(
+    '[a2a/notifications] url-validator.js not available, using fallback SSRF check:',
+    err.message || err,
+  );
   validateFetchUrl = null;
 }
 
@@ -56,9 +59,25 @@ function safeValidateUrl(url) {
     validateFetchUrl(url);
     return;
   }
-  // Fallback: basic protocol check
-  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
-    throw new Error(`Invalid webhook URL: must start with http:// or https://`);
+  // Inline SSRF protection (mirrors utils/url-validator.js)
+  if (!url) throw new Error('Invalid webhook URL: URL is required');
+  const parsed = new URL(url);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`Unsupported protocol: ${parsed.protocol}`);
+  }
+  const host = parsed.hostname;
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host.startsWith('10.') ||
+    host.startsWith('192.168.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    host.endsWith('.internal') ||
+    host.endsWith('.local')
+  ) {
+    throw new Error(`SSRF blocked: cannot fetch internal URL ${parsed.origin}`);
   }
 }
 
@@ -75,8 +94,13 @@ function formatNotificationLog(row) {
   if (typeof payload === 'string') {
     try {
       payload = JSON.parse(payload);
-    } catch {
-      console.warn('Failed to parse notification payload for log', row.id);
+    } catch (err) {
+      console.warn(
+        '[a2a/notifications] Failed to parse notification payload for log',
+        row.id,
+        ':',
+        err.message || err,
+      );
     }
   }
 
@@ -361,9 +385,7 @@ export function createNotificationService(store) {
     if (!endpointUrl) {
       throw new Error('endpointUrl is required');
     }
-    if (!endpointUrl.startsWith('http://') && !endpointUrl.startsWith('https://')) {
-      throw new Error('endpointUrl must start with http:// or https://');
-    }
+    safeValidateUrl(endpointUrl);
 
     const config = {
       agent_address: agentAddress,

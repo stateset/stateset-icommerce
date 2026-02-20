@@ -334,7 +334,8 @@ export function verifyEventSignature(eventSigningHash, signature, publicKey) {
     });
 
     return crypto.verify(null, eventSigningHash, keyObj, signature);
-  } catch {
+  } catch (err) {
+    console.debug('[sync-crypto] Signature verification failed:', err.message || err);
     return false;
   }
 }

@@ -63,6 +63,7 @@ fn row_to_backorder_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Backorder> 
     })
 }
 
+#[derive(Debug)]
 pub struct SqliteBackorderRepository {
     pool: Pool<SqliteConnectionManager>,
 }

@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
 
 /**
  * Supplier tool definitions
@@ -34,7 +35,7 @@ export const supplierTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return { error: 'Create supplier requires --apply flag.' };
+        return applyRequired('Create supplier', params);
       }
 
       const supplier = await commerce.purchaseOrders.createSupplier({
@@ -72,10 +73,18 @@ export const supplierTools = [
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
-        return { error: 'Create PO requires --apply flag.' };
+        return applyRequired('Create PO', params);
       }
 
-      const items = JSON.parse(params.items);
+      let items;
+      try {
+        items = JSON.parse(params.items);
+      } catch (err) {
+        return {
+          success: false,
+          error: `Invalid items JSON: ${err.message}. Expected format: [{"sku":"X","name":"Y","quantity":10,"unitPrice":5.00}]`,
+        };
+      }
       const po = await commerce.purchaseOrders.create({
         supplierId: params.supplierId,
         items,
@@ -96,7 +105,7 @@ export const supplierTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { purchaseOrderId, approvedBy } = params;
       if (!allowApply) {
-        return { error: 'Approve PO requires --apply flag.' };
+        return applyRequired('Approve PO', params);
       }
 
       const po = await commerce.purchaseOrders.approve(purchaseOrderId, approvedBy);
@@ -114,7 +123,7 @@ export const supplierTools = [
     handler: async ({ commerce, params, allowApply }) => {
       const { purchaseOrderId } = params;
       if (!allowApply) {
-        return { error: 'Send PO requires --apply flag.' };
+        return applyRequired('Send PO', params);
       }
 
       const po = await commerce.purchaseOrders.send(purchaseOrderId);

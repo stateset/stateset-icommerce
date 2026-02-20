@@ -19,6 +19,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of InventoryRepository
+#[derive(Debug)]
 pub struct SqliteInventoryRepository {
     pool: Pool<SqliteConnectionManager>,
 }

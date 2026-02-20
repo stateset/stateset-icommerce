@@ -29,7 +29,11 @@ if (typeof globalThis.WebSocket !== 'undefined') {
   try {
     const ws = await import('ws');
     WebSocketImpl = ws.default || ws.WebSocket || ws;
-  } catch {
+  } catch (err) {
+    console.debug(
+      '[browser] WebSocket import failed (ws package not available):',
+      err.message || err,
+    );
     // Will throw a clear error at connect-time if neither is available.
     WebSocketImpl = null;
   }
@@ -163,7 +167,8 @@ export class BrowserTools {
       try {
         versionInfo = await this._httpGet('/json/version');
         break;
-      } catch {
+      } catch (err) {
+        console.debug('[browser] Waiting for Chrome debug port...', err.message || err);
         await sleep(200);
       }
     }
@@ -221,7 +226,8 @@ export class BrowserTools {
       let msg;
       try {
         msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString());
-      } catch {
+      } catch (err) {
+        console.debug('[browser] Failed to parse CDP message:', err.message || err);
         return;
       }
 
@@ -244,8 +250,8 @@ export class BrowserTools {
           for (const fn of listeners) {
             try {
               fn(msg.params);
-            } catch {
-              // Swallow listener errors.
+            } catch (err) {
+              console.debug('[browser] CDP event listener error:', err.message || err);
             }
           }
         }
@@ -338,7 +344,8 @@ export class BrowserTools {
       await this._httpGet('/json/version');
       alreadyRunning = true;
       console.log(`[browser-tools] Found existing Chrome on port ${this.port}.`);
-    } catch {
+    } catch (err) {
+      console.debug('[browser] No existing Chrome found, will launch:', err.message || err);
       // Not running -- we will launch one.
     }
 
@@ -1004,8 +1011,11 @@ export class BrowserTools {
     if (this._ws && this._connected) {
       try {
         await this.send('Browser.close');
-      } catch {
-        // Ignore -- the browser may already be gone.
+      } catch (err) {
+        console.debug(
+          '[browser] Browser.close CDP command failed (browser may already be gone):',
+          err.message || err,
+        );
       }
     }
 
@@ -1013,8 +1023,8 @@ export class BrowserTools {
     if (this._ws) {
       try {
         this._ws.close();
-      } catch {
-        // Ignore.
+      } catch (err) {
+        console.debug('[browser] WebSocket close failed:', err.message || err);
       }
       this._ws = null;
     }
@@ -1027,8 +1037,8 @@ export class BrowserTools {
     if (this._process) {
       try {
         this._process.kill('SIGTERM');
-      } catch {
-        // Ignore.
+      } catch (err) {
+        console.debug('[browser] Failed to kill Chrome process:', err.message || err);
       }
       this._process = null;
     }

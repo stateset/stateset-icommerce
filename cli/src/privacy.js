@@ -33,7 +33,8 @@ export function redactObject(value, options = {}) {
   try {
     const json = JSON.stringify(value);
     return JSON.parse(redactSensitive(json, options));
-  } catch {
+  } catch (err) {
+    console.debug('[privacy] Deep redaction failed:', err.message || err);
     return value;
   }
 }

@@ -1,0 +1,6 @@
+Id,First Name,Last Name,Email,Phone,Accepts Marketing,Tags,Note
+1001,Alice,Johnson,alice@example.com,+15551234567,yes,"vip,wholesale",Preferred customer
+1002,Bob,Smith,bob@example.com,,no,,
+1003,Charlie,Brown,charlie@example.com,+15559876543,no,flagged,Account suspended
+1004,Diana,Prince,diana@example.com,+15555555555,yes,,
+1005,Eve,Williams,eve@example.com,,yes,vip,Loyalty program member

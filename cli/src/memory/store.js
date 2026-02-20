@@ -44,8 +44,8 @@ function defaultDbPath() {
   const dir = join(homedir(), '.stateset');
   try {
     mkdirSync(dir, { recursive: true });
-  } catch {
-    /* exists */
+  } catch (err) {
+    console.debug('[memory-store] Directory creation failed:', err.message || err);
   }
   return join(dir, 'memory.db');
 }

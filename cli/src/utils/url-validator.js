@@ -23,7 +23,8 @@ export function isSafeDisplayUrl(url) {
   try {
     const parsed = new URL(url);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
+  } catch (err) {
+    console.debug('[url-validator] URL parse failed:', err.message || err);
     return false;
   }
 }

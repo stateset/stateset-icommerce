@@ -204,7 +204,8 @@ export class SessionManager {
             operationCount: session.metadata?.operationCount || 0,
             lastOperation: session.metadata?.lastOperation,
           };
-        } catch {
+        } catch (err) {
+          console.debug('[session] Session file parse failed:', err.message || err);
           return null;
         }
       })

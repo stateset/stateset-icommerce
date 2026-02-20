@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn test_product_text() {
         let product = Product {
-            id: uuid::Uuid::new_v4(),
+            id: stateset_primitives::ProductId::new(),
             name: "Test Product".to_string(),
             slug: "test-product".to_string(),
             description: "A great product".to_string(),

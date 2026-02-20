@@ -425,7 +425,8 @@ export class VectorMemoryStore {
           const blob = Buffer.from(embedding.buffer);
           this._insertVecStmt.run(mem.id, blob, norm, Date.now());
           processed++;
-        } catch {
+        } catch (err) {
+          console.warn('[vector-store] Embedding insertion failed:', err.message || err);
           errors++;
         }
       }

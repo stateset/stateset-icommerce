@@ -847,7 +847,8 @@ const parseBody = async (request: NextRequest) => {
       return await request.json();
     }
     return {};
-  } catch {
+  } catch (err) {
+    console.debug('[scaffold-templates] Request body parse failed:', err.message || err);
     return {};
   }
 };

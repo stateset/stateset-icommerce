@@ -81,7 +81,8 @@ export class ChannelSessionStore {
     if (row.context) {
       try {
         context = JSON.parse(row.context);
-      } catch {
+      } catch (err) {
+        console.debug('[session-store] Context JSON parse failed:', err.message || err);
         context = null;
       }
     }

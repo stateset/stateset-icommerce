@@ -1485,8 +1485,8 @@ export async function runAgentLoop({
     if (syncEngine) {
       try {
         await syncEngine.shutdown();
-      } catch {
-        /* ignore */
+      } catch (err) {
+        console.debug('[harness] Sync engine shutdown failed:', err.message || err);
       }
     }
     emitEvent(onEvent, {

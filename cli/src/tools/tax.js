@@ -374,6 +374,7 @@ export const taxTools = [
       const { customerId, exemptionType, certificateNumber, issuingAuthority, expiresAt } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Write operations require --apply flag. Would create tax exemption for customer.',
           preview: { customerId, exemptionType, certificateNumber, issuingAuthority },
         };

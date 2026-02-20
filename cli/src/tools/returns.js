@@ -48,7 +48,7 @@ export const returnTools = [
       const ret = await commerce.returns.get(returnId);
 
       if (!ret) {
-        return { error: 'Return not found' };
+        return { success: false, error: 'Return not found' };
       }
 
       return { success: true, return: ret };
@@ -86,6 +86,7 @@ export const returnTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
@@ -118,6 +119,7 @@ export const returnTools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Approve operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldApprove: { returnId },
@@ -146,6 +148,7 @@ export const returnTools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Reject operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldReject: { returnId, reason },

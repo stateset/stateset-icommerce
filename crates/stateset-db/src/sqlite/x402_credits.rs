@@ -15,6 +15,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of X402CreditRepository
+#[derive(Debug)]
 pub struct SqliteX402CreditRepository {
     pool: Pool<SqliteConnectionManager>,
 }

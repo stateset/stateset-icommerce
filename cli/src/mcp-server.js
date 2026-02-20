@@ -42,6 +42,9 @@ import { shipmentTools } from './tools/shipments.js';
 import { supplierTools } from './tools/suppliers.js';
 import { invoiceTools } from './tools/invoices.js';
 import { warrantyTools } from './tools/warranties.js';
+import { importTools } from './tools/import.js';
+
+const AGENTIC_TOOL_RESULT_SCHEMA_VERSION = '1.0.0';
 
 /**
  * All domain tool definitions, collected from modules.
@@ -310,6 +313,7 @@ const ALL_TOOL_DEFS = [
   ...supplierTools,
   ...invoiceTools,
   ...warrantyTools,
+  ...importTools,
   ...vectorTools,
   ...AGENTIC_RUNTIME_TOOLS,
 ];
@@ -822,6 +826,7 @@ function autoIndexEntity(entityType, entity) {
  * @param {string} options.agentConfig.walletAddress - This agent's wallet address
  * @param {Object} options.agentConfig.signingKey - Ed25519 signing key { privateKey, publicKey }
  * @param {Object} options.mcpEventStream - Optional MCP event stream service
+ * @param {boolean} options.structuredToolResults - Return MCP tool responses with machine-readable metadata
  */
 export function createStatesetMcpServer({
   commerce,
@@ -835,6 +840,7 @@ export function createStatesetMcpServer({
   treasury = null,
   agentConfig = null,
   mcpEventStream = null,
+  structuredToolResults = false,
 }) {
   // ---------------------------------------------------------------------------
   // A2A Store initialization
@@ -1054,13 +1060,14 @@ export function createStatesetMcpServer({
     return toolName.trim().replace(/^mcp__[a-z0-9_-]+__/, '');
   };
 
-  const applyPolicyTransform = (input, transform) => {
+  const applyPolicyTransform = (input, transform, auditEntries = []) => {
     if (!transform || typeof transform !== 'object' || Array.isArray(transform)) {
-      return input;
+      return { output: input, auditEntries };
     }
 
     const output = { ...(input || {}) };
     for (const [key, value] of Object.entries(transform)) {
+      const before = output[key];
       if (
         output[key] !== null &&
         output[key] !== undefined &&
@@ -1074,9 +1081,15 @@ export function createStatesetMcpServer({
       } else {
         output[key] = value;
       }
+      auditEntries.push({
+        field: key,
+        before,
+        after: output[key],
+        timestamp: new Date().toISOString(),
+      });
     }
 
-    return output;
+    return { output, auditEntries };
   };
 
   const resolvePolicyPath =
@@ -1358,6 +1371,21 @@ export function createStatesetMcpServer({
       : [];
     const contract = {
       engine: 'stateset-icommerce',
+      agenticToolResultSchema: {
+        version: AGENTIC_TOOL_RESULT_SCHEMA_VERSION,
+        envelope: 'mcp_tool_result',
+        metadata: [
+          'schemaVersion',
+          'status',
+          'tool',
+          'requestId',
+          'sessionId',
+          'policy',
+          'permission',
+          'charge',
+          'timing',
+        ],
+      },
       purpose: 'agentic_runtime_contract',
       generatedAt: new Date().toISOString(),
       includeLegacyDefaults,
@@ -2701,9 +2729,23 @@ export function createStatesetMcpServer({
     const notifyActions = actions.filter((action) => action?.type === 'notify');
 
     let transformedParams = params;
+    const transformAudit = [];
     for (const action of actions) {
       if (action?.type === 'transform') {
-        transformedParams = applyPolicyTransform(transformedParams, action.transform);
+        const { output, auditEntries } = applyPolicyTransform(
+          transformedParams,
+          action.transform,
+          [],
+        );
+        transformedParams = output;
+        for (const entry of auditEntries) {
+          transformAudit.push({
+            ...entry,
+            ruleId: action.metadata?.ruleId || null,
+            ruleName: action.metadata?.ruleName || null,
+            policySetId: action.metadata?.policySetId || null,
+          });
+        }
       }
     }
 
@@ -2714,6 +2756,7 @@ export function createStatesetMcpServer({
         allowed: !result?.shouldDeny,
         actionCount: actions.length,
         actionTypes: actions.map((action) => action?.type).filter(Boolean),
+        transformAuditCount: transformAudit.length,
       });
     }
 
@@ -2729,17 +2772,32 @@ export function createStatesetMcpServer({
       }
     }
 
+    const explanations = result?.explanations || [];
+
     if (result?.shouldDeny) {
-      const reason = actions
-        .filter((action) => action?.type === 'deny')
-        .map((action) => action?.reason || action?.metadata?.reason || 'Tool denied by policy')
-        .filter(Boolean)
-        .join('; ');
+      const denyExplanations = explanations
+        .filter((e) => e.actionType === 'deny')
+        .map((e) => (typeof e.toJSON === 'function' ? e.toJSON() : e));
+
+      const reason =
+        denyExplanations
+          .map((e) => e.reason || `Rule "${e.ruleName}" denied this operation`)
+          .filter(Boolean)
+          .join('; ') || 'Tool denied by policy';
+
+      const remediation =
+        denyExplanations
+          .map((e) => e.remediation)
+          .filter(Boolean)
+          .join('; ') || null;
 
       return {
         allowed: false,
         params: transformedParams,
-        reason: reason || 'Tool denied by policy',
+        reason,
+        remediation,
+        explanations: denyExplanations,
+        transformAudit,
         actions,
         domain,
         evaluation: result,
@@ -2749,6 +2807,8 @@ export function createStatesetMcpServer({
     return {
       allowed: true,
       params: transformedParams,
+      explanations: explanations.map((e) => (typeof e.toJSON === 'function' ? e.toJSON() : e)),
+      transformAudit,
       actions,
       domain,
       evaluation: result,
@@ -2912,9 +2972,103 @@ export function createStatesetMcpServer({
     }
   };
 
+  const shouldReturnStructuredResults =
+    structuredToolResults ||
+    String(process.env.STATESSET_MCP_STRUCTURED_TOOL_RESULTS || '').toLowerCase() === 'true' ||
+    String(process.env.STATESSET_MCP_STRUCTURED_TOOL_RESULTS || '').toLowerCase() === '1';
+
   // ---------------------------------------------------------------------------
-  // Tool wrapper — adds hooks, permission checks, treasury, and telemetry
+  // Tool wrapper helpers — add hooks, permission checks, treasury, and telemetry
   // ---------------------------------------------------------------------------
+
+  const buildToolResultPayload = (basePayload, status, startedAt, toolMeta = {}) => {
+    if (!shouldReturnStructuredResults) {
+      return basePayload;
+    }
+
+    const agenticMeta = {
+      schemaVersion: AGENTIC_TOOL_RESULT_SCHEMA_VERSION,
+      status,
+      tool: basePayload?.tool || toolMeta.name || null,
+      requestId: toolMeta.requestId ?? null,
+      sessionId: toolMeta.sessionId ?? null,
+      policy: compactReplayValue(toolMeta.policy || null),
+      permission: compactReplayValue(toolMeta.permission || null),
+      charge: compactReplayValue(toolMeta.charge || null),
+      timing: {
+        startedAt: new Date(startedAt).toISOString(),
+        completedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+      },
+    };
+
+    const withType = {
+      ...toolMeta.meta,
+      ...agenticMeta,
+    };
+
+    if (
+      basePayload === null ||
+      basePayload === undefined ||
+      Array.isArray(basePayload) ||
+      typeof basePayload !== 'object'
+    ) {
+      return {
+        result: basePayload,
+        _agentic: compactReplayValue(withType),
+      };
+    }
+
+    if (basePayload._agentic) {
+      return basePayload;
+    }
+
+    return {
+      ...basePayload,
+      _agentic: compactReplayValue(withType),
+    };
+  };
+
+  const buildToolResultResponse = (result, status, startedAt, toolMeta = {}, isError = false) => {
+    const payload = buildToolResultPayload(result, status, startedAt, toolMeta);
+    const response = {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(payload),
+        },
+      ],
+    };
+    if (isError) response.isError = true;
+    return response;
+  };
+
+  const attachStructuredToolMetadataToResponse = (response, status, startedAt, toolMeta = {}) => {
+    if (
+      !shouldReturnStructuredResults ||
+      !response ||
+      !response.content ||
+      !Array.isArray(response.content)
+    ) {
+      return response;
+    }
+
+    const first = response.content[0];
+    if (!first || first.type !== 'text' || typeof first.text !== 'string') {
+      return response;
+    }
+
+    try {
+      const parsedPayload = JSON.parse(first.text);
+      const payload = buildToolResultPayload(parsedPayload, status, startedAt, toolMeta);
+      return {
+        ...response,
+        content: [{ ...first, text: JSON.stringify(payload) }, ...response.content.slice(1)],
+      };
+    } catch {
+      return response;
+    }
+  };
 
   const wrapTool = (name, description, schema, handler, policyDomain = null) => {
     return sdkTool(name, description, schema, async (args, extra) => {
@@ -2979,10 +3133,27 @@ export function createStatesetMcpServer({
                 },
               },
             });
-            return {
-              content: [{ type: 'text', text: JSON.stringify(payload) }],
-              isError: true,
-            };
+            return buildToolResultResponse(
+              payload,
+              'blocked',
+              startedAt,
+              {
+                requestId: baseToolContext.requestId,
+                sessionId: baseToolContext.sessionId,
+                policy,
+                permission,
+                charge,
+                name,
+                meta: {
+                  hook: {
+                    allowed: hookResult?.allowed,
+                    reason: hookResult?.reason || null,
+                    blocked: true,
+                  },
+                },
+              },
+              true,
+            );
           }
         }
 
@@ -2990,10 +3161,13 @@ export function createStatesetMcpServer({
         if (!policy.allowed) {
           const payload = {
             error: policy.reason || 'Tool execution blocked by policy',
+            remediation: policy.remediation || null,
             tool: name,
             policy: {
               domain: policy.domain,
               actions: policy.actions || [],
+              explanations: policy.explanations || [],
+              transformAudit: policy.transformAudit || [],
               evaluation: policy.evaluation || null,
             },
           };
@@ -3001,11 +3175,25 @@ export function createStatesetMcpServer({
             params: nextArgs,
             policy: payload.policy,
             error: payload.error,
+            remediation: payload.remediation,
           });
-          return {
-            content: [{ type: 'text', text: JSON.stringify(payload) }],
-            isError: true,
-          };
+          return buildToolResultResponse(
+            payload,
+            'policy_block',
+            startedAt,
+            {
+              requestId: baseToolContext.requestId,
+              sessionId: baseToolContext.sessionId,
+              policy,
+              permission,
+              charge,
+              name,
+              meta: {
+                policy: payload.policy,
+              },
+            },
+            true,
+          );
         }
 
         nextArgs = policy.params;
@@ -3035,10 +3223,20 @@ export function createStatesetMcpServer({
               error: payload.error,
             });
           }
-          return {
-            content: [{ type: 'text', text: JSON.stringify(payload) }],
-            isError: true,
-          };
+          return buildToolResultResponse(
+            payload,
+            permission.preview ? 'preview' : 'permission_block',
+            startedAt,
+            {
+              requestId: baseToolContext.requestId,
+              sessionId: baseToolContext.sessionId,
+              policy,
+              permission,
+              charge,
+              name,
+            },
+            true,
+          );
         }
 
         charge = await maybeChargeForTool(name, extra);
@@ -3052,19 +3250,24 @@ export function createStatesetMcpServer({
             },
             error: charge.reason || 'Treasury charge blocked',
           });
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  error: charge.reason || 'Treasury charge blocked',
-                  tool: name,
-                  charge,
-                }),
-              },
-            ],
-            isError: true,
-          };
+          return buildToolResultResponse(
+            {
+              error: charge.reason || 'Treasury charge blocked',
+              tool: name,
+              charge,
+            },
+            'treasury_block',
+            startedAt,
+            {
+              requestId: baseToolContext.requestId,
+              sessionId: baseToolContext.sessionId,
+              policy,
+              permission,
+              charge,
+              name,
+            },
+            true,
+          );
         }
 
         const wrapped = wrapWithTelemetry(name, handler);
@@ -3089,7 +3292,20 @@ export function createStatesetMcpServer({
             actions: policy.actions || [],
           },
         });
-        return result;
+        const maybeStructured = attachStructuredToolMetadataToResponse(
+          result,
+          'success',
+          startedAt,
+          {
+            requestId: baseToolContext.requestId,
+            sessionId: baseToolContext.sessionId,
+            policy,
+            permission,
+            charge,
+            name,
+          },
+        );
+        return maybeStructured;
       } catch (error) {
         if (hookRunner?.hasHooks?.('after_tool_call')) {
           await hookRunner.run('after_tool_call', {
@@ -3161,7 +3377,9 @@ export function createStatesetMcpServer({
         };
       } catch (error) {
         return {
-          content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }],
+          content: [
+            { type: 'text', text: JSON.stringify({ success: false, error: error.message }) },
+          ],
         };
       }
     });

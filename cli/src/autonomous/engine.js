@@ -280,10 +280,13 @@ export class AutonomousEngine extends EventEmitter {
         });
       } catch (err) {
         console.error('[Notification] Failed to send via notifier:', err.message);
-        console.log('[Notification]', JSON.stringify(notification, null, 2));
+        console.warn('[Notification] Fallback output:', JSON.stringify(notification, null, 2));
       }
     } else {
-      console.log('[Notification]', JSON.stringify(notification, null, 2));
+      console.debug(
+        '[Notification] No notifier configured:',
+        JSON.stringify(notification, null, 2),
+      );
     }
   }
 

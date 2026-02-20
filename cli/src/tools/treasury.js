@@ -27,13 +27,13 @@ export const treasuryTools = [
       const ctx = await loadTreasuryContext(treasuryContextOptions || {});
 
       if (token && !chainId) {
-        return { error: 'token requires chainId' };
+        return { success: false, error: 'token requires chainId' };
       }
 
       if (token) {
         const resolved = resolveToken(chainId, token, ctx.registry);
         if (!resolved) {
-          return { error: `Unknown token ${token} on ${chainId}` };
+          return { success: false, error: `Unknown token ${token} on ${chainId}` };
         }
         const balance = ctx.store.getBalance({
           agentId,

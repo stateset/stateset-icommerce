@@ -28,6 +28,7 @@ export const subscriptionTools = [
       const { status, billingInterval } = params;
       const plans = await commerce.listSubscriptionPlans({ status, billingInterval });
       return {
+        success: true,
         count: plans.length,
         plans: plans.map((p) => ({
           id: p.id,
@@ -50,7 +51,7 @@ export const subscriptionTools = [
     handler: async ({ commerce, params }) => {
       const { planId } = params;
       const plan = await commerce.getSubscriptionPlan(planId);
-      if (!plan) return { error: 'Plan not found' };
+      if (!plan) return { success: false, error: 'Plan not found' };
       return plan;
     },
   },
@@ -71,6 +72,7 @@ export const subscriptionTools = [
       const { name, billingInterval, price, currency, trialDays, description, setupFee } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: { name, billingInterval, price },
@@ -97,6 +99,7 @@ export const subscriptionTools = [
       const { planId } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Activate operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldActivate: planId,
@@ -115,6 +118,7 @@ export const subscriptionTools = [
       const { planId } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Archive operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldArchive: planId,
@@ -162,7 +166,7 @@ export const subscriptionTools = [
     handler: async ({ commerce, params }) => {
       const { subscriptionId } = params;
       const subscription = await commerce.getSubscription(subscriptionId);
-      if (!subscription) return { error: 'Subscription not found' };
+      if (!subscription) return { success: false, error: 'Subscription not found' };
       return subscription;
     },
   },
@@ -181,6 +185,7 @@ export const subscriptionTools = [
       const { customerId, planId, paymentMethodId, skipTrial, couponCode } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Subscribe operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldSubscribe: { customerId, planId },
@@ -212,6 +217,7 @@ export const subscriptionTools = [
       const { subscriptionId, resumeAt, reason } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Pause operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldPause: subscriptionId,
@@ -236,6 +242,7 @@ export const subscriptionTools = [
       const { subscriptionId } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Resume operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldResume: subscriptionId,
@@ -265,6 +272,7 @@ export const subscriptionTools = [
       const { subscriptionId, immediate, reason } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Cancel operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCancel: subscriptionId,
@@ -291,6 +299,7 @@ export const subscriptionTools = [
       const { subscriptionId, reason } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Skip operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldSkip: subscriptionId,
@@ -341,7 +350,7 @@ export const subscriptionTools = [
     handler: async ({ commerce, params }) => {
       const { cycleId } = params;
       const cycle = await commerce.getBillingCycle(cycleId);
-      if (!cycle) return { error: 'Billing cycle not found' };
+      if (!cycle) return { success: false, error: 'Billing cycle not found' };
       return cycle;
     },
   },

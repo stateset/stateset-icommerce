@@ -1036,6 +1036,7 @@ Options:
   --port <n>            HTTP port (default: 8081, 0 picks random)
   --history-limit <n>    Maximum events kept in memory (default: 500)
   --stream-name <name>   Stream name for emitted events
+  --structured-tool-results Include machine-readable metadata in MCP tool responses
   --help                Show help
 
 Endpoints:

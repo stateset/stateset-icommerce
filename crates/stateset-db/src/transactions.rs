@@ -68,6 +68,16 @@ pub struct TransactionHandle {
     operations: Vec<Box<dyn Transactional<Output = ()>>>,
 }
 
+impl std::fmt::Debug for TransactionHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransactionHandle")
+            .field("id", &self.id)
+            .field("state", &self.state)
+            .field("operations_len", &self.operations.len())
+            .finish()
+    }
+}
+
 impl TransactionHandle {
     /// Create a new transaction handle
     pub fn new() -> Self {
@@ -156,6 +166,7 @@ impl Default for TransactionHandle {
 ///
 /// Sagas execute a sequence of operations with compensating actions
 /// to handle failures gracefully.
+#[derive(Debug)]
 pub struct Saga {
     handle: TransactionHandle,
 }
@@ -187,6 +198,14 @@ impl Default for Saga {
 /// Builder for transaction batches
 pub struct TransactionBuilder {
     operations: Vec<Box<dyn Transactional<Output = ()>>>,
+}
+
+impl std::fmt::Debug for TransactionBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransactionBuilder")
+            .field("operations_len", &self.operations.len())
+            .finish()
+    }
 }
 
 impl TransactionBuilder {

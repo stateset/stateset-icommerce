@@ -15,6 +15,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of AgentReputationRepository
+#[derive(Debug)]
 pub struct SqliteAgentReputationRepository {
     pool: Pool<SqliteConnectionManager>,
 }

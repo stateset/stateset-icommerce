@@ -33,6 +33,7 @@ export const erc8004Tools = [
     handler: async ({ params, allowApply, dbPath }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Registering ERC-8004 identity requires --apply flag.',
           wouldRegister: params,
         };
@@ -74,6 +75,7 @@ export const erc8004Tools = [
     handler: async ({ params, allowApply, dbPath }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Linking ERC-8004 wallet requires --apply flag.',
           wouldLink: params,
         };

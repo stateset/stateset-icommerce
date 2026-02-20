@@ -19,6 +19,7 @@ use super::{
     parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
 };
 
+#[derive(Debug)]
 pub struct SqliteCostAccountingRepository {
     pool: Pool<SqliteConnectionManager>,
 }

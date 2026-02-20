@@ -456,8 +456,8 @@ export class SyncEngine extends EventEmitter {
         remoteHead = remoteState.headSequence;
         connected = true;
       }
-    } catch {
-      // Ignore connection errors for status
+    } catch (err) {
+      console.debug('[sync-engine] Remote head fetch failed:', err.message || err);
     }
 
     return {

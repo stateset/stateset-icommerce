@@ -10,6 +10,136 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 
+/**
+ * Column whitelists for each table's update methods.
+ * Prevents SQL column injection by rejecting unknown column names.
+ * Derived from the CREATE TABLE schemas below + ALTER TABLE migrations.
+ * @type {Record<string, Set<string>>}
+ */
+const UPDATABLE_COLUMNS = {
+  a2a_payments: new Set([
+    'status',
+    'sender_agent_id',
+    'recipient_agent_id',
+    'memo',
+    'intent_id',
+    'tx_hash',
+    'block_number',
+    'metadata',
+    'completed_at',
+  ]),
+  a2a_payment_requests: new Set([
+    'status',
+    'payer_agent_id',
+    'payer_address',
+    'amount_paid',
+    'payment_ids',
+    'allow_partial',
+    'metadata',
+    'paid_at',
+  ]),
+  a2a_quotes: new Set([
+    'status',
+    'items',
+    'subtotal',
+    'fees',
+    'tax',
+    'total',
+    'total_decimal',
+    'terms',
+    'estimated_delivery',
+    'delivery_method',
+    'fulfillment_instructions',
+    'payment_id',
+    'payment_request_id',
+    'response_message',
+    'metadata',
+    'quoted_at',
+    'accepted_at',
+    'fulfilled_at',
+    'counter_count',
+    'negotiation_history',
+    'max_rounds',
+    'escrow_id',
+  ]),
+  a2a_escrows: new Set([
+    'status',
+    'payment_id',
+    'release_conditions',
+    'funded_at',
+    'released_at',
+    'disputed_at',
+    'dispute_id',
+    'auto_release_after',
+    'metadata',
+    'intent_id',
+  ]),
+  a2a_disputes: new Set([
+    'status',
+    'resolution_type',
+    'resolution_amount',
+    'resolution_note',
+    'resolved_by',
+    'evidence_deadline',
+    'review_deadline',
+    'metadata',
+    'resolved_at',
+  ]),
+  a2a_feedback: new Set(['dimensions', 'comment', 'response', 'response_at', 'is_revoked']),
+  a2a_services: new Set([
+    'name',
+    'description',
+    'category',
+    'pricing_model',
+    'pricing_details',
+    'active',
+    'input_schema',
+    'output_schema',
+    'endpoint_url',
+    'avg_response_time',
+    'success_rate',
+    'transaction_count',
+    'metadata',
+  ]),
+  a2a_notification_log: new Set([
+    'status',
+    'attempts',
+    'last_attempt_at',
+    'last_error',
+    'delivered_at',
+  ]),
+  a2a_subscriptions: new Set([
+    'status',
+    'plan_name',
+    'amount',
+    'amount_decimal',
+    'billing_interval',
+    'trial_end_date',
+    'current_period_start',
+    'current_period_end',
+    'next_billing_date',
+    'cancel_at_period_end',
+    'cancelled_at',
+    'past_due_since',
+    'max_past_due_cycles',
+    'total_billed',
+    'total_billed_decimal',
+    'billing_count',
+    'last_payment_id',
+    'metadata',
+  ]),
+  a2a_split_payments: new Set(['status', 'metadata', 'completed_at']),
+  a2a_split_recipients: new Set([
+    'recipient_address',
+    'share_percent',
+    'share_amount',
+    'share_amount_decimal',
+    'payment_id',
+    'status',
+  ]),
+  a2a_event_subscriptions: new Set(['event_types', 'active', 'last_event_id']),
+};
+
 const A2A_SCHEMA = `
 -- A2A Payments (direct agent-to-agent transfers)
 CREATE TABLE IF NOT EXISTS a2a_payments (
@@ -412,6 +542,23 @@ export class A2AStore {
   }
 
   /**
+   * Validate that all keys in an update object are whitelisted columns.
+   * Prevents SQL column injection via dynamic SET clauses.
+   * @param {string} table - The table name
+   * @param {string[]} keys - Column names from the updates object
+   * @throws {Error} If any key is not in the whitelist
+   */
+  _validateUpdateKeys(table, keys) {
+    const allowed = UPDATABLE_COLUMNS[table];
+    if (!allowed) throw new Error(`Unknown table for update validation: ${table}`);
+    for (const key of keys) {
+      if (!allowed.has(key)) {
+        throw new Error(`Column '${key}' is not allowed for update on ${table}`);
+      }
+    }
+  }
+
+  /**
    * Add negotiation columns to the quotes table.
    * Uses ALTER TABLE wrapped in try/catch since ALTER IF NOT EXISTS
    * is not supported — columns may already exist on subsequent runs.
@@ -427,8 +574,13 @@ export class A2AStore {
     for (const [name, type] of columns) {
       try {
         this.db.exec(`ALTER TABLE a2a_quotes ADD COLUMN ${name} ${type}`);
-      } catch {
-        // Column already exists — ignore
+      } catch (err) {
+        console.debug(
+          '[a2a/store] Column',
+          name,
+          'already exists on a2a_quotes:',
+          err.message || err,
+        );
       }
     }
   }
@@ -486,6 +638,7 @@ export class A2AStore {
 
   updatePayment(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_payments', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -644,6 +797,7 @@ export class A2AStore {
 
   updatePaymentRequest(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_payment_requests', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -791,6 +945,7 @@ export class A2AStore {
 
   updateQuote(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_quotes', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -940,6 +1095,7 @@ export class A2AStore {
    */
   updateEscrow(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_escrows', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -1080,6 +1236,7 @@ export class A2AStore {
    */
   updateDispute(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_disputes', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -1257,6 +1414,7 @@ export class A2AStore {
    */
   updateFeedback(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_feedback', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -1487,6 +1645,7 @@ export class A2AStore {
    */
   updateService(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_services', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -1568,8 +1727,13 @@ export class A2AStore {
     for (const [name, type] of columns) {
       try {
         this.db.exec(`ALTER TABLE a2a_escrows ADD COLUMN ${name} ${type}`);
-      } catch {
-        // Column already exists — ignore
+      } catch (err) {
+        console.debug(
+          '[a2a/store] Column',
+          name,
+          'already exists on a2a_escrows:',
+          err.message || err,
+        );
       }
     }
   }
@@ -1617,6 +1781,7 @@ export class A2AStore {
 
   updateNotificationLog(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_notification_log', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -1808,6 +1973,7 @@ export class A2AStore {
 
   updateSubscription(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_subscriptions', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -1950,6 +2116,7 @@ export class A2AStore {
 
   updateSplitPayment(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_split_payments', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -2037,6 +2204,7 @@ export class A2AStore {
 
   updateSplitRecipient(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_split_recipients', Object.keys(updates));
     const fields = [];
     const values = [];
 
@@ -2107,6 +2275,7 @@ export class A2AStore {
 
   updateEventSubscription(id, updates) {
     this.init();
+    this._validateUpdateKeys('a2a_event_subscriptions', Object.keys(updates));
     const fields = [];
     const values = [];
 

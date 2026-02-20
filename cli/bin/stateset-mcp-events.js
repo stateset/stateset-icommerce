@@ -41,6 +41,7 @@ OPTIONS:
   --port <port>           HTTP port (default: 8081, 0 picks random port)
   --history-limit <n>     In-memory event history size (default: 500)
   --stream-name <name>    Event stream name (default: stateset-mcp)
+  --structured-tool-results  Include machine-readable _agentic metadata in MCP tool results
   --help, -h              Show this help message
   --version, -v           Show version
 
@@ -111,6 +112,7 @@ async function main() {
       port: { type: 'string', default: '8081' },
       'history-limit': { type: 'string', default: '500' },
       'stream-name': { type: 'string', default: 'stateset-mcp' },
+      'structured-tool-results': { type: 'boolean', short: 's', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -148,6 +150,7 @@ async function main() {
   const mcpServer = createStatesetMcpServer({
     commerce,
     dbPath: values.db,
+    structuredToolResults: values['structured-tool-results'],
     mcpEventStream: eventStreamer,
   });
   const mcpInstance = mcpServer?.instance || mcpServer?.server || mcpServer;

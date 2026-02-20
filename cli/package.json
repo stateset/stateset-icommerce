@@ -46,7 +46,8 @@
     "stateset-install-service": "bin/stateset-install-service.js",
     "stateset-x402-mcp": "bin/stateset-x402-mcp.js",
     "stateset-x402": "bin/stateset-x402.js",
-    "stateset-init": "bin/stateset-init.js"
+    "stateset-init": "bin/stateset-init.js",
+    "stateset-import": "bin/stateset-import.js"
   },
   "main": "src/index.js",
   "exports": {

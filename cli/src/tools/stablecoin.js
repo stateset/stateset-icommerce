@@ -102,6 +102,7 @@ export const stablecoinTools = [
     }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Stablecoin payment requires --apply flag.',
           wouldSend: {
             to: params.toAddress,

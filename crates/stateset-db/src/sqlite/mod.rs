@@ -96,6 +96,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::time::Duration;
 
 /// SQLite database connection pool
+#[derive(Debug)]
 pub struct SqliteDatabase {
     pool: Pool<SqliteConnectionManager>,
 }

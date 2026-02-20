@@ -54,7 +54,7 @@ export const customerTools = [
       }
 
       if (!customer) {
-        return { error: 'Customer not found' };
+        return { success: false, error: 'Customer not found' };
       }
 
       return {
@@ -92,6 +92,7 @@ export const customerTools = [
     handler: async ({ commerce, params, allowApply, autoIndexEntity }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set to create customers.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,

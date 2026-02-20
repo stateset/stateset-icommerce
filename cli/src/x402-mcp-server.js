@@ -328,7 +328,11 @@ export function createX402McpServer({
     let result;
     try {
       result = await policyEngineInstance.evaluate('x402', context);
-    } catch {
+    } catch (err) {
+      console.debug(
+        '[x402-mcp-server] Policy evaluation failed, allowing by default:',
+        err.message || err,
+      );
       return { allowed: true, params };
     }
 

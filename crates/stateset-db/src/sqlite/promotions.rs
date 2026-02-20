@@ -20,6 +20,7 @@ use super::{
     parse_json_opt_row, parse_uuid_row,
 };
 
+#[derive(Debug)]
 pub struct SqlitePromotionRepository {
     pool: Pool<SqliteConnectionManager>,
 }

@@ -15,6 +15,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of ShipmentRepository
+#[derive(Debug)]
 pub struct SqliteShipmentRepository {
     pool: Pool<SqliteConnectionManager>,
 }

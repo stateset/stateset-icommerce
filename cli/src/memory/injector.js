@@ -164,8 +164,8 @@ export async function registerMemoryHooksAsync(opts) {
         },
         { priority: 20, pluginId: '__memory_injector__' },
       );
-  } catch {
-    // Plugin system not available
+  } catch (err) {
+    console.debug('[memory-injector] Plugin system hook registration failed:', err.message || err);
   }
 
   return _injector;

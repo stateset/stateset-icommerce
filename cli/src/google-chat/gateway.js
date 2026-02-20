@@ -47,14 +47,16 @@ export async function startGoogleChatGateway({
   let google, PubSub;
   try {
     ({ google } = await import('googleapis'));
-  } catch {
-    throw new Error('googleapis is not installed. Install it with: npm install googleapis');
+  } catch (err) {
+    throw new Error(
+      `googleapis is not installed. Install it with: npm install googleapis (${err.message || err})`,
+    );
   }
   try {
     ({ PubSub } = await import('@google-cloud/pubsub'));
-  } catch {
+  } catch (err) {
     throw new Error(
-      '@google-cloud/pubsub is not installed. Install it with: npm install @google-cloud/pubsub',
+      `@google-cloud/pubsub is not installed. Install it with: npm install @google-cloud/pubsub (${err.message || err})`,
     );
   }
 

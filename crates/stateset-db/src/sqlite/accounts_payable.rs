@@ -20,6 +20,7 @@ use stateset_core::{
     generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
 };
 
+#[derive(Debug)]
 pub struct SqliteAccountsPayableRepository {
     pool: Pool<SqliteConnectionManager>,
 }

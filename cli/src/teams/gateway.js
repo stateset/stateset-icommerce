@@ -369,8 +369,8 @@ export async function startTeamsGateway({
           appId,
           appPassword,
         );
-      } catch {
-        // Typing indicator failure is non-critical
+      } catch (err) {
+        console.debug('[teams] Typing indicator failed (non-critical):', err.message || err);
       }
     },
 

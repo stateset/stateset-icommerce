@@ -15,6 +15,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of BomRepository
+#[derive(Debug)]
 pub struct SqliteBomRepository {
     pool: Pool<SqliteConnectionManager>,
 }

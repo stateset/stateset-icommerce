@@ -24,7 +24,7 @@ export const inventoryTools = [
       const stock = await commerce.inventory.getStock(sku);
 
       if (!stock) {
-        return { error: `No inventory item found for SKU ${sku}` };
+        return { success: false, error: `No inventory item found for SKU ${sku}` };
       }
 
       return {
@@ -54,6 +54,7 @@ export const inventoryTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Create operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldCreate: params,
@@ -91,6 +92,7 @@ export const inventoryTools = [
       if (!allowApply) {
         const stock = await commerce.inventory.getStock(sku);
         return {
+          success: false,
           error: 'Adjust operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldAdjust: {
@@ -132,6 +134,7 @@ export const inventoryTools = [
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return {
+          success: false,
           error: 'Reserve operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldReserve: params,
@@ -169,6 +172,7 @@ export const inventoryTools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Confirm operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldConfirm: { reservationId },
@@ -196,6 +200,7 @@ export const inventoryTools = [
 
       if (!allowApply) {
         return {
+          success: false,
           error: 'Release operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
           wouldRelease: { reservationId },

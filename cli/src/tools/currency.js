@@ -105,6 +105,7 @@ export const currencyTools = [
       const { baseCurrency, quoteCurrency, rate, source } = params;
       if (!allowApply)
         return {
+          success: false,
           error:
             'Write operations require --apply flag. Would set rate: 1 ' +
             baseCurrency +
@@ -161,6 +162,7 @@ export const currencyTools = [
       const { currency } = params;
       if (!allowApply)
         return {
+          success: false,
           error: 'Write operations require --apply flag. Would set base currency to: ' + currency,
           preview: { baseCurrency: currency.toUpperCase() },
         };
@@ -188,6 +190,7 @@ export const currencyTools = [
       const { currencies } = params;
       if (!allowApply)
         return {
+          success: false,
           error:
             'Write operations require --apply flag. Would enable currencies: ' +
             currencies.join(', '),

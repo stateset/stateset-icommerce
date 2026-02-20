@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// SQLite implementation of X402PaymentIntentRepository
+#[derive(Debug)]
 pub struct SqliteX402PaymentIntentRepository {
     pool: Pool<SqliteConnectionManager>,
 }

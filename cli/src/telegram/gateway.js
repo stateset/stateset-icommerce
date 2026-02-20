@@ -39,8 +39,10 @@ export async function startTelegramGateway({
   let Bot;
   try {
     ({ Bot } = await import('grammy'));
-  } catch {
-    throw new Error('grammy is not installed. Install it with: npm install grammy');
+  } catch (err) {
+    throw new Error(
+      `grammy is not installed. Install it with: npm install grammy (${err.message || err})`,
+    );
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;

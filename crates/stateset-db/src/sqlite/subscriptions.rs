@@ -21,6 +21,7 @@ use super::{
     parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
 };
 
+#[derive(Debug)]
 pub struct SqliteSubscriptionRepository {
     pool: Pool<SqliteConnectionManager>,
 }

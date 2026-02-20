@@ -19,6 +19,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of WorkOrderRepository
+#[derive(Debug)]
 pub struct SqliteWorkOrderRepository {
     pool: Pool<SqliteConnectionManager>,
 }

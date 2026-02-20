@@ -124,8 +124,8 @@ export class DatabaseManager {
         info.sizeFormatted = this.formatSize(stats.size);
         info.created = stats.birthtime;
         info.modified = stats.mtime;
-      } catch {
-        // Ignore stat errors
+      } catch (err) {
+        console.debug('[database] File stat failed:', err.message || err);
       }
     }
 
@@ -139,8 +139,8 @@ export class DatabaseManager {
           products: conn.commerce.products.count(),
           returns: conn.commerce.returns.count(),
         };
-      } catch {
-        // Ignore count errors
+      } catch (err) {
+        console.debug('[database] Record count query failed:', err.message || err);
       }
     }
 

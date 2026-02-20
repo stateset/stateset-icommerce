@@ -550,7 +550,8 @@ export class WebhookServer extends EventEmitter {
     let payload;
     try {
       payload = JSON.parse(body);
-    } catch {
+    } catch (err) {
+      console.debug('[webhooks] Webhook payload JSON parse failed:', err.message || err);
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Invalid JSON' }));
       return;

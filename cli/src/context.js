@@ -254,7 +254,10 @@ export class Span {
    * Set multiple attributes
    */
   setAttributes(attrs) {
-    Object.assign(this.attributes, attrs);
+    for (const [key, value] of Object.entries(attrs || {})) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+      this.attributes[key] = value;
+    }
     return this;
   }
 

@@ -176,7 +176,8 @@ function isLoopbackOrigin(origin) {
   try {
     const u = new URL(origin);
     return u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1';
-  } catch {
+  } catch (err) {
+    console.debug('[http-gateway] Origin URL parse failed:', err.message || err);
     return false;
   }
 }
@@ -470,7 +471,8 @@ export class HttpGateway {
           if (Commerce) {
             checks.database = 'ok';
           }
-        } catch {
+        } catch (err) {
+          console.debug('[http-gateway] Database readiness check failed:', err.message || err);
           checks.database = 'unavailable';
           ready = false;
         }
@@ -480,7 +482,11 @@ export class HttpGateway {
           try {
             this._subsystems.memory.stats();
             checks.memory = 'ok';
-          } catch {
+          } catch (err) {
+            console.warn(
+              '[http-gateway] Memory subsystem readiness check failed:',
+              err.message || err,
+            );
             checks.memory = 'error';
             ready = false;
           }
@@ -580,7 +586,8 @@ export class HttpGateway {
             return sendJson(res, 404, { error: `No queue lane found: ${laneId}` });
           }
           return sendJson(res, 200, stats);
-        } catch {
+        } catch (err) {
+          console.debug('[http-gateway] Agent queue stats unavailable:', err.message || err);
           return sendJson(res, 501, { error: 'Agent queue stats are not available' });
         }
       }
@@ -660,7 +667,8 @@ export class HttpGateway {
               origin: s.origin,
             }));
           return sendJson(res, 200, { skills });
-        } catch {
+        } catch (err) {
+          console.debug('[http-gateway] Skill system not available:', err.message || err);
           return sendJson(res, 501, { error: 'Skill system not available' });
         }
       }
@@ -670,7 +678,8 @@ export class HttpGateway {
           const { getMarketplaceClient } = await import('../skills/marketplace.js');
           const catalog = getMarketplaceClient().loadLocalCatalog();
           return sendJson(res, 200, catalog);
-        } catch {
+        } catch (err) {
+          console.debug('[http-gateway] Marketplace not available:', err.message || err);
           return sendJson(res, 501, { error: 'Marketplace not available' });
         }
       }
@@ -680,7 +689,8 @@ export class HttpGateway {
           const { getSkillRegistry } = await import('../skills/registry.js');
           const stats = getSkillRegistry().getStats();
           return sendJson(res, 200, { categories: stats.categories });
-        } catch {
+        } catch (err) {
+          console.debug('[http-gateway] Skill categories not available:', err.message || err);
           return sendJson(res, 501, { error: 'Skill system not available' });
         }
       }
@@ -704,7 +714,8 @@ export class HttpGateway {
             mcpTools: skill.parsed.mcpTools,
             cliCommands: skill.parsed.cliCommands,
           });
-        } catch {
+        } catch (err) {
+          console.debug('[http-gateway] Skill info not available:', err.message || err);
           return sendJson(res, 501, { error: 'Skill system not available' });
         }
       }
@@ -715,7 +726,8 @@ export class HttpGateway {
         const q = (cmd, args = []) => {
           try {
             return execFileSync(cmd, args, { encoding: 'utf-8', timeout: 5000 }).trim();
-          } catch {
+          } catch (err) {
+            console.debug(`[http-gateway] Daemon command '${cmd}' failed:`, err.message || err);
             return null;
           }
         };
@@ -777,7 +789,11 @@ export class HttpGateway {
         const q = (cmd, args = []) => {
           try {
             return execFileSync(cmd, args, { encoding: 'utf-8', timeout: 5000 }).trim();
-          } catch {
+          } catch (err) {
+            console.debug(
+              `[http-gateway] Remote-access command '${cmd}' failed:`,
+              err.message || err,
+            );
             return null;
           }
         };

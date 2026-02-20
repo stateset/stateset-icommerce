@@ -180,8 +180,8 @@ class PluginStorage {
           }
         }
       }
-    } catch {
-      // Ignore load errors
+    } catch (err) {
+      console.debug('[plugin-runtime] State load failed:', err.message || err);
     }
   }
 
@@ -201,8 +201,8 @@ class PluginStorage {
       }
 
       writeFileSync(join(this._stateDir, `${this._pluginId}.json`), JSON.stringify(obj, null, 2));
-    } catch {
-      // Ignore save errors
+    } catch (err) {
+      console.debug('[plugin-runtime] State save failed:', err.message || err);
     }
   }
 }

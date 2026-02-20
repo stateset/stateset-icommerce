@@ -1,0 +1,64 @@
+{
+  "customers": [
+    {
+      "id": 1001,
+      "email": "alice@example.com",
+      "first_name": "Alice",
+      "last_name": "Johnson",
+      "phone": "+15551234567",
+      "state": "enabled",
+      "accepts_marketing": true,
+      "tags": "vip,wholesale",
+      "note": "Preferred customer",
+      "created_at": "2024-01-15T10:30:00-05:00"
+    },
+    {
+      "id": 1002,
+      "email": "bob@example.com",
+      "first_name": "Bob",
+      "last_name": "Smith",
+      "phone": null,
+      "state": "enabled",
+      "accepts_marketing": false,
+      "tags": "",
+      "note": "",
+      "created_at": "2024-02-01T14:00:00-05:00"
+    },
+    {
+      "id": 1003,
+      "email": "charlie@example.com",
+      "first_name": "Charlie",
+      "last_name": "Brown",
+      "phone": "+15559876543",
+      "state": "disabled",
+      "accepts_marketing": false,
+      "tags": "flagged",
+      "note": "Account suspended",
+      "created_at": "2024-03-10T09:15:00-05:00"
+    },
+    {
+      "id": 1004,
+      "email": "diana@example.com",
+      "first_name": "Diana",
+      "last_name": "Prince",
+      "phone": "+15555555555",
+      "state": "invited",
+      "accepts_marketing": true,
+      "tags": "",
+      "note": "",
+      "created_at": "2024-04-01T12:00:00-05:00"
+    },
+    {
+      "id": 1005,
+      "email": "eve@example.com",
+      "first_name": "Eve",
+      "last_name": "Williams",
+      "phone": null,
+      "state": "enabled",
+      "accepts_marketing": true,
+      "tags": "vip",
+      "note": "Loyalty program member",
+      "created_at": "2024-05-20T16:45:00-05:00"
+    }
+  ]
+}

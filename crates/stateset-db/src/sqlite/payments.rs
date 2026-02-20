@@ -15,6 +15,7 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+#[derive(Debug)]
 pub struct SqlitePaymentRepository {
     pool: Pool<SqliteConnectionManager>,
 }

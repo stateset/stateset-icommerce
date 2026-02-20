@@ -301,8 +301,8 @@ export async function seedDemoData(commerce, options = {}) {
   for (const { sku, adjustment, reason } of LOW_STOCK_ADJUSTMENTS) {
     try {
       await commerce.inventory.adjust(sku, adjustment, reason);
-    } catch {
-      // best-effort
+    } catch (err) {
+      console.debug('[demo] Inventory adjustment failed:', err.message || err);
     }
   }
   log(`  Done: ${inventoryCount} SKUs stocked (3 low-stock)\n`);
@@ -349,8 +349,8 @@ export async function seedDemoData(commerce, options = {}) {
     try {
       await commerce.promotions.create(promo);
       promoCount++;
-    } catch {
-      // best-effort — promotions may not be available in all builds
+    } catch (err) {
+      console.debug('[demo] Promotion creation failed:', err.message || err);
     }
   }
   log(`  Done: ${promoCount} promotions\n`);
@@ -367,8 +367,8 @@ export async function seedDemoData(commerce, options = {}) {
     try {
       await commerce.subscriptions.createPlan(plan);
       planCount++;
-    } catch {
-      // best-effort
+    } catch (err) {
+      console.debug('[demo] Subscription plan creation failed:', err.message || err);
     }
   }
   log(`  Done: ${planCount} subscription plans\n`);

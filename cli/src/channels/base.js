@@ -450,8 +450,8 @@ export async function handleBotCommand(
             .join(' ');
           extra = `\nName: ${name || 'N/A'}\nEmail: ${customer.email || 'N/A'}`;
         }
-      } catch {
-        /* ignore */
+      } catch (err) {
+        console.debug('[channel] Failed to fetch linked customer details:', err.message || err);
       }
     }
     return {
@@ -539,7 +539,8 @@ export async function handleBotCommand(
       const lines = skills.map((s) => `- ${s.name}: ${s.description.slice(0, 80)}`);
       const header = category ? `Skills (${category}):` : `Skills (${skills.length}):`;
       return { handled: true, response: [header, ...lines].join('\n') };
-    } catch {
+    } catch (err) {
+      console.debug('[channel] Skill system not available:', err.message || err);
       return { handled: true, response: 'Skill system not available.' };
     }
   }
@@ -561,7 +562,8 @@ export async function handleBotCommand(
         `Scripts: ${skill.hasScripts ? 'yes' : 'no'}`,
       ];
       return { handled: true, response: info.join('\n') };
-    } catch {
+    } catch (err) {
+      console.debug('[channel] Skill info system not available:', err.message || err);
       return { handled: true, response: 'Skill system not available.' };
     }
   }
@@ -697,8 +699,8 @@ export async function processWithAgent(text, session, opts) {
           provider: result.provider,
           failedOver: true,
         };
-      } catch {
-        // All providers failed
+      } catch (err) {
+        console.warn('[channel] All fallback providers failed:', err.message || err);
       }
     }
     const response = `Sorry, I encountered an error: ${err.message}`;
@@ -804,8 +806,11 @@ export function createMessageHandler(adapter, opts) {
       if (Commerce) {
         _commerce = new Commerce(dbPath);
       }
-    } catch {
-      // @stateset/embedded not available or dbPath issue — commerce commands will be unavailable
+    } catch (err) {
+      console.debug(
+        '[channel] Commerce module not available (commerce commands disabled):',
+        err.message || err,
+      );
     }
     return _commerce;
   }
@@ -949,8 +954,8 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
   if (adapter.sendTyping) {
     try {
       await adapter.sendTyping(targetId);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.debug('[channel] Failed to send typing indicator:', err.message || err);
     }
   }
 
@@ -988,8 +993,11 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
         metrics.recordResponse(channel || 'unknown', Date.now() - startTime);
         hookRunner.run('message_sent', { text: cmd.response, senderId, channel });
         return;
-      } catch {
-        // Fall through to plain text
+      } catch (err) {
+        console.debug(
+          '[channel] Rich message send failed, falling back to plain text:',
+          err.message || err,
+        );
       }
     }
 

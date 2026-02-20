@@ -237,6 +237,81 @@ describe('mcp-server', () => {
       });
       assert.strictEqual(server.mcpEventStream, customStream);
     });
+
+    it('should include _agentic metadata when structuredToolResults is enabled', async () => {
+      const subscriptions = [];
+      const customStream = {
+        publish: () => {},
+        subscribe: async ({ sessionId, eventTypes }) => {
+          const result = {
+            success: true,
+            subscription: {
+              id: 'sub-structured',
+              sessionId: sessionId || '__global__',
+              eventTypes,
+              active: true,
+              createdAt: new Date().toISOString(),
+              lastEventId: null,
+            },
+          };
+          subscriptions.push(result.subscription);
+          return result;
+        },
+        unsubscribe: async () => ({ success: true }),
+        listSubscriptions: async () => subscriptions,
+        getEventHistory: async () => [],
+      };
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        structuredToolResults: true,
+        mcpEventStream: customStream,
+      });
+      const tool = server.instance._registeredTools.agentic_subscribe_events;
+      const res = await tool.handler({ sessionId: 'session-structured', eventTypes: ['success'] });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload.success, true);
+      assert.equal(payload._agentic?.tool, 'agentic_subscribe_events');
+      assert.equal(payload._agentic?.sessionId, 'session-structured');
+      assert.equal(payload._agentic?.status, 'success');
+      assert.equal(typeof payload._agentic?.timing?.elapsedMs, 'number');
+      assert.equal(payload._agentic?.schemaVersion, '1.0.0');
+    });
+
+    it('should not include _agentic metadata by default', async () => {
+      const customStream = {
+        publish: () => {},
+        subscribe: async () => ({ success: true }),
+        unsubscribe: async () => ({ success: true }),
+        listSubscriptions: async () => [],
+        getEventHistory: async () => [],
+      };
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        mcpEventStream: customStream,
+      });
+      const tool = server.instance._registeredTools.agentic_list_event_subscriptions;
+      const res = await tool.handler({ sessionId: 'session-legacy' });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload._agentic, undefined);
+      assert.equal(Array.isArray(payload), true);
+    });
+
+    it('should expose agentic tool result schema contract from runtime tool', async () => {
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+      });
+      const tool = server.instance._registeredTools.agentic_runtime_contract;
+      const res = await tool.handler({});
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload.engine, 'stateset-icommerce');
+      assert.equal(payload.agenticToolResultSchema.version, '1.0.0');
+      assert.equal(payload.agenticToolResultSchema.envelope, 'mcp_tool_result');
+      assert.equal(Array.isArray(payload.agenticToolResultSchema.metadata), true);
+      assert.equal(payload.agenticToolResultSchema.metadata.includes('schemaVersion'), true);
+    });
   });
 
   describe('Agentic event stream tools', () => {

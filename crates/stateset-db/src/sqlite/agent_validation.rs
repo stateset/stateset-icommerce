@@ -13,6 +13,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// SQLite implementation of AgentValidationRepository
+#[derive(Debug)]
 pub struct SqliteAgentValidationRepository {
     pool: Pool<SqliteConnectionManager>,
 }

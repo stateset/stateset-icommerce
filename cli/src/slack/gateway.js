@@ -45,8 +45,10 @@ export async function startSlackGateway({
   } catch {
     try {
       ({ App } = await import('@slack/bolt'));
-    } catch {
-      throw new Error('@slack/bolt is not installed. Install it with: npm install @slack/bolt');
+    } catch (err2) {
+      throw new Error(
+        `@slack/bolt is not installed. Install it with: npm install @slack/bolt (${err2.message || err2})`,
+      );
     }
   }
 
@@ -82,8 +84,11 @@ export async function startSlackGateway({
   try {
     const auth = await app.client.auth.test({ token: botToken });
     botUserId = auth.user_id;
-  } catch {
-    // Will be set after first message if needed
+  } catch (err) {
+    console.debug(
+      '[slack] Could not fetch bot user ID, will be set after first message:',
+      err.message || err,
+    );
   }
 
   /** @type {import('../channels/base.js').ChannelAdapter} */

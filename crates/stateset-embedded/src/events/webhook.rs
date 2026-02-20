@@ -672,7 +672,7 @@ fn is_localhostish_host(host: &str) -> bool {
 
 fn is_public_hostname(host: &str, port: u16) -> bool {
     match (host, port).to_socket_addrs() {
-        Ok(mut addrs) => {
+        Ok(addrs) => {
             let mut resolved = false;
             let mut has_private_or_local = false;
 

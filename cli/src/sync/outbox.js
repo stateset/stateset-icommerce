@@ -341,7 +341,7 @@ export class Outbox {
 
     // Debug: log signing hash
     if (process.env.VES_DEBUG) {
-      console.log('[VES] Event signing:', {
+      console.debug('[VES] Event signing:', {
         eventId,
         tenantId: event.tenantId,
         storeId: event.storeId,
