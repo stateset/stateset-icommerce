@@ -30,7 +30,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.7.1"
+version = "0.7.2"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -140,11 +140,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
 
 # Internal crates
-stateset-primitives = { path = "crates/stateset-primitives", version = "0.7.1" }
-stateset-core = { path = "crates/stateset-core", version = "0.7.1" }
-stateset-db = { path = "crates/stateset-db", version = "0.7.1" }
-stateset-embedded = { path = "crates/stateset-embedded", version = "0.7.1" }
-stateset-observability = { path = "crates/stateset-observability", version = "0.7.1" }
+stateset-primitives = { path = "crates/stateset-primitives", version = "0.7.2" }
+stateset-core = { path = "crates/stateset-core", version = "0.7.2" }
+stateset-db = { path = "crates/stateset-db", version = "0.7.2" }
+stateset-embedded = { path = "crates/stateset-embedded", version = "0.7.2" }
+stateset-observability = { path = "crates/stateset-observability", version = "0.7.2" }
 stateset-test-utils = { path = "crates/stateset-test-utils" }
 
 # Testing
