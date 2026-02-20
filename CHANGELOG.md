@@ -6,6 +6,12 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-02-20
+
+### Changed
+- Bumped the workspace and cross-language release metadata to `0.7.2` across Rust crates, CLI, language bindings, and examples.
+- Updated docs and configuration references to reflect the `0.7.2` version line (including npm/cargo/composer/gradle packaging metadata and SDK version checks).
+
 ## [0.7.0] - 2026-02-07
 
 ### Added
