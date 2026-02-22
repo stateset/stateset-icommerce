@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/stateset-primitives",
     "crates/stateset-core",
+    "crates/stateset-crypto",
     "crates/stateset-db",
     "crates/stateset-embedded",
     "crates/stateset-observability",
@@ -23,6 +24,7 @@ members = [
 default-members = [
     "crates/stateset-primitives",
     "crates/stateset-core",
+    "crates/stateset-crypto",
     "crates/stateset-db",
     "crates/stateset-embedded",
     "crates/stateset-observability",
@@ -30,7 +32,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.7.2"
+version = "0.7.3"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -140,11 +142,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
 
 # Internal crates
-stateset-primitives = { path = "crates/stateset-primitives", version = "0.7.2" }
-stateset-core = { path = "crates/stateset-core", version = "0.7.2" }
-stateset-db = { path = "crates/stateset-db", version = "0.7.2" }
-stateset-embedded = { path = "crates/stateset-embedded", version = "0.7.2" }
-stateset-observability = { path = "crates/stateset-observability", version = "0.7.2" }
+stateset-primitives = { path = "crates/stateset-primitives", version = "0.7.3" }
+stateset-core = { path = "crates/stateset-core", version = "0.7.3" }
+stateset-db = { path = "crates/stateset-db", version = "0.7.3" }
+stateset-embedded = { path = "crates/stateset-embedded", version = "0.7.3" }
+stateset-observability = { path = "crates/stateset-observability", version = "0.7.3" }
+stateset-crypto = { path = "crates/stateset-crypto", version = "0.7.3" }
 stateset-test-utils = { path = "crates/stateset-test-utils" }
 
 # Testing

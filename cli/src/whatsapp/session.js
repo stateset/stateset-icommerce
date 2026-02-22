@@ -66,7 +66,7 @@ export async function createWhatsAppSocket({
     version,
     logger,
     printQRInTerminal: false,
-    browser: ['StateSet Commerce', 'CLI', '0.7.2'],
+    browser: ['StateSet Commerce', 'CLI', '0.7.3'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
   });
@@ -85,12 +85,12 @@ export async function createWhatsAppSocket({
         import('qrcode-terminal')
           .then((mod) => {
             const qrcode = mod.default || mod;
-            console.log('\nScan this QR code in WhatsApp > Linked Devices:\n');
+            console.debug('\nScan this QR code in WhatsApp > Linked Devices:\n');
             qrcode.generate(qr, { small: true });
           })
           .catch(() => {
-            console.log('\nQR code (install qrcode-terminal for visual display):');
-            console.log(qr);
+            console.debug('\nQR code (install qrcode-terminal for visual display):');
+            console.debug(qr);
           });
       }
     }

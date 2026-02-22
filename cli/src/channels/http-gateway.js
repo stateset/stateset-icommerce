@@ -294,7 +294,7 @@ export class HttpGateway {
       this._server.listen(this._port, this._host, () => {
         this._address = this._server.address();
         if (this._verbose) {
-          console.log(`[HttpGateway] Listening on ${this._address.address}:${this._address.port}`);
+          console.info(`[HttpGateway] Listening on ${this._address.address}:${this._address.port}`);
         }
         if (this._validApiKeyCount === 0 && !this._allowAnonymous) {
           console.warn(
@@ -318,7 +318,7 @@ export class HttpGateway {
     return new Promise((resolve) => {
       this._server.close(() => {
         if (this._verbose) {
-          console.log('[HttpGateway] Stopped.');
+          console.info('[HttpGateway] Stopped.');
         }
         this._server = null;
         this._address = null;
@@ -382,7 +382,7 @@ export class HttpGateway {
     }
 
     if (this._verbose) {
-      console.log(`[HttpGateway] ${method} ${pathname}`);
+      console.debug(`[HttpGateway] ${method} ${pathname}`);
     }
 
     try {
@@ -433,7 +433,7 @@ export class HttpGateway {
           status: 'ok',
           uptime: Date.now() - startTime,
           timestamp: new Date().toISOString(),
-          version: process.env.npm_package_version || '0.7.2',
+          version: process.env.npm_package_version || '0.7.3',
           subsystems: {
             voice: this._subsystems.voice ? 'enabled' : 'disabled',
             browser: this._subsystems.browser ? 'enabled' : 'disabled',
