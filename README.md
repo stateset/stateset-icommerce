@@ -13,10 +13,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.7.1    # Python
-gem install stateset_embedded -v 0.7.1  # Ruby
-npm install @stateset/embedded@0.7.1    # Node.js
-npm install -g @stateset/cli@0.7.1      # CLI
+pip install stateset-embedded==0.7.3    # Python
+gem install stateset_embedded -v 0.7.3  # Ruby
+npm install @stateset/embedded@0.7.3    # Node.js
+npm install -g @stateset/cli@0.7.3      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -74,24 +74,28 @@ npm run check                # root quality checks
 
 ---
 
-## What's New in v0.7.1
+## What's New in v0.7.3
 
-**Agent-to-Agent (A2A) Commerce** — AI agents can now autonomously pay, quote, subscribe, split payments, and negotiate with each other.
+**21-crate Rust workspace** — The engine now ships as a modular workspace of 21 specialized crates covering protocol, policy, transport, operations, interchange, and cross-cutting concerns. 2,671 Rust tests, 0 failures.
 
 | Feature | Description |
 |---------|-------------|
-| **Policy Runtime** | Policy-driven tool guardrails (allow/deny/transform) with optional domain inference and configurable policy store |
-| **A2A Payments** | Direct agent-to-agent transfers (USDC, USDT, ssUSD, DAI) across SET Chain, Base, Ethereum, Arbitrum |
-| **A2A Quotes** | Request → provide → accept/decline → fulfill negotiation flow |
-| **A2A Subscriptions** | Recurring inter-agent billing with trial periods, pause/resume, weekly-to-annual intervals |
-| **A2A Split Payments** | Multi-party splits (percentage or fixed) with platform fees and drift prevention |
-| **A2A Escrow** | Conditional payments (seller_fulfilled, buyer_confirmed, time_lock, milestone) with dispute resolution |
-| **A2A Webhooks** | HMAC-SHA256 signed notifications with SSRF validation and exponential backoff retry |
-| **A2A Event Streaming** | Real-time SSE push with wildcard filtering and persistent event log |
-| **Agent Discovery** | Find agents by capability, reputation scoring, trust-level gating |
-| **256 MCP Tools** | Up from 175 — 53 A2A tools + 8 agentic runtime tools across 27 modular domain modules |
+| **21 Rust Crates** | Fully modular workspace: primitives, core, db, embedded, crypto, protocol, policy, authz, pricing, migrations, jobs, http, sync, a2a, ffi, sdk, observability, macros, test-utils, integration-tests, benches |
+| **stateset-protocol** | Wire types: `EventEnvelope`, `SyncBatch`, Merkle trees, JCS canonical JSON, schema versioning (148 tests) |
+| **stateset-http** | Axum REST + SSE server: 19 endpoints, middleware (auth, CORS, tracing), `ServerBuilder` (92 tests) |
+| **stateset-ffi** | Stable C ABI: `#[repr(C)]` types, 9 `extern "C"` functions, ABI versioning (125 tests) |
+| **stateset-a2a** | Escrow state machine, split payments, subscriptions, HMAC webhooks, SSRF protection (201 tests) |
+| **stateset-sync** | Outbox, conflict resolution, transport traits, sync engine (103 tests) |
+| **stateset-authz** | RBAC permissions, rate limiting, audit logging, JSON redaction (162 tests) |
+| **stateset-pricing** | Deterministic pricing: line items, order totals, promotions, currency conversion, tax, rounding (161 tests) |
+| **stateset-migrations** | SQL migrations with SHA-256 checksums, rollback support, 4 built-in versions (87 tests) |
+| **stateset-jobs** | Background job scheduler: cron, intervals, events, retries, backoff strategies, 5 built-in jobs (150 tests) |
+| **stateset-crypto** | VES v1.0: JCS canonicalization, Ed25519 signing, AES-256-GCM encryption, Merkle trees (91 tests) |
+| **Policy Runtime** | Policy-driven tool guardrails (allow/deny/transform) with explainable denials and dry-run evaluation |
+| **A2A Commerce** | 53 A2A tools: payments, quotes, subscriptions, splits, escrow, webhooks, event streaming, discovery |
+| **256 MCP Tools** | 248 domain tools + 8 agentic runtime tools across 27 modular domain modules |
 | **Modular MCP Server** | Rewritten from 9,340 to 470 lines (95% reduction) with `adaptTool()` composition |
-| **4,700+ Tests** | 4,068 CLI + 434 Rust + 261 admin across 60+ test files |
+| **9,500+ Tests** | 6,611 CLI + 2,671 Rust + 261 admin |
 
 ---
 
@@ -135,13 +139,28 @@ StateSet enables this shift by providing a portable, embeddable commerce engine 
 
 ```
 stateset-icommerce/
-├── crates/
-│   ├── stateset-primitives/ # Strongly-typed newtypes (OrderId, Sku, Money)
-│   ├── stateset-core/       # Pure domain models & business logic (no I/O)
-│   ├── stateset-db/         # SQLite + PostgreSQL implementations
-│   ├── stateset-embedded/   # Unified high-level API
-│   ├── stateset-observability/ # Metrics + tracing helpers
-│   └── stateset-test-utils/ # Shared test fixtures & assertion macros
+├── crates/                        # 21 Rust crates (2,671 tests)
+│   ├── stateset-primitives/       # Strongly-typed newtypes (OrderId, Sku, Money)
+│   ├── stateset-core/             # Pure domain models & business logic (no I/O)
+│   ├── stateset-crypto/           # VES v1.0 cryptography (JCS, Ed25519, AES-GCM, Merkle)
+│   ├── stateset-db/               # SQLite + PostgreSQL implementations
+│   ├── stateset-embedded/         # Unified high-level API
+│   ├── stateset-observability/    # Metrics + tracing helpers
+│   ├── stateset-macros/           # Proc macros
+│   ├── stateset-policy/           # Policy DSL engine (YAML rules, conditions, transforms)
+│   ├── stateset-protocol/         # Wire types (EventEnvelope, SyncBatch, Merkle proofs)
+│   ├── stateset-http/             # Axum REST + SSE server (19 endpoints, middleware)
+│   ├── stateset-a2a/              # Agent-to-Agent (escrow, splits, subscriptions, webhooks)
+│   ├── stateset-sync/             # Sync engine (outbox, conflict resolution, transport)
+│   ├── stateset-authz/            # Authorization (RBAC, rate limiting, audit, redaction)
+│   ├── stateset-pricing/          # Deterministic pricing (line items, tax, promotions, FX)
+│   ├── stateset-migrations/       # SQL migrations (checksums, rollback, 4 built-in versions)
+│   ├── stateset-jobs/             # Background jobs (cron, retries, backoff, 5 built-in jobs)
+│   ├── stateset-ffi/              # Stable C ABI (#[repr(C)], extern "C", ABI versioning)
+│   ├── stateset-sdk/              # Facade re-exports + prelude
+│   ├── stateset-test-utils/       # Shared test fixtures & assertion macros
+│   ├── stateset-integration-tests/ # Cross-crate integration tests
+│   └── stateset-benches/          # Criterion benchmarks
 ├── bindings/
 │   ├── node/                # JavaScript/TypeScript (NAPI)
 │   ├── python/              # Python (PyO3)
@@ -225,6 +244,33 @@ stateset-icommerce/
 │  └─────────────────────────────────────────────────┘            │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Rust Crate Reference
+
+| Crate | Seam | Description | Tests |
+|-------|------|-------------|-------|
+| `stateset-primitives` | Core | Strongly-typed newtypes (`OrderId`, `Sku`, `Money`, `CurrencyCode`) | 17 |
+| `stateset-core` | Core | Pure domain models and business logic (254 types, no I/O) | 378 |
+| `stateset-crypto` | Core | VES v1.0: JCS canonicalization, Ed25519, AES-256-GCM, Merkle trees | 91 |
+| `stateset-db` | Core | SQLite + PostgreSQL repository implementations | 37 |
+| `stateset-embedded` | Core | Unified high-level API (33 modules) | ~200 |
+| `stateset-observability` | Core | Metrics collectors + tracing helpers | 6 |
+| `stateset-macros` | Core | Proc macros for derive helpers | — |
+| `stateset-protocol` | Protocol | Wire types: `EventEnvelope`, `SyncBatch`, Merkle proofs, schema versioning | 148 |
+| `stateset-policy` | Policy | Policy DSL engine: YAML rules, condition groups, transforms, dry-run | 57 |
+| `stateset-http` | Transport | Axum REST + SSE server: 19 endpoints, auth/CORS/tracing middleware | 92 |
+| `stateset-a2a` | Interchange | Escrow state machine, split payments, subscriptions, HMAC webhooks | 201 |
+| `stateset-sync` | Interchange | Sync engine: outbox, conflict resolution, transport traits | 103 |
+| `stateset-ffi` | Interchange | Stable C ABI: `#[repr(C)]` types, 9 `extern "C"` functions | 125 |
+| `stateset-sdk` | Interchange | Facade crate: re-exports + prelude | 5 |
+| `stateset-authz` | Cross-cutting | RBAC permissions, rate limiting, audit logging, JSON redaction | 162 |
+| `stateset-pricing` | Cross-cutting | Deterministic pricing: line items, order totals, promotions, tax, FX | 161 |
+| `stateset-migrations` | Operations | SQL migrations with SHA-256 checksums, rollback, 4 built-in versions | 87 |
+| `stateset-jobs` | Operations | Background job scheduler: cron, intervals, retries, 5 built-in jobs | 150 |
+| `stateset-test-utils` | Dev | Shared test fixtures and assertion macros | 20 |
+| `stateset-integration-tests` | Dev | Cross-crate integration tests | 41 |
+| `stateset-benches` | Dev | Criterion benchmarks | — |
+| **Total** | | **21 crates** | **2,671** |
 
 ---
 
@@ -1188,7 +1234,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.3"
+stateset-embedded = "0.7.3"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1238,14 +1284,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.7.1</version>
+    <version>0.7.3</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.7.1'
+implementation 'com.stateset:embedded:0.7.3'
 ```
 
 ### Kotlin (Gradle)
@@ -1253,7 +1299,7 @@ implementation 'com.stateset:embedded:0.7.1'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.7.1")
+    implementation("com.stateset:embedded-kotlin:0.7.3")
 }
 ```
 
@@ -1262,32 +1308,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.1")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.3")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.7.1'
+pod 'StateSet', '~> 0.7.3'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.7.1
+dotnet add package StateSet.Embedded --version 0.7.3
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.7.1" />
+<PackageReference Include="StateSet.Embedded" Version="0.7.3" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.1
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.3
 ```
 
 ### CLI
@@ -1456,13 +1502,13 @@ stateset --apply "add 50 units to SKU-001"
 
 ## Development
 
-Rust (434+ tests):
+Rust (2,671 tests across 21 crates):
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p stateset-primitives -p stateset-core -p stateset-db -p stateset-embedded -p stateset-test-utils
-cargo bench -p stateset-core -p stateset-db -p stateset-embedded
+cargo test                       # Run all 2,671 tests
+cargo bench -p stateset-benches  # Criterion benchmarks
 ```
 
 Bindings:
@@ -1472,7 +1518,7 @@ cd bindings/node && npm ci && npm test
 cd bindings/python && python -m pip install maturin pytest && maturin develop --release && pytest -q
 ```
 
-CLI (4,000+ tests):
+CLI (6,611 tests):
 
 ```bash
 cd cli
@@ -1498,19 +1544,29 @@ npm test                    # Vitest test suite
 
 ```
 stateset-icommerce/
-├── Cargo.toml                 # Workspace manifest
+├── Cargo.toml                      # Workspace manifest (21 crates)
 ├── crates/
-│   ├── stateset-primitives/   # Strongly-typed newtypes (OrderId, Sku, Money, CurrencyCode)
-│   ├── stateset-core/         # Domain models (32 domain modules)
-│   │   └── src/models/        # 254 types
-│   ├── stateset-db/           # Database layer
-│   │   ├── src/sqlite/        # 18 SQLite modules
-│   │   ├── src/postgres/      # 37 PostgreSQL modules
-│   │   └── migrations/        # 26 SQL migrations
-│   ├── stateset-embedded/     # High-level API
-│   │   └── src/               # 33 API modules
-│   ├── stateset-observability/ # Metrics + tracing helpers
-│   └── stateset-test-utils/   # Shared test fixtures & assertion macros
+│   ├── stateset-primitives/        # Strongly-typed newtypes (OrderId, Sku, Money, CurrencyCode)
+│   ├── stateset-core/              # Domain models (32 domain modules, 254 types)
+│   ├── stateset-crypto/            # VES v1.0 (JCS, Ed25519, AES-256-GCM, Merkle)
+│   ├── stateset-db/                # Database layer (SQLite + PostgreSQL)
+│   ├── stateset-embedded/          # High-level API (33 modules)
+│   ├── stateset-observability/     # Metrics + tracing helpers
+│   ├── stateset-macros/            # Proc macros
+│   ├── stateset-policy/            # Policy DSL engine (YAML, conditions, transforms)
+│   ├── stateset-protocol/          # Wire types (EventEnvelope, SyncBatch, Merkle)
+│   ├── stateset-http/              # Axum REST + SSE (19 endpoints, middleware)
+│   ├── stateset-a2a/               # Agent-to-Agent commerce
+│   ├── stateset-sync/              # Sync engine (outbox, conflict, transport)
+│   ├── stateset-authz/             # Authorization (RBAC, rate limiting, audit)
+│   ├── stateset-pricing/           # Deterministic pricing (line items, tax, FX)
+│   ├── stateset-migrations/        # SQL migrations (checksums, rollback)
+│   ├── stateset-jobs/              # Background jobs (cron, retries, backoff)
+│   ├── stateset-ffi/               # Stable C ABI (#[repr(C)], extern "C")
+│   ├── stateset-sdk/               # Facade re-exports + prelude
+│   ├── stateset-test-utils/        # Shared test fixtures & assertion macros
+│   ├── stateset-integration-tests/ # Cross-crate integration tests
+│   └── stateset-benches/           # Criterion benchmarks
 ├── bindings/
 │   ├── node/                  # NAPI bindings (@stateset/embedded)
 │   ├── python/                # PyO3 bindings (stateset-embedded)
