@@ -53,7 +53,7 @@ export const promotionTools = [
   {
     name: 'get_promotion',
     description: 'Get a promotion by ID or internal code.',
-    inputSchema: { identifier: z.string().describe('Promotion ID (UUID) or internal code') },
+    inputSchema: { identifier: z.string().min(1).describe('Promotion ID (UUID) or internal code') },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { identifier } = params;
@@ -96,7 +96,7 @@ export const promotionTools = [
     description:
       'Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts.',
     inputSchema: {
-      name: z.string().describe('Promotion name (e.g., "Summer Sale")'),
+      name: z.string().min(1).describe('Promotion name (e.g., "Summer Sale")'),
       type: z
         .enum([
           'percentage_off',
@@ -170,7 +170,7 @@ export const promotionTools = [
   {
     name: 'activate_promotion',
     description: 'Activate a promotion to make it available for use.',
-    inputSchema: { promotionId: z.string().describe('Promotion ID to activate') },
+    inputSchema: { promotionId: z.string().min(1).describe('Promotion ID to activate') },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { promotionId } = params;
@@ -192,7 +192,7 @@ export const promotionTools = [
   {
     name: 'deactivate_promotion',
     description: 'Pause/deactivate a promotion.',
-    inputSchema: { promotionId: z.string().describe('Promotion ID to deactivate') },
+    inputSchema: { promotionId: z.string().min(1).describe('Promotion ID to deactivate') },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { promotionId } = params;
@@ -215,8 +215,8 @@ export const promotionTools = [
     name: 'create_coupon',
     description: 'Create a coupon code for a promotion.',
     inputSchema: {
-      promotionId: z.string().describe('Promotion ID to create coupon for'),
-      code: z.string().describe('Coupon code (e.g., "SUMMER25")'),
+      promotionId: z.string().min(1).describe('Promotion ID to create coupon for'),
+      code: z.string().min(1).describe('Coupon code (e.g., "SUMMER25")'),
       usageLimit: z.number().optional().describe('Maximum number of times this coupon can be used'),
       perCustomerLimit: z.number().optional().describe('Max uses per customer'),
       startsAt: z.string().optional().describe('Coupon valid from (ISO 8601)'),
@@ -256,7 +256,7 @@ export const promotionTools = [
   {
     name: 'validate_coupon',
     description: 'Check if a coupon code is valid and can be used.',
-    inputSchema: { code: z.string().describe('Coupon code to validate') },
+    inputSchema: { code: z.string().min(1).describe('Coupon code to validate') },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { code } = params;
@@ -337,7 +337,7 @@ export const promotionTools = [
     name: 'apply_cart_promotions',
     description:
       'Calculate and apply all applicable promotions to a cart. Uses coupon codes on the cart and automatic promotions.',
-    inputSchema: { cartId: z.string().describe('Cart ID to apply promotions to') },
+    inputSchema: { cartId: z.string().min(1).describe('Cart ID to apply promotions to') },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { cartId } = params;

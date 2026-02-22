@@ -181,7 +181,7 @@ impl AgentCard {
     }
 
     /// Set trust level
-    pub fn with_trust_level(mut self, level: TrustLevel) -> Self {
+    pub const fn with_trust_level(mut self, level: TrustLevel) -> Self {
         self.trust_level = level;
         self
     }
@@ -243,7 +243,7 @@ pub enum TrustLevel {
 
 impl TrustLevel {
     /// Numeric rank for trust comparison (higher is more trusted).
-    pub fn rank(&self) -> u8 {
+    pub const fn rank(&self) -> u8 {
         match self {
             Self::Sandbox => 0,
             Self::Standard => 1,
@@ -253,7 +253,7 @@ impl TrustLevel {
     }
 
     /// Get the default transaction limit for this trust level (in USDC cents)
-    pub fn default_transaction_limit(&self) -> u64 {
+    pub const fn default_transaction_limit(&self) -> u64 {
         match self {
             Self::Sandbox => 100_000_000,        // $100 (for testing)
             Self::Standard => 1_000_000_000,     // $1,000
@@ -263,7 +263,7 @@ impl TrustLevel {
     }
 
     /// Get the default daily volume limit for this trust level
-    pub fn default_daily_limit(&self) -> u64 {
+    pub const fn default_daily_limit(&self) -> u64 {
         match self {
             Self::Sandbox => 1_000_000_000,        // $1,000/day
             Self::Standard => 10_000_000_000,      // $10,000/day

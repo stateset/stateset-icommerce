@@ -108,7 +108,8 @@ pub struct PaymentRun {
 // ============================================================================
 
 /// Status of a bill.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BillStatus {
@@ -123,33 +124,18 @@ pub enum BillStatus {
     Disputed,
 }
 
-impl std::fmt::Display for BillStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BillStatus::Draft => write!(f, "draft"),
-            BillStatus::Pending => write!(f, "pending"),
-            BillStatus::Approved => write!(f, "approved"),
-            BillStatus::PartiallyPaid => write!(f, "partially_paid"),
-            BillStatus::Paid => write!(f, "paid"),
-            BillStatus::Overdue => write!(f, "overdue"),
-            BillStatus::Cancelled => write!(f, "cancelled"),
-            BillStatus::Disputed => write!(f, "disputed"),
-        }
-    }
-}
-
 impl FromStr for BillStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "draft" => Ok(BillStatus::Draft),
-            "pending" => Ok(BillStatus::Pending),
-            "approved" => Ok(BillStatus::Approved),
-            "partially_paid" | "partiallypaid" => Ok(BillStatus::PartiallyPaid),
-            "paid" => Ok(BillStatus::Paid),
-            "overdue" => Ok(BillStatus::Overdue),
-            "cancelled" | "canceled" => Ok(BillStatus::Cancelled),
-            "disputed" => Ok(BillStatus::Disputed),
+            "draft" => Ok(Self::Draft),
+            "pending" => Ok(Self::Pending),
+            "approved" => Ok(Self::Approved),
+            "partially_paid" | "partiallypaid" => Ok(Self::PartiallyPaid),
+            "paid" => Ok(Self::Paid),
+            "overdue" => Ok(Self::Overdue),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "disputed" => Ok(Self::Disputed),
             _ => Err(format!("Unknown bill status: {}", s)),
         }
     }
@@ -172,12 +158,12 @@ pub enum PaymentMethodAP {
 impl std::fmt::Display for PaymentMethodAP {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PaymentMethodAP::Check => write!(f, "check"),
-            PaymentMethodAP::Ach => write!(f, "ach"),
-            PaymentMethodAP::Wire => write!(f, "wire"),
-            PaymentMethodAP::CreditCard => write!(f, "credit_card"),
-            PaymentMethodAP::Cash => write!(f, "cash"),
-            PaymentMethodAP::Other => write!(f, "other"),
+            Self::Check => write!(f, "check"),
+            Self::Ach => write!(f, "ach"),
+            Self::Wire => write!(f, "wire"),
+            Self::CreditCard => write!(f, "credit_card"),
+            Self::Cash => write!(f, "cash"),
+            Self::Other => write!(f, "other"),
         }
     }
 }
@@ -186,19 +172,20 @@ impl FromStr for PaymentMethodAP {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "check" => Ok(PaymentMethodAP::Check),
-            "ach" => Ok(PaymentMethodAP::Ach),
-            "wire" => Ok(PaymentMethodAP::Wire),
-            "credit_card" | "creditcard" => Ok(PaymentMethodAP::CreditCard),
-            "cash" => Ok(PaymentMethodAP::Cash),
-            "other" => Ok(PaymentMethodAP::Other),
+            "check" => Ok(Self::Check),
+            "ach" => Ok(Self::Ach),
+            "wire" => Ok(Self::Wire),
+            "credit_card" | "creditcard" => Ok(Self::CreditCard),
+            "cash" => Ok(Self::Cash),
+            "other" => Ok(Self::Other),
             _ => Err(format!("Unknown payment method: {}", s)),
         }
     }
 }
 
 /// AP payment status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentStatusAP {
@@ -210,34 +197,23 @@ pub enum PaymentStatusAP {
     Failed,
 }
 
-impl std::fmt::Display for PaymentStatusAP {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PaymentStatusAP::Pending => write!(f, "pending"),
-            PaymentStatusAP::Processed => write!(f, "processed"),
-            PaymentStatusAP::Cleared => write!(f, "cleared"),
-            PaymentStatusAP::Voided => write!(f, "voided"),
-            PaymentStatusAP::Failed => write!(f, "failed"),
-        }
-    }
-}
-
 impl FromStr for PaymentStatusAP {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(PaymentStatusAP::Pending),
-            "processed" => Ok(PaymentStatusAP::Processed),
-            "cleared" => Ok(PaymentStatusAP::Cleared),
-            "voided" => Ok(PaymentStatusAP::Voided),
-            "failed" => Ok(PaymentStatusAP::Failed),
+            "pending" => Ok(Self::Pending),
+            "processed" => Ok(Self::Processed),
+            "cleared" => Ok(Self::Cleared),
+            "voided" => Ok(Self::Voided),
+            "failed" => Ok(Self::Failed),
             _ => Err(format!("Unknown payment status: {}", s)),
         }
     }
 }
 
 /// Payment run status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentRunStatus {
@@ -250,29 +226,16 @@ pub enum PaymentRunStatus {
     Cancelled,
 }
 
-impl std::fmt::Display for PaymentRunStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PaymentRunStatus::Draft => write!(f, "draft"),
-            PaymentRunStatus::Pending => write!(f, "pending"),
-            PaymentRunStatus::Approved => write!(f, "approved"),
-            PaymentRunStatus::Processing => write!(f, "processing"),
-            PaymentRunStatus::Completed => write!(f, "completed"),
-            PaymentRunStatus::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
 impl FromStr for PaymentRunStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "draft" => Ok(PaymentRunStatus::Draft),
-            "pending" => Ok(PaymentRunStatus::Pending),
-            "approved" => Ok(PaymentRunStatus::Approved),
-            "processing" | "in_progress" | "inprogress" => Ok(PaymentRunStatus::Processing),
-            "completed" => Ok(PaymentRunStatus::Completed),
-            "cancelled" | "canceled" => Ok(PaymentRunStatus::Cancelled),
+            "draft" => Ok(Self::Draft),
+            "pending" => Ok(Self::Pending),
+            "approved" => Ok(Self::Approved),
+            "processing" | "in_progress" | "inprogress" => Ok(Self::Processing),
+            "completed" => Ok(Self::Completed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
             _ => Err(format!("Unknown payment run status: {}", s)),
         }
     }

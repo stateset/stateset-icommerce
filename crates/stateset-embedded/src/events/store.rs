@@ -33,6 +33,14 @@ pub struct InMemoryEventStore {
     max_events: usize,
 }
 
+impl std::fmt::Debug for InMemoryEventStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InMemoryEventStore")
+            .field("max_events", &self.max_events)
+            .finish_non_exhaustive()
+    }
+}
+
 impl InMemoryEventStore {
     /// Create a new in-memory event store
     pub fn new(max_events: usize) -> Self {

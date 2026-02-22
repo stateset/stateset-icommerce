@@ -44,6 +44,12 @@ pub struct Shipments {
     metrics: Metrics,
 }
 
+impl std::fmt::Debug for Shipments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Shipments").finish_non_exhaustive()
+    }
+}
+
 impl Shipments {
     pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
         Self { db, metrics }

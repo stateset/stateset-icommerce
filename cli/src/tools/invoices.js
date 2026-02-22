@@ -28,13 +28,14 @@ export const invoiceTools = [
     name: 'create_invoice',
     description: 'Create an invoice for a customer.',
     inputSchema: {
-      customerId: z.string().describe('Customer ID'),
+      customerId: z.string().min(1).describe('Customer ID'),
       orderId: z.string().optional().describe('Order ID'),
       items: z
         .string()
+        .min(1)
         .describe('JSON array: [{"description":"X","quantity":1,"unitPrice":10.00}]'),
-      dueDate: z.string().optional().describe('Due date ISO'),
-      notes: z.string().optional().describe('Notes'),
+      dueDate: z.string().max(30).optional().describe('Due date ISO'),
+      notes: z.string().max(1000).optional().describe('Notes'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -66,7 +67,7 @@ export const invoiceTools = [
     name: 'send_invoice',
     description: 'Send an invoice to the customer.',
     inputSchema: {
-      invoiceId: z.string().describe('Invoice ID'),
+      invoiceId: z.string().min(1).describe('Invoice ID'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -84,10 +85,10 @@ export const invoiceTools = [
     name: 'record_invoice_payment',
     description: 'Record payment on an invoice.',
     inputSchema: {
-      invoiceId: z.string().describe('Invoice ID'),
-      amount: z.number().describe('Amount paid'),
-      paymentMethod: z.string().optional().describe('Payment method'),
-      reference: z.string().optional().describe('Check/reference number'),
+      invoiceId: z.string().min(1).describe('Invoice ID'),
+      amount: z.number().positive().describe('Amount paid'),
+      paymentMethod: z.string().max(50).optional().describe('Payment method'),
+      reference: z.string().max(100).optional().describe('Check/reference number'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

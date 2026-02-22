@@ -12,7 +12,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Quality inspection for goods
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inspection {
     pub id: Uuid,
     pub inspection_number: String,
@@ -85,7 +85,8 @@ impl std::str::FromStr for InspectionType {
 }
 
 /// Status of an inspection
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum InspectionStatus {
@@ -102,21 +103,6 @@ pub enum InspectionStatus {
 impl Default for InspectionStatus {
     fn default() -> Self {
         Self::Pending
-    }
-}
-
-impl std::fmt::Display for InspectionStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Scheduled => write!(f, "scheduled"),
-            Self::InProgress => write!(f, "in_progress"),
-            Self::Passed => write!(f, "passed"),
-            Self::Failed => write!(f, "failed"),
-            Self::PartialPass => write!(f, "partial_pass"),
-            Self::OnHold => write!(f, "on_hold"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
     }
 }
 
@@ -139,7 +125,7 @@ impl std::str::FromStr for InspectionStatus {
 }
 
 /// Line item in an inspection
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InspectionItem {
     pub id: Uuid,
     pub inspection_id: Uuid,
@@ -157,7 +143,8 @@ pub struct InspectionItem {
 }
 
 /// Result of inspecting an item
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum InspectionResult {
@@ -170,17 +157,6 @@ pub enum InspectionResult {
 impl Default for InspectionResult {
     fn default() -> Self {
         Self::Pending
-    }
-}
-
-impl std::fmt::Display for InspectionResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Pass => write!(f, "pass"),
-            Self::Fail => write!(f, "fail"),
-            Self::ConditionalPass => write!(f, "conditional_pass"),
-        }
     }
 }
 
@@ -318,7 +294,8 @@ impl std::str::FromStr for Severity {
 }
 
 /// Status of an NCR
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum NcrStatus {
@@ -335,21 +312,6 @@ pub enum NcrStatus {
 impl Default for NcrStatus {
     fn default() -> Self {
         Self::Open
-    }
-}
-
-impl std::fmt::Display for NcrStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Open => write!(f, "open"),
-            Self::UnderReview => write!(f, "under_review"),
-            Self::PendingDisposition => write!(f, "pending_disposition"),
-            Self::CorrectiveAction => write!(f, "corrective_action"),
-            Self::PreventiveAction => write!(f, "preventive_action"),
-            Self::Verification => write!(f, "verification"),
-            Self::Closed => write!(f, "closed"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
     }
 }
 
@@ -708,7 +670,7 @@ pub struct CreateDefectCode {
 // Type Aliases for API compatibility
 // ============================================================================
 
-/// Alias for CreateNonConformance for API convenience
+/// Alias for `CreateNonConformance` for API convenience
 pub type CreateNcr = CreateNonConformance;
 
 /// Input for completing an inspection
@@ -737,12 +699,12 @@ impl Default for CompleteInspection {
 
 impl Inspection {
     /// Check if inspection can be started
-    pub fn can_start(&self) -> bool {
+    pub const fn can_start(&self) -> bool {
         matches!(self.status, InspectionStatus::Pending | InspectionStatus::Scheduled)
     }
 
     /// Check if inspection can be completed
-    pub fn can_complete(&self) -> bool {
+    pub const fn can_complete(&self) -> bool {
         matches!(self.status, InspectionStatus::InProgress)
     }
 
@@ -786,7 +748,7 @@ impl Inspection {
 
 impl NonConformance {
     /// Check if NCR can be closed
-    pub fn can_close(&self) -> bool {
+    pub const fn can_close(&self) -> bool {
         matches!(
             self.status,
             NcrStatus::Verification | NcrStatus::CorrectiveAction | NcrStatus::PreventiveAction
@@ -794,19 +756,19 @@ impl NonConformance {
     }
 
     /// Check if NCR requires immediate action based on severity
-    pub fn requires_immediate_action(&self) -> bool {
+    pub const fn requires_immediate_action(&self) -> bool {
         matches!(self.severity, Severity::Critical)
     }
 
     /// Check if disposition has been set
-    pub fn has_disposition(&self) -> bool {
+    pub const fn has_disposition(&self) -> bool {
         self.disposition.is_some()
     }
 }
 
 impl QualityHold {
     /// Check if hold is active
-    pub fn is_active(&self) -> bool {
+    pub const fn is_active(&self) -> bool {
         self.released_at.is_none()
     }
 

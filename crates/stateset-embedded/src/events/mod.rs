@@ -2,7 +2,7 @@
 //!
 //! This module provides real-time event streaming capabilities:
 //! - In-process pub/sub via broadcast channels
-//! - Event persistence via EventStore
+//! - Event persistence via `EventStore`
 //! - Webhook delivery to external endpoints
 //!
 //! # Example
@@ -125,6 +125,14 @@ pub struct EventSystem {
     config: EventConfig,
 }
 
+impl std::fmt::Debug for EventSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventSystem")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
 impl EventSystem {
     /// Create a new event system with default configuration
     pub fn new() -> Self {
@@ -175,7 +183,7 @@ impl EventSystem {
 
 impl EventSystem {
     /// Get the event emitter for publishing events
-    pub fn emitter(&self) -> &EventEmitter {
+    pub const fn emitter(&self) -> &EventEmitter {
         &self.emitter
     }
 
@@ -242,12 +250,12 @@ impl EventSystem {
     }
 
     /// Get the event bus for advanced usage
-    pub fn bus(&self) -> &Arc<EventBus> {
+    pub const fn bus(&self) -> &Arc<EventBus> {
         &self.bus
     }
 
     /// Get configuration
-    pub fn config(&self) -> &EventConfig {
+    pub const fn config(&self) -> &EventConfig {
         &self.config
     }
 
@@ -343,6 +351,12 @@ pub struct FilteredSubscription<F> {
     filter: F,
 }
 
+impl<F> std::fmt::Debug for FilteredSubscription<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilteredSubscription").finish_non_exhaustive()
+    }
+}
+
 impl<F> FilteredSubscription<F>
 where
     F: Fn(&CommerceEvent) -> bool,
@@ -364,7 +378,7 @@ pub mod filters {
     use stateset_core::CommerceEvent;
 
     /// Filter for order events only
-    pub fn orders_only(event: &CommerceEvent) -> bool {
+    pub const fn orders_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
             CommerceEvent::OrderCreated { .. }
@@ -378,7 +392,7 @@ pub mod filters {
     }
 
     /// Filter for inventory events only
-    pub fn inventory_only(event: &CommerceEvent) -> bool {
+    pub const fn inventory_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
             CommerceEvent::InventoryItemCreated { .. }
@@ -391,7 +405,7 @@ pub mod filters {
     }
 
     /// Filter for customer events only
-    pub fn customers_only(event: &CommerceEvent) -> bool {
+    pub const fn customers_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
             CommerceEvent::CustomerCreated { .. }
@@ -402,7 +416,7 @@ pub mod filters {
     }
 
     /// Filter for product events only
-    pub fn products_only(event: &CommerceEvent) -> bool {
+    pub const fn products_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
             CommerceEvent::ProductCreated { .. }
@@ -414,7 +428,7 @@ pub mod filters {
     }
 
     /// Filter for return events only
-    pub fn returns_only(event: &CommerceEvent) -> bool {
+    pub const fn returns_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
             CommerceEvent::ReturnRequested { .. }
@@ -427,7 +441,7 @@ pub mod filters {
     }
 
     /// Filter for low stock alerts
-    pub fn low_stock_alerts(event: &CommerceEvent) -> bool {
+    pub const fn low_stock_alerts(event: &CommerceEvent) -> bool {
         matches!(event, CommerceEvent::LowStockAlert { .. })
     }
 

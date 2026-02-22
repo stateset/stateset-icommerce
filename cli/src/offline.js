@@ -228,8 +228,8 @@ export function showOfflineWarning(output, status) {
 
   const message = warnings[status.reason] || `Running in offline mode: ${status.message}`;
 
-  console.log(`\n\x1b[33m⚠ ${message}\x1b[0m`);
-  console.log('\x1b[90m  Using stateset-direct mode. Some AI features unavailable.\x1b[0m\n');
+  console.warn(`\n\x1b[33m⚠ ${message}\x1b[0m`);
+  console.warn('\x1b[90m  Using stateset-direct mode. Some AI features unavailable.\x1b[0m\n');
 }
 
 /**

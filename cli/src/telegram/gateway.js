@@ -53,7 +53,7 @@ export async function startTelegramGateway({
     );
   }
 
-  console.log('Starting StateSet Telegram Gateway...');
+  console.info('Starting StateSet Telegram Gateway...');
 
   const bot = new Bot(token);
   const sessionManager = createSessionManager({ store: sessionStore, channel: 'telegram' });
@@ -169,7 +169,7 @@ export async function startTelegramGateway({
   // grammY handles reconnection internally via long polling
   bot.start({
     onStart: () => {
-      console.log('Telegram bot connected. Gateway is ready for messages.');
+      console.info('Telegram bot connected. Gateway is ready for messages.');
     },
   });
 
@@ -184,7 +184,7 @@ export async function startTelegramGateway({
     getNotifier().unregisterChannel('telegram');
     sessionManager.stopCleanup(cleanupHandle);
     bot.stop();
-    console.log('Telegram gateway shut down.');
+    console.info('Telegram gateway shut down.');
   };
 
   return { shutdown };

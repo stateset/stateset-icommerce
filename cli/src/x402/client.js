@@ -4,12 +4,29 @@
 
 import { SyncConfig } from '../sync/config.js';
 
+const ALLOWED_SEQUENCER_PROTOCOLS = new Set(['grpc:', 'grpcs:', 'http:', 'https:']);
+
+function parseSequencerUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) {
+    throw new Error('Sequencer URL is required');
+  }
+
+  const parsed = new URL(url.trim());
+  if (!ALLOWED_SEQUENCER_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(`Unsupported sequencer protocol: ${parsed.protocol}`);
+  }
+  if (!parsed.hostname) {
+    throw new Error('Sequencer URL must include a host');
+  }
+  return parsed;
+}
+
 function buildBaseUrl(input) {
   const raw = typeof input === 'string' ? input : input?.sequencerUrl || input?.sequencer?.url;
   if (!raw) {
     throw new Error('Sequencer URL is required');
   }
-  const url = new URL(raw);
+  const url = parseSequencerUrl(raw);
   if (url.protocol === 'grpc:' || url.protocol === 'grpcs:') {
     const restProtocol = url.protocol === 'grpcs:' ? 'https:' : 'http:';
     return `${restProtocol}//${url.host}`;

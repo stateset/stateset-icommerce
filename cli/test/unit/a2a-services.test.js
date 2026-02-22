@@ -405,7 +405,7 @@ describe('a2a_get_service', () => {
 
     assert.ok(result.error);
     assert.match(result.error, /not found/i);
-    assert.strictEqual(result.success, undefined);
+    assert.strictEqual(result.success, false);
   });
 
   it('returns full service details', async () => {

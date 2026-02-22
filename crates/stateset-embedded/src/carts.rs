@@ -60,6 +60,12 @@ pub struct Carts {
     metrics: Metrics,
 }
 
+impl std::fmt::Debug for Carts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Carts").finish_non_exhaustive()
+    }
+}
+
 impl Carts {
     pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
         Self { db, metrics }

@@ -136,11 +136,11 @@ pub enum CostMethod {
 impl std::fmt::Display for CostMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CostMethod::Average => write!(f, "average"),
-            CostMethod::Fifo => write!(f, "fifo"),
-            CostMethod::Lifo => write!(f, "lifo"),
-            CostMethod::Standard => write!(f, "standard"),
-            CostMethod::Specific => write!(f, "specific"),
+            Self::Average => write!(f, "average"),
+            Self::Fifo => write!(f, "fifo"),
+            Self::Lifo => write!(f, "lifo"),
+            Self::Standard => write!(f, "standard"),
+            Self::Specific => write!(f, "specific"),
         }
     }
 }
@@ -149,11 +149,11 @@ impl FromStr for CostMethod {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "average" | "avg" => Ok(CostMethod::Average),
-            "fifo" => Ok(CostMethod::Fifo),
-            "lifo" => Ok(CostMethod::Lifo),
-            "standard" | "std" => Ok(CostMethod::Standard),
-            "specific" => Ok(CostMethod::Specific),
+            "average" | "avg" => Ok(Self::Average),
+            "fifo" => Ok(Self::Fifo),
+            "lifo" => Ok(Self::Lifo),
+            "standard" | "std" => Ok(Self::Standard),
+            "specific" => Ok(Self::Specific),
             _ => Err(format!("Unknown cost method: {}", s)),
         }
     }
@@ -175,11 +175,11 @@ pub enum CostLayerSource {
 impl std::fmt::Display for CostLayerSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CostLayerSource::Purchase => write!(f, "purchase"),
-            CostLayerSource::Production => write!(f, "production"),
-            CostLayerSource::Transfer => write!(f, "transfer"),
-            CostLayerSource::Adjustment => write!(f, "adjustment"),
-            CostLayerSource::Opening => write!(f, "opening"),
+            Self::Purchase => write!(f, "purchase"),
+            Self::Production => write!(f, "production"),
+            Self::Transfer => write!(f, "transfer"),
+            Self::Adjustment => write!(f, "adjustment"),
+            Self::Opening => write!(f, "opening"),
         }
     }
 }
@@ -188,11 +188,11 @@ impl FromStr for CostLayerSource {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "purchase" => Ok(CostLayerSource::Purchase),
-            "production" => Ok(CostLayerSource::Production),
-            "transfer" => Ok(CostLayerSource::Transfer),
-            "adjustment" => Ok(CostLayerSource::Adjustment),
-            "opening" | "opening_balance" => Ok(CostLayerSource::Opening),
+            "purchase" => Ok(Self::Purchase),
+            "production" => Ok(Self::Production),
+            "transfer" => Ok(Self::Transfer),
+            "adjustment" => Ok(Self::Adjustment),
+            "opening" | "opening_balance" => Ok(Self::Opening),
             _ => Err(format!("Unknown cost layer source: {}", s)),
         }
     }
@@ -214,11 +214,11 @@ pub enum CostTransactionType {
 impl std::fmt::Display for CostTransactionType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CostTransactionType::Receipt => write!(f, "receipt"),
-            CostTransactionType::Issue => write!(f, "issue"),
-            CostTransactionType::Adjustment => write!(f, "adjustment"),
-            CostTransactionType::Transfer => write!(f, "transfer"),
-            CostTransactionType::Revaluation => write!(f, "revaluation"),
+            Self::Receipt => write!(f, "receipt"),
+            Self::Issue => write!(f, "issue"),
+            Self::Adjustment => write!(f, "adjustment"),
+            Self::Transfer => write!(f, "transfer"),
+            Self::Revaluation => write!(f, "revaluation"),
         }
     }
 }
@@ -227,11 +227,11 @@ impl FromStr for CostTransactionType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "receipt" => Ok(CostTransactionType::Receipt),
-            "issue" => Ok(CostTransactionType::Issue),
-            "adjustment" => Ok(CostTransactionType::Adjustment),
-            "transfer" => Ok(CostTransactionType::Transfer),
-            "revaluation" => Ok(CostTransactionType::Revaluation),
+            "receipt" => Ok(Self::Receipt),
+            "issue" => Ok(Self::Issue),
+            "adjustment" => Ok(Self::Adjustment),
+            "transfer" => Ok(Self::Transfer),
+            "revaluation" => Ok(Self::Revaluation),
             _ => Err(format!("Unknown cost transaction type: {}", s)),
         }
     }
@@ -254,12 +254,12 @@ pub enum VarianceType {
 impl std::fmt::Display for VarianceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VarianceType::Purchase => write!(f, "purchase"),
-            VarianceType::Material => write!(f, "material"),
-            VarianceType::Labor => write!(f, "labor"),
-            VarianceType::Overhead => write!(f, "overhead"),
-            VarianceType::Efficiency => write!(f, "efficiency"),
-            VarianceType::Volume => write!(f, "volume"),
+            Self::Purchase => write!(f, "purchase"),
+            Self::Material => write!(f, "material"),
+            Self::Labor => write!(f, "labor"),
+            Self::Overhead => write!(f, "overhead"),
+            Self::Efficiency => write!(f, "efficiency"),
+            Self::Volume => write!(f, "volume"),
         }
     }
 }
@@ -268,12 +268,12 @@ impl FromStr for VarianceType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "purchase" => Ok(VarianceType::Purchase),
-            "material" => Ok(VarianceType::Material),
-            "labor" => Ok(VarianceType::Labor),
-            "overhead" => Ok(VarianceType::Overhead),
-            "efficiency" => Ok(VarianceType::Efficiency),
-            "volume" => Ok(VarianceType::Volume),
+            "purchase" => Ok(Self::Purchase),
+            "material" => Ok(Self::Material),
+            "labor" => Ok(Self::Labor),
+            "overhead" => Ok(Self::Overhead),
+            "efficiency" => Ok(Self::Efficiency),
+            "volume" => Ok(Self::Volume),
             _ => Err(format!("Unknown variance type: {}", s)),
         }
     }
@@ -294,10 +294,10 @@ pub enum CostAdjustmentType {
 impl std::fmt::Display for CostAdjustmentType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CostAdjustmentType::StandardCostUpdate => write!(f, "standard_cost_update"),
-            CostAdjustmentType::Revaluation => write!(f, "revaluation"),
-            CostAdjustmentType::WriteOff => write!(f, "write_off"),
-            CostAdjustmentType::Correction => write!(f, "correction"),
+            Self::StandardCostUpdate => write!(f, "standard_cost_update"),
+            Self::Revaluation => write!(f, "revaluation"),
+            Self::WriteOff => write!(f, "write_off"),
+            Self::Correction => write!(f, "correction"),
         }
     }
 }
@@ -307,11 +307,11 @@ impl FromStr for CostAdjustmentType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
             "standard_cost_update" | "standardcostupdate" => {
-                Ok(CostAdjustmentType::StandardCostUpdate)
+                Ok(Self::StandardCostUpdate)
             }
-            "revaluation" => Ok(CostAdjustmentType::Revaluation),
-            "write_off" | "writeoff" => Ok(CostAdjustmentType::WriteOff),
-            "correction" => Ok(CostAdjustmentType::Correction),
+            "revaluation" => Ok(Self::Revaluation),
+            "write_off" | "writeoff" => Ok(Self::WriteOff),
+            "correction" => Ok(Self::Correction),
             _ => Err(format!("Unknown cost adjustment type: {}", s)),
         }
     }
@@ -332,10 +332,10 @@ pub enum CostAdjustmentStatus {
 impl std::fmt::Display for CostAdjustmentStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CostAdjustmentStatus::Pending => write!(f, "pending"),
-            CostAdjustmentStatus::Approved => write!(f, "approved"),
-            CostAdjustmentStatus::Applied => write!(f, "applied"),
-            CostAdjustmentStatus::Rejected => write!(f, "rejected"),
+            Self::Pending => write!(f, "pending"),
+            Self::Approved => write!(f, "approved"),
+            Self::Applied => write!(f, "applied"),
+            Self::Rejected => write!(f, "rejected"),
         }
     }
 }
@@ -344,10 +344,10 @@ impl FromStr for CostAdjustmentStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(CostAdjustmentStatus::Pending),
-            "approved" => Ok(CostAdjustmentStatus::Approved),
-            "applied" => Ok(CostAdjustmentStatus::Applied),
-            "rejected" => Ok(CostAdjustmentStatus::Rejected),
+            "pending" => Ok(Self::Pending),
+            "approved" => Ok(Self::Approved),
+            "applied" => Ok(Self::Applied),
+            "rejected" => Ok(Self::Rejected),
             _ => Err(format!("Unknown cost adjustment status: {}", s)),
         }
     }

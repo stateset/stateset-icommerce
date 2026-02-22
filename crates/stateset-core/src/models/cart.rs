@@ -121,7 +121,7 @@ pub struct CartAddress {
 
 impl From<CartAddress> for Address {
     fn from(addr: CartAddress) -> Self {
-        Address {
+        Self {
             line1: addr.line1,
             line2: addr.line2,
             city: addr.city,
@@ -134,7 +134,7 @@ impl From<CartAddress> for Address {
 
 impl From<Address> for CartAddress {
     fn from(addr: Address) -> Self {
-        CartAddress {
+        Self {
             first_name: String::new(),
             last_name: String::new(),
             company: None,
@@ -483,17 +483,17 @@ impl Cart {
     }
 
     /// Check if cart can be modified
-    pub fn can_modify(&self) -> bool {
+    pub const fn can_modify(&self) -> bool {
         matches!(self.status, CartStatus::Active)
     }
 
     /// Check if cart can be completed
-    pub fn can_complete(&self) -> bool {
+    pub const fn can_complete(&self) -> bool {
         matches!(self.status, CartStatus::ReadyForPayment | CartStatus::PaymentPending)
     }
 
     /// Check if cart can be cancelled
-    pub fn can_cancel(&self) -> bool {
+    pub const fn can_cancel(&self) -> bool {
         matches!(
             self.status,
             CartStatus::Active | CartStatus::ReadyForPayment | CartStatus::PaymentPending

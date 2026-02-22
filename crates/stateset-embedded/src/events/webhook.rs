@@ -191,7 +191,7 @@ pub struct WebhookDelivery {
 }
 
 /// Delivery status
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryStatus {
     Pending,
@@ -207,6 +207,14 @@ pub struct WebhookManager {
     config: WebhookConfig,
     client: reqwest::Client,
     runtime: WebhookRuntime,
+}
+
+impl std::fmt::Debug for WebhookManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookManager")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl WebhookManager {
@@ -702,7 +710,7 @@ fn is_public_hostname(host: &str, port: u16) -> bool {
     }
 }
 
-fn is_public_ip(ip: IpAddr) -> bool {
+const fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(addr) => {
             !addr.is_loopback()

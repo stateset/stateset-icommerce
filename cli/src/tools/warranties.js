@@ -28,11 +28,14 @@ export const warrantyTools = [
     name: 'create_warranty',
     description: 'Create a warranty for a product.',
     inputSchema: {
-      customerId: z.string().describe('Customer ID (required)'),
+      customerId: z.string().min(1).describe('Customer ID (required)'),
       orderId: z.string().optional().describe('Order ID'),
       productId: z.string().optional().describe('Product ID'),
-      warrantyType: z.string().optional().describe('Type: standard, extended, lifetime'),
-      durationMonths: z.number().optional().describe('Duration in months'),
+      warrantyType: z
+        .enum(['standard', 'extended', 'lifetime'])
+        .optional()
+        .describe('Warranty type'),
+      durationMonths: z.number().int().positive().optional().describe('Duration in months'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -55,9 +58,9 @@ export const warrantyTools = [
     name: 'create_warranty_claim',
     description: 'File a warranty claim.',
     inputSchema: {
-      warrantyId: z.string().describe('Warranty ID'),
-      description: z.string().describe('Issue description'),
-      claimType: z.string().optional().describe('Type: repair, replacement, refund'),
+      warrantyId: z.string().min(1).describe('Warranty ID'),
+      description: z.string().min(1).max(1000).describe('Issue description'),
+      claimType: z.enum(['repair', 'replacement', 'refund']).optional().describe('Claim type'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -78,7 +81,7 @@ export const warrantyTools = [
     name: 'approve_warranty_claim',
     description: 'Approve a warranty claim.',
     inputSchema: {
-      claimId: z.string().describe('Claim ID'),
+      claimId: z.string().min(1).describe('Claim ID'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

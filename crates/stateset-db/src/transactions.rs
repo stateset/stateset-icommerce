@@ -94,7 +94,7 @@ impl TransactionHandle {
     }
 
     /// Get the current state
-    pub fn state(&self) -> TransactionState {
+    pub const fn state(&self) -> TransactionState {
         self.state
     }
 
@@ -196,6 +196,7 @@ impl Default for Saga {
 }
 
 /// Builder for transaction batches
+#[must_use]
 pub struct TransactionBuilder {
     operations: Vec<Box<dyn Transactional<Output = ()>>>,
 }

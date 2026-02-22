@@ -28,17 +28,17 @@ pub enum ShippingCarrier {
 
 impl ShippingCarrier {
     /// Get the tracking URL base for this carrier
-    pub fn tracking_url_base(&self) -> Option<&'static str> {
+    pub const fn tracking_url_base(&self) -> Option<&'static str> {
         match self {
-            ShippingCarrier::Ups => Some("https://www.ups.com/track?tracknum="),
-            ShippingCarrier::FedEx => Some("https://www.fedex.com/apps/fedextrack/?tracknumbers="),
-            ShippingCarrier::Usps => Some("https://tools.usps.com/go/TrackConfirmAction?tLabels="),
-            ShippingCarrier::Dhl => Some(
+            Self::Ups => Some("https://www.ups.com/track?tracknum="),
+            Self::FedEx => Some("https://www.fedex.com/apps/fedextrack/?tracknumbers="),
+            Self::Usps => Some("https://tools.usps.com/go/TrackConfirmAction?tLabels="),
+            Self::Dhl => Some(
                 "https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id=",
             ),
-            ShippingCarrier::OnTrac => Some("https://www.ontrac.com/tracking/?number="),
-            ShippingCarrier::LaserShip => Some("https://www.lasership.com/track/"),
-            ShippingCarrier::Other => None,
+            Self::OnTrac => Some("https://www.ontrac.com/tracking/?number="),
+            Self::LaserShip => Some("https://www.lasership.com/track/"),
+            Self::Other => None,
         }
     }
 
@@ -105,7 +105,7 @@ pub enum ShipmentStatus {
 
 impl ShipmentStatus {
     /// Check if this status can transition to the target status
-    pub fn can_transition_to(&self, target: ShipmentStatus) -> bool {
+    pub const fn can_transition_to(&self, target: Self) -> bool {
         use ShipmentStatus::*;
         matches!(
             (self, target),
@@ -134,10 +134,10 @@ impl ShipmentStatus {
     }
 
     /// Check if this is a terminal status
-    pub fn is_terminal(&self) -> bool {
+    pub const fn is_terminal(&self) -> bool {
         matches!(
             self,
-            ShipmentStatus::Delivered | ShipmentStatus::Cancelled | ShipmentStatus::Returned
+            Self::Delivered | Self::Cancelled | Self::Returned
         )
     }
 }
@@ -258,13 +258,13 @@ pub struct ShipmentItem {
 pub struct ShipmentEvent {
     pub id: Uuid,
     pub shipment_id: ShipmentId,
-    /// Type of event (e.g., "picked_up", "departed_facility", "arrived_at_hub")
+    /// Type of event (e.g., "`picked_up`", "`departed_facility`", "`arrived_at_hub`")
     pub event_type: String,
     /// Location where event occurred
     pub location: Option<String>,
     /// Description of the event
     pub description: Option<String>,
-    /// When the event occurred (may differ from created_at for imported events)
+    /// When the event occurred (may differ from `created_at` for imported events)
     pub event_time: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }

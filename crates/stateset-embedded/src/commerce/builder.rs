@@ -17,6 +17,7 @@ use stateset_db::PostgresDatabase;
 
 /// Builder for creating a Commerce instance with custom configuration.
 #[derive(Default)]
+#[must_use]
 pub struct CommerceBuilder {
     sqlite_path: Option<String>,
     #[cfg(feature = "postgres")]
@@ -27,6 +28,12 @@ pub struct CommerceBuilder {
     #[cfg(feature = "events")]
     event_config: Option<EventConfig>,
     metrics_config: MetricsConfig,
+}
+
+impl std::fmt::Debug for CommerceBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommerceBuilder").finish_non_exhaustive()
+    }
 }
 
 impl CommerceBuilder {
@@ -66,19 +73,19 @@ impl CommerceBuilder {
     }
 
     /// Set the maximum number of database connections.
-    pub fn max_connections(mut self, count: u32) -> Self {
+    pub const fn max_connections(mut self, count: u32) -> Self {
         self.max_connections = Some(count);
         self
     }
 
     /// Configure in-process engine metrics collection.
-    pub fn metrics_config(mut self, config: MetricsConfig) -> Self {
+    pub const fn metrics_config(mut self, config: MetricsConfig) -> Self {
         self.metrics_config = config;
         self
     }
 
     /// Disable in-process engine metrics collection.
-    pub fn disable_metrics(mut self) -> Self {
+    pub const fn disable_metrics(mut self) -> Self {
         self.metrics_config.enabled = false;
         self
     }

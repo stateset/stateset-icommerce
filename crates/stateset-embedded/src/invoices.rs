@@ -51,6 +51,12 @@ pub struct Invoices {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for Invoices {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Invoices").finish_non_exhaustive()
+    }
+}
+
 impl Invoices {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }

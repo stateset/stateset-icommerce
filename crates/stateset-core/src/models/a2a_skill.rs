@@ -35,7 +35,7 @@ pub struct DiscoverSellersInput {
     pub limit: Option<u32>,
 }
 
-/// Output from discover_sellers skill
+/// Output from `discover_sellers` skill
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoverSellersOutput {
     /// List of matching seller agents
@@ -107,7 +107,7 @@ pub struct QuoteItem {
     pub specifications: Option<String>,
 }
 
-/// Output from request_quote skill
+/// Output from `request_quote` skill
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestQuoteOutput {
     /// Quote ID for reference
@@ -241,7 +241,7 @@ pub struct InitiatePurchaseInput {
     pub notes: Option<String>,
 }
 
-/// Output from initiate_purchase skill
+/// Output from `initiate_purchase` skill
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitiatePurchaseOutput {
     /// Purchase ID
@@ -271,7 +271,8 @@ pub struct InitiatePurchaseOutput {
 }
 
 /// Purchase status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PurchaseStatus {
@@ -296,22 +297,6 @@ pub enum PurchaseStatus {
     Disputed,
 }
 
-impl std::fmt::Display for PurchaseStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Initiated => write!(f, "initiated"),
-            Self::PaymentPending => write!(f, "payment_pending"),
-            Self::Paid => write!(f, "paid"),
-            Self::Fulfilling => write!(f, "fulfilling"),
-            Self::Shipped => write!(f, "shipped"),
-            Self::Delivered => write!(f, "delivered"),
-            Self::Completed => write!(f, "completed"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::Disputed => write!(f, "disputed"),
-        }
-    }
-}
-
 // =============================================================================
 // commerce.confirm_delivery
 // =============================================================================
@@ -329,7 +314,7 @@ pub struct ConfirmDeliveryInput {
     pub feedback: Option<String>,
 }
 
-/// Output from confirm_delivery skill
+/// Output from `confirm_delivery` skill
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfirmDeliveryOutput {
     /// Purchase ID

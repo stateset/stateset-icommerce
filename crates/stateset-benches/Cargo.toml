@@ -1,0 +1,48 @@
+[package]
+name = "stateset-benches"
+description = "Cross-crate benchmark suite for StateSet iCommerce"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+stateset-primitives = { path = "../stateset-primitives" }
+stateset-core = { path = "../stateset-core" }
+stateset-crypto = { path = "../stateset-crypto" }
+stateset-db = { path = "../stateset-db", features = ["sqlite"] }
+stateset-embedded = { path = "../stateset-embedded", features = ["sqlite", "events"] }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = "1.36"
+chrono = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.10"
+tokio = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "money_arithmetic"
+harness = false
+
+[[bench]]
+name = "merkle_tree"
+harness = false
+
+[[bench]]
+name = "jcs_canonicalize"
+harness = false
+
+[[bench]]
+name = "sqlite_batch_insert"
+harness = false
+
+[[bench]]
+name = "event_bus_throughput"
+harness = false

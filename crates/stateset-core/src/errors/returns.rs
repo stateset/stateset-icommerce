@@ -43,7 +43,7 @@ impl ReturnError {
     /// Convenience constructor for `NotFound`.
     #[inline]
     #[track_caller]
-    pub fn not_found(id: Uuid) -> Self {
+    pub const fn not_found(id: Uuid) -> Self {
         Self::NotFound(id)
     }
 

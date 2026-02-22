@@ -51,6 +51,12 @@ pub struct WarehouseOps {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for WarehouseOps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WarehouseOps").finish_non_exhaustive()
+    }
+}
+
 impl WarehouseOps {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
@@ -273,7 +279,7 @@ impl WarehouseOps {
 
     /// Create multiple locations in a batch.
     ///
-    /// Returns a BatchResult with succeeded and failed operations.
+    /// Returns a `BatchResult` with succeeded and failed operations.
     pub fn create_locations_batch(
         &self,
         inputs: Vec<CreateLocation>,
@@ -375,7 +381,7 @@ impl WarehouseOps {
 
     /// Get total available quantity for a SKU across a warehouse.
     ///
-    /// Sums available quantity (on_hand - reserved) across all locations.
+    /// Sums available quantity (`on_hand` - reserved) across all locations.
     pub fn get_total_available(&self, warehouse_id: i32, sku: &str) -> Result<Decimal> {
         let inventory = self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)?;
         Ok(inventory.iter().map(|i| i.quantity_available).sum())

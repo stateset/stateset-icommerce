@@ -185,7 +185,7 @@ export class BrowserTools {
       throw new Error('Chrome did not expose a webSocketDebuggerUrl.');
     }
 
-    console.log(`[browser-tools] Connecting to Chrome CDP: ${wsUrl}`);
+    console.debug(`[browser-tools] Connecting to Chrome CDP: ${wsUrl}`);
 
     await new Promise((resolve, reject) => {
       this._ws = new WebSocketImpl(wsUrl);
@@ -193,7 +193,7 @@ export class BrowserTools {
       const onOpen = () => {
         cleanup();
         this._connected = true;
-        console.log('[browser-tools] CDP WebSocket connected.');
+        console.debug('[browser-tools] CDP WebSocket connected.');
         resolve();
       };
 
@@ -343,7 +343,7 @@ export class BrowserTools {
     try {
       await this._httpGet('/json/version');
       alreadyRunning = true;
-      console.log(`[browser-tools] Found existing Chrome on port ${this.port}.`);
+      console.debug(`[browser-tools] Found existing Chrome on port ${this.port}.`);
     } catch (err) {
       console.debug('[browser] No existing Chrome found, will launch:', err.message || err);
       // Not running -- we will launch one.
@@ -351,7 +351,7 @@ export class BrowserTools {
 
     if (!alreadyRunning) {
       const chromeBin = this._findChrome();
-      console.log(`[browser-tools] Launching Chrome: ${chromeBin}`);
+      console.debug(`[browser-tools] Launching Chrome: ${chromeBin}`);
 
       const args = [
         `--remote-debugging-port=${this.port}`,
@@ -391,7 +391,7 @@ export class BrowserTools {
       });
 
       this._process.on('exit', (code, signal) => {
-        console.log(`[browser-tools] Chrome exited (code=${code}, signal=${signal}).`);
+        console.debug(`[browser-tools] Chrome exited (code=${code}, signal=${signal}).`);
         this._process = null;
       });
     }
@@ -1043,7 +1043,7 @@ export class BrowserTools {
       this._process = null;
     }
 
-    console.log('[browser-tools] Browser closed.');
+    console.debug('[browser-tools] Browser closed.');
   }
 }
 

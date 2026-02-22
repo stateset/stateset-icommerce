@@ -78,8 +78,8 @@ export const stablecoinTools = [
     description:
       'Create and execute a stablecoin payment to a wallet address. Supports USDC on Solana, ssUSD on SET Chain, etc.',
     inputSchema: {
-      toAddress: z.string().describe('Recipient wallet address'),
-      amount: z.number().describe('Amount to send (e.g., 50.00)'),
+      toAddress: z.string().min(1).describe('Recipient wallet address'),
+      amount: z.number().positive().describe('Amount to send (e.g., 50.00)'),
       chain: z
         .string()
         .optional()

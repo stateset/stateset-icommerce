@@ -56,6 +56,12 @@ pub struct Subscriptions {
     metrics: Metrics,
 }
 
+impl std::fmt::Debug for Subscriptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Subscriptions").finish_non_exhaustive()
+    }
+}
+
 impl Subscriptions {
     pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
         Self { db, metrics }

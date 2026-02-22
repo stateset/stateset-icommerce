@@ -28,6 +28,13 @@ export function createConfirmPrompt({ input = process.stdin, output = process.st
     });
 }
 
+/**
+ * Create a confirmation handler.
+ *
+ * When running in a TTY, uses @clack/prompts for a beautiful interactive
+ * confirmation.  Falls back to readline for non-TTY or when @clack is
+ * unavailable.
+ */
 export function createConfirmHandler({
   output = null,
   assumeYes = false,
@@ -58,6 +65,34 @@ export function createConfirmHandler({
     };
   }
 
+  // Try @clack/prompts for beautiful TTY confirmations
+  if (process.stdin.isTTY && !confirmPrompt) {
+    return async (ctx = {}) => {
+      const { operation, details, amount } = normalizeConfirmContext(ctx);
+      let message = `Confirm: ${operation}`;
+      if (details) message += ` — ${details}`;
+      if (amount !== null) message += ` ($${amount.toFixed(2)})`;
+
+      try {
+        const ui = await import('../ui.js');
+        return await ui.confirm(message);
+      } catch {
+        // @clack unavailable — fall through to readline below
+      }
+
+      // Readline fallback
+      const prompt = createConfirmPrompt();
+      let display = `\n${style.yellow('WARNING: Confirmation required')}\n`;
+      display += `   Operation: ${operation}\n`;
+      if (details) display += `   Details: ${details}\n`;
+      if (amount !== null) display += `   Amount: ${style.bold('$' + amount.toFixed(2))}\n`;
+      display += `\n   Proceed?`;
+      console.log(display);
+      return await prompt('');
+    };
+  }
+
+  // Non-TTY or custom prompt: use readline
   const prompt = confirmPrompt || createConfirmPrompt();
   return async (ctx = {}) => {
     const { operation, details, amount } = normalizeConfirmContext(ctx);

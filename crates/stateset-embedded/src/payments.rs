@@ -47,6 +47,12 @@ pub struct Payments {
     metrics: Metrics,
 }
 
+impl std::fmt::Debug for Payments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Payments").finish_non_exhaustive()
+    }
+}
+
 impl Payments {
     pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
         Self { db, metrics }

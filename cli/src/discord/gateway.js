@@ -56,7 +56,7 @@ export async function startDiscordGateway({
     );
   }
 
-  console.log('Starting StateSet Discord Gateway...');
+  console.info('Starting StateSet Discord Gateway...');
 
   const client = new Client({
     intents: [
@@ -204,7 +204,7 @@ export async function startDiscordGateway({
   // Wait for ready
   await new Promise((resolve, reject) => {
     client.once('ready', () => {
-      console.log(`Discord bot connected as ${client.user.tag}. Gateway is ready for messages.`);
+      console.info(`Discord bot connected as ${client.user.tag}. Gateway is ready for messages.`);
       resolve();
     });
     client.once('error', reject);
@@ -222,7 +222,7 @@ export async function startDiscordGateway({
     getNotifier().unregisterChannel('discord');
     sessionManager.stopCleanup(cleanupHandle);
     client.destroy();
-    console.log('Discord gateway shut down.');
+    console.info('Discord gateway shut down.');
   };
 
   return { shutdown };

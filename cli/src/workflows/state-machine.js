@@ -13,6 +13,17 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+// ============================================================================
+// Time constants (milliseconds)
+// ============================================================================
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * ONE_HOUR_MS;
+const TWO_DAYS_MS = 2 * ONE_DAY_MS;
+const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
+const FOURTEEN_DAYS_MS = 14 * ONE_DAY_MS;
+const THIRTY_DAYS_MS = 30 * ONE_DAY_MS;
+
 /**
  * State definition
  */
@@ -775,7 +786,7 @@ export const WorkflowTemplates = {
       {
         name: 'awaiting_payment',
         description: 'Waiting for payment confirmation',
-        timeout: 3600000, // 1 hour
+        timeout: ONE_HOUR_MS,
         timeoutTransition: 'cancelled',
       },
       {
@@ -824,7 +835,7 @@ export const WorkflowTemplates = {
       {
         name: 'pending_approval',
         description: 'Awaiting approval decision',
-        timeout: 86400000, // 24 hours
+        timeout: ONE_DAY_MS,
         timeoutTransition: 'auto_approved',
       },
       { name: 'auto_approved', description: 'Auto-approved due to timeout' },
@@ -833,7 +844,7 @@ export const WorkflowTemplates = {
       {
         name: 'awaiting_item',
         description: 'Waiting for item to be returned',
-        timeout: 604800000, // 7 days
+        timeout: SEVEN_DAYS_MS,
         timeoutTransition: 'expired',
       },
       {
@@ -870,7 +881,7 @@ export const WorkflowTemplates = {
       {
         name: 'trial',
         description: 'Trial period',
-        timeout: 1209600000, // 14 days
+        timeout: FOURTEEN_DAYS_MS,
         timeoutTransition: 'trial_ending',
       },
       { name: 'trial_ending', description: 'Trial ending soon' },
@@ -878,13 +889,13 @@ export const WorkflowTemplates = {
       {
         name: 'past_due',
         description: 'Payment past due',
-        timeout: 604800000, // 7 days
+        timeout: SEVEN_DAYS_MS,
         timeoutTransition: 'suspended',
       },
       {
         name: 'suspended',
         description: 'Subscription suspended',
-        timeout: 2592000000, // 30 days
+        timeout: THIRTY_DAYS_MS,
         timeoutTransition: 'cancelled',
       },
       { name: 'cancelled', description: 'Subscription cancelled' },
@@ -916,14 +927,14 @@ export const WorkflowTemplates = {
       {
         name: 'pending_review',
         description: 'Awaiting initial review',
-        timeout: 172800000, // 48 hours
+        timeout: TWO_DAYS_MS,
         timeoutTransition: 'escalated',
       },
       { name: 'escalated', description: 'Escalated due to timeout' },
       {
         name: 'pending_approval',
         description: 'Awaiting manager approval',
-        timeout: 172800000,
+        timeout: TWO_DAYS_MS,
         timeoutTransition: 'escalated',
       },
       { name: 'approved', description: 'PO approved' },

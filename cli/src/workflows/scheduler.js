@@ -13,6 +13,14 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+// ============================================================================
+// Constants
+// ============================================================================
+
+const MAX_CRON_ITERATIONS = 525_600; // minutes in a year
+const DEFAULT_JOB_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_TICK_INTERVAL_MS = 60_000; // 1 minute
+
 /**
  * Parse a cron expression into next execution time
  * Supports: minute hour day-of-month month day-of-week
@@ -180,7 +188,7 @@ function getNextCronTime(expression, fromDate = new Date()) {
   next.setMinutes(next.getMinutes() + 1);
 
   // Search up to 1 year ahead
-  const maxIterations = 525600; // minutes in a year
+  const maxIterations = MAX_CRON_ITERATIONS;
   for (let i = 0; i < maxIterations; i++) {
     if (cronMatches(cron, next)) {
       return next;
@@ -217,7 +225,7 @@ export class Job {
     enabled = true,
     maxRetries = 3,
     retryDelay = 5000,
-    timeout = 300000, // 5 minutes default
+    timeout = DEFAULT_JOB_TIMEOUT_MS,
     metadata = {},
     createdAt = new Date().toISOString(),
     lastRunAt = null,
@@ -330,7 +338,7 @@ export class JobResult {
 export class Scheduler extends EventEmitter {
   constructor({
     storePath = null,
-    tickInterval = 60000, // Check every minute
+    tickInterval = DEFAULT_TICK_INTERVAL_MS,
     maxConcurrentJobs = 5,
     executor = null, // Function to execute job actions
   }) {

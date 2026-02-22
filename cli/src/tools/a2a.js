@@ -19,7 +19,7 @@ export const a2aTools = [
     description:
       'Pay another AI agent directly. Send USDC or other stablecoins to another agent by their wallet address or agent ID.',
     inputSchema: {
-      to: z.string().describe('Recipient: wallet address (0x...) or agent ID (UUID)'),
+      to: z.string().min(1).describe('Recipient: wallet address (0x...) or agent ID (UUID)'),
       amount: z.number().positive().describe('Amount to pay (e.g., 10.00 for $10 USDC)'),
       asset: z.string().optional().describe('Asset to pay with: USDC (default), USDT, ssUSD, DAI'),
       network: z
@@ -81,15 +81,21 @@ export const a2aTools = [
       amount: z.number().positive().describe('Amount to request (e.g., 25.00 for $25)'),
       description: z
         .string()
+        .min(1)
         .describe('What the payment is for (e.g., "Data processing fee", "API access")'),
       from: z
         .string()
         .optional()
         .describe('Specific payer wallet/agent (optional - leave empty for open request)'),
       asset: z.string().optional().describe('Asset to request: USDC (default), USDT'),
-      expiresInHours: z.number().optional().describe('Hours until request expires (default: 24)'),
+      expiresInHours: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe('Hours until request expires (default: 24)'),
       allowPartial: z.boolean().optional().describe('Allow partial payments'),
-      callbackUrl: z.string().optional().describe('Webhook URL to notify when paid'),
+      callbackUrl: z.string().url().optional().describe('Webhook URL to notify when paid'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -137,7 +143,7 @@ export const a2aTools = [
     name: 'a2a_pay_request',
     description: 'Pay an existing payment request from another agent.',
     inputSchema: {
-      requestId: z.string().describe('Payment request ID (UUID)'),
+      requestId: z.string().min(1).describe('Payment request ID (UUID)'),
       amount: z
         .number()
         .optional()
@@ -185,15 +191,17 @@ export const a2aTools = [
     name: 'a2a_request_quote',
     description: 'Request a price quote from another agent for goods or services.',
     inputSchema: {
-      seller: z.string().describe('Seller agent wallet address or agent ID'),
+      seller: z.string().min(1).describe('Seller agent wallet address or agent ID'),
       items: z
         .array(
           z.object({
             description: z.string().describe('Item description'),
-            quantity: z.number().optional().describe('Quantity (default: 1)'),
+            quantity: z.number().int().min(1).optional().describe('Quantity (default: 1)'),
             sku: z.string().optional().describe('SKU or service code'),
           }),
         )
+        .min(1)
+        .max(100)
         .describe('Items to get a quote for'),
       asset: z.string().optional().describe('Preferred payment asset: USDC (default)'),
       message: z.string().optional().describe('Message to seller'),
@@ -240,11 +248,16 @@ export const a2aTools = [
     name: 'a2a_provide_quote',
     description: 'Respond to a quote request with pricing (for sellers).',
     inputSchema: {
-      quoteId: z.string().describe('Quote ID to respond to'),
+      quoteId: z.string().min(1).describe('Quote ID to respond to'),
       total: z.number().positive().describe('Total price'),
-      fees: z.number().optional().describe('Processing/platform fees'),
-      tax: z.number().optional().describe('Tax amount'),
-      expiresInHours: z.number().optional().describe('Hours until quote expires (default: 48)'),
+      fees: z.number().min(0).optional().describe('Processing/platform fees'),
+      tax: z.number().min(0).optional().describe('Tax amount'),
+      expiresInHours: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe('Hours until quote expires (default: 48)'),
       terms: z.string().optional().describe('Terms and conditions'),
       estimatedDelivery: z
         .string()
@@ -297,7 +310,7 @@ export const a2aTools = [
     name: 'a2a_accept_quote',
     description: 'Accept a quote and pay. Automatically sends payment to the seller.',
     inputSchema: {
-      quoteId: z.string().describe('Quote ID to accept'),
+      quoteId: z.string().min(1).describe('Quote ID to accept'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -334,7 +347,7 @@ export const a2aTools = [
     name: 'a2a_decline_quote',
     description: 'Decline a quote.',
     inputSchema: {
-      quoteId: z.string().describe('Quote ID to decline'),
+      quoteId: z.string().min(1).describe('Quote ID to decline'),
       reason: z.string().optional().describe('Reason for declining'),
     },
     permission: 'write',
@@ -370,7 +383,7 @@ export const a2aTools = [
     name: 'a2a_fulfill_quote',
     description: 'Mark a quote as fulfilled after delivering goods/services (for sellers).',
     inputSchema: {
-      quoteId: z.string().describe('Quote ID to mark as fulfilled'),
+      quoteId: z.string().min(1).describe('Quote ID to mark as fulfilled'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -416,7 +429,7 @@ export const a2aTools = [
         .string()
         .optional()
         .describe('Filter by status: pending, submitted, completed, failed'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params, agentConfig }) => {
@@ -456,7 +469,7 @@ export const a2aTools = [
         .string()
         .optional()
         .describe('Filter by status: pending, viewed, paid, declined, expired'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params, agentConfig }) => {
@@ -497,7 +510,7 @@ export const a2aTools = [
         .optional()
         .describe('Filter by status: requested, quoted, accepted, declined, fulfilled'),
       includeExpired: z.boolean().optional().describe('Include expired quotes'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params, agentConfig }) => {
@@ -608,7 +621,7 @@ export const a2aTools = [
     description:
       'Counter a quote with a different price (for buyers). Initiates or continues price negotiation with the seller.',
     inputSchema: {
-      quoteId: z.string().describe('Quote ID to counter'),
+      quoteId: z.string().min(1).describe('Quote ID to counter'),
       total: z.number().positive().describe('Proposed counter-offer total price'),
       message: z.string().optional().describe('Message to seller explaining the counter-offer'),
     },
@@ -654,10 +667,10 @@ export const a2aTools = [
     description:
       'Revise a quote after a buyer counter-offer (for sellers). Adjusts pricing in response to negotiation.',
     inputSchema: {
-      quoteId: z.string().describe('Quote ID to revise'),
+      quoteId: z.string().min(1).describe('Quote ID to revise'),
       total: z.number().positive().describe('Revised total price'),
-      fees: z.number().optional().describe('Revised processing/platform fees'),
-      tax: z.number().optional().describe('Revised tax amount'),
+      fees: z.number().min(0).optional().describe('Revised processing/platform fees'),
+      tax: z.number().min(0).optional().describe('Revised tax amount'),
       message: z.string().optional().describe('Message to buyer explaining the revision'),
     },
     permission: 'write',
@@ -708,8 +721,8 @@ export const a2aTools = [
       'Create an escrow to hold funds between buyer and seller agents. Supports conditional release, time-based expiry, and dispute escalation.',
     inputSchema: {
       quoteId: z.string().optional().describe('Associated quote ID (optional)'),
-      buyerAddress: z.string().describe('Buyer wallet address'),
-      sellerAddress: z.string().describe('Seller wallet address'),
+      buyerAddress: z.string().min(1).describe('Buyer wallet address'),
+      sellerAddress: z.string().min(1).describe('Seller wallet address'),
       amount: z.number().positive().describe('Amount to escrow (e.g., 100.00 for $100 USDC)'),
       asset: z.string().optional().describe('Asset to escrow: USDC (default), USDT, ssUSD'),
       conditions: z
@@ -723,9 +736,15 @@ export const a2aTools = [
             description: z.string().optional().describe('Description for milestone condition'),
           }),
         )
+        .max(20)
         .optional()
         .describe('Release conditions (optional)'),
-      expiresInHours: z.number().optional().describe('Hours until escrow expires (default: 72)'),
+      expiresInHours: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe('Hours until escrow expires (default: 72)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -774,7 +793,7 @@ export const a2aTools = [
     name: 'a2a_fund_escrow',
     description: 'Fund an escrow, moving it to active status so the seller can begin work.',
     inputSchema: {
-      escrowId: z.string().describe('Escrow ID to fund'),
+      escrowId: z.string().min(1).describe('Escrow ID to fund'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -810,7 +829,7 @@ export const a2aTools = [
     name: 'a2a_release_escrow',
     description: 'Release escrow funds to the seller. All release conditions must be met.',
     inputSchema: {
-      escrowId: z.string().describe('Escrow ID to release'),
+      escrowId: z.string().min(1).describe('Escrow ID to release'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -855,7 +874,7 @@ export const a2aTools = [
     name: 'a2a_refund_escrow',
     description: 'Refund escrow funds back to the buyer.',
     inputSchema: {
-      escrowId: z.string().describe('Escrow ID to refund'),
+      escrowId: z.string().min(1).describe('Escrow ID to refund'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -891,14 +910,19 @@ export const a2aTools = [
     name: 'a2a_dispute_escrow',
     description: 'Dispute an escrow, escalating it to the dispute resolution system.',
     inputSchema: {
-      escrowId: z.string().describe('Escrow ID to dispute'),
-      reason: z.string().describe('Reason for the dispute'),
+      escrowId: z.string().min(1).describe('Escrow ID to dispute'),
+      reason: z.string().min(1).max(500).describe('Reason for the dispute'),
       category: z
-        .string()
+        .enum([
+          'non_delivery',
+          'poor_quality',
+          'not_as_described',
+          'overcharged',
+          'unauthorized',
+          'other',
+        ])
         .optional()
-        .describe(
-          'Dispute category: non_delivery, poor_quality, not_as_described, overcharged, unauthorized, other',
-        ),
+        .describe('Dispute category (default: other)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -938,7 +962,7 @@ export const a2aTools = [
     name: 'a2a_get_escrow',
     description: 'Get details of an escrow by ID.',
     inputSchema: {
-      escrowId: z.string().describe('Escrow ID'),
+      escrowId: z.string().min(1).describe('Escrow ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -972,7 +996,7 @@ export const a2aTools = [
         .enum(['buyer', 'seller', 'all'])
         .optional()
         .describe('Filter by role: buyer, seller, or all'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params, agentConfig }) => {
@@ -1008,8 +1032,8 @@ export const a2aTools = [
     description:
       'File a formal dispute against an escrow. Begins the dispute resolution process with evidence collection and review.',
     inputSchema: {
-      escrowId: z.string().describe('Escrow ID being disputed'),
-      reason: z.string().describe('Detailed reason for the dispute'),
+      escrowId: z.string().min(1).describe('Escrow ID being disputed'),
+      reason: z.string().min(1).describe('Detailed reason for the dispute'),
       category: z
         .enum([
           'non_delivery',
@@ -1075,15 +1099,16 @@ export const a2aTools = [
     name: 'a2a_submit_evidence',
     description: 'Submit evidence for an active dispute.',
     inputSchema: {
-      disputeId: z.string().describe('Dispute ID'),
+      disputeId: z.string().min(1).describe('Dispute ID'),
       evidenceType: z
         .string()
+        .min(1)
         .describe(
           'Type of evidence: screenshot, transaction_log, communication, delivery_proof, other',
         ),
-      title: z.string().describe('Evidence title'),
+      title: z.string().min(1).describe('Evidence title'),
       description: z.string().optional().describe('Evidence description'),
-      content: z.string().describe('Evidence content (text, base64 data, or reference)'),
+      content: z.string().min(1).describe('Evidence content (text, base64 data, or reference)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -1126,11 +1151,15 @@ export const a2aTools = [
     description:
       'Resolve a dispute with a resolution type (full refund, partial refund, release to seller, split, or escalate).',
     inputSchema: {
-      disputeId: z.string().describe('Dispute ID to resolve'),
+      disputeId: z.string().min(1).describe('Dispute ID to resolve'),
       resolutionType: z
         .enum(['full_refund', 'partial_refund', 'release_to_seller', 'split', 'escalated'])
         .describe('How to resolve the dispute'),
-      amount: z.number().optional().describe('Amount for partial_refund or split (buyer share)'),
+      amount: z
+        .number()
+        .positive()
+        .optional()
+        .describe('Amount for partial_refund or split (buyer share)'),
       note: z.string().optional().describe('Resolution note'),
     },
     permission: 'write',
@@ -1173,7 +1202,7 @@ export const a2aTools = [
     name: 'a2a_get_dispute',
     description: 'Get details of a dispute by ID, including evidence count.',
     inputSchema: {
-      disputeId: z.string().describe('Dispute ID'),
+      disputeId: z.string().min(1).describe('Dispute ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1200,7 +1229,7 @@ export const a2aTools = [
         .string()
         .optional()
         .describe('Filter by status: filed, evidence_period, under_review, resolved, escalated'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1230,12 +1259,13 @@ export const a2aTools = [
     description:
       'Rate an agent after a transaction. Scores 1-5 with optional dimension ratings (reliability, quality, speed, communication).',
     inputSchema: {
-      agentAddress: z.string().describe('Wallet address of the agent to rate'),
+      agentAddress: z.string().min(1).describe('Wallet address of the agent to rate'),
       transactionType: z
         .enum(['quote', 'payment', 'escrow', 'service'])
         .describe('Type of transaction being rated'),
       transactionId: z
         .string()
+        .min(1)
         .describe('ID of the transaction (quote, payment, escrow, or service ID)'),
       score: z.number().int().min(1).max(5).describe('Overall score (1-5)'),
       dimensions: z
@@ -1247,7 +1277,7 @@ export const a2aTools = [
         })
         .optional()
         .describe('Dimension scores (each 1-5)'),
-      comment: z.string().optional().describe('Optional review comment'),
+      comment: z.string().max(1000).optional().describe('Optional review comment'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -1295,7 +1325,7 @@ export const a2aTools = [
     name: 'a2a_get_reputation',
     description: 'Get reputation and trust score for an agent.',
     inputSchema: {
-      agentAddress: z.string().describe('Wallet address of the agent'),
+      agentAddress: z.string().min(1).describe('Wallet address of the agent'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1315,8 +1345,8 @@ export const a2aTools = [
     name: 'a2a_respond_to_feedback',
     description: 'Respond to feedback left on your agent (only the rated agent can respond).',
     inputSchema: {
-      feedbackId: z.string().describe('Feedback ID to respond to'),
-      response: z.string().describe('Response text'),
+      feedbackId: z.string().min(1).describe('Feedback ID to respond to'),
+      response: z.string().min(1).max(2000).describe('Response text'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -1359,8 +1389,8 @@ export const a2aTools = [
     description:
       'Register a service that this agent provides. Other agents can discover and purchase your services.',
     inputSchema: {
-      name: z.string().describe('Service name'),
-      description: z.string().describe('Service description'),
+      name: z.string().min(1).describe('Service name'),
+      description: z.string().min(1).describe('Service description'),
       category: z
         .enum(['data', 'compute', 'api', 'content', 'analysis', 'goods', 'digital_goods', 'other'])
         .describe('Service category'),
@@ -1369,7 +1399,7 @@ export const a2aTools = [
         .describe('Pricing model'),
       pricingDetails: z
         .object({
-          basePrice: z.number().optional(),
+          basePrice: z.number().positive().optional(),
           currency: z.string().optional(),
           unitName: z.string().optional(),
           tiers: z
@@ -1383,7 +1413,7 @@ export const a2aTools = [
         })
         .optional()
         .describe('Pricing details (structure depends on pricing model)'),
-      endpointUrl: z.string().optional().describe('Service endpoint URL'),
+      endpointUrl: z.string().url().optional().describe('Service endpoint URL'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -1446,7 +1476,7 @@ export const a2aTools = [
         ),
       agentAddress: z.string().optional().describe('Filter by agent wallet address'),
       search: z.string().optional().describe('Search services by name or description'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1483,7 +1513,7 @@ export const a2aTools = [
     name: 'a2a_get_service',
     description: 'Get details of a specific agent service.',
     inputSchema: {
-      serviceId: z.string().describe('Service ID'),
+      serviceId: z.string().min(1).describe('Service ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1524,10 +1554,17 @@ export const a2aTools = [
     description:
       'Send a webhook notification to another agent. Delivers a signed payload to their configured endpoint.',
     inputSchema: {
-      recipientAddress: z.string().describe('Recipient agent wallet address'),
-      eventType: z.string().describe('Event type (e.g., "payment.completed", "escrow.released")'),
+      recipientAddress: z.string().min(1).describe('Recipient agent wallet address'),
+      eventType: z
+        .string()
+        .min(1)
+        .describe('Event type (e.g., "payment.completed", "escrow.released")'),
       payload: z.record(z.unknown()).describe('Event payload to deliver'),
-      endpointUrl: z.string().optional().describe('Override endpoint URL (bypasses config lookup)'),
+      endpointUrl: z
+        .string()
+        .url()
+        .optional()
+        .describe('Override endpoint URL (bypasses config lookup)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -1567,7 +1604,7 @@ export const a2aTools = [
       recipientAddress: z.string().optional().describe('Filter by recipient address'),
       eventType: z.string().optional().describe('Filter by event type'),
       status: z.string().optional().describe('Filter by status: pending, delivered, failed'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1594,11 +1631,12 @@ export const a2aTools = [
     description:
       'Configure webhook settings for an agent. Set the endpoint URL, signing secret, and which event types to receive.',
     inputSchema: {
-      agentAddress: z.string().describe('Agent wallet address to configure'),
-      endpointUrl: z.string().describe('Webhook endpoint URL (https:// recommended)'),
+      agentAddress: z.string().min(1).describe('Agent wallet address to configure'),
+      endpointUrl: z.string().url().describe('Webhook endpoint URL (https:// recommended)'),
       secret: z.string().optional().describe('HMAC-SHA256 signing secret for payload verification'),
       enabledEvents: z
         .array(z.string())
+        .max(50)
         .optional()
         .describe('Event types to receive (default: ["*"] for all)'),
     },
@@ -1641,10 +1679,10 @@ export const a2aTools = [
     description:
       'Create a recurring payment subscription between two agents. Supports trial periods and configurable billing intervals.',
     inputSchema: {
-      subscriberAddress: z.string().describe('Subscriber agent wallet address'),
-      providerAddress: z.string().describe('Provider agent wallet address'),
+      subscriberAddress: z.string().min(1).describe('Subscriber agent wallet address'),
+      providerAddress: z.string().min(1).describe('Provider agent wallet address'),
       serviceId: z.string().optional().describe('Associated service ID'),
-      planName: z.string().describe('Human-readable plan name (e.g., "Pro Plan")'),
+      planName: z.string().min(1).describe('Human-readable plan name (e.g., "Pro Plan")'),
       amount: z.number().positive().describe('Amount per billing cycle (e.g., 49.99)'),
       asset: z.string().optional().describe('Asset: USDC (default), USDT, ssUSD'),
       network: z.string().optional().describe('Network: set_chain (default), base, ethereum'),
@@ -1652,9 +1690,11 @@ export const a2aTools = [
         .enum(['weekly', 'biweekly', 'monthly', 'quarterly', 'annual'])
         .optional()
         .describe('Billing interval (default: monthly)'),
-      trialDays: z.number().optional().describe('Trial period in days (0 = no trial)'),
+      trialDays: z.number().int().min(0).optional().describe('Trial period in days (0 = no trial)'),
       maxPastDueCycles: z
         .number()
+        .int()
+        .min(0)
         .optional()
         .describe('Max past-due billing cycles before cancellation (default: 3)'),
       metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
@@ -1691,7 +1731,7 @@ export const a2aTools = [
     name: 'a2a_pause_agent_subscription',
     description: 'Pause an active agent subscription. Billing is suspended until resumed.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID to pause'),
+      subscriptionId: z.string().min(1).describe('Subscription ID to pause'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -1720,7 +1760,7 @@ export const a2aTools = [
     name: 'a2a_resume_agent_subscription',
     description: 'Resume a paused agent subscription. Recalculates billing dates from now.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID to resume'),
+      subscriptionId: z.string().min(1).describe('Subscription ID to resume'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -1750,7 +1790,7 @@ export const a2aTools = [
     description:
       'Cancel an agent subscription. Can cancel immediately or at the end of the current billing period.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID to cancel'),
+      subscriptionId: z.string().min(1).describe('Subscription ID to cancel'),
       immediate: z
         .boolean()
         .optional()
@@ -1788,7 +1828,7 @@ export const a2aTools = [
     name: 'a2a_get_agent_subscription',
     description: 'Get details of an agent-to-agent subscription.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID'),
+      subscriptionId: z.string().min(1).describe('Subscription ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1814,7 +1854,7 @@ export const a2aTools = [
         .string()
         .optional()
         .describe('Filter by status: active, paused, cancelled, trial, past_due'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1871,7 +1911,7 @@ export const a2aTools = [
     description:
       'Create a multi-party split payment. Splits a payment across 2+ recipients by percentage or fixed amounts, with optional platform fee.',
     inputSchema: {
-      senderAddress: z.string().describe('Sender wallet address'),
+      senderAddress: z.string().min(1).describe('Sender wallet address'),
       totalAmount: z.number().positive().describe('Total amount to split (e.g., 100.00)'),
       asset: z.string().optional().describe('Asset: USDC (default), USDT, ssUSD'),
       network: z.string().optional().describe('Network: set_chain (default), base, ethereum'),
@@ -1882,14 +1922,23 @@ export const a2aTools = [
       recipients: z
         .array(
           z.object({
-            address: z.string().describe('Recipient wallet address'),
-            percent: z.number().optional().describe('Share percentage (for percentage splits)'),
-            amount: z.number().optional().describe('Fixed amount (for fixed splits)'),
+            address: z.string().min(1).describe('Recipient wallet address'),
+            percent: z
+              .number()
+              .min(0)
+              .max(100)
+              .optional()
+              .describe('Share percentage (for percentage splits)'),
+            amount: z.number().positive().optional().describe('Fixed amount (for fixed splits)'),
           }),
         )
+        .min(2)
+        .max(20)
         .describe('Recipients (min 2). For percentage: percents must sum to 100'),
       platformFeePercent: z
         .number()
+        .min(0)
+        .max(100)
         .optional()
         .describe('Platform fee percentage (0-100, deducted before split)'),
       platformFeeAddress: z.string().optional().describe('Platform fee recipient address'),
@@ -1930,7 +1979,7 @@ export const a2aTools = [
     description:
       'Execute a pending split payment, sending funds to each recipient. Tracks per-recipient status.',
     inputSchema: {
-      splitPaymentId: z.string().describe('Split payment ID to execute'),
+      splitPaymentId: z.string().min(1).describe('Split payment ID to execute'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -1974,7 +2023,7 @@ export const a2aTools = [
     name: 'a2a_get_split_payment',
     description: 'Get details of a split payment including all recipient shares and statuses.',
     inputSchema: {
-      splitPaymentId: z.string().describe('Split payment ID'),
+      splitPaymentId: z.string().min(1).describe('Split payment ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -2000,7 +2049,7 @@ export const a2aTools = [
         .string()
         .optional()
         .describe('Filter by status: pending, processing, completed, partial, failed'),
-      limit: z.number().optional().describe('Max results (default: 20)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -2029,8 +2078,8 @@ export const a2aTools = [
     description:
       'Create a conditional payment that combines escrow with x402 payment intent. Funds are held in escrow until conditions are met, then automatically settled.',
     inputSchema: {
-      buyerAddress: z.string().describe('Buyer wallet address'),
-      sellerAddress: z.string().describe('Seller wallet address'),
+      buyerAddress: z.string().min(1).describe('Buyer wallet address'),
+      sellerAddress: z.string().min(1).describe('Seller wallet address'),
       amount: z.number().positive().describe('Payment amount (e.g., 100.00)'),
       asset: z.string().optional().describe('Asset: USDC (default)'),
       quoteId: z
@@ -2048,9 +2097,15 @@ export const a2aTools = [
             description: z.string().optional(),
           }),
         )
+        .max(20)
         .optional()
         .describe('Release conditions'),
-      expiresInHours: z.number().optional().describe('Hours until expiry (default: 72)'),
+      expiresInHours: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe('Hours until expiry (default: 72)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -2087,7 +2142,7 @@ export const a2aTools = [
     name: 'a2a_check_payment_conditions',
     description: 'Check whether all release conditions are met for a conditional payment (escrow).',
     inputSchema: {
-      escrowId: z.string().describe('Escrow ID to check conditions for'),
+      escrowId: z.string().min(1).describe('Escrow ID to check conditions for'),
     },
     permission: 'read',
     handler: async ({ commerce, params, agentConfig }) => {
@@ -2116,7 +2171,7 @@ export const a2aTools = [
     description:
       'Settle a conditional payment. Checks all conditions, releases escrow funds to the seller, and marks the x402 intent as settled.',
     inputSchema: {
-      escrowId: z.string().describe('Escrow ID to settle'),
+      escrowId: z.string().min(1).describe('Escrow ID to settle'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, agentConfig }) => {
@@ -2158,9 +2213,10 @@ export const a2aTools = [
     description:
       'Subscribe an agent to receive real-time events. Supports wildcard and prefix-based event type filtering.',
     inputSchema: {
-      agentAddress: z.string().describe('Agent wallet address to subscribe'),
+      agentAddress: z.string().min(1).describe('Agent wallet address to subscribe'),
       eventTypes: z
         .array(z.string())
+        .max(50)
         .optional()
         .describe(
           'Event types to subscribe to (default: ["*"] for all). Supports prefix wildcards like "a2a_payment.*"',
@@ -2199,7 +2255,7 @@ export const a2aTools = [
     name: 'a2a_list_event_subscriptions',
     description: 'List active event subscriptions for an agent.',
     inputSchema: {
-      agentAddress: z.string().describe('Agent wallet address'),
+      agentAddress: z.string().min(1).describe('Agent wallet address'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -2222,10 +2278,10 @@ export const a2aTools = [
     name: 'a2a_get_event_history',
     description: 'Get historical events for an agent with optional filtering.',
     inputSchema: {
-      agentAddress: z.string().describe('Agent wallet address'),
-      eventTypes: z.array(z.string()).optional().describe('Filter by event types'),
+      agentAddress: z.string().min(1).describe('Agent wallet address'),
+      eventTypes: z.array(z.string()).max(50).optional().describe('Filter by event types'),
       since: z.string().optional().describe('ISO timestamp — only events after this time'),
-      limit: z.number().optional().describe('Max results (default: 50)'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 50)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {

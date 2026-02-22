@@ -46,26 +46,26 @@ export const subscriptionTools = [
   {
     name: 'get_subscription_plan',
     description: 'Get details for a specific subscription plan.',
-    inputSchema: { planId: z.string().describe('Plan ID or code') },
+    inputSchema: { planId: z.string().min(1).describe('Plan ID or code') },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { planId } = params;
       const plan = await commerce.getSubscriptionPlan(planId);
       if (!plan) return { success: false, error: 'Plan not found' };
-      return plan;
+      return { success: true, plan };
     },
   },
   {
     name: 'create_subscription_plan',
     description: 'Create a new subscription plan. Requires --apply flag.',
     inputSchema: {
-      name: z.string().describe('Plan name'),
+      name: z.string().min(1).describe('Plan name'),
       billingInterval: billingIntervalEnum.describe('Billing interval'),
-      price: z.number().describe('Price per billing cycle'),
-      currency: z.string().optional().describe('Currency code (default: USD)'),
-      trialDays: z.number().optional().describe('Trial period in days'),
-      description: z.string().optional().describe('Plan description'),
-      setupFee: z.number().optional().describe('One-time setup fee'),
+      price: z.number().positive().describe('Price per billing cycle'),
+      currency: z.string().max(10).optional().describe('Currency code (default: USD)'),
+      trialDays: z.number().int().min(0).optional().describe('Trial period in days'),
+      description: z.string().max(5000).optional().describe('Plan description'),
+      setupFee: z.number().positive().optional().describe('One-time setup fee'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -93,7 +93,7 @@ export const subscriptionTools = [
     name: 'activate_subscription_plan',
     description:
       'Activate a subscription plan (make it available for new subscriptions). Requires --apply flag.',
-    inputSchema: { planId: z.string().describe('Plan ID to activate') },
+    inputSchema: { planId: z.string().min(1).describe('Plan ID to activate') },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { planId } = params;
@@ -112,7 +112,7 @@ export const subscriptionTools = [
     name: 'archive_subscription_plan',
     description:
       'Archive a subscription plan (no new subscriptions, existing ones continue). Requires --apply flag.',
-    inputSchema: { planId: z.string().describe('Plan ID to archive') },
+    inputSchema: { planId: z.string().min(1).describe('Plan ID to archive') },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { planId } = params;
@@ -161,7 +161,7 @@ export const subscriptionTools = [
   {
     name: 'get_subscription',
     description: 'Get details for a specific subscription.',
-    inputSchema: { subscriptionId: z.string().describe('Subscription ID or number') },
+    inputSchema: { subscriptionId: z.string().min(1).describe('Subscription ID or number') },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { subscriptionId } = params;
@@ -174,8 +174,8 @@ export const subscriptionTools = [
     name: 'create_subscription',
     description: 'Create a new subscription for a customer. Requires --apply flag.',
     inputSchema: {
-      customerId: z.string().describe('Customer ID'),
-      planId: z.string().describe('Plan ID'),
+      customerId: z.string().min(1).describe('Customer ID'),
+      planId: z.string().min(1).describe('Plan ID'),
       paymentMethodId: z.string().optional().describe('Payment method ID from payment provider'),
       skipTrial: z.boolean().optional().describe('Skip trial period'),
       couponCode: z.string().optional().describe('Coupon code to apply'),
@@ -208,7 +208,7 @@ export const subscriptionTools = [
     name: 'pause_subscription',
     description: 'Pause a subscription (stops billing, can resume later). Requires --apply flag.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID'),
+      subscriptionId: z.string().min(1).describe('Subscription ID'),
       resumeAt: z.string().optional().describe('ISO date when to auto-resume'),
       reason: z.string().optional().describe('Reason for pausing'),
     },
@@ -236,7 +236,7 @@ export const subscriptionTools = [
   {
     name: 'resume_subscription',
     description: 'Resume a paused subscription. Requires --apply flag.',
-    inputSchema: { subscriptionId: z.string().describe('Subscription ID') },
+    inputSchema: { subscriptionId: z.string().min(1).describe('Subscription ID') },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { subscriptionId } = params;
@@ -260,7 +260,7 @@ export const subscriptionTools = [
     description:
       'Cancel a subscription. By default cancels at end of period. Requires --apply flag.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID'),
+      subscriptionId: z.string().min(1).describe('Subscription ID'),
       immediate: z
         .boolean()
         .optional()
@@ -291,7 +291,7 @@ export const subscriptionTools = [
     name: 'skip_billing_cycle',
     description: 'Skip the next billing cycle for a subscription. Requires --apply flag.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID'),
+      subscriptionId: z.string().min(1).describe('Subscription ID'),
       reason: z.string().optional().describe('Reason for skipping'),
     },
     permission: 'write',
@@ -317,7 +317,7 @@ export const subscriptionTools = [
     name: 'list_billing_cycles',
     description: 'List billing cycles for a subscription.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID'),
+      subscriptionId: z.string().min(1).describe('Subscription ID'),
       status: z
         .enum(['scheduled', 'processing', 'paid', 'failed', 'skipped', 'refunded', 'voided'])
         .optional()
@@ -345,7 +345,7 @@ export const subscriptionTools = [
   {
     name: 'get_billing_cycle',
     description: 'Get details for a specific billing cycle.',
-    inputSchema: { cycleId: z.string().describe('Billing cycle ID') },
+    inputSchema: { cycleId: z.string().min(1).describe('Billing cycle ID') },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { cycleId } = params;
@@ -358,7 +358,7 @@ export const subscriptionTools = [
     name: 'get_subscription_events',
     description: 'Get event history (audit log) for a subscription.',
     inputSchema: {
-      subscriptionId: z.string().describe('Subscription ID'),
+      subscriptionId: z.string().min(1).describe('Subscription ID'),
       limit: z.number().optional().describe('Maximum events to return'),
     },
     permission: 'read',

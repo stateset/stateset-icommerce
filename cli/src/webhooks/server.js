@@ -466,7 +466,14 @@ export class WebhookServer extends EventEmitter {
    */
   async handleRequest(req, res) {
     // Parse URL
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    let url;
+    try {
+      url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid request URL' }));
+      return;
+    }
 
     // Health check
     if (url.pathname === '/health') {

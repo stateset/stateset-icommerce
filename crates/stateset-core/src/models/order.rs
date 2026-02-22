@@ -61,7 +61,7 @@ pub struct Address {
 
 /// Order status enumeration.
 ///
-/// Uses [`strum`] derives for `Display` (snake_case) and `FromStr` (case-insensitive).
+/// Uses [`strum`] derives for `Display` (`snake_case`) and `FromStr` (case-insensitive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
@@ -85,7 +85,7 @@ impl Default for OrderStatus {
 
 impl OrderStatus {
     /// Check if a status transition is allowed.
-    pub fn can_transition_to(self, next: OrderStatus) -> bool {
+    pub fn can_transition_to(self, next: Self) -> bool {
         if self == next {
             return true;
         }
@@ -103,7 +103,7 @@ impl OrderStatus {
 
 /// Payment status enumeration.
 ///
-/// Uses [`strum`] derives for `Display` (snake_case) and `FromStr` (case-insensitive).
+/// Uses [`strum`] derives for `Display` (`snake_case`) and `FromStr` (case-insensitive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
@@ -128,7 +128,7 @@ impl Default for PaymentStatus {
 
 /// Fulfillment status enumeration.
 ///
-/// Uses [`strum`] derives for `Display` (snake_case) and `FromStr` (case-insensitive).
+/// Uses [`strum`] derives for `Display` (`snake_case`) and `FromStr` (case-insensitive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
@@ -236,7 +236,7 @@ impl Order {
     }
 
     /// Check if order can be cancelled
-    pub fn can_cancel(&self) -> bool {
+    pub const fn can_cancel(&self) -> bool {
         matches!(
             self.status,
             OrderStatus::Pending | OrderStatus::Confirmed | OrderStatus::Processing
@@ -244,7 +244,7 @@ impl Order {
     }
 
     /// Check if order can be refunded
-    pub fn can_refund(&self) -> bool {
+    pub const fn can_refund(&self) -> bool {
         matches!(self.payment_status, PaymentStatus::Paid | PaymentStatus::PartiallyPaid)
     }
 }

@@ -9,6 +9,12 @@ import { getAuditStore } from './audit-store.js';
 import { z } from 'zod';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+const RATE_WINDOW_MS = 60_000;
+
+// ============================================================================
 // Permission Levels
 // ============================================================================
 
@@ -345,6 +351,78 @@ export const TOOL_PERMISSIONS = {
   x402_call: 'write',
   x402_history: 'read',
   x402_receipt: 'read',
+
+  // Gift Cards
+  create_gift_card: 'write',
+  get_gift_card: 'read',
+  list_gift_cards: 'read',
+  charge_gift_card: 'write',
+  refund_to_gift_card: 'write',
+  disable_gift_card: 'write',
+  check_gift_card_balance: 'read',
+
+  // Store Credits
+  create_store_credit: 'write',
+  get_store_credit: 'read',
+  list_store_credits: 'read',
+  adjust_store_credit: 'write',
+  apply_store_credit: 'write',
+
+  // Customer Segments
+  create_segment: 'write',
+  get_segment: 'read',
+  list_segments: 'read',
+  update_segment: 'write',
+  evaluate_segment_membership: 'read',
+  rebuild_dynamic_segment: 'write',
+
+  // Shipping Zones & Methods
+  create_shipping_zone: 'write',
+  get_shipping_zone: 'read',
+  list_shipping_zones: 'read',
+  update_shipping_zone: 'write',
+  create_shipping_method: 'write',
+  calculate_shipping_rate: 'read',
+  list_shipping_methods: 'read',
+
+  // Product Reviews
+  create_review: 'write',
+  get_review: 'read',
+  list_reviews: 'read',
+  approve_review: 'write',
+  reject_review: 'write',
+  get_review_summary: 'read',
+  flag_review: 'write',
+
+  // Wishlists
+  create_wishlist: 'write',
+  get_wishlist: 'read',
+  add_to_wishlist: 'write',
+  remove_from_wishlist: 'write',
+  list_wishlists: 'read',
+  convert_wishlist_to_cart: 'write',
+
+  // Loyalty Programs
+  create_loyalty_program: 'write',
+  get_loyalty_program: 'read',
+  enroll_customer: 'write',
+  get_loyalty_account: 'read',
+  earn_points: 'write',
+  redeem_points: 'write',
+  list_rewards: 'read',
+  create_reward: 'write',
+
+  // Fraud Detection
+  assess_order_fraud: 'read',
+  get_fraud_assessment: 'read',
+  list_fraud_signals: 'read',
+  create_fraud_rule: 'write',
+  update_fraud_rule: 'write',
+  review_flagged_order: 'write',
+
+  // Agentic Runtime
+  discover_tools: 'read',
+  delegate_to_agent: 'write',
 };
 
 // ============================================================================
@@ -476,6 +554,16 @@ export class PermissionGate {
       writeOps: [],
       dailyOrders: { count: 0, total: 0, date: this._getDateKey() },
     };
+
+    // Aggregate session safety limits
+    const maxMutations = parseInt(process.env.STATESET_MAX_MUTATIONS, 10);
+    const maxMonetary = parseFloat(process.env.STATESET_MAX_MONETARY);
+    this.sessionLimits = {
+      maxMutationsPerSession: Number.isFinite(maxMutations) ? maxMutations : 50,
+      maxMonetaryTotal: Number.isFinite(maxMonetary) ? maxMonetary : 10000,
+      mutationCount: 0,
+      monetaryTotal: 0,
+    };
   }
 
   // --------------------------------------------------------------------------
@@ -519,6 +607,14 @@ export class PermissionGate {
       );
     }
 
+    // Check aggregate session limits for write operations
+    if (requiredLevel !== 'read') {
+      const aggregateCheck = this._checkAggregateLimits(normalizedName, params);
+      if (!aggregateCheck.allowed) {
+        return aggregateCheck;
+      }
+    }
+
     // Check rate limits
     const rateLimitCheck = this._checkRateLimits(normalizedName);
     if (!rateLimitCheck.allowed) {
@@ -545,10 +641,67 @@ export class PermissionGate {
       }
     }
 
+    // Track aggregate session mutations for write operations
+    if (requiredLevel !== 'read') {
+      this.sessionLimits.mutationCount++;
+      const amount = parseFloat(params?.amount || params?.totalAmount || params?.total || 0);
+      if (Number.isFinite(amount) && amount > 0) {
+        this.sessionLimits.monetaryTotal += amount;
+      }
+    }
+
     // Log the allowed operation
     this._logAudit(normalizedName, params, 'allowed');
 
     return { allowed: true };
+  }
+
+  // --------------------------------------------------------------------------
+  // Aggregate Session Limits
+  // --------------------------------------------------------------------------
+
+  /**
+   * Check aggregate session-level limits (mutation count and monetary total).
+   * @param {string} toolName
+   * @param {object} params
+   * @returns {{ allowed: boolean, reason?: string }}
+   */
+  _checkAggregateLimits(toolName, params = {}) {
+    const { maxMutationsPerSession, maxMonetaryTotal, mutationCount, monetaryTotal } =
+      this.sessionLimits;
+
+    if (mutationCount >= maxMutationsPerSession) {
+      return this._deny(
+        `Session mutation limit (${maxMutationsPerSession}) reached. ` +
+          `Set STATESET_MAX_MUTATIONS env var to increase.`,
+        toolName,
+      );
+    }
+
+    const amount = parseFloat(params?.amount || params?.totalAmount || params?.total || 0);
+    if (Number.isFinite(amount) && amount > 0 && monetaryTotal + amount > maxMonetaryTotal) {
+      return this._deny(
+        `Session monetary limit ($${maxMonetaryTotal}) would be exceeded ` +
+          `(current: $${monetaryTotal.toFixed(2)}, requested: $${amount.toFixed(2)}). ` +
+          `Set STATESET_MAX_MONETARY env var to increase.`,
+        toolName,
+      );
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * Get current session limits status.
+   * @returns {{ mutationCount: number, monetaryTotal: number, maxMutations: number, maxMonetary: number }}
+   */
+  getSessionLimitsStatus() {
+    return {
+      mutationCount: this.sessionLimits.mutationCount,
+      monetaryTotal: this.sessionLimits.monetaryTotal,
+      maxMutations: this.sessionLimits.maxMutationsPerSession,
+      maxMonetary: this.sessionLimits.maxMonetaryTotal,
+    };
   }
 
   // --------------------------------------------------------------------------
@@ -557,7 +710,7 @@ export class PermissionGate {
 
   _checkRateLimits(toolName) {
     const now = Date.now();
-    const oneMinuteAgo = now - 60000;
+    const oneMinuteAgo = now - RATE_WINDOW_MS;
 
     // Clean old entries
     this.rateLimitState.toolCalls = this.rateLimitState.toolCalls.filter((t) => t > oneMinuteAgo);
@@ -834,7 +987,7 @@ export class PermissionGate {
   getSummary() {
     this._resetDailyCountersIfNeeded();
     const now = Date.now();
-    const oneMinuteAgo = now - 60000;
+    const oneMinuteAgo = now - RATE_WINDOW_MS;
 
     return {
       level: this.levelName,

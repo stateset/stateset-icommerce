@@ -21,6 +21,7 @@ use std::fmt;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
+#[must_use]
 pub struct Sku(String);
 
 impl Sku {

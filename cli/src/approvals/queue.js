@@ -13,6 +13,18 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+// ============================================================================
+// Time constants (milliseconds)
+// ============================================================================
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const TWO_HOURS_MS = 2 * ONE_HOUR_MS;
+const FOUR_HOURS_MS = 4 * ONE_HOUR_MS;
+const ONE_DAY_MS = 24 * ONE_HOUR_MS;
+const TWO_DAYS_MS = 2 * ONE_DAY_MS;
+const THREE_DAYS_MS = 3 * ONE_DAY_MS;
+const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
+
 /**
  * Approval status enumeration
  */
@@ -981,7 +993,7 @@ export const ApprovalChainTemplates = {
         approvers: ['manager', 'sales_lead'],
         requiredApprovals: 1,
         canApproveAmount: 5000,
-        timeout: 3600000, // 1 hour
+        timeout: ONE_HOUR_MS,
         timeoutAction: 'escalate',
       },
       {
@@ -991,7 +1003,7 @@ export const ApprovalChainTemplates = {
         approvers: ['director', 'vp_sales'],
         requiredApprovals: 1,
         canApproveAmount: null, // Unlimited
-        timeout: 86400000, // 24 hours
+        timeout: ONE_DAY_MS,
         timeoutAction: 'escalate',
       },
       {
@@ -1000,7 +1012,7 @@ export const ApprovalChainTemplates = {
         description: 'Executive approval for escalated orders',
         approvers: ['cfo', 'ceo'],
         requiredApprovals: 1,
-        timeout: 172800000, // 48 hours
+        timeout: TWO_DAYS_MS,
         timeoutAction: 'auto_reject',
       },
     ],
@@ -1027,7 +1039,7 @@ export const ApprovalChainTemplates = {
         approvers: ['cs_agent', 'cs_lead'],
         requiredApprovals: 1,
         canApproveAmount: 500,
-        timeout: 14400000, // 4 hours
+        timeout: FOUR_HOURS_MS,
         timeoutAction: 'auto_approve',
       },
       {
@@ -1035,7 +1047,7 @@ export const ApprovalChainTemplates = {
         name: 'Manager Review',
         approvers: ['cs_manager'],
         requiredApprovals: 1,
-        timeout: 86400000, // 24 hours
+        timeout: ONE_DAY_MS,
         timeoutAction: 'escalate',
       },
     ],
@@ -1053,7 +1065,7 @@ export const ApprovalChainTemplates = {
         approvers: ['buyer', 'procurement_agent'],
         requiredApprovals: 1,
         canApproveAmount: 5000,
-        timeout: 86400000,
+        timeout: ONE_DAY_MS,
         timeoutAction: 'escalate',
       },
       {
@@ -1062,7 +1074,7 @@ export const ApprovalChainTemplates = {
         approvers: ['procurement_manager'],
         requiredApprovals: 1,
         canApproveAmount: 25000,
-        timeout: 172800000,
+        timeout: TWO_DAYS_MS,
         timeoutAction: 'escalate',
       },
       {
@@ -1071,7 +1083,7 @@ export const ApprovalChainTemplates = {
         approvers: ['finance_manager', 'controller'],
         requiredApprovals: 1,
         canApproveAmount: 100000,
-        timeout: 259200000, // 3 days
+        timeout: THREE_DAYS_MS,
         timeoutAction: 'escalate',
       },
       {
@@ -1079,7 +1091,7 @@ export const ApprovalChainTemplates = {
         name: 'Executive Approval',
         approvers: ['cfo'],
         requiredApprovals: 1,
-        timeout: 604800000, // 7 days
+        timeout: SEVEN_DAYS_MS,
         timeoutAction: 'auto_reject',
       },
     ],
@@ -1106,7 +1118,7 @@ export const ApprovalChainTemplates = {
         approvers: ['cs_agent'],
         requiredApprovals: 1,
         canApproveAmount: 200,
-        timeout: 7200000, // 2 hours
+        timeout: TWO_HOURS_MS,
         timeoutAction: 'auto_approve',
       },
       {
@@ -1114,7 +1126,7 @@ export const ApprovalChainTemplates = {
         name: 'Supervisor Review',
         approvers: ['cs_supervisor', 'finance_analyst'],
         requiredApprovals: 1,
-        timeout: 86400000,
+        timeout: ONE_DAY_MS,
         timeoutAction: 'escalate',
       },
     ],

@@ -132,7 +132,7 @@ export class HeartbeatMonitor extends EventEmitter {
 
     if (this._verbose) {
       const enabled = [...this._checks.values()].filter((c) => c.enabled).length;
-      console.log(`[Heartbeat] Started — ${enabled}/${this._checks.size} checks enabled`);
+      console.debug(`[Heartbeat] Started — ${enabled}/${this._checks.size} checks enabled`);
     }
 
     this.emit('started');
@@ -151,7 +151,7 @@ export class HeartbeatMonitor extends EventEmitter {
     this._running = false;
 
     if (this._verbose) {
-      console.log('[Heartbeat] Stopped');
+      console.debug('[Heartbeat] Stopped');
     }
 
     this.emit('stopped');
@@ -193,14 +193,17 @@ export class HeartbeatMonitor extends EventEmitter {
         this.emit('alert', {
           checkId: id,
           checkName: check.name,
+          status: 'unhealthy',
+          details: result.data,
           data: result.data,
           summary: result.summary,
+          timestamp: Date.now(),
         });
       }
 
       if (this._verbose) {
         const flag = result.triggered ? 'TRIGGERED' : 'ok';
-        console.log(`[Heartbeat] ${check.name}: ${flag} — ${result.summary}`);
+        console.debug(`[Heartbeat] ${check.name}: ${flag} — ${result.summary}`);
       }
 
       return result;

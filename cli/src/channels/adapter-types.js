@@ -315,7 +315,7 @@ export function withAdapterLogging(adapter, channelName, verbose = false) {
       const value = target[prop];
       if (typeof value === 'function') {
         return (...args) => {
-          console.log(`[${channelName}] adapter.${String(prop)}(${args.length} args)`);
+          console.debug(`[${channelName}] adapter.${String(prop)}(${args.length} args)`);
           return value.apply(target, args);
         };
       }

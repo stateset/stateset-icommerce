@@ -43,16 +43,16 @@ pub enum TaxType {
 
 impl TaxType {
     /// Return the canonical string representation
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            TaxType::SalesTax => "sales_tax",
-            TaxType::Vat => "vat",
-            TaxType::Gst => "gst",
-            TaxType::Hst => "hst",
-            TaxType::Pst => "pst",
-            TaxType::Qst => "qst",
-            TaxType::ConsumptionTax => "consumption_tax",
-            TaxType::Custom => "custom",
+            Self::SalesTax => "sales_tax",
+            Self::Vat => "vat",
+            Self::Gst => "gst",
+            Self::Hst => "hst",
+            Self::Pst => "pst",
+            Self::Qst => "qst",
+            Self::ConsumptionTax => "consumption_tax",
+            Self::Custom => "custom",
         }
     }
 }
@@ -185,20 +185,20 @@ pub enum ProductTaxCategory {
 
 impl ProductTaxCategory {
     /// Return the canonical string representation
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            ProductTaxCategory::Standard => "standard",
-            ProductTaxCategory::Reduced => "reduced",
-            ProductTaxCategory::SuperReduced => "super_reduced",
-            ProductTaxCategory::ZeroRated => "zero_rated",
-            ProductTaxCategory::Exempt => "exempt",
-            ProductTaxCategory::Digital => "digital",
-            ProductTaxCategory::Clothing => "clothing",
-            ProductTaxCategory::Food => "food",
-            ProductTaxCategory::PreparedFood => "prepared_food",
-            ProductTaxCategory::Medical => "medical",
-            ProductTaxCategory::Educational => "educational",
-            ProductTaxCategory::Luxury => "luxury",
+            Self::Standard => "standard",
+            Self::Reduced => "reduced",
+            Self::SuperReduced => "super_reduced",
+            Self::ZeroRated => "zero_rated",
+            Self::Exempt => "exempt",
+            Self::Digital => "digital",
+            Self::Clothing => "clothing",
+            Self::Food => "food",
+            Self::PreparedFood => "prepared_food",
+            Self::Medical => "medical",
+            Self::Educational => "educational",
+            Self::Luxury => "luxury",
         }
     }
 }
@@ -651,7 +651,7 @@ pub struct TaxSettings {
     pub origin_address: Option<TaxAddress>,
     /// Default product tax category
     pub default_product_category: ProductTaxCategory,
-    /// Rounding mode (up, down, half_up, half_down)
+    /// Rounding mode (up, down, `half_up`, `half_down`)
     pub rounding_mode: String,
     /// Decimal places for tax amounts
     pub decimal_places: i32,

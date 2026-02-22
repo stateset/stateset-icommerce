@@ -2,7 +2,7 @@
 //!
 //! This module provides a minimal, dependency-light metrics surface using
 //! lock-free atomic counters. Downstream applications can wrap these hooks
-//! with their preferred metrics exporter (Prometheus, StatsD, etc.).
+//! with their preferred metrics exporter (Prometheus, `StatsD`, etc.).
 //!
 //! # Example
 //!

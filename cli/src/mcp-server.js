@@ -14,6 +14,7 @@ import { getSharedRuntime } from './channels/plugin-runtime.js';
 import { A2AStore } from './a2a/store.js';
 import { PolicyEngine } from './policies/engine.js';
 import { createMcpEventStreamer } from './mcp-event-streamer.js';
+import { ToolDiscoveryEngine } from './mcp-tool-discovery.js';
 
 // Domain tool modules
 import { customerTools } from './tools/customers.js';
@@ -43,6 +44,16 @@ import { supplierTools } from './tools/suppliers.js';
 import { invoiceTools } from './tools/invoices.js';
 import { warrantyTools } from './tools/warranties.js';
 import { importTools } from './tools/import.js';
+import { giftCardTools } from './tools/gift-cards.js';
+import { storeCreditTools } from './tools/store-credits.js';
+import { segmentTools } from './tools/segments.js';
+import { shippingZoneTools } from './tools/shipping-zones.js';
+import { reviewTools } from './tools/reviews.js';
+import { wishlistTools } from './tools/wishlists.js';
+import { loyaltyTools } from './tools/loyalty.js';
+import { fraudTools } from './tools/fraud.js';
+
+let toolDiscoveryEngine = null;
 
 const AGENTIC_TOOL_RESULT_SCHEMA_VERSION = '1.0.0';
 
@@ -282,6 +293,76 @@ const AGENTIC_RUNTIME_TOOLS = [
       });
     },
   },
+  {
+    name: 'discover_tools',
+    description:
+      'Discover relevant MCP tools by intent description. Returns the top matching tools for a given natural language query.',
+    inputSchema: {
+      intent: z.string().min(1).describe('Natural language description of what you want to do'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(20)
+        .optional()
+        .default(5)
+        .describe('Maximum number of tools to return'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params }) => {
+      // Lazy-initialize singleton
+      if (!toolDiscoveryEngine) {
+        toolDiscoveryEngine = new ToolDiscoveryEngine();
+        toolDiscoveryEngine.registerFromToolDefs(ALL_TOOL_DEFS);
+      }
+      const results = toolDiscoveryEngine.discover(params.intent, params.limit || 5);
+      return { success: true, tools: results };
+    },
+  },
+  {
+    name: 'delegate_to_agent',
+    description:
+      'Delegate a sub-task to a specialized commerce agent. Available agents: orders, inventory, returns, checkout, analytics, promotions, subscriptions, customer-service.',
+    inputSchema: {
+      agent_name: z.string().min(1).describe('Name of the specialized agent to delegate to'),
+      task_description: z.string().min(1).max(2000).describe('Description of the task to delegate'),
+      context: z
+        .record(z.string(), z.any())
+        .optional()
+        .default({})
+        .describe('Additional context data for the agent'),
+    },
+    permission: 'write',
+    policyDomain: 'agentic',
+    handler: async ({ params, autonomousEngine }) => {
+      if (!autonomousEngine) {
+        return {
+          success: false,
+          error:
+            'Autonomous engine not available. Agent delegation requires the autonomous engine to be initialized.',
+        };
+      }
+      try {
+        const result = await autonomousEngine.executeAgentRequest(
+          params.agent_name,
+          params.task_description,
+          params.context || {},
+        );
+        return {
+          success: true,
+          delegatedTo: params.agent_name,
+          task: params.task_description,
+          result,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: `Delegation to '${params.agent_name}' failed: ${err.message}`,
+        };
+      }
+    },
+  },
 ];
 
 const AGENTIC_REPLAY_LOG_FILE = 'agentic-tool-calls.jsonl';
@@ -315,6 +396,14 @@ const ALL_TOOL_DEFS = [
   ...warrantyTools,
   ...importTools,
   ...vectorTools,
+  ...giftCardTools,
+  ...storeCreditTools,
+  ...segmentTools,
+  ...shippingZoneTools,
+  ...reviewTools,
+  ...wishlistTools,
+  ...loyaltyTools,
+  ...fraudTools,
   ...AGENTIC_RUNTIME_TOOLS,
 ];
 

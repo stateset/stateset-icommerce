@@ -12,7 +12,14 @@ export const cartTools = [
     name: 'list_carts',
     description: 'List all shopping carts. Shows cart status, customer, totals, and item count.',
     inputSchema: {
-      limit: z.number().optional().default(50).describe('Maximum number of carts to return'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .default(50)
+        .describe('Maximum number of carts to return'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -45,7 +52,7 @@ export const cartTools = [
     description:
       'Get a specific cart by ID or cart number. Returns full cart details including items.',
     inputSchema: {
-      identifier: z.string().describe('Cart ID (UUID) or cart number'),
+      identifier: z.string().min(1).describe('Cart ID (UUID) or cart number'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -94,9 +101,14 @@ export const cartTools = [
     inputSchema: {
       customerId: z.string().optional().describe('Customer ID (UUID) for authenticated checkout'),
       customerEmail: z.string().email().optional().describe('Customer email for guest checkout'),
-      customerName: z.string().optional().describe('Customer name'),
-      currency: z.string().optional().default('USD').describe('Currency code'),
-      expiresInMinutes: z.number().optional().describe('Cart expiration time in minutes'),
+      customerName: z.string().max(200).optional().describe('Customer name'),
+      currency: z.string().max(10).optional().default('USD').describe('Currency code'),
+      expiresInMinutes: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Cart expiration time in minutes'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -126,13 +138,13 @@ export const cartTools = [
     name: 'add_cart_item',
     description: 'Add an item to a shopping cart.',
     inputSchema: {
-      cartId: z.string().describe('Cart ID (UUID)'),
-      sku: z.string().describe('Product SKU'),
-      name: z.string().describe('Product name'),
-      quantity: z.number().describe('Quantity to add'),
-      unitPrice: z.number().describe('Unit price'),
-      description: z.string().optional().describe('Item description'),
-      imageUrl: z.string().optional().describe('Product image URL'),
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      sku: z.string().min(1).max(100).describe('Product SKU'),
+      name: z.string().min(1).max(255).describe('Product name'),
+      quantity: z.number().int().min(1).describe('Quantity to add'),
+      unitPrice: z.number().positive().describe('Unit price'),
+      description: z.string().max(1000).optional().describe('Item description'),
+      imageUrl: z.string().url().optional().describe('Product image URL'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -178,8 +190,8 @@ export const cartTools = [
     name: 'update_cart_item',
     description: 'Update the quantity of an item in the cart.',
     inputSchema: {
-      itemId: z.string().describe('Cart item ID (UUID)'),
-      quantity: z.number().describe('New quantity'),
+      itemId: z.string().min(1).describe('Cart item ID (UUID)'),
+      quantity: z.number().int().min(1).describe('New quantity'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -205,7 +217,7 @@ export const cartTools = [
     name: 'remove_cart_item',
     description: 'Remove an item from the cart.',
     inputSchema: {
-      itemId: z.string().describe('Cart item ID (UUID)'),
+      itemId: z.string().min(1).describe('Cart item ID (UUID)'),
     },
     permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
@@ -227,16 +239,16 @@ export const cartTools = [
     name: 'set_cart_shipping_address',
     description: 'Set the shipping address for a cart.',
     inputSchema: {
-      cartId: z.string().describe('Cart ID (UUID)'),
-      firstName: z.string().describe('First name'),
-      lastName: z.string().describe('Last name'),
-      line1: z.string().describe('Address line 1'),
-      line2: z.string().optional().describe('Address line 2'),
-      city: z.string().describe('City'),
-      state: z.string().optional().describe('State/Province'),
-      postalCode: z.string().describe('Postal/ZIP code'),
-      country: z.string().describe('Country code (e.g., US)'),
-      phone: z.string().optional().describe('Phone number'),
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      firstName: z.string().min(1).max(100).describe('First name'),
+      lastName: z.string().min(1).max(100).describe('Last name'),
+      line1: z.string().min(1).max(255).describe('Address line 1'),
+      line2: z.string().max(255).optional().describe('Address line 2'),
+      city: z.string().min(1).max(100).describe('City'),
+      state: z.string().max(50).optional().describe('State/Province'),
+      postalCode: z.string().min(1).max(20).describe('Postal/ZIP code'),
+      country: z.string().min(2).max(3).describe('Country code (e.g., US)'),
+      phone: z.string().max(30).optional().describe('Phone number'),
       email: z.string().email().optional().describe('Email address'),
     },
     permission: 'write',
@@ -266,8 +278,11 @@ export const cartTools = [
     name: 'set_cart_payment',
     description: 'Set the payment method for a cart.',
     inputSchema: {
-      cartId: z.string().describe('Cart ID (UUID)'),
-      paymentMethod: z.string().describe('Payment method (e.g., credit_card, paypal, crypto)'),
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      paymentMethod: z
+        .string()
+        .min(1)
+        .describe('Payment method (e.g., credit_card, paypal, crypto)'),
       paymentToken: z.string().optional().describe('Payment token from payment provider'),
     },
     permission: 'write',
@@ -294,8 +309,8 @@ export const cartTools = [
     name: 'apply_cart_discount',
     description: 'Apply a coupon/discount code to the cart.',
     inputSchema: {
-      cartId: z.string().describe('Cart ID (UUID)'),
-      couponCode: z.string().describe('Coupon or discount code'),
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
+      couponCode: z.string().min(1).describe('Coupon or discount code'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -326,7 +341,7 @@ export const cartTools = [
     name: 'get_shipping_rates',
     description: 'Get available shipping rates for a cart based on contents and address.',
     inputSchema: {
-      cartId: z.string().describe('Cart ID (UUID)'),
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -351,7 +366,7 @@ export const cartTools = [
     description:
       'Complete the checkout process and convert the cart to an order. This is the final step in the checkout flow.',
     inputSchema: {
-      cartId: z.string().describe('Cart ID (UUID)'),
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -398,7 +413,7 @@ export const cartTools = [
     name: 'cancel_cart',
     description: 'Cancel a shopping cart.',
     inputSchema: {
-      cartId: z.string().describe('Cart ID (UUID)'),
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
     },
     permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
@@ -424,7 +439,7 @@ export const cartTools = [
     name: 'abandon_cart',
     description: 'Mark a cart as abandoned (for recovery campaigns).',
     inputSchema: {
-      cartId: z.string().describe('Cart ID (UUID)'),
+      cartId: z.string().min(1).describe('Cart ID (UUID)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

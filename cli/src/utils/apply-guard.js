@@ -7,6 +7,7 @@
  */
 export function applyRequired(operation, preview = null) {
   const response = {
+    success: false,
     error: `${operation} requires --apply flag.`,
     hint: 'Run with --apply to enable write operations.',
   };

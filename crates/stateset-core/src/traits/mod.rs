@@ -24,8 +24,10 @@ use crate::errors::{BatchResult, Result};
 use crate::models::*;
 use chrono::{DateTime, Utc};
 use stateset_primitives::{
-    CartId, CreditId, CustomerId, FulfillmentId, InvoiceId, OrderId, OrderItemId, PaymentId,
-    ProductId, PromotionId, PurchaseOrderId, ReturnId, ShipmentId, SubscriptionId, WarrantyId,
+    CartId, CreditId, CustomerId, FraudRuleId, FulfillmentId, GiftCardId, InvoiceId,
+    LoyaltyAccountId, LoyaltyProgramId, OrderId, OrderItemId, PaymentId, ProductId, PromotionId,
+    PurchaseOrderId, ReturnId, ReviewId, RewardId, SearchConfigId, SegmentId, ShipmentId,
+    ShippingMethodId, ShippingZoneId, StoreCreditId, SubscriptionId, WarrantyId, WishlistId,
 };
 use uuid::Uuid;
 
@@ -467,7 +469,7 @@ pub trait WorkOrderRepository: Send + Sync {
     /// Delete a work order (cancels if not started)
     fn delete(&self, id: Uuid) -> Result<()>;
 
-    /// Start a work order (transitions from planned to in_progress)
+    /// Start a work order (transitions from planned to `in_progress`)
     fn start(&self, id: Uuid) -> Result<WorkOrder>;
 
     /// Complete a work order
@@ -1139,8 +1141,8 @@ pub trait CartRepository: Send + Sync {
     fn set_x402_payment(&self, id: CartId, payment: SetCartX402Payment) -> Result<Cart>;
 
     /// Complete checkout with x402 payment
-    /// Returns PaymentRequired if no intent exists, IntentCreated if awaiting signature,
-    /// AwaitingSettlement if signed but not settled, or Completed if settled
+    /// Returns `PaymentRequired` if no intent exists, `IntentCreated` if awaiting signature,
+    /// `AwaitingSettlement` if signed but not settled, or Completed if settled
     fn complete_with_x402(&self, id: CartId, payee_address: &str) -> Result<X402CheckoutResult>;
 
     // Discount operations
@@ -1318,7 +1320,7 @@ pub trait CurrencyRepository: Send + Sync {
     // === Batch Operations ===
 
     /// Set multiple exchange rates - atomic (all-or-nothing)
-    /// Note: set_rates already exists as a partial-success batch operation
+    /// Note: `set_rates` already exists as a partial-success batch operation
     fn set_rates_atomic(&self, rates: Vec<SetExchangeRate>) -> Result<Vec<ExchangeRate>>;
 
     /// Delete multiple exchange rates - partial success allowed
@@ -1943,7 +1945,7 @@ pub trait ReceivingRepository: Send + Sync {
     /// Delete a receipt (only if not started)
     fn delete_receipt(&self, id: Uuid) -> Result<()>;
 
-    /// Start receiving (transition to in_progress)
+    /// Start receiving (transition to `in_progress`)
     fn start_receiving(&self, id: Uuid) -> Result<Receipt>;
 
     /// Receive items on a receipt
@@ -2986,7 +2988,7 @@ pub trait X402PaymentIntentRepository: Send + Sync {
     /// Count payment intents matching filter
     fn count(&self, filter: X402PaymentIntentFilter) -> Result<u64>;
 
-    /// Expire all intents that have passed their valid_until timestamp
+    /// Expire all intents that have passed their `valid_until` timestamp
     fn expire_stale_intents(&self) -> Result<u64>;
 
     // === Batch Operations ===
@@ -3380,4 +3382,295 @@ pub trait CustomObjectRepository: Send + Sync {
     fn list_objects(&self, filter: CustomObjectFilter) -> Result<Vec<CustomObject>>;
 
     fn delete_object(&self, id: Uuid) -> Result<()>;
+}
+
+// ============================================================================
+// New Domain Repository Traits
+// ============================================================================
+
+/// Gift card repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait GiftCardRepository: Send + Sync {
+    /// Create a new gift card
+    fn create(&self, input: CreateGiftCard) -> Result<GiftCard>;
+
+    /// Get gift card by ID
+    fn get(&self, id: GiftCardId) -> Result<Option<GiftCard>>;
+
+    /// Get gift card by code
+    fn get_by_code(&self, code: &str) -> Result<Option<GiftCard>>;
+
+    /// Update a gift card
+    fn update(&self, id: GiftCardId, input: UpdateGiftCard) -> Result<GiftCard>;
+
+    /// List gift cards with filter
+    fn list(&self, filter: GiftCardFilter) -> Result<Vec<GiftCard>>;
+
+    /// Charge (debit) a gift card
+    fn charge(&self, id: GiftCardId, amount: rust_decimal::Decimal, reference_id: Option<String>) -> Result<GiftCardTransaction>;
+
+    /// Refund (credit) to a gift card
+    fn refund(&self, id: GiftCardId, amount: rust_decimal::Decimal, reference_id: Option<String>) -> Result<GiftCardTransaction>;
+
+    /// Disable a gift card
+    fn disable(&self, id: GiftCardId) -> Result<GiftCard>;
+
+    /// Get transaction history for a gift card
+    fn get_transactions(&self, gift_card_id: GiftCardId) -> Result<Vec<GiftCardTransaction>>;
+}
+
+/// Store credit repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait StoreCreditRepository: Send + Sync {
+    /// Create a new store credit
+    fn create(&self, input: CreateStoreCredit) -> Result<StoreCredit>;
+
+    /// Get store credit by ID
+    fn get(&self, id: StoreCreditId) -> Result<Option<StoreCredit>>;
+
+    /// List store credits with filter
+    fn list(&self, filter: StoreCreditFilter) -> Result<Vec<StoreCredit>>;
+
+    /// Adjust store credit balance
+    fn adjust(&self, id: StoreCreditId, input: AdjustStoreCredit) -> Result<StoreCredit>;
+
+    /// Apply store credit to an order (debit)
+    fn apply(&self, id: StoreCreditId, amount: rust_decimal::Decimal, reference_id: Option<String>) -> Result<StoreCreditTransaction>;
+
+    /// Get transaction history for a store credit
+    fn get_transactions(&self, store_credit_id: StoreCreditId) -> Result<Vec<StoreCreditTransaction>>;
+}
+
+/// Customer segment repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait SegmentRepository: Send + Sync {
+    /// Create a new segment
+    fn create(&self, input: CreateSegment) -> Result<Segment>;
+
+    /// Get segment by ID
+    fn get(&self, id: SegmentId) -> Result<Option<Segment>>;
+
+    /// Update a segment
+    fn update(&self, id: SegmentId, input: UpdateSegment) -> Result<Segment>;
+
+    /// List segments with filter
+    fn list(&self, filter: SegmentFilter) -> Result<Vec<Segment>>;
+
+    /// Delete a segment
+    fn delete(&self, id: SegmentId) -> Result<()>;
+
+    /// Add a customer to a static segment
+    fn add_member(&self, segment_id: SegmentId, customer_id: CustomerId) -> Result<SegmentMembership>;
+
+    /// Remove a customer from a static segment
+    fn remove_member(&self, segment_id: SegmentId, customer_id: CustomerId) -> Result<()>;
+
+    /// List members of a segment
+    fn list_members(&self, segment_id: SegmentId, limit: Option<u32>, offset: Option<u32>) -> Result<Vec<SegmentMembership>>;
+
+    /// Check if a customer is a member of a segment
+    fn is_member(&self, segment_id: SegmentId, customer_id: CustomerId) -> Result<bool>;
+
+    /// Count members in a segment
+    fn count_members(&self, segment_id: SegmentId) -> Result<u64>;
+}
+
+/// Shipping zone repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ShippingZoneRepository: Send + Sync {
+    /// Create a new shipping zone
+    fn create(&self, input: CreateShippingZone) -> Result<ShippingZone>;
+
+    /// Get shipping zone by ID
+    fn get(&self, id: ShippingZoneId) -> Result<Option<ShippingZone>>;
+
+    /// Update a shipping zone
+    fn update(&self, id: ShippingZoneId, input: UpdateShippingZone) -> Result<ShippingZone>;
+
+    /// List shipping zones with filter
+    fn list(&self, filter: ShippingZoneFilter) -> Result<Vec<ShippingZone>>;
+
+    /// Delete a shipping zone
+    fn delete(&self, id: ShippingZoneId) -> Result<()>;
+
+    /// Find zones matching a destination
+    fn find_matching_zones(&self, country: &str, region: Option<&str>, postal_code: Option<&str>) -> Result<Vec<ShippingZone>>;
+}
+
+/// Zone shipping method repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ZoneShippingMethodRepository: Send + Sync {
+    /// Create a shipping method in a zone
+    fn create(&self, input: CreateZoneShippingMethod) -> Result<ZoneShippingMethod>;
+
+    /// Get shipping method by ID
+    fn get(&self, id: ShippingMethodId) -> Result<Option<ZoneShippingMethod>>;
+
+    /// List shipping methods with filter
+    fn list(&self, filter: ZoneShippingMethodFilter) -> Result<Vec<ZoneShippingMethod>>;
+
+    /// Delete a shipping method
+    fn delete(&self, id: ShippingMethodId) -> Result<()>;
+
+    /// Calculate rates for a destination
+    fn calculate_rates(&self, request: ZoneShippingRateRequest) -> Result<Vec<ZoneShippingRate>>;
+}
+
+/// Product review repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait ReviewRepository: Send + Sync {
+    /// Create a new review
+    fn create(&self, input: CreateReview) -> Result<Review>;
+
+    /// Get review by ID
+    fn get(&self, id: ReviewId) -> Result<Option<Review>>;
+
+    /// Update a review
+    fn update(&self, id: ReviewId, input: UpdateReview) -> Result<Review>;
+
+    /// List reviews with filter
+    fn list(&self, filter: ReviewFilter) -> Result<Vec<Review>>;
+
+    /// Delete a review
+    fn delete(&self, id: ReviewId) -> Result<()>;
+
+    /// Get aggregate review summary for a product
+    fn get_summary(&self, product_id: ProductId) -> Result<ReviewSummary>;
+
+    /// Increment the helpful count
+    fn mark_helpful(&self, id: ReviewId) -> Result<()>;
+
+    /// Increment the reported count
+    fn mark_reported(&self, id: ReviewId) -> Result<()>;
+}
+
+/// Wishlist repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait WishlistRepository: Send + Sync {
+    /// Create a new wishlist
+    fn create(&self, input: CreateWishlist) -> Result<Wishlist>;
+
+    /// Get wishlist by ID
+    fn get(&self, id: WishlistId) -> Result<Option<Wishlist>>;
+
+    /// Update wishlist metadata
+    fn update(&self, id: WishlistId, input: UpdateWishlist) -> Result<Wishlist>;
+
+    /// List wishlists with filter
+    fn list(&self, filter: WishlistFilter) -> Result<Vec<Wishlist>>;
+
+    /// Delete a wishlist
+    fn delete(&self, id: WishlistId) -> Result<()>;
+
+    /// Add an item to a wishlist
+    fn add_item(&self, wishlist_id: WishlistId, item: AddWishlistItem) -> Result<WishlistItem>;
+
+    /// Remove an item from a wishlist
+    fn remove_item(&self, wishlist_id: WishlistId, product_id: ProductId) -> Result<()>;
+}
+
+/// Loyalty program repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait LoyaltyProgramRepository: Send + Sync {
+    /// Create a new loyalty program
+    fn create(&self, input: CreateLoyaltyProgram) -> Result<LoyaltyProgram>;
+
+    /// Get loyalty program by ID
+    fn get(&self, id: LoyaltyProgramId) -> Result<Option<LoyaltyProgram>>;
+
+    /// List all loyalty programs
+    fn list(&self) -> Result<Vec<LoyaltyProgram>>;
+
+    /// Enroll a customer in a program
+    fn enroll(&self, input: EnrollCustomer) -> Result<LoyaltyAccount>;
+
+    /// Get a loyalty account
+    fn get_account(&self, id: LoyaltyAccountId) -> Result<Option<LoyaltyAccount>>;
+
+    /// Get loyalty account by customer and program
+    fn get_account_by_customer(&self, customer_id: CustomerId, program_id: LoyaltyProgramId) -> Result<Option<LoyaltyAccount>>;
+
+    /// List loyalty accounts with filter
+    fn list_accounts(&self, filter: LoyaltyAccountFilter) -> Result<Vec<LoyaltyAccount>>;
+
+    /// Adjust points on an account (earn, redeem, etc.)
+    fn adjust_points(&self, input: AdjustPoints) -> Result<LoyaltyTransaction>;
+
+    /// Get transaction history for an account
+    fn get_transactions(&self, account_id: LoyaltyAccountId, limit: Option<u32>) -> Result<Vec<LoyaltyTransaction>>;
+}
+
+/// Reward catalog repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait RewardRepository: Send + Sync {
+    /// Create a new reward
+    fn create(&self, input: CreateReward) -> Result<Reward>;
+
+    /// Get reward by ID
+    fn get(&self, id: RewardId) -> Result<Option<Reward>>;
+
+    /// List rewards with filter
+    fn list(&self, filter: RewardFilter) -> Result<Vec<Reward>>;
+
+    /// Delete a reward
+    fn delete(&self, id: RewardId) -> Result<()>;
+}
+
+/// Fraud detection repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait FraudRepository: Send + Sync {
+    /// Create a fraud assessment for an order
+    fn create_assessment(&self, input: CreateFraudAssessment) -> Result<FraudAssessment>;
+
+    /// Get fraud assessment for an order
+    fn get_assessment(&self, order_id: OrderId) -> Result<Option<FraudAssessment>>;
+
+    /// List fraud assessments with filter
+    fn list_assessments(&self, filter: FraudAssessmentFilter) -> Result<Vec<FraudAssessment>>;
+
+    /// Update assessment after manual review
+    fn review_assessment(&self, order_id: OrderId, decision: FraudDecision, reviewer: String, notes: Option<String>) -> Result<FraudAssessment>;
+
+    /// Create a fraud rule
+    fn create_rule(&self, input: CreateFraudRule) -> Result<FraudRule>;
+
+    /// Get a fraud rule by ID
+    fn get_rule(&self, id: FraudRuleId) -> Result<Option<FraudRule>>;
+
+    /// Update a fraud rule
+    fn update_rule(&self, id: FraudRuleId, input: UpdateFraudRule) -> Result<FraudRule>;
+
+    /// List fraud rules with filter
+    fn list_rules(&self, filter: FraudRuleFilter) -> Result<Vec<FraudRule>>;
+
+    /// Delete a fraud rule
+    fn delete_rule(&self, id: FraudRuleId) -> Result<()>;
+
+    /// Get all enabled rules
+    fn get_active_rules(&self) -> Result<Vec<FraudRule>>;
+}
+
+/// Search configuration repository trait.
+#[auto_impl::auto_impl(&, Box, Arc)]
+pub trait SearchConfigRepository: Send + Sync {
+    /// Create a search configuration
+    fn create(&self, input: CreateSearchConfig) -> Result<SearchConfig>;
+
+    /// Get search configuration by ID
+    fn get(&self, id: SearchConfigId) -> Result<Option<SearchConfig>>;
+
+    /// Update a search configuration
+    fn update(&self, id: SearchConfigId, input: UpdateSearchConfig) -> Result<SearchConfig>;
+
+    /// List search configurations with filter
+    fn list(&self, filter: SearchConfigFilter) -> Result<Vec<SearchConfig>>;
+
+    /// Delete a search configuration
+    fn delete(&self, id: SearchConfigId) -> Result<()>;
+
+    /// Get the currently active search configuration
+    fn get_active(&self) -> Result<Option<SearchConfig>>;
+
+    /// Set a configuration as active (deactivating any current one)
+    fn set_active(&self, id: SearchConfigId) -> Result<SearchConfig>;
 }

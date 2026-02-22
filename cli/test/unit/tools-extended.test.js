@@ -1025,11 +1025,13 @@ describe('Subscription Tools', () => {
 
     it('returns plan by ID', async () => {
       const result = await tool.handler({ commerce: makeSubCommerce(), params: { planId: 'plan-1' } });
-      assert.equal(result.name, 'Coffee Club');
+      assert.strictEqual(result.success, true);
+      assert.equal(result.plan.name, 'Coffee Club');
     });
 
     it('returns error for unknown plan', async () => {
       const result = await tool.handler({ commerce: makeSubCommerce(), params: { planId: 'nope' } });
+      assert.strictEqual(result.success, false);
       assert.ok(result.error);
     });
   });

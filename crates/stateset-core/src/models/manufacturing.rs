@@ -17,7 +17,7 @@ use uuid::Uuid;
 // =============================================================================
 
 /// Bill of Materials - defines what components make up a product
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BillOfMaterials {
     pub id: Uuid,
     /// Unique BOM number (e.g., "BOM-2024-001")
@@ -61,7 +61,8 @@ impl BillOfMaterials {
 }
 
 /// BOM lifecycle status
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BomStatus {
@@ -72,16 +73,6 @@ pub enum BomStatus {
     Active,
     /// Obsolete - no longer used
     Obsolete,
-}
-
-impl std::fmt::Display for BomStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BomStatus::Draft => write!(f, "draft"),
-            BomStatus::Active => write!(f, "active"),
-            BomStatus::Obsolete => write!(f, "obsolete"),
-        }
-    }
 }
 
 impl std::str::FromStr for BomStatus {
@@ -98,7 +89,7 @@ impl std::str::FromStr for BomStatus {
 }
 
 /// A component in a Bill of Materials
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BomComponent {
     pub id: Uuid,
     /// The BOM this component belongs to
@@ -169,7 +160,7 @@ pub struct BomFilter {
 // =============================================================================
 
 /// Work Order - a manufacturing job to build products
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkOrder {
     pub id: Uuid,
     /// Unique work order number (e.g., "WO-2024-001")
@@ -218,12 +209,12 @@ impl WorkOrder {
     }
 
     /// Check if work order can be started
-    pub fn can_start(&self) -> bool {
+    pub const fn can_start(&self) -> bool {
         matches!(self.status, WorkOrderStatus::Planned | WorkOrderStatus::OnHold)
     }
 
     /// Check if work order can be completed
-    pub fn can_complete(&self) -> bool {
+    pub const fn can_complete(&self) -> bool {
         matches!(self.status, WorkOrderStatus::InProgress)
     }
 
@@ -248,7 +239,8 @@ impl WorkOrder {
 }
 
 /// Work order status
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WorkOrderStatus {
@@ -265,19 +257,6 @@ pub enum WorkOrderStatus {
     Cancelled,
     /// On hold (temporarily stopped)
     OnHold,
-}
-
-impl std::fmt::Display for WorkOrderStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WorkOrderStatus::Planned => write!(f, "planned"),
-            WorkOrderStatus::InProgress => write!(f, "in_progress"),
-            WorkOrderStatus::Completed => write!(f, "completed"),
-            WorkOrderStatus::PartiallyCompleted => write!(f, "partially_completed"),
-            WorkOrderStatus::Cancelled => write!(f, "cancelled"),
-            WorkOrderStatus::OnHold => write!(f, "on_hold"),
-        }
-    }
 }
 
 impl std::str::FromStr for WorkOrderStatus {
@@ -315,10 +294,10 @@ pub enum WorkOrderPriority {
 impl std::fmt::Display for WorkOrderPriority {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WorkOrderPriority::Low => write!(f, "low"),
-            WorkOrderPriority::Normal => write!(f, "normal"),
-            WorkOrderPriority::High => write!(f, "high"),
-            WorkOrderPriority::Urgent => write!(f, "urgent"),
+            Self::Low => write!(f, "low"),
+            Self::Normal => write!(f, "normal"),
+            Self::High => write!(f, "high"),
+            Self::Urgent => write!(f, "urgent"),
         }
     }
 }
@@ -405,7 +384,7 @@ pub struct WorkOrderFilter {
 // =============================================================================
 
 /// A task within a work order (a step in manufacturing)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkOrderTask {
     pub id: Uuid,
     /// Parent work order
@@ -434,12 +413,12 @@ pub struct WorkOrderTask {
 
 impl WorkOrderTask {
     /// Check if task can be started
-    pub fn can_start(&self) -> bool {
+    pub const fn can_start(&self) -> bool {
         matches!(self.status, TaskStatus::Pending)
     }
 
     /// Check if task can be completed
-    pub fn can_complete(&self) -> bool {
+    pub const fn can_complete(&self) -> bool {
         matches!(self.status, TaskStatus::InProgress)
     }
 
@@ -473,11 +452,11 @@ pub enum TaskStatus {
 impl std::fmt::Display for TaskStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TaskStatus::Pending => write!(f, "pending"),
-            TaskStatus::InProgress => write!(f, "in_progress"),
-            TaskStatus::Completed => write!(f, "completed"),
-            TaskStatus::Skipped => write!(f, "skipped"),
-            TaskStatus::Cancelled => write!(f, "cancelled"),
+            Self::Pending => write!(f, "pending"),
+            Self::InProgress => write!(f, "in_progress"),
+            Self::Completed => write!(f, "completed"),
+            Self::Skipped => write!(f, "skipped"),
+            Self::Cancelled => write!(f, "cancelled"),
         }
     }
 }
@@ -526,7 +505,7 @@ pub struct UpdateWorkOrderTask {
 // =============================================================================
 
 /// Material tracking for a work order
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkOrderMaterial {
     pub id: Uuid,
     /// Parent work order

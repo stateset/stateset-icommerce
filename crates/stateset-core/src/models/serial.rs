@@ -35,7 +35,8 @@ pub struct SerialNumber {
 }
 
 /// Status of a serial number
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SerialStatus {
@@ -70,26 +71,6 @@ pub enum SerialStatus {
 impl Default for SerialStatus {
     fn default() -> Self {
         Self::Available
-    }
-}
-
-impl std::fmt::Display for SerialStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InProduction => write!(f, "in_production"),
-            Self::Available => write!(f, "available"),
-            Self::Reserved => write!(f, "reserved"),
-            Self::Shipped => write!(f, "shipped"),
-            Self::Sold => write!(f, "sold"),
-            Self::Returned => write!(f, "returned"),
-            Self::InService => write!(f, "in_service"),
-            Self::InWarranty => write!(f, "in_warranty"),
-            Self::Quarantined => write!(f, "quarantined"),
-            Self::Scrapped => write!(f, "scrapped"),
-            Self::Recalled => write!(f, "recalled"),
-            Self::Lost => write!(f, "lost"),
-            Self::Transferred => write!(f, "transferred"),
-        }
     }
 }
 
@@ -458,7 +439,7 @@ pub struct SerialValidation {
 // Type Aliases for API compatibility
 // ============================================================================
 
-/// Alias for CreateSerialNumber for API convenience
+/// Alias for `CreateSerialNumber` for API convenience
 pub type CreateSerial = CreateSerialNumber;
 
 // ============================================================================
@@ -472,7 +453,7 @@ impl SerialNumber {
     }
 
     /// Check if serial is in customer's possession
-    pub fn is_with_customer(&self) -> bool {
+    pub const fn is_with_customer(&self) -> bool {
         matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped)
     }
 
@@ -482,22 +463,22 @@ impl SerialNumber {
     }
 
     /// Check if serial can be shipped
-    pub fn can_ship(&self) -> bool {
+    pub const fn can_ship(&self) -> bool {
         matches!(self.status, SerialStatus::Available | SerialStatus::Reserved)
     }
 
     /// Check if serial can be returned
-    pub fn can_return(&self) -> bool {
+    pub const fn can_return(&self) -> bool {
         matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped)
     }
 
     /// Check if serial can be scrapped
-    pub fn can_scrap(&self) -> bool {
+    pub const fn can_scrap(&self) -> bool {
         !matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped)
     }
 
     /// Check if serial has been activated
-    pub fn is_activated(&self) -> bool {
+    pub const fn is_activated(&self) -> bool {
         self.activated_at.is_some()
     }
 
@@ -528,7 +509,7 @@ impl SerialReservation {
     }
 
     /// Check if reservation has been confirmed
-    pub fn is_confirmed(&self) -> bool {
+    pub const fn is_confirmed(&self) -> bool {
         self.confirmed_at.is_some()
     }
 }

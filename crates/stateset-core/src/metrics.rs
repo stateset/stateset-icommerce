@@ -284,13 +284,15 @@ pub mod payments {
 // ============================================================================
 
 /// Helper to build consistent metric labels
+#[derive(Debug)]
+#[must_use]
 pub struct LabelsBuilder {
     labels: Vec<String>,
 }
 
 impl LabelsBuilder {
     /// Create a new labels builder
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { labels: Vec::new() }
     }
 

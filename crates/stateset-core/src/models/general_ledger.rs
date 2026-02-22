@@ -33,11 +33,11 @@ pub enum AccountType {
 impl fmt::Display for AccountType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AccountType::Asset => write!(f, "asset"),
-            AccountType::Liability => write!(f, "liability"),
-            AccountType::Equity => write!(f, "equity"),
-            AccountType::Revenue => write!(f, "revenue"),
-            AccountType::Expense => write!(f, "expense"),
+            Self::Asset => write!(f, "asset"),
+            Self::Liability => write!(f, "liability"),
+            Self::Equity => write!(f, "equity"),
+            Self::Revenue => write!(f, "revenue"),
+            Self::Expense => write!(f, "expense"),
         }
     }
 }
@@ -46,11 +46,11 @@ impl FromStr for AccountType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "asset" => Ok(AccountType::Asset),
-            "liability" => Ok(AccountType::Liability),
-            "equity" => Ok(AccountType::Equity),
-            "revenue" => Ok(AccountType::Revenue),
-            "expense" => Ok(AccountType::Expense),
+            "asset" => Ok(Self::Asset),
+            "liability" => Ok(Self::Liability),
+            "equity" => Ok(Self::Equity),
+            "revenue" => Ok(Self::Revenue),
+            "expense" => Ok(Self::Expense),
             _ => Err(format!("Unknown account type: {}", s)),
         }
     }
@@ -58,23 +58,23 @@ impl FromStr for AccountType {
 
 impl AccountType {
     /// Returns the normal balance side for this account type
-    pub fn normal_balance(&self) -> BalanceSide {
+    pub const fn normal_balance(&self) -> BalanceSide {
         match self {
-            AccountType::Asset | AccountType::Expense => BalanceSide::Debit,
-            AccountType::Liability | AccountType::Equity | AccountType::Revenue => {
+            Self::Asset | Self::Expense => BalanceSide::Debit,
+            Self::Liability | Self::Equity | Self::Revenue => {
                 BalanceSide::Credit
             }
         }
     }
 
     /// Returns true if this account type appears on the Balance Sheet
-    pub fn is_balance_sheet(&self) -> bool {
-        matches!(self, AccountType::Asset | AccountType::Liability | AccountType::Equity)
+    pub const fn is_balance_sheet(&self) -> bool {
+        matches!(self, Self::Asset | Self::Liability | Self::Equity)
     }
 
     /// Returns true if this account type appears on the Income Statement
-    pub fn is_income_statement(&self) -> bool {
-        matches!(self, AccountType::Revenue | AccountType::Expense)
+    pub const fn is_income_statement(&self) -> bool {
+        matches!(self, Self::Revenue | Self::Expense)
     }
 }
 
@@ -91,8 +91,8 @@ pub enum BalanceSide {
 impl fmt::Display for BalanceSide {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BalanceSide::Debit => write!(f, "debit"),
-            BalanceSide::Credit => write!(f, "credit"),
+            Self::Debit => write!(f, "debit"),
+            Self::Credit => write!(f, "credit"),
         }
     }
 }
@@ -101,8 +101,8 @@ impl FromStr for BalanceSide {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "debit" => Ok(BalanceSide::Debit),
-            "credit" => Ok(BalanceSide::Credit),
+            "debit" => Ok(Self::Debit),
+            "credit" => Ok(Self::Credit),
             _ => Err(format!("Unknown balance side: {}", s)),
         }
     }
@@ -153,36 +153,36 @@ pub enum AccountSubType {
 impl fmt::Display for AccountSubType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AccountSubType::Cash => write!(f, "cash"),
-            AccountSubType::AccountsReceivable => write!(f, "accounts_receivable"),
-            AccountSubType::Inventory => write!(f, "inventory"),
-            AccountSubType::PrepaidExpense => write!(f, "prepaid_expense"),
-            AccountSubType::FixedAsset => write!(f, "fixed_asset"),
-            AccountSubType::AccumulatedDepreciation => write!(f, "accumulated_depreciation"),
-            AccountSubType::OtherCurrentAsset => write!(f, "other_current_asset"),
-            AccountSubType::OtherNonCurrentAsset => write!(f, "other_non_current_asset"),
-            AccountSubType::AccountsPayable => write!(f, "accounts_payable"),
-            AccountSubType::AccruedLiabilities => write!(f, "accrued_liabilities"),
-            AccountSubType::UnearnedRevenue => write!(f, "unearned_revenue"),
-            AccountSubType::ShortTermDebt => write!(f, "short_term_debt"),
-            AccountSubType::LongTermDebt => write!(f, "long_term_debt"),
-            AccountSubType::OtherCurrentLiability => write!(f, "other_current_liability"),
-            AccountSubType::OtherNonCurrentLiability => write!(f, "other_non_current_liability"),
-            AccountSubType::CommonStock => write!(f, "common_stock"),
-            AccountSubType::RetainedEarnings => write!(f, "retained_earnings"),
-            AccountSubType::OtherEquity => write!(f, "other_equity"),
-            AccountSubType::SalesRevenue => write!(f, "sales_revenue"),
-            AccountSubType::ServiceRevenue => write!(f, "service_revenue"),
-            AccountSubType::OtherRevenue => write!(f, "other_revenue"),
-            AccountSubType::CostOfGoodsSold => write!(f, "cost_of_goods_sold"),
-            AccountSubType::OperatingExpense => write!(f, "operating_expense"),
-            AccountSubType::Payroll => write!(f, "payroll"),
-            AccountSubType::RentExpense => write!(f, "rent_expense"),
-            AccountSubType::UtilitiesExpense => write!(f, "utilities_expense"),
-            AccountSubType::DepreciationExpense => write!(f, "depreciation_expense"),
-            AccountSubType::InterestExpense => write!(f, "interest_expense"),
-            AccountSubType::TaxExpense => write!(f, "tax_expense"),
-            AccountSubType::OtherExpense => write!(f, "other_expense"),
+            Self::Cash => write!(f, "cash"),
+            Self::AccountsReceivable => write!(f, "accounts_receivable"),
+            Self::Inventory => write!(f, "inventory"),
+            Self::PrepaidExpense => write!(f, "prepaid_expense"),
+            Self::FixedAsset => write!(f, "fixed_asset"),
+            Self::AccumulatedDepreciation => write!(f, "accumulated_depreciation"),
+            Self::OtherCurrentAsset => write!(f, "other_current_asset"),
+            Self::OtherNonCurrentAsset => write!(f, "other_non_current_asset"),
+            Self::AccountsPayable => write!(f, "accounts_payable"),
+            Self::AccruedLiabilities => write!(f, "accrued_liabilities"),
+            Self::UnearnedRevenue => write!(f, "unearned_revenue"),
+            Self::ShortTermDebt => write!(f, "short_term_debt"),
+            Self::LongTermDebt => write!(f, "long_term_debt"),
+            Self::OtherCurrentLiability => write!(f, "other_current_liability"),
+            Self::OtherNonCurrentLiability => write!(f, "other_non_current_liability"),
+            Self::CommonStock => write!(f, "common_stock"),
+            Self::RetainedEarnings => write!(f, "retained_earnings"),
+            Self::OtherEquity => write!(f, "other_equity"),
+            Self::SalesRevenue => write!(f, "sales_revenue"),
+            Self::ServiceRevenue => write!(f, "service_revenue"),
+            Self::OtherRevenue => write!(f, "other_revenue"),
+            Self::CostOfGoodsSold => write!(f, "cost_of_goods_sold"),
+            Self::OperatingExpense => write!(f, "operating_expense"),
+            Self::Payroll => write!(f, "payroll"),
+            Self::RentExpense => write!(f, "rent_expense"),
+            Self::UtilitiesExpense => write!(f, "utilities_expense"),
+            Self::DepreciationExpense => write!(f, "depreciation_expense"),
+            Self::InterestExpense => write!(f, "interest_expense"),
+            Self::TaxExpense => write!(f, "tax_expense"),
+            Self::OtherExpense => write!(f, "other_expense"),
         }
     }
 }
@@ -191,36 +191,36 @@ impl FromStr for AccountSubType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "cash" => Ok(AccountSubType::Cash),
-            "accounts_receivable" => Ok(AccountSubType::AccountsReceivable),
-            "inventory" => Ok(AccountSubType::Inventory),
-            "prepaid_expense" => Ok(AccountSubType::PrepaidExpense),
-            "fixed_asset" => Ok(AccountSubType::FixedAsset),
-            "accumulated_depreciation" => Ok(AccountSubType::AccumulatedDepreciation),
-            "other_current_asset" => Ok(AccountSubType::OtherCurrentAsset),
-            "other_non_current_asset" => Ok(AccountSubType::OtherNonCurrentAsset),
-            "accounts_payable" => Ok(AccountSubType::AccountsPayable),
-            "accrued_liabilities" => Ok(AccountSubType::AccruedLiabilities),
-            "unearned_revenue" => Ok(AccountSubType::UnearnedRevenue),
-            "short_term_debt" => Ok(AccountSubType::ShortTermDebt),
-            "long_term_debt" => Ok(AccountSubType::LongTermDebt),
-            "other_current_liability" => Ok(AccountSubType::OtherCurrentLiability),
-            "other_non_current_liability" => Ok(AccountSubType::OtherNonCurrentLiability),
-            "common_stock" => Ok(AccountSubType::CommonStock),
-            "retained_earnings" => Ok(AccountSubType::RetainedEarnings),
-            "other_equity" => Ok(AccountSubType::OtherEquity),
-            "sales_revenue" => Ok(AccountSubType::SalesRevenue),
-            "service_revenue" => Ok(AccountSubType::ServiceRevenue),
-            "other_revenue" => Ok(AccountSubType::OtherRevenue),
-            "cost_of_goods_sold" => Ok(AccountSubType::CostOfGoodsSold),
-            "operating_expense" => Ok(AccountSubType::OperatingExpense),
-            "payroll" => Ok(AccountSubType::Payroll),
-            "rent_expense" => Ok(AccountSubType::RentExpense),
-            "utilities_expense" => Ok(AccountSubType::UtilitiesExpense),
-            "depreciation_expense" => Ok(AccountSubType::DepreciationExpense),
-            "interest_expense" => Ok(AccountSubType::InterestExpense),
-            "tax_expense" => Ok(AccountSubType::TaxExpense),
-            "other_expense" => Ok(AccountSubType::OtherExpense),
+            "cash" => Ok(Self::Cash),
+            "accounts_receivable" => Ok(Self::AccountsReceivable),
+            "inventory" => Ok(Self::Inventory),
+            "prepaid_expense" => Ok(Self::PrepaidExpense),
+            "fixed_asset" => Ok(Self::FixedAsset),
+            "accumulated_depreciation" => Ok(Self::AccumulatedDepreciation),
+            "other_current_asset" => Ok(Self::OtherCurrentAsset),
+            "other_non_current_asset" => Ok(Self::OtherNonCurrentAsset),
+            "accounts_payable" => Ok(Self::AccountsPayable),
+            "accrued_liabilities" => Ok(Self::AccruedLiabilities),
+            "unearned_revenue" => Ok(Self::UnearnedRevenue),
+            "short_term_debt" => Ok(Self::ShortTermDebt),
+            "long_term_debt" => Ok(Self::LongTermDebt),
+            "other_current_liability" => Ok(Self::OtherCurrentLiability),
+            "other_non_current_liability" => Ok(Self::OtherNonCurrentLiability),
+            "common_stock" => Ok(Self::CommonStock),
+            "retained_earnings" => Ok(Self::RetainedEarnings),
+            "other_equity" => Ok(Self::OtherEquity),
+            "sales_revenue" => Ok(Self::SalesRevenue),
+            "service_revenue" => Ok(Self::ServiceRevenue),
+            "other_revenue" => Ok(Self::OtherRevenue),
+            "cost_of_goods_sold" => Ok(Self::CostOfGoodsSold),
+            "operating_expense" => Ok(Self::OperatingExpense),
+            "payroll" => Ok(Self::Payroll),
+            "rent_expense" => Ok(Self::RentExpense),
+            "utilities_expense" => Ok(Self::UtilitiesExpense),
+            "depreciation_expense" => Ok(Self::DepreciationExpense),
+            "interest_expense" => Ok(Self::InterestExpense),
+            "tax_expense" => Ok(Self::TaxExpense),
+            "other_expense" => Ok(Self::OtherExpense),
             _ => Err(format!("Unknown account sub-type: {}", s)),
         }
     }
@@ -240,9 +240,9 @@ pub enum AccountStatus {
 impl fmt::Display for AccountStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AccountStatus::Active => write!(f, "active"),
-            AccountStatus::Inactive => write!(f, "inactive"),
-            AccountStatus::Archived => write!(f, "archived"),
+            Self::Active => write!(f, "active"),
+            Self::Inactive => write!(f, "inactive"),
+            Self::Archived => write!(f, "archived"),
         }
     }
 }
@@ -251,9 +251,9 @@ impl FromStr for AccountStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "active" => Ok(AccountStatus::Active),
-            "inactive" => Ok(AccountStatus::Inactive),
-            "archived" => Ok(AccountStatus::Archived),
+            "active" => Ok(Self::Active),
+            "inactive" => Ok(Self::Inactive),
+            "archived" => Ok(Self::Archived),
             _ => Err(format!("Unknown account status: {}", s)),
         }
     }
@@ -278,10 +278,10 @@ pub enum PeriodStatus {
 impl fmt::Display for PeriodStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PeriodStatus::Future => write!(f, "future"),
-            PeriodStatus::Open => write!(f, "open"),
-            PeriodStatus::Closed => write!(f, "closed"),
-            PeriodStatus::Locked => write!(f, "locked"),
+            Self::Future => write!(f, "future"),
+            Self::Open => write!(f, "open"),
+            Self::Closed => write!(f, "closed"),
+            Self::Locked => write!(f, "locked"),
         }
     }
 }
@@ -290,10 +290,10 @@ impl FromStr for PeriodStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "future" => Ok(PeriodStatus::Future),
-            "open" => Ok(PeriodStatus::Open),
-            "closed" => Ok(PeriodStatus::Closed),
-            "locked" => Ok(PeriodStatus::Locked),
+            "future" => Ok(Self::Future),
+            "open" => Ok(Self::Open),
+            "closed" => Ok(Self::Closed),
+            "locked" => Ok(Self::Locked),
             _ => Err(format!("Unknown period status: {}", s)),
         }
     }
@@ -315,11 +315,11 @@ pub enum JournalEntryType {
 impl fmt::Display for JournalEntryType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            JournalEntryType::Standard => write!(f, "standard"),
-            JournalEntryType::Adjusting => write!(f, "adjusting"),
-            JournalEntryType::Closing => write!(f, "closing"),
-            JournalEntryType::Reversing => write!(f, "reversing"),
-            JournalEntryType::Opening => write!(f, "opening"),
+            Self::Standard => write!(f, "standard"),
+            Self::Adjusting => write!(f, "adjusting"),
+            Self::Closing => write!(f, "closing"),
+            Self::Reversing => write!(f, "reversing"),
+            Self::Opening => write!(f, "opening"),
         }
     }
 }
@@ -328,11 +328,11 @@ impl FromStr for JournalEntryType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "standard" => Ok(JournalEntryType::Standard),
-            "adjusting" => Ok(JournalEntryType::Adjusting),
-            "closing" => Ok(JournalEntryType::Closing),
-            "reversing" => Ok(JournalEntryType::Reversing),
-            "opening" => Ok(JournalEntryType::Opening),
+            "standard" => Ok(Self::Standard),
+            "adjusting" => Ok(Self::Adjusting),
+            "closing" => Ok(Self::Closing),
+            "reversing" => Ok(Self::Reversing),
+            "opening" => Ok(Self::Opening),
             _ => Err(format!("Unknown journal entry type: {}", s)),
         }
     }
@@ -358,15 +358,15 @@ pub enum JournalEntrySource {
 impl fmt::Display for JournalEntrySource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            JournalEntrySource::Manual => write!(f, "manual"),
-            JournalEntrySource::AutoInvoice => write!(f, "auto_invoice"),
-            JournalEntrySource::AutoPayment => write!(f, "auto_payment"),
-            JournalEntrySource::AutoBill => write!(f, "auto_bill"),
-            JournalEntrySource::AutoBillPayment => write!(f, "auto_bill_payment"),
-            JournalEntrySource::AutoInventory => write!(f, "auto_inventory"),
-            JournalEntrySource::AutoWriteOff => write!(f, "auto_write_off"),
-            JournalEntrySource::SystemClosing => write!(f, "system_closing"),
-            JournalEntrySource::Import => write!(f, "import"),
+            Self::Manual => write!(f, "manual"),
+            Self::AutoInvoice => write!(f, "auto_invoice"),
+            Self::AutoPayment => write!(f, "auto_payment"),
+            Self::AutoBill => write!(f, "auto_bill"),
+            Self::AutoBillPayment => write!(f, "auto_bill_payment"),
+            Self::AutoInventory => write!(f, "auto_inventory"),
+            Self::AutoWriteOff => write!(f, "auto_write_off"),
+            Self::SystemClosing => write!(f, "system_closing"),
+            Self::Import => write!(f, "import"),
         }
     }
 }
@@ -375,15 +375,15 @@ impl FromStr for JournalEntrySource {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "manual" => Ok(JournalEntrySource::Manual),
-            "auto_invoice" => Ok(JournalEntrySource::AutoInvoice),
-            "auto_payment" => Ok(JournalEntrySource::AutoPayment),
-            "auto_bill" => Ok(JournalEntrySource::AutoBill),
-            "auto_bill_payment" => Ok(JournalEntrySource::AutoBillPayment),
-            "auto_inventory" => Ok(JournalEntrySource::AutoInventory),
-            "auto_write_off" => Ok(JournalEntrySource::AutoWriteOff),
-            "system_closing" => Ok(JournalEntrySource::SystemClosing),
-            "import" => Ok(JournalEntrySource::Import),
+            "manual" => Ok(Self::Manual),
+            "auto_invoice" => Ok(Self::AutoInvoice),
+            "auto_payment" => Ok(Self::AutoPayment),
+            "auto_bill" => Ok(Self::AutoBill),
+            "auto_bill_payment" => Ok(Self::AutoBillPayment),
+            "auto_inventory" => Ok(Self::AutoInventory),
+            "auto_write_off" => Ok(Self::AutoWriteOff),
+            "system_closing" => Ok(Self::SystemClosing),
+            "import" => Ok(Self::Import),
             _ => Err(format!("Unknown journal entry source: {}", s)),
         }
     }
@@ -405,11 +405,11 @@ pub enum JournalEntryStatus {
 impl fmt::Display for JournalEntryStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            JournalEntryStatus::Draft => write!(f, "draft"),
-            JournalEntryStatus::Pending => write!(f, "pending"),
-            JournalEntryStatus::Posted => write!(f, "posted"),
-            JournalEntryStatus::Voided => write!(f, "voided"),
-            JournalEntryStatus::Reversed => write!(f, "reversed"),
+            Self::Draft => write!(f, "draft"),
+            Self::Pending => write!(f, "pending"),
+            Self::Posted => write!(f, "posted"),
+            Self::Voided => write!(f, "voided"),
+            Self::Reversed => write!(f, "reversed"),
         }
     }
 }
@@ -418,11 +418,11 @@ impl FromStr for JournalEntryStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "draft" => Ok(JournalEntryStatus::Draft),
-            "pending" => Ok(JournalEntryStatus::Pending),
-            "posted" => Ok(JournalEntryStatus::Posted),
-            "voided" => Ok(JournalEntryStatus::Voided),
-            "reversed" => Ok(JournalEntryStatus::Reversed),
+            "draft" => Ok(Self::Draft),
+            "pending" => Ok(Self::Pending),
+            "posted" => Ok(Self::Posted),
+            "voided" => Ok(Self::Voided),
+            "reversed" => Ok(Self::Reversed),
             _ => Err(format!("Unknown journal entry status: {}", s)),
         }
     }
@@ -760,7 +760,7 @@ pub struct CreateJournalEntryLine {
 
 impl CreateJournalEntryLine {
     /// Create a debit line for an account
-    pub fn debit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
+    pub const fn debit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
         Self {
             account_id,
             description,
@@ -772,7 +772,7 @@ impl CreateJournalEntryLine {
     }
 
     /// Create a credit line for an account
-    pub fn credit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
+    pub const fn credit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
         Self {
             account_id,
             description,

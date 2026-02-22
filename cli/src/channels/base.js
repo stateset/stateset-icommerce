@@ -691,7 +691,7 @@ export async function processWithAgent(text, session, opts) {
         ];
         const result = await chain.chat(messages);
         if (verbose) {
-          console.log(`[Gateway] Claude failed, fell back to ${result.provider}`);
+          console.warn(`[Gateway] Claude failed, fell back to ${result.provider}`);
         }
         return {
           response: result.text,
@@ -826,7 +826,7 @@ export function createMessageHandler(adapter, opts) {
     // 3. Allowlist
     const senderId = adapter.getSenderId(raw);
     if (!isAllowed(senderId, allowlist)) {
-      if (verbose) console.log(`Blocked message from unauthorized sender: ${senderId}`);
+      if (verbose) console.debug(`Blocked message from unauthorized sender: ${senderId}`);
       return;
     }
 
@@ -835,7 +835,7 @@ export function createMessageHandler(adapter, opts) {
 
     const targetId = adapter.getTargetId(raw);
 
-    console.log(
+    console.debug(
       `[${new Date().toISOString()}] ${senderId}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`,
     );
 
@@ -858,7 +858,7 @@ export function createMessageHandler(adapter, opts) {
 
       if (ctx.blocked) {
         if (verbose)
-          console.log(`Message blocked by middleware for ${senderId}: ${ctx.blockReason}`);
+          console.debug(`Message blocked by middleware for ${senderId}: ${ctx.blockReason}`);
         return;
       }
     }
@@ -869,7 +869,7 @@ export function createMessageHandler(adapter, opts) {
     if (session.processing) {
       session.queue.push(text);
       if (verbose)
-        console.log(`Queued message from ${senderId} (${session.queue.length} in queue)`);
+        console.debug(`Queued message from ${senderId} (${session.queue.length} in queue)`);
       return;
     }
 
@@ -1059,7 +1059,7 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
     // Persist session after agent updates sessionId/agent
     if (persistSession) persistSession(senderId, session);
 
-    console.log(
+    console.debug(
       `[${new Date().toISOString()}] Replied to ${senderId} (${finalResponse.length} chars, agent: ${result.agent})`,
     );
   } catch (err) {

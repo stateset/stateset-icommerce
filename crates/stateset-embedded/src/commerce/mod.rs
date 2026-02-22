@@ -64,3 +64,11 @@ pub struct Commerce {
     #[cfg(all(feature = "sqlite", feature = "vector"))]
     sqlite_db: Option<Arc<SqliteDatabase>>,
 }
+
+impl std::fmt::Debug for Commerce {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Commerce")
+            .field("backend", &self.backend)
+            .finish_non_exhaustive()
+    }
+}

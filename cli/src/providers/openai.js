@@ -8,7 +8,7 @@
  * Requires: OPENAI_API_KEY environment variable
  */
 
-import { ModelProvider } from './base.js';
+import { ModelProvider, DEFAULT_MAX_TOKENS } from './base.js';
 import { PROVIDERS } from '../config.js';
 
 const API_URL = 'https://api.openai.com/v1/chat/completions';
@@ -34,7 +34,7 @@ export class OpenAIProvider extends ModelProvider {
     }
 
     const model = this.resolveModel(options.model);
-    const maxTokens = options.maxTokens || 4096;
+    const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
     const temperature = options.temperature ?? 0.7;
     const stream = options.stream || false;
 

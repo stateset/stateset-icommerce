@@ -443,23 +443,23 @@ export class AgentTelemetry extends EventEmitter {
   printSummary() {
     const summary = this.getSummary();
 
-    console.log('\n' + '─'.repeat(50));
-    console.log('📊 Agent Execution Summary');
-    console.log('─'.repeat(50));
-    console.log(`Trace ID:     ${summary.traceId}`);
-    console.log(`Duration:     ${summary.duration}ms`);
-    console.log(
+    console.info('\n' + '─'.repeat(50));
+    console.info('📊 Agent Execution Summary');
+    console.info('─'.repeat(50));
+    console.info(`Trace ID:     ${summary.traceId}`);
+    console.info(`Duration:     ${summary.duration}ms`);
+    console.info(
       `Tool Calls:   ${summary.toolCalls.total} (${summary.toolCalls.successRate} success)`,
     );
-    console.log(`Avg Latency:  ${summary.avgToolDuration}ms per tool`);
+    console.info(`Avg Latency:  ${summary.avgToolDuration}ms per tool`);
 
     if (summary.topTools.length > 0) {
-      console.log('\nTop Tools:');
+      console.info('\nTop Tools:');
       for (const tool of summary.topTools) {
-        console.log(`  • ${tool.name}: ${tool.count}x (avg ${Math.round(tool.avgMs)}ms)`);
+        console.info(`  • ${tool.name}: ${tool.count}x (avg ${Math.round(tool.avgMs)}ms)`);
       }
     }
-    console.log('─'.repeat(50) + '\n');
+    console.info('─'.repeat(50) + '\n');
   }
 
   // --------------------------------------------------------------------------
@@ -481,10 +481,10 @@ export class AgentTelemetry extends EventEmitter {
     const icon = icons[type] || 'ℹ️';
 
     if (this.outputFormat === 'json') {
-      console.log(JSON.stringify({ timestamp, type, message, ...data }));
+      console.info(JSON.stringify({ timestamp, type, message, ...data }));
     } else {
       const dataStr = Object.keys(data).length > 0 ? ` ${JSON.stringify(data)}` : '';
-      console.log(`[${timestamp}] ${icon} ${message}${dataStr}`);
+      console.info(`[${timestamp}] ${icon} ${message}${dataStr}`);
     }
   }
 

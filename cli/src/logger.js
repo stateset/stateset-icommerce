@@ -2,8 +2,10 @@
  * Structured Logging Module for StateSet CLI
  *
  * Provides structured, level-based logging with JSON output support,
- * context tracking, and performance timing.
+ * context tracking, subsystem prefixes, and performance timing.
  */
+
+import { PALETTE } from './theme.js';
 
 // Log levels with numeric priorities
 export const LOG_LEVELS = {
@@ -15,9 +17,9 @@ export const LOG_LEVELS = {
   trace: 4,
 };
 
-// ANSI color codes
+// ANSI color codes — sourced from theme palette
 const COLORS = {
-  reset: '\x1b[0m',
+  reset: PALETTE.reset,
   red: '\x1b[31m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
@@ -32,6 +34,16 @@ const LEVEL_COLORS = {
   debug: COLORS.gray,
   trace: COLORS.cyan,
 };
+
+// Rotating palette for subsystem prefix coloring
+const SUBSYSTEM_COLORS = [
+  PALETTE.accent, // blue
+  PALETTE.info, // light blue
+  '\x1b[35m', // magenta
+  PALETTE.accentBright, // bright blue
+  '\x1b[36m', // cyan
+  PALETTE.warn, // orange
+];
 
 /**
  * Logger - Structured logging with levels and context
@@ -49,6 +61,7 @@ export class Logger {
     this.context = options.context ?? {};
     this.timers = new Map();
     this.output = options.output ?? console;
+    this.subsystem = options.subsystem ?? null;
   }
 
   /**
@@ -61,6 +74,29 @@ export class Logger {
       color: this.color,
       context: { ...this.context, ...context },
       output: this.output,
+      subsystem: this.subsystem,
+    });
+  }
+
+  /**
+   * Create a child logger scoped to a subsystem.
+   *
+   * Output is prefixed with `[subsystem]` in human mode, or includes
+   * a `subsystem` field in JSON mode.  Nested calls produce
+   * `[parent/child]` prefixes.
+   *
+   * @param {string} name
+   * @returns {Logger}
+   */
+  subsystemLogger(name) {
+    const fullName = this.subsystem ? `${this.subsystem}/${name}` : name;
+    return new Logger({
+      level: Object.keys(LOG_LEVELS).find((k) => LOG_LEVELS[k] === this.level),
+      json: this.json,
+      color: this.color,
+      context: { ...this.context },
+      output: this.output,
+      subsystem: fullName,
     });
   }
 
@@ -129,6 +165,7 @@ export class Logger {
     const entry = {
       timestamp: new Date().toISOString(),
       level,
+      ...(this.subsystem ? { subsystem: this.subsystem } : {}),
       message,
       ...this.context,
       ...meta,
@@ -138,6 +175,7 @@ export class Logger {
       this.output.log(JSON.stringify(entry));
     } else {
       const levelStr = this._formatLevel(level);
+      const prefix = this._formatSubsystem();
       const timestamp = this.color
         ? `${COLORS.gray}${entry.timestamp}${COLORS.reset}`
         : entry.timestamp;
@@ -146,8 +184,25 @@ export class Logger {
           ? ` ${this.color ? COLORS.gray : ''}${JSON.stringify(meta)}${this.color ? COLORS.reset : ''}`
           : '';
 
-      this.output.log(`${timestamp} ${levelStr} ${message}${metaStr}`);
+      this.output.log(`${timestamp} ${levelStr} ${prefix}${message}${metaStr}`);
     }
+  }
+
+  /**
+   * Format subsystem prefix with deterministic color
+   * @returns {string}
+   */
+  _formatSubsystem() {
+    if (!this.subsystem) return '';
+    if (!this.color) return `[${this.subsystem}] `;
+
+    // Pick a stable color from the palette based on subsystem name hash
+    let hash = 0;
+    for (let i = 0; i < this.subsystem.length; i++) {
+      hash = ((hash << 5) - hash + this.subsystem.charCodeAt(i)) | 0;
+    }
+    const colorCode = SUBSYSTEM_COLORS[Math.abs(hash) % SUBSYSTEM_COLORS.length];
+    return `${colorCode}[${this.subsystem}]${COLORS.reset} `;
   }
 
   _formatLevel(level) {
@@ -226,6 +281,16 @@ export class ToolCallLogger {
     }
     return sanitized;
   }
+}
+
+/**
+ * Create a subsystem-scoped logger (convenience wrapper).
+ *
+ * @param {string} subsystem - e.g. 'mcp', 'gateway', 'harness'
+ * @returns {Logger}
+ */
+export function createSubsystemLogger(subsystem) {
+  return logger.subsystemLogger(subsystem);
 }
 
 export default Logger;

@@ -40,14 +40,14 @@ impl ProductError {
     /// Convenience constructor for `NotFound`.
     #[inline]
     #[track_caller]
-    pub fn not_found(id: Uuid) -> Self {
+    pub const fn not_found(id: Uuid) -> Self {
         Self::NotFound(id)
     }
 
     /// Convenience constructor for `VariantNotFound`.
     #[inline]
     #[track_caller]
-    pub fn variant_not_found(id: Uuid) -> Self {
+    pub const fn variant_not_found(id: Uuid) -> Self {
         Self::VariantNotFound(id)
     }
 

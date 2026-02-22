@@ -1,0 +1,23 @@
+[package]
+name = "stateset-jobs"
+description = "Background job scheduler for StateSet iCommerce — cron, interval, and event-driven job execution with retry and backoff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["commerce", "jobs", "scheduler", "background", "cron"]
+categories = ["asynchronous"]
+
+[dependencies]
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util"] }
+
+[lints]
+workspace = true

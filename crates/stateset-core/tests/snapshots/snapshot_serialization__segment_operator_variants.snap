@@ -1,0 +1,17 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+expression: variants
+---
+[
+  "eq",
+  "neq",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "contains",
+  "in",
+  "between",
+  "starts_with",
+  "ends_with"
+]

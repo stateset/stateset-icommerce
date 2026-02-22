@@ -12,6 +12,13 @@ import { PROVIDERS } from '../config.js';
 import { resolveProviderApiKey } from '../credentials.js';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/** Default maximum output tokens for chat completions */
+export const DEFAULT_MAX_TOKENS = 4096;
+
+// ============================================================================
 // ModelProvider Base Class
 // ============================================================================
 

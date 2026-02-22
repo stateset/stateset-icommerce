@@ -173,7 +173,7 @@ export class EventBridge {
           };
 
           if (this._verbose) {
-            console.log(
+            console.debug(
               `[EventBridge] ${eventName} → ${notification.type}: ${notification.message.slice(0, 80)}`,
             );
           }
@@ -189,7 +189,7 @@ export class EventBridge {
     }
 
     if (this._verbose) {
-      console.log(`[EventBridge] Listening for ${this._listeners.length} event types`);
+      console.debug(`[EventBridge] Listening for ${this._listeners.length} event types`);
     }
   }
 

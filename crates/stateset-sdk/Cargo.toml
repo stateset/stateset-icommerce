@@ -1,0 +1,35 @@
+[package]
+name = "stateset-sdk"
+description = "Unified SDK facade for StateSet iCommerce — re-exports all crates with feature-gated includes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["commerce", "sdk", "stateset"]
+categories = ["api-bindings"]
+
+[dependencies]
+# Always included (core)
+stateset-primitives = { workspace = true }
+stateset-core = { workspace = true }
+stateset-db = { workspace = true }
+stateset-embedded = { workspace = true }
+stateset-observability = { workspace = true }
+
+# Feature-gated
+stateset-crypto = { workspace = true, optional = true }
+stateset-policy = { workspace = true, optional = true }
+stateset-macros = { workspace = true, optional = true }
+
+[features]
+default = ["core"]
+core = []
+full = ["crypto", "policy", "macros"]
+crypto = ["dep:stateset-crypto"]
+policy = ["dep:stateset-policy"]
+macros = ["dep:stateset-macros"]
+
+[lints]
+workspace = true

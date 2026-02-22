@@ -16,9 +16,9 @@ export const agentCardTools = [
     description:
       'Register an AI agent card for A2A commerce. Advertises capabilities, supported networks, and payment assets.',
     inputSchema: {
-      name: z.string().describe('Agent name'),
-      walletAddress: z.string().describe('Agent wallet address for receiving payments'),
-      publicKey: z.string().describe('Ed25519 public key for verifying signatures'),
+      name: z.string().min(1).describe('Agent name'),
+      walletAddress: z.string().min(1).describe('Agent wallet address for receiving payments'),
+      publicKey: z.string().min(1).describe('Ed25519 public key for verifying signatures'),
       supportedNetworks: z
         .array(z.string())
         .optional()
@@ -160,7 +160,7 @@ export const agentCardTools = [
     name: 'verify_agent',
     description: 'Verify an AI agent card (admin operation). Upgrades trust level to Verified.',
     inputSchema: {
-      agentId: z.string().describe('Agent ID to verify'),
+      agentId: z.string().min(1).describe('Agent ID to verify'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

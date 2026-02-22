@@ -235,17 +235,27 @@ function getApiKeyStatus(provider) {
 
 // Interactive API key setup
 async function setApiKey(provider, output) {
-  const readline = await import('node:readline');
-
-  const config = API_KEY_PROVIDERS[provider];
-  if (!config) {
+  const providerConfig = API_KEY_PROVIDERS[provider];
+  if (!providerConfig) {
     console.error(`Unknown provider: ${provider}`);
     console.error(`Available providers: ${Object.keys(API_KEY_PROVIDERS).join(', ')}`);
     process.exit(1);
   }
 
-  console.log(`\n${output.bold(`Set up ${config.name} API Key`)}`);
-  console.log(output.dim(`${config.description}\n`));
+  // Try @clack for beautiful prompts, fall back to readline
+  let ui = null;
+  if (process.stdin.isTTY) {
+    try {
+      ui = await import('../src/ui.js');
+    } catch {
+      // @clack not available — use readline below
+    }
+  }
+
+  const { theme: t } = await import('../src/theme.js');
+
+  console.log(`\n${output.bold(`Set up ${providerConfig.name} API Key`)}`);
+  console.log(output.dim(`${providerConfig.description}\n`));
 
   // Check current status
   const status = getApiKeyStatus(provider);
@@ -253,45 +263,46 @@ async function setApiKey(provider, output) {
     console.log(output.yellow(`Current key: ${maskApiKey(status.value)} (from ${status.source})`));
   }
 
-  console.log(`Get your API key from: ${output.cyan(config.getKeyUrl)}\n`);
+  console.log(`Get your API key from: ${output.cyan(providerConfig.getKeyUrl)}\n`);
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(`Enter your ${config.name} API key: `, (apiKey) => {
-      rl.close();
-
-      apiKey = apiKey.trim();
-
-      if (!apiKey) {
-        console.log(output.yellow('\nNo key entered. Skipping.'));
-        resolve(false);
-        return;
-      }
-
-      // Validate prefix if specified
-      if (config.prefix && !apiKey.startsWith(config.prefix)) {
-        console.log(
-          output.yellow(`\nWarning: Key doesn't start with expected prefix '${config.prefix}'`),
-        );
-      }
-
-      // Save to .env file
-      const envFile = loadEnvFile();
-      envFile[config.envVar] = apiKey;
-      saveEnvFile(envFile);
-
-      console.log(output.green(`\n✓ API key saved to ~/.stateset/.env`));
-      console.log(output.green(`✓ Ready to use! The CLI will automatically load your key.\n`));
-      console.log(`Try it now:`);
-      console.log(output.cyan(`  stateset "show me all customers"`));
-
-      resolve(true);
+  let apiKey = '';
+  if (ui) {
+    apiKey = await ui.password(`Enter your ${providerConfig.name} API key`);
+  } else {
+    // Readline fallback for non-TTY or missing @clack
+    const readline = await import('node:readline');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    apiKey = await new Promise((resolve) => {
+      rl.question(`Enter your ${providerConfig.name} API key: `, (answer) => {
+        rl.close();
+        resolve(answer.trim());
+      });
     });
-  });
+  }
+
+  if (!apiKey) {
+    console.log(output.yellow('\nNo key entered. Skipping.'));
+    return false;
+  }
+
+  // Validate prefix if specified
+  if (providerConfig.prefix && !apiKey.startsWith(providerConfig.prefix)) {
+    console.log(
+      output.yellow(`\nWarning: Key doesn't start with expected prefix '${providerConfig.prefix}'`),
+    );
+  }
+
+  // Save to .env file
+  const envFile = loadEnvFile();
+  envFile[providerConfig.envVar] = apiKey;
+  saveEnvFile(envFile);
+
+  console.log(t.success(`\n✓ API key saved to ~/.stateset/.env`));
+  console.log(t.success(`✓ Ready to use! The CLI will automatically load your key.\n`));
+  console.log(`Try it now:`);
+  console.log(t.accent(`  stateset "show me all customers"`));
+
+  return true;
 }
 
 // Show all configured API keys
@@ -387,7 +398,22 @@ async function main() {
 
   switch (command) {
     case 'set-key': {
-      const provider = args[0] || 'anthropic';
+      let provider = args[0];
+      if (!provider && process.stdin.isTTY) {
+        // Interactive provider selection via @clack
+        try {
+          const ui = await import('../src/ui.js');
+          provider = await ui.select('Which API key do you want to configure?', [
+            { value: 'anthropic', label: 'Anthropic (Claude)', hint: 'Required' },
+            { value: 'openai', label: 'OpenAI', hint: 'Optional' },
+            { value: 'gemini', label: 'Google Gemini', hint: 'Optional' },
+          ]);
+        } catch {
+          provider = 'anthropic';
+        }
+      } else {
+        provider = provider || 'anthropic';
+      }
       await setApiKey(provider, output);
       break;
     }
@@ -498,20 +524,95 @@ async function main() {
         }
         process.exit(1);
       }
+
+      // Known config keys with validation rules
+      const KNOWN_CONFIG_KEYS = {
+        db: 'string',
+        model: 'string',
+        provider: 'string',
+        apply: 'boolean',
+        verbose: 'boolean',
+        memory: 'boolean',
+        stream: 'boolean',
+        think: 'string',
+        format: 'string',
+        budget: 'string',
+      };
+
+      // Warn on unknown keys (non-breaking — still saves)
+      if (!(key in KNOWN_CONFIG_KEYS)) {
+        if (!values.json) {
+          console.warn(
+            `Warning: '${key}' is not a recognized config key. Known keys: ${Object.keys(KNOWN_CONFIG_KEYS).join(', ')}`,
+          );
+        }
+      }
+
       const profileName = values.profile || config.defaultProfile || 'default';
       const profile = loadProfile(profileName);
 
-      // Parse booleans
+      // Parse and validate by type
       let parsedValue = value;
-      if (value === 'true') parsedValue = true;
-      else if (value === 'false') parsedValue = false;
+      const keyType = KNOWN_CONFIG_KEYS[key];
+
+      if (keyType === 'boolean') {
+        const lower = value.toLowerCase();
+        const truthyValues = ['true', 'yes', '1', 'on'];
+        const falsyValues = ['false', 'no', '0', 'off'];
+        if (truthyValues.includes(lower)) {
+          parsedValue = true;
+        } else if (falsyValues.includes(lower)) {
+          parsedValue = false;
+        } else {
+          await emitError(
+            `Error: '${key}' expects a boolean value (true/false, yes/no, 1/0, on/off)`,
+          );
+          process.exit(1);
+        }
+      } else if (value === 'true') {
+        parsedValue = true;
+      } else if (value === 'false') {
+        parsedValue = false;
+      }
+
+      // Key-specific validation (warnings, not errors)
+      if (key === 'db' && parsedValue !== ':memory:' && !values.json) {
+        const dir = path.dirname(path.resolve(String(parsedValue)));
+        if (!fs.existsSync(dir)) {
+          console.warn(
+            `Warning: Directory '${dir}' does not exist. Create it with: mkdir -p ${dir}`,
+          );
+        }
+      }
+      if (key === 'provider' && !values.json) {
+        const known = ['claude', 'openai', 'gemini', 'ollama'];
+        if (!known.includes(parsedValue)) {
+          console.warn(
+            `Warning: Unknown provider '${parsedValue}'. Known providers: ${known.join(', ')}`,
+          );
+        }
+      }
+      if (key === 'think' && !values.json) {
+        const levels = ['off', 'low', 'medium', 'high'];
+        if (!levels.includes(parsedValue)) {
+          console.warn(
+            `Warning: Unknown think level '${parsedValue}'. Valid: ${levels.join(', ')}`,
+          );
+        }
+      }
+      if (key === 'format' && !values.json) {
+        const fmts = ['table', 'json', 'csv', 'yaml'];
+        if (!fmts.includes(parsedValue)) {
+          console.warn(`Warning: Unknown format '${parsedValue}'. Valid: ${fmts.join(', ')}`);
+        }
+      }
 
       profile[key] = parsedValue;
       saveProfile(profileName, profile);
       if (values.json) {
         await writeJson({ profile: profileName, key, value: parsedValue });
       } else {
-        console.log(output.green(`✓ Set ${key}=${value} in profile '${profileName}'`));
+        console.log(output.green(`✓ Set ${key}=${parsedValue} in profile '${profileName}'`));
       }
       break;
     }

@@ -49,8 +49,7 @@ use stateset_core::{
     AgentCard, AgentCardFilter, CreateAgentCard, CreateX402PaymentIntent, Result,
     SignX402PaymentIntent, TrustLevel, UpdateAgentCard, X402Asset, X402CreditAccount,
     X402CreditAdjustment, X402CreditDirection, X402CreditTransaction, X402CreditTransactionFilter,
-    A2APurchase, A2APurchaseFilter, CreateA2APurchase, CreateA2AQuote, PurchaseStatus, QuotedItem,
-    QuoteStatus,
+    A2APurchase, A2APurchaseFilter, CreateA2APurchase, CreateA2AQuote, PurchaseStatus, QuoteStatus,
     SkillQuote, SkillQuoteFilter, X402IntentStatus, X402Network, X402PaymentIntent,
     X402PaymentIntentFilter,
 };
@@ -64,6 +63,12 @@ use uuid::Uuid;
 /// as well as agent card management for AI agent commerce.
 pub struct X402 {
     db: Arc<dyn Database>,
+}
+
+impl std::fmt::Debug for X402 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("X402").finish_non_exhaustive()
+    }
 }
 
 impl X402 {
@@ -621,7 +626,7 @@ impl X402 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stateset_core::{A2ASkill, ItemAvailability};
+    use stateset_core::{A2ASkill, ItemAvailability, QuotedItem};
 
     fn setup_commerce() -> crate::Commerce {
         crate::Commerce::in_memory().unwrap()

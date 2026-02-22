@@ -16,7 +16,7 @@ export const inventoryTools = [
     description:
       'Get current stock level for a SKU. Shows on-hand, allocated, and available quantities.',
     inputSchema: {
-      sku: z.string().describe('Product SKU'),
+      sku: z.string().min(1).describe('Product SKU'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -44,11 +44,17 @@ export const inventoryTools = [
     name: 'create_inventory_item',
     description: 'Create a new inventory item for a SKU.',
     inputSchema: {
-      sku: z.string().describe('Product SKU'),
-      name: z.string().describe('Item name'),
+      sku: z.string().min(1).describe('Product SKU'),
+      name: z.string().min(1).describe('Item name'),
       description: z.string().optional().describe('Item description'),
-      initialQuantity: z.number().optional().default(0).describe('Initial stock quantity'),
-      reorderPoint: z.number().optional().describe('Reorder point threshold'),
+      initialQuantity: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .default(0)
+        .describe('Initial stock quantity'),
+      reorderPoint: z.number().int().min(0).optional().describe('Reorder point threshold'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -79,10 +85,14 @@ export const inventoryTools = [
     description:
       'Adjust inventory quantity for a SKU. Use positive numbers to add stock, negative to remove.',
     inputSchema: {
-      sku: z.string().describe('Product SKU'),
-      quantity: z.number().describe('Quantity adjustment (positive to add, negative to subtract)'),
+      sku: z.string().min(1).describe('Product SKU'),
+      quantity: z
+        .number()
+        .int()
+        .describe('Quantity adjustment (positive to add, negative to subtract)'),
       reason: z
         .string()
+        .min(1)
         .describe('Reason for adjustment (e.g., "Received shipment", "Damaged goods")'),
     },
     permission: 'write',
@@ -124,11 +134,16 @@ export const inventoryTools = [
     description:
       'Reserve inventory for an order. Reserved stock is allocated but not yet deducted.',
     inputSchema: {
-      sku: z.string().describe('Product SKU'),
-      quantity: z.number().describe('Quantity to reserve'),
-      referenceType: z.string().describe('Reference type (e.g., "order", "transfer")'),
-      referenceId: z.string().describe('Reference ID (e.g., order ID)'),
-      expiresInSeconds: z.number().optional().describe('Reservation expiry in seconds'),
+      sku: z.string().min(1).describe('Product SKU'),
+      quantity: z.number().int().min(1).describe('Quantity to reserve'),
+      referenceType: z.string().min(1).describe('Reference type (e.g., "order", "transfer")'),
+      referenceId: z.string().min(1).describe('Reference ID (e.g., order ID)'),
+      expiresInSeconds: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Reservation expiry in seconds'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -164,7 +179,7 @@ export const inventoryTools = [
     name: 'confirm_reservation',
     description: 'Confirm an inventory reservation, deducting the reserved quantity from stock.',
     inputSchema: {
-      reservationId: z.string().describe('Reservation ID'),
+      reservationId: z.string().min(1).describe('Reservation ID'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -192,7 +207,7 @@ export const inventoryTools = [
     description:
       'Release an inventory reservation, returning the reserved quantity to available stock.',
     inputSchema: {
-      reservationId: z.string().describe('Reservation ID'),
+      reservationId: z.string().min(1).describe('Reservation ID'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

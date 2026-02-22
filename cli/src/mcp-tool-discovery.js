@@ -347,6 +347,60 @@ export class ToolDiscoveryEngine {
   }
 
   /**
+   * Register tools from ALL_TOOL_DEFS-style array (name + description + optional metadata)
+   */
+  registerFromToolDefs(toolDefs) {
+    for (const tool of toolDefs) {
+      if (tool?.name && tool?.description) {
+        this.registerTool(tool.name, {
+          name: tool.name,
+          description: tool.description,
+          category: tool.policyDomain || 'general',
+          purpose: tool.description,
+          whenToUse: tool.description,
+          inputSchema: tool.inputSchema,
+          permission: tool.permission,
+        });
+      }
+    }
+  }
+
+  /**
+   * Discover tools matching a natural language intent query.
+   * Searches both the intent mapping and the full tool registry by keyword.
+   */
+  discover(intent, limit = 5) {
+    const results = [];
+    const seen = new Set();
+
+    // First, try exact intent key match
+    const mapped = this.discoverToolsByIntent(intent);
+    for (const name of mapped) {
+      if (!seen.has(name)) {
+        seen.add(name);
+        const tool = this.toolRegistry.get(name);
+        results.push(
+          tool ? { name, description: tool.description, category: tool.category } : { name },
+        );
+      }
+    }
+
+    // Then keyword search across registry
+    if (results.length < limit) {
+      const keywordMatches = this.searchTools(intent);
+      for (const match of keywordMatches) {
+        if (!seen.has(match.name)) {
+          seen.add(match.name);
+          results.push(match);
+        }
+        if (results.length >= limit) break;
+      }
+    }
+
+    return results.slice(0, limit);
+  }
+
+  /**
    * Export tool registry as JSON for external tools
    */
   exportRegistry() {

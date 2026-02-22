@@ -10,6 +10,22 @@ import { SequencerClient } from './client.js';
 
 // Lazy-load gRPC client to make it optional
 let GrpcSequencerClient = null;
+const ALLOWED_SEQUENCER_PROTOCOLS = new Set(['grpc:', 'grpcs:', 'http:', 'https:']);
+
+function parseSequencerUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) {
+    throw new Error('Sequencer URL must be a non-empty string');
+  }
+
+  const parsed = new URL(url.trim());
+  if (!ALLOWED_SEQUENCER_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(`Unsupported sequencer protocol: ${parsed.protocol}`);
+  }
+  if (!parsed.hostname) {
+    throw new Error('Sequencer URL must include a host');
+  }
+  return parsed;
+}
 
 /**
  * Check if gRPC is available
@@ -44,7 +60,7 @@ async function loadGrpcClient() {
  * @returns {'grpc' | 'rest'}
  */
 function getTransportType(url) {
-  const parsed = new URL(url);
+  const parsed = parseSequencerUrl(url);
   if (parsed.protocol === 'grpc:' || parsed.protocol === 'grpcs:') {
     return 'grpc';
   }
@@ -111,7 +127,12 @@ export class UnifiedSequencerClient extends EventEmitter {
    * @returns {Promise<void>}
    */
   async connect() {
-    const requestedTransport = getTransportType(this.config.sequencerUrl);
+    let requestedTransport;
+    try {
+      requestedTransport = getTransportType(this.config.sequencerUrl);
+    } catch (error) {
+      throw new Error(`Invalid sequencer URL: ${error.message}`);
+    }
 
     // Check if gRPC is available
     if (this._grpcAvailable === null) {
@@ -139,7 +160,7 @@ export class UnifiedSequencerClient extends EventEmitter {
     const GrpcClient = await loadGrpcClient();
 
     // Parse URL for gRPC
-    const url = new URL(this.config.sequencerUrl);
+    const url = parseSequencerUrl(this.config.sequencerUrl);
     const host = url.port ? `${url.hostname}:${url.port}` : `${url.hostname}:50051`;
 
     const creds = this.config.getCredentials();

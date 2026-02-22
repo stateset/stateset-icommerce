@@ -1,0 +1,9 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+expression: variants
+---
+[
+  "accept",
+  "review",
+  "reject"
+]

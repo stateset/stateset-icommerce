@@ -39,6 +39,17 @@ mod work_orders;
 mod x402_credits;
 mod x402_payment_intents;
 mod a2a;
+mod fraud;
+mod gift_cards;
+mod loyalty;
+mod reviews;
+mod rewards;
+mod search_configs;
+mod segments;
+mod shipping_zones;
+mod store_credits;
+mod wishlists;
+mod zone_shipping_methods;
 
 #[cfg(feature = "vector")]
 mod vector;
@@ -83,6 +94,17 @@ pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
 pub use a2a::*;
+pub use fraud::*;
+pub use gift_cards::*;
+pub use loyalty::*;
+pub use reviews::*;
+pub use rewards::*;
+pub use search_configs::*;
+pub use segments::*;
+pub use shipping_zones::*;
+pub use store_credits::*;
+pub use wishlists::*;
+pub use zone_shipping_methods::*;
 
 use crate::DatabaseConfig;
 use crate::migrations;
@@ -371,6 +393,61 @@ impl SqliteDatabase {
     /// Get agent validation repository (ERC-8004)
     pub fn agent_validation(&self) -> SqliteAgentValidationRepository {
         SqliteAgentValidationRepository::new(self.pool.clone())
+    }
+
+    /// Get gift card repository
+    pub fn gift_cards(&self) -> SqliteGiftCardRepository {
+        SqliteGiftCardRepository::new(self.pool.clone())
+    }
+
+    /// Get store credit repository
+    pub fn store_credits(&self) -> SqliteStoreCreditRepository {
+        SqliteStoreCreditRepository::new(self.pool.clone())
+    }
+
+    /// Get customer segment repository
+    pub fn segments(&self) -> SqliteSegmentRepository {
+        SqliteSegmentRepository::new(self.pool.clone())
+    }
+
+    /// Get shipping zone repository
+    pub fn shipping_zones(&self) -> SqliteShippingZoneRepository {
+        SqliteShippingZoneRepository::new(self.pool.clone())
+    }
+
+    /// Get zone shipping method repository
+    pub fn zone_shipping_methods(&self) -> SqliteZoneShippingMethodRepository {
+        SqliteZoneShippingMethodRepository::new(self.pool.clone())
+    }
+
+    /// Get product review repository
+    pub fn reviews(&self) -> SqliteReviewRepository {
+        SqliteReviewRepository::new(self.pool.clone())
+    }
+
+    /// Get wishlist repository
+    pub fn wishlists(&self) -> SqliteWishlistRepository {
+        SqliteWishlistRepository::new(self.pool.clone())
+    }
+
+    /// Get loyalty program repository
+    pub fn loyalty_programs(&self) -> SqliteLoyaltyProgramRepository {
+        SqliteLoyaltyProgramRepository::new(self.pool.clone())
+    }
+
+    /// Get reward catalog repository
+    pub fn rewards(&self) -> SqliteRewardRepository {
+        SqliteRewardRepository::new(self.pool.clone())
+    }
+
+    /// Get fraud detection repository
+    pub fn fraud(&self) -> SqliteFraudRepository {
+        SqliteFraudRepository::new(self.pool.clone())
+    }
+
+    /// Get search configuration repository
+    pub fn search_configs(&self) -> SqliteSearchConfigRepository {
+        SqliteSearchConfigRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

@@ -1,0 +1,34 @@
+[package]
+name = "stateset-policy"
+description = "Declarative policy engine for StateSet iCommerce — conditions, rules, deny-overrides, and explainable denials"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["commerce", "policy", "rules-engine", "access-control"]
+categories = ["algorithms"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+regex = "1"
+tracing = "0.1"
+
+# Optional YAML support
+serde_yaml = { version = "0.9", optional = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+tempfile = "3.10"
+
+[features]
+default = ["yaml"]
+yaml = ["dep:serde_yaml"]
+
+[lints]
+workspace = true

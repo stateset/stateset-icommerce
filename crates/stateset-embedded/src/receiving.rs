@@ -43,6 +43,12 @@ pub struct Receiving {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for Receiving {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Receiving").finish_non_exhaustive()
+    }
+}
+
 impl Receiving {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
@@ -135,7 +141,7 @@ impl Receiving {
         self.db.receiving().delete_receipt(id)
     }
 
-    /// Start receiving goods (transition from 'expected' to 'in_progress').
+    /// Start receiving goods (transition from 'expected' to '`in_progress`').
     ///
     /// Call this when goods arrive and receiving process begins.
     pub fn start_receiving(&self, id: Uuid) -> Result<Receipt> {

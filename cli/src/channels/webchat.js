@@ -611,7 +611,7 @@ export function startWebChatChannel(config = {}) {
   const sessionManager = createSessionManager({ store: sessionStore, channel: 'webchat' });
   const cleanupHandle = sessionManager.startCleanup();
 
-  console.log('[WebChat] Channel initialised.');
+  console.info('[WebChat] Channel initialised.');
 
   // ── Cached HTML ──
   const chatHTML = buildChatHTML();
@@ -675,7 +675,7 @@ export function startWebChatChannel(config = {}) {
     pushMessage(sessionId, 'user', trimmed);
 
     if (verbose) {
-      console.log(`[WebChat] ${sessionId}: ${trimmed.slice(0, 120)}`);
+      console.debug(`[WebChat] ${sessionId}: ${trimmed.slice(0, 120)}`);
     }
 
     // 1. Check bot commands first
@@ -718,7 +718,7 @@ export function startWebChatChannel(config = {}) {
       sessionManager.persistSession(sessionId, session);
 
       if (verbose) {
-        console.log(
+        console.debug(
           `[WebChat] Replied to ${sessionId} (${response.length} chars, agent: ${result.agent})`,
         );
       }
@@ -777,7 +777,7 @@ export function startWebChatChannel(config = {}) {
   function shutdown() {
     sessionManager.stopCleanup(cleanupHandle);
     conversationHistory.clear();
-    console.log('[WebChat] Channel shut down.');
+    console.info('[WebChat] Channel shut down.');
   }
 
   return { getRoutes, shutdown };

@@ -47,6 +47,12 @@ pub struct WorkOrders {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for WorkOrders {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkOrders").finish_non_exhaustive()
+    }
+}
+
 impl WorkOrders {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
@@ -101,7 +107,7 @@ impl WorkOrders {
 
     /// Start a work order.
     ///
-    /// Transitions the work order from Planned to InProgress and records the actual start time.
+    /// Transitions the work order from Planned to `InProgress` and records the actual start time.
     ///
     /// # Example
     ///
@@ -123,7 +129,7 @@ impl WorkOrders {
     /// Complete a work order with the quantity produced.
     ///
     /// If the quantity meets or exceeds the target, the order is marked as Completed.
-    /// Otherwise, it's marked as PartiallyCompleted.
+    /// Otherwise, it's marked as `PartiallyCompleted`.
     ///
     /// # Example
     ///

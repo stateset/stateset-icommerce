@@ -12,7 +12,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// A lot/batch of inventory items
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lot {
     pub id: Uuid,
     pub lot_number: String,
@@ -37,7 +37,8 @@ pub struct Lot {
 }
 
 /// Status of a lot
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum LotStatus {
@@ -63,20 +64,6 @@ impl Default for LotStatus {
     }
 }
 
-impl std::fmt::Display for LotStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Active => write!(f, "active"),
-            Self::Quarantine => write!(f, "quarantine"),
-            Self::Expired => write!(f, "expired"),
-            Self::Consumed => write!(f, "consumed"),
-            Self::OnHold => write!(f, "on_hold"),
-            Self::Recalled => write!(f, "recalled"),
-            Self::Scrapped => write!(f, "scrapped"),
-        }
-    }
-}
-
 impl std::str::FromStr for LotStatus {
     type Err = String;
 
@@ -99,7 +86,7 @@ impl std::str::FromStr for LotStatus {
 // ============================================================================
 
 /// Transaction record for lot movements
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LotTransaction {
     pub id: Uuid,
     pub lot_id: Uuid,
@@ -278,7 +265,7 @@ impl std::str::FromStr for CertificateType {
 // ============================================================================
 
 /// Inventory of a lot at a specific location
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LotLocation {
     pub lot_id: Uuid,
     pub location_id: i32,
@@ -291,7 +278,7 @@ pub struct LotLocation {
 // ============================================================================
 
 /// Result of a traceability query
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceabilityResult {
     pub lot: Lot,
     /// Upstream trace - where did this lot come from
@@ -301,7 +288,7 @@ pub struct TraceabilityResult {
 }
 
 /// A node in the traceability chain
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceNode {
     pub node_type: TraceNodeType,
     pub node_id: Uuid,

@@ -116,9 +116,9 @@ export const taxTools = [
       items: z
         .array(
           z.object({
-            id: z.string().describe('Line item identifier'),
-            unitPrice: z.number().describe('Unit price per item'),
-            quantity: z.number().describe('Quantity of items'),
+            id: z.string().min(1).describe('Line item identifier'),
+            unitPrice: z.number().positive().describe('Unit price per item'),
+            quantity: z.number().int().positive().describe('Quantity of items'),
             taxCategory: z
               .string()
               .optional()
@@ -131,7 +131,7 @@ export const taxTools = [
         .describe('Line items to calculate tax for'),
       shippingAddress: z
         .object({
-          country: z.string().describe('Country code (e.g., US, DE, CA)'),
+          country: z.string().min(1).describe('Country code (e.g., US, DE, CA)'),
           state: z.string().optional().describe('State/Province code (e.g., CA, TX, ON)'),
           city: z.string().optional().describe('City name'),
           postalCode: z.string().optional().describe('Postal/ZIP code'),
@@ -191,7 +191,7 @@ export const taxTools = [
     name: 'get_tax_rate',
     description: 'Get the effective tax rate for a shipping address and product category.',
     inputSchema: {
-      country: z.string().describe('Country code (e.g., US, DE, CA)'),
+      country: z.string().min(1).describe('Country code (e.g., US, DE, CA)'),
       state: z.string().optional().describe('State/Province code (e.g., CA, TX, ON)'),
       city: z.string().optional().describe('City name'),
       taxCategory: z
@@ -316,7 +316,7 @@ export const taxTools = [
   {
     name: 'get_us_state_tax_info',
     description: 'Get pre-configured US state sales tax information including rates and rules.',
-    inputSchema: { stateCode: z.string().describe('US state code (e.g., CA, TX, NY)') },
+    inputSchema: { stateCode: z.string().min(1).describe('US state code (e.g., CA, TX, NY)') },
     permission: 'read',
     handler: async ({ params }) => {
       const { stateCode } = params;
@@ -335,7 +335,7 @@ export const taxTools = [
   {
     name: 'get_customer_tax_exemptions',
     description: 'Get active tax exemptions for a customer.',
-    inputSchema: { customerId: z.string().describe('Customer ID') },
+    inputSchema: { customerId: z.string().min(1).describe('Customer ID') },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { customerId } = params;
@@ -359,9 +359,10 @@ export const taxTools = [
     name: 'create_tax_exemption',
     description: 'Create a tax exemption certificate for a customer.',
     inputSchema: {
-      customerId: z.string().describe('Customer ID'),
+      customerId: z.string().min(1).describe('Customer ID'),
       exemptionType: z
         .string()
+        .min(1)
         .describe(
           'Type: resale, non_profit, government, educational, religious, medical, manufacturing, agricultural, export, diplomatic',
         ),
@@ -406,7 +407,7 @@ export const taxTools = [
     name: 'calculate_cart_tax',
     description:
       'Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals.',
-    inputSchema: { cartId: z.string().describe('Cart ID to calculate tax for') },
+    inputSchema: { cartId: z.string().min(1).describe('Cart ID to calculate tax for') },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { cartId } = params;

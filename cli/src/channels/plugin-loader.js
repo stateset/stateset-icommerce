@@ -128,30 +128,61 @@ export function discoverPlugins(opts = {}) {
   // 5. Config-declared plugins (explicit paths)
   for (const [id, entry] of Object.entries(configEntries)) {
     if (seenIds.has(id)) continue;
+    if (!entry || typeof entry.path !== 'string' || !entry.path.trim()) {
+      console.warn(`[PluginLoader] Config plugin "${id}" has invalid path`);
+      continue;
+    }
 
-    const pluginPath = path.resolve(entry.path);
+    let pluginPath;
+    try {
+      pluginPath = path.resolve(entry.path.trim());
+    } catch (err) {
+      console.warn(
+        `[PluginLoader] Invalid config plugin "${id}" path "${entry.path}":`,
+        err.message,
+      );
+      continue;
+    }
     if (!fs.existsSync(pluginPath)) {
       console.warn(`[PluginLoader] Config plugin "${id}" path not found: ${pluginPath}`);
       continue;
     }
 
-    const stat = fs.statSync(pluginPath);
+    let stat;
+    try {
+      stat = fs.statSync(pluginPath);
+    } catch (err) {
+      console.warn(
+        `[PluginLoader] Cannot access plugin "${id}" path "${pluginPath}":`,
+        err.message,
+      );
+      continue;
+    }
+
     const dirPath = stat.isDirectory() ? pluginPath : path.dirname(pluginPath);
 
     const result = readManifest(dirPath);
     if (result.found && result.manifest) {
-      seenIds.add(result.manifest.id);
-      discovered.push({
-        id: result.manifest.id,
-        origin: PLUGIN_ORIGINS.CONFIG,
-        dirPath,
-        entryPath: path.resolve(dirPath, result.manifest.entry),
-        manifest: result.manifest,
-        warnings: result.warnings || [],
-      });
+      try {
+        const entryPath = resolvePluginEntryPath(dirPath, result.manifest.entry);
+        seenIds.add(result.manifest.id);
+        discovered.push({
+          id: result.manifest.id,
+          origin: PLUGIN_ORIGINS.CONFIG,
+          dirPath,
+          entryPath,
+          manifest: result.manifest,
+          warnings: result.warnings || [],
+        });
+      } catch (error) {
+        console.warn(
+          `[PluginLoader] Invalid manifest entry in ${path.resolve(dirPath, result.manifest.entry)}:`,
+          error.message,
+        );
+      }
     } else if (!result.found) {
       // Allow config entries without a manifest if the path points to a .js file
-      if (stat.isFile() && pluginPath.endsWith('.js')) {
+      if (stat.isFile() && path.extname(pluginPath).toLowerCase() === '.js') {
         seenIds.add(id);
         discovered.push({
           id,
@@ -212,14 +243,19 @@ function scanDirectory(dirPath, origin) {
     const result = readManifest(pluginDir);
 
     if (result.found && result.manifest) {
-      plugins.push({
-        id: result.manifest.id,
-        origin,
-        dirPath: pluginDir,
-        entryPath: path.resolve(pluginDir, result.manifest.entry),
-        manifest: result.manifest,
-        warnings: result.warnings || [],
-      });
+      try {
+        const entryPath = resolvePluginEntryPath(pluginDir, result.manifest.entry);
+        plugins.push({
+          id: result.manifest.id,
+          origin,
+          dirPath: pluginDir,
+          entryPath,
+          manifest: result.manifest,
+          warnings: result.warnings || [],
+        });
+      } catch (error) {
+        console.warn(`[PluginLoader] Invalid manifest entry in ${pluginDir}:`, error.message);
+      }
     } else if (result.found && result.errors) {
       console.warn(`[PluginLoader] Invalid manifest in ${pluginDir}:`, result.errors);
     }
@@ -227,6 +263,39 @@ function scanDirectory(dirPath, origin) {
   }
 
   return plugins;
+}
+
+/**
+ * Resolve and validate a plugin entry path.
+ * Prevents manifest path traversal so entries cannot escape plugin directory.
+ *
+ * @param {string} pluginDir
+ * @param {string} entry
+ * @returns {string}
+ */
+function resolvePluginEntryPath(pluginDir, entry) {
+  if (typeof entry !== 'string' || !entry.trim()) {
+    throw new Error('Manifest "entry" must be a non-empty string');
+  }
+
+  const rootDir = path.resolve(pluginDir);
+  const resolvedEntry = path.resolve(rootDir, entry);
+  const relative = path.relative(rootDir, resolvedEntry);
+
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Manifest entry escapes plugin directory: ${entry}`);
+  }
+
+  if (!fs.existsSync(resolvedEntry)) {
+    throw new Error(`Manifest entry not found: ${entry}`);
+  }
+
+  const stat = fs.statSync(resolvedEntry);
+  if (!stat.isFile()) {
+    throw new Error(`Manifest entry must be a file: ${entry}`);
+  }
+
+  return resolvedEntry;
 }
 
 // ============================================================================
@@ -256,7 +325,7 @@ export async function loadPlugins(plugins, opts = {}) {
     // Check if enabled
     if (configState && !configState.isEnabled(id)) {
       if (verbose) {
-        console.log(
+        console.debug(
           `[PluginLoader] Skipping disabled plugin: ${id} (${configState.getDisableReason(id)})`,
         );
       }
@@ -265,6 +334,39 @@ export async function loadPlugins(plugins, opts = {}) {
         origin,
         loaded: false,
         error: `disabled: ${configState.getDisableReason(id)}`,
+      });
+      continue;
+    }
+
+    if (!fs.existsSync(entryPath)) {
+      results.push({
+        id,
+        origin,
+        loaded: false,
+        error: `Plugin entry not found: ${entryPath}`,
+      });
+      continue;
+    }
+
+    let entryStat;
+    try {
+      entryStat = fs.statSync(entryPath);
+    } catch (err) {
+      results.push({
+        id,
+        origin,
+        loaded: false,
+        error: `Failed to access plugin entry: ${err.message}`,
+      });
+      continue;
+    }
+
+    if (!entryStat.isFile()) {
+      results.push({
+        id,
+        origin,
+        loaded: false,
+        error: `Plugin entry must be a file: ${entryPath}`,
       });
       continue;
     }
@@ -292,7 +394,7 @@ export async function loadPlugins(plugins, opts = {}) {
     // Load module
     try {
       if (verbose) {
-        console.log(`[PluginLoader] Loading ${id} from ${entryPath} (${origin})`);
+        console.debug(`[PluginLoader] Loading ${id} from ${entryPath} (${origin})`);
       }
 
       const mod = await import(entryPath);
@@ -340,11 +442,11 @@ export async function discoverAndLoadPlugins(opts = {}) {
   const discovered = discoverPlugins(opts);
 
   if (opts.verbose) {
-    console.log(
+    console.debug(
       `[PluginLoader] Discovered ${discovered.length} plugins from ${new Set(discovered.map((p) => p.origin)).size} origin(s)`,
     );
     for (const p of discovered) {
-      console.log(`  - ${p.id} (${p.origin}) v${p.manifest.version}`);
+      console.debug(`  - ${p.id} (${p.origin}) v${p.manifest.version}`);
     }
   }
 
@@ -353,7 +455,9 @@ export async function discoverAndLoadPlugins(opts = {}) {
   const loaded = results.filter((r) => r.loaded).length;
   const failed = results.filter((r) => !r.loaded).length;
 
-  console.log(`[PluginLoader] Loaded ${loaded} plugin(s)${failed > 0 ? `, ${failed} failed` : ''}`);
+  console.debug(
+    `[PluginLoader] Loaded ${loaded} plugin(s)${failed > 0 ? `, ${failed} failed` : ''}`,
+  );
 
   return { discovered, results };
 }

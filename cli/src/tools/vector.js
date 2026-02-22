@@ -16,7 +16,7 @@ export const vectorTools = [
     description:
       'Search products using natural language query with hybrid semantic + BM25 ranking. Returns products sorted by relevance score.',
     inputSchema: {
-      query: z.string().describe('Natural language search query'),
+      query: z.string().min(1).describe('Natural language search query'),
       limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
   },
@@ -25,7 +25,7 @@ export const vectorTools = [
     description:
       'Search customers using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
-      query: z.string().describe('Natural language search query'),
+      query: z.string().min(1).describe('Natural language search query'),
       limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
   },
@@ -33,7 +33,7 @@ export const vectorTools = [
     name: 'vector_search_orders',
     description: 'Search orders using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
-      query: z.string().describe('Natural language search query'),
+      query: z.string().min(1).describe('Natural language search query'),
       limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
   },
@@ -42,7 +42,7 @@ export const vectorTools = [
     description:
       'Search inventory items using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
-      query: z.string().describe('Natural language search query'),
+      query: z.string().min(1).describe('Natural language search query'),
       limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
   },
@@ -50,28 +50,28 @@ export const vectorTools = [
     name: 'vector_index_product',
     description: 'Index a single product for vector search by its ID.',
     inputSchema: {
-      product_id: z.string().describe('Product ID (UUID) to index'),
+      product_id: z.string().min(1).describe('Product ID (UUID) to index'),
     },
   },
   {
     name: 'vector_index_customer',
     description: 'Index a single customer for vector search by their ID.',
     inputSchema: {
-      customer_id: z.string().describe('Customer ID (UUID) to index'),
+      customer_id: z.string().min(1).describe('Customer ID (UUID) to index'),
     },
   },
   {
     name: 'vector_index_order',
     description: 'Index a single order for vector search by its ID.',
     inputSchema: {
-      order_id: z.string().describe('Order ID (UUID) to index'),
+      order_id: z.string().min(1).describe('Order ID (UUID) to index'),
     },
   },
   {
     name: 'vector_index_inventory',
     description: 'Index a single inventory item for vector search by its ID.',
     inputSchema: {
-      item_id: z.string().describe('Inventory item ID to index'),
+      item_id: z.string().min(1).describe('Inventory item ID to index'),
     },
   },
   {

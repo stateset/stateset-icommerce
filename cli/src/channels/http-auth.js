@@ -55,6 +55,7 @@ export const ROUTE_PERMISSIONS = {
   '/voice': { level: 'read', methods: { POST: 'write' } },
 
   // Browser (write by default, GET overridden to read)
+  '/browser/evaluate': { level: 'admin' },
   '/browser': { level: 'write', methods: { GET: 'read' } },
 
   // Memory

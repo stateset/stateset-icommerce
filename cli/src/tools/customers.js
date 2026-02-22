@@ -40,7 +40,7 @@ export const customerTools = [
     name: 'get_customer',
     description: 'Get a specific customer by ID or email address.',
     inputSchema: {
-      identifier: z.string().describe('Customer ID (UUID) or email address'),
+      identifier: z.string().min(1).describe('Customer ID (UUID) or email address'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -79,9 +79,9 @@ export const customerTools = [
     description: 'Create a new customer. Requires email, first name, and last name.',
     inputSchema: {
       email: z.string().email().describe('Customer email address'),
-      firstName: z.string().describe('Customer first name'),
-      lastName: z.string().describe('Customer last name'),
-      phone: z.string().optional().describe('Customer phone number'),
+      firstName: z.string().min(1).max(100).describe('Customer first name'),
+      lastName: z.string().min(1).max(100).describe('Customer last name'),
+      phone: z.string().max(30).optional().describe('Customer phone number'),
       acceptsMarketing: z
         .boolean()
         .optional()

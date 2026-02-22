@@ -205,7 +205,7 @@ pub struct WarehouseFilter {
 // ============================================================================
 
 /// A location within a warehouse (zone/aisle/rack/bin)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Location {
     pub id: i32,
@@ -284,7 +284,7 @@ pub struct LocationFilter {
 // ============================================================================
 
 /// Inventory at a specific location
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct LocationInventory {
     pub location_id: i32,
@@ -341,7 +341,7 @@ pub struct LocationInventoryFilter {
 // ============================================================================
 
 /// Record of inventory movement between locations
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct LocationMovement {
     pub id: Uuid,
@@ -463,5 +463,5 @@ pub struct UpdateZone {
 // Type Aliases for API compatibility
 // ============================================================================
 
-/// Alias for CreateLocation for API convenience
+/// Alias for `CreateLocation` for API convenience
 pub type CreateWarehouseLocation = CreateLocation;

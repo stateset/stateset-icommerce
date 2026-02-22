@@ -55,8 +55,8 @@ export async function startSignalGateway({
     );
   }
 
-  console.log('Starting StateSet Signal Gateway...');
-  console.log(`Connecting to signal-cli daemon at ${socketPath}...`);
+  console.info('Starting StateSet Signal Gateway...');
+  console.info(`Connecting to signal-cli daemon at ${socketPath}...`);
 
   const sessionManager = createSessionManager({ store: sessionStore, channel: 'signal' });
   const cleanupHandle = sessionManager.startCleanup();
@@ -149,7 +149,7 @@ export async function startSignalGateway({
       let buffer = '';
 
       conn.on('connect', () => {
-        console.log('Connected to signal-cli daemon. Gateway is ready for messages.');
+        console.info('Connected to signal-cli daemon. Gateway is ready for messages.');
         resolve();
       });
 
@@ -194,7 +194,7 @@ export async function startSignalGateway({
       });
 
       conn.on('close', () => {
-        console.log('Signal socket closed.');
+        console.info('Signal socket closed.');
       });
     });
   }
@@ -245,7 +245,7 @@ export async function startSignalGateway({
         console.warn('[signal] Connection destroy error:', err.message);
       }
     }
-    console.log('Signal gateway shut down.');
+    console.info('Signal gateway shut down.');
   };
 
   // Wait for first successful connection

@@ -478,7 +478,7 @@ pub mod result {
 
 impl CommerceError {
     /// Check if error is a not found error.
-    pub fn is_not_found(&self) -> bool {
+    pub const fn is_not_found(&self) -> bool {
         match self {
             Self::NotFound
             | Self::OrderNotFound(_)
@@ -503,12 +503,12 @@ impl CommerceError {
     }
 
     /// Check if error is a validation error.
-    pub fn is_validation(&self) -> bool {
+    pub const fn is_validation(&self) -> bool {
         matches!(self, Self::ValidationError(_) | Self::InvalidInput { .. })
     }
 
     /// Check if error is a conflict error.
-    pub fn is_conflict(&self) -> bool {
+    pub const fn is_conflict(&self) -> bool {
         match self {
             Self::Conflict(_)
             | Self::OptimisticLockFailure
@@ -525,12 +525,12 @@ impl CommerceError {
     }
 
     /// Check if error is a database error.
-    pub fn is_database(&self) -> bool {
+    pub const fn is_database(&self) -> bool {
         matches!(self, Self::DatabaseError(_) | Self::Database(_))
     }
 
     /// Check if error is an external service error.
-    pub fn is_external_service(&self) -> bool {
+    pub const fn is_external_service(&self) -> bool {
         matches!(self, Self::ExternalServiceError(_))
     }
 
@@ -541,7 +541,7 @@ impl CommerceError {
     /// - Pool exhaustion
     /// - Transaction failures (some)
     /// - Optimistic lock failures
-    pub fn is_retryable(&self) -> bool {
+    pub const fn is_retryable(&self) -> bool {
         match self {
             Self::OptimisticLockFailure => true,
             Self::Database(db_err) => matches!(
@@ -558,14 +558,14 @@ impl CommerceError {
     ///
     /// This is a superset of [`is_retryable`](Self::is_retryable) — it also includes
     /// external service failures which may recover after a delay.
-    pub fn is_transient(&self) -> bool {
+    pub const fn is_transient(&self) -> bool {
         self.is_retryable() || self.is_external_service()
     }
 
     /// Check if error is a client error (bad input from the caller).
     ///
     /// Client errors include not-found, validation, conflict, and permission errors.
-    pub fn is_client_error(&self) -> bool {
+    pub const fn is_client_error(&self) -> bool {
         self.is_not_found() || self.is_validation() || self.is_conflict() || self.is_not_permitted()
     }
 
@@ -573,12 +573,12 @@ impl CommerceError {
     ///
     /// Server errors include database errors, internal errors, and external service
     /// failures.
-    pub fn is_server_error(&self) -> bool {
+    pub const fn is_server_error(&self) -> bool {
         self.is_database() || matches!(self, Self::Internal(_)) || self.is_external_service()
     }
 
     /// Check if this is a permission-denied error.
-    pub fn is_not_permitted(&self) -> bool {
+    pub const fn is_not_permitted(&self) -> bool {
         matches!(self, Self::NotPermitted(_))
     }
 
@@ -597,7 +597,7 @@ impl CommerceError {
     /// let err = CommerceError::ValidationError("bad".into());
     /// assert_eq!(err.suggested_status_code(), 400);
     /// ```
-    pub fn suggested_status_code(&self) -> u16 {
+    pub const fn suggested_status_code(&self) -> u16 {
         if self.is_not_found() {
             404
         } else if self.is_validation() {
@@ -614,7 +614,7 @@ impl CommerceError {
     }
 
     /// Get the underlying database error if this is a database error.
-    pub fn as_db_error(&self) -> Option<&DbError> {
+    pub const fn as_db_error(&self) -> Option<&DbError> {
         match self {
             Self::Database(e) => Some(e),
             _ => None,
@@ -622,7 +622,7 @@ impl CommerceError {
     }
 
     /// Get the underlying order error if this is an order error.
-    pub fn as_order_error(&self) -> Option<&OrderError> {
+    pub const fn as_order_error(&self) -> Option<&OrderError> {
         match self {
             Self::Order(e) => Some(e),
             _ => None,
@@ -630,7 +630,7 @@ impl CommerceError {
     }
 
     /// Get the underlying inventory error if this is an inventory error.
-    pub fn as_inventory_error(&self) -> Option<&InventoryError> {
+    pub const fn as_inventory_error(&self) -> Option<&InventoryError> {
         match self {
             Self::Inventory(e) => Some(e),
             _ => None,
@@ -638,7 +638,7 @@ impl CommerceError {
     }
 
     /// Get the underlying customer error if this is a customer error.
-    pub fn as_customer_error(&self) -> Option<&CustomerError> {
+    pub const fn as_customer_error(&self) -> Option<&CustomerError> {
         match self {
             Self::Customer(e) => Some(e),
             _ => None,
@@ -646,16 +646,16 @@ impl CommerceError {
     }
 
     /// Get the underlying product error if this is a product error.
-    pub fn as_product_error(&self) -> Option<&ProductError> {
+    pub const fn as_product_error(&self) -> Option<&ProductError> {
         match self {
             Self::Product(e) => Some(e),
             _ => None,
         }
     }
 
-    /// Create a database error from a typed DbError.
+    /// Create a database error from a typed `DbError`.
     #[track_caller]
-    pub fn db(error: DbError) -> Self {
+    pub const fn db(error: DbError) -> Self {
         Self::Database(error)
     }
 
@@ -694,7 +694,8 @@ impl CommerceError {
 pub const MAX_BATCH_SIZE: usize = 1000;
 
 /// Categorized batch error codes for programmatic handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BatchErrorCode {
@@ -759,7 +760,7 @@ pub struct BatchError {
 }
 
 impl BatchError {
-    /// Create a new BatchError from an index and CommerceError.
+    /// Create a new `BatchError` from an index and `CommerceError`.
     pub fn from_error(index: usize, id: Option<String>, err: &CommerceError) -> Self {
         Self { index, id, error: err.to_string(), code: BatchErrorCode::from(err) }
     }
@@ -781,8 +782,8 @@ pub struct BatchResult<T> {
 }
 
 impl<T> BatchResult<T> {
-    /// Create a new empty BatchResult.
-    pub fn new() -> Self {
+    /// Create a new empty `BatchResult`.
+    pub const fn new() -> Self {
         Self {
             succeeded: Vec::new(),
             failed: Vec::new(),
@@ -792,7 +793,7 @@ impl<T> BatchResult<T> {
         }
     }
 
-    /// Create a BatchResult with pre-allocated capacity.
+    /// Create a `BatchResult` with pre-allocated capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             succeeded: Vec::with_capacity(capacity),
@@ -818,22 +819,22 @@ impl<T> BatchResult<T> {
     }
 
     /// Check if all operations succeeded.
-    pub fn all_succeeded(&self) -> bool {
+    pub const fn all_succeeded(&self) -> bool {
         self.failure_count == 0
     }
 
     /// Check if all operations failed.
-    pub fn all_failed(&self) -> bool {
+    pub const fn all_failed(&self) -> bool {
         self.success_count == 0 && self.total_attempted > 0
     }
 
     /// Check if some operations succeeded and some failed.
-    pub fn partial_success(&self) -> bool {
+    pub const fn partial_success(&self) -> bool {
         self.success_count > 0 && self.failure_count > 0
     }
 
     /// Check if the batch was empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.total_attempted == 0
     }
 }

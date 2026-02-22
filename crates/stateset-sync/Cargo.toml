@@ -1,0 +1,29 @@
+[package]
+name = "stateset-sync"
+description = "Event-sourcing sync engine for StateSet iCommerce — outbox, conflict resolution, and transport abstraction"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["commerce", "sync", "event-sourcing", "outbox", "conflict-resolution"]
+categories = ["algorithms"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util"] }
+
+[lints]
+workspace = true

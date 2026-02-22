@@ -111,12 +111,12 @@ pub enum ReceiptType {
 impl std::fmt::Display for ReceiptType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ReceiptType::PurchaseOrder => write!(f, "purchase_order"),
-            ReceiptType::Transfer => write!(f, "transfer"),
-            ReceiptType::Return => write!(f, "return"),
-            ReceiptType::Adjustment => write!(f, "adjustment"),
-            ReceiptType::Production => write!(f, "production"),
-            ReceiptType::Other => write!(f, "other"),
+            Self::PurchaseOrder => write!(f, "purchase_order"),
+            Self::Transfer => write!(f, "transfer"),
+            Self::Return => write!(f, "return"),
+            Self::Adjustment => write!(f, "adjustment"),
+            Self::Production => write!(f, "production"),
+            Self::Other => write!(f, "other"),
         }
     }
 }
@@ -125,19 +125,20 @@ impl FromStr for ReceiptType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "purchase_order" | "purchaseorder" | "po" => Ok(ReceiptType::PurchaseOrder),
-            "transfer" => Ok(ReceiptType::Transfer),
-            "return" | "returns" => Ok(ReceiptType::Return),
-            "adjustment" => Ok(ReceiptType::Adjustment),
-            "production" => Ok(ReceiptType::Production),
-            "other" => Ok(ReceiptType::Other),
+            "purchase_order" | "purchaseorder" | "po" => Ok(Self::PurchaseOrder),
+            "transfer" => Ok(Self::Transfer),
+            "return" | "returns" => Ok(Self::Return),
+            "adjustment" => Ok(Self::Adjustment),
+            "production" => Ok(Self::Production),
+            "other" => Ok(Self::Other),
             _ => Err(format!("Unknown receipt type: {}", s)),
         }
     }
 }
 
 /// Status of a receipt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ReceiptStatus {
@@ -158,31 +159,17 @@ pub enum ReceiptStatus {
     Cancelled,
 }
 
-impl std::fmt::Display for ReceiptStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReceiptStatus::Expected => write!(f, "expected"),
-            ReceiptStatus::InProgress => write!(f, "in_progress"),
-            ReceiptStatus::Received => write!(f, "received"),
-            ReceiptStatus::Inspecting => write!(f, "inspecting"),
-            ReceiptStatus::PuttingAway => write!(f, "putting_away"),
-            ReceiptStatus::Completed => write!(f, "completed"),
-            ReceiptStatus::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
 impl FromStr for ReceiptStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "expected" => Ok(ReceiptStatus::Expected),
-            "in_progress" | "inprogress" => Ok(ReceiptStatus::InProgress),
-            "received" => Ok(ReceiptStatus::Received),
-            "inspecting" => Ok(ReceiptStatus::Inspecting),
-            "putting_away" | "puttingaway" => Ok(ReceiptStatus::PuttingAway),
-            "completed" => Ok(ReceiptStatus::Completed),
-            "cancelled" | "canceled" => Ok(ReceiptStatus::Cancelled),
+            "expected" => Ok(Self::Expected),
+            "in_progress" | "inprogress" => Ok(Self::InProgress),
+            "received" => Ok(Self::Received),
+            "inspecting" => Ok(Self::Inspecting),
+            "putting_away" | "puttingaway" => Ok(Self::PuttingAway),
+            "completed" => Ok(Self::Completed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
             _ => Err(format!("Unknown receipt status: {}", s)),
         }
     }
@@ -205,12 +192,12 @@ pub enum ReceiptItemStatus {
 impl std::fmt::Display for ReceiptItemStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ReceiptItemStatus::Pending => write!(f, "pending"),
-            ReceiptItemStatus::PartiallyReceived => write!(f, "partially_received"),
-            ReceiptItemStatus::Received => write!(f, "received"),
-            ReceiptItemStatus::Inspecting => write!(f, "inspecting"),
-            ReceiptItemStatus::Rejected => write!(f, "rejected"),
-            ReceiptItemStatus::PutAway => write!(f, "put_away"),
+            Self::Pending => write!(f, "pending"),
+            Self::PartiallyReceived => write!(f, "partially_received"),
+            Self::Received => write!(f, "received"),
+            Self::Inspecting => write!(f, "inspecting"),
+            Self::Rejected => write!(f, "rejected"),
+            Self::PutAway => write!(f, "put_away"),
         }
     }
 }
@@ -219,12 +206,12 @@ impl FromStr for ReceiptItemStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(ReceiptItemStatus::Pending),
-            "partially_received" | "partiallyreceived" => Ok(ReceiptItemStatus::PartiallyReceived),
-            "received" => Ok(ReceiptItemStatus::Received),
-            "inspecting" => Ok(ReceiptItemStatus::Inspecting),
-            "rejected" => Ok(ReceiptItemStatus::Rejected),
-            "put_away" | "putaway" => Ok(ReceiptItemStatus::PutAway),
+            "pending" => Ok(Self::Pending),
+            "partially_received" | "partiallyreceived" => Ok(Self::PartiallyReceived),
+            "received" => Ok(Self::Received),
+            "inspecting" => Ok(Self::Inspecting),
+            "rejected" => Ok(Self::Rejected),
+            "put_away" | "putaway" => Ok(Self::PutAway),
             _ => Err(format!("Unknown receipt item status: {}", s)),
         }
     }
@@ -246,11 +233,11 @@ pub enum PutAwayStatus {
 impl std::fmt::Display for PutAwayStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PutAwayStatus::Pending => write!(f, "pending"),
-            PutAwayStatus::Assigned => write!(f, "assigned"),
-            PutAwayStatus::InProgress => write!(f, "in_progress"),
-            PutAwayStatus::Completed => write!(f, "completed"),
-            PutAwayStatus::Cancelled => write!(f, "cancelled"),
+            Self::Pending => write!(f, "pending"),
+            Self::Assigned => write!(f, "assigned"),
+            Self::InProgress => write!(f, "in_progress"),
+            Self::Completed => write!(f, "completed"),
+            Self::Cancelled => write!(f, "cancelled"),
         }
     }
 }
@@ -259,11 +246,11 @@ impl FromStr for PutAwayStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(PutAwayStatus::Pending),
-            "assigned" => Ok(PutAwayStatus::Assigned),
-            "in_progress" | "inprogress" => Ok(PutAwayStatus::InProgress),
-            "completed" => Ok(PutAwayStatus::Completed),
-            "cancelled" | "canceled" => Ok(PutAwayStatus::Cancelled),
+            "pending" => Ok(Self::Pending),
+            "assigned" => Ok(Self::Assigned),
+            "in_progress" | "inprogress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
             _ => Err(format!("Unknown put-away status: {}", s)),
         }
     }
@@ -390,7 +377,7 @@ pub struct PutAwayFilter {
 // Type Aliases for API compatibility
 // ============================================================================
 
-/// Alias for CreateReceiptItem for API convenience
+/// Alias for `CreateReceiptItem` for API convenience
 pub type CreateReceiptLine = CreateReceiptItem;
 
 // ============================================================================

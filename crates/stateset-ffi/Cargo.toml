@@ -1,0 +1,30 @@
+[package]
+name = "stateset-ffi"
+description = "C-ABI stable FFI surface for stateset-embedded — powers Python, Swift, Kotlin, Go, and C bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+stateset-primitives = { workspace = true }
+stateset-core = { workspace = true }
+stateset-embedded = { workspace = true }
+uuid = { workspace = true }
+rust_decimal = { workspace = true }
+
+[lints]
+workspace = true
+
+[features]
+default = []
+cbindgen = []
+
+[dev-dependencies]
+rust_decimal_macros = "1.36"
+chrono = { workspace = true }

@@ -13,13 +13,20 @@ use rust_decimal_macros::dec;
 use uuid::Uuid;
 
 use stateset_core::models::customer::CustomerStatus;
+use stateset_core::models::fraud::{FraudDecision, FraudSignalType};
+use stateset_core::models::gift_card::{GiftCardStatus, GiftCardTransactionType};
 use stateset_core::models::inventory::TransactionType;
+use stateset_core::models::loyalty::{LoyaltyProgramStatus, LoyaltyTransactionType, RewardType};
 use stateset_core::models::order::{
     Address, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderItem, OrderStatus,
     PaymentStatus,
 };
 use stateset_core::models::product::ProductStatus;
 use stateset_core::models::returns::ReturnStatus;
+use stateset_core::models::review::ReviewStatus;
+use stateset_core::models::segment::{SegmentOperator, SegmentType};
+use stateset_core::models::shipping_zone::ShippingMethodType;
+use stateset_core::models::store_credit::StoreCreditStatus;
 use stateset_core::{CustomerId, OrderId, OrderItemId, ProductId};
 
 use stateset_test_utils::fixtures;
@@ -184,4 +191,148 @@ fn snapshot_inventory_transaction_types() {
         TransactionType::CycleCount,
     ];
     assert_json_snapshot!("inventory_transaction_types", types);
+}
+
+#[test]
+fn snapshot_gift_card_status_variants() {
+    let variants = vec![
+        GiftCardStatus::Active,
+        GiftCardStatus::Depleted,
+        GiftCardStatus::Expired,
+        GiftCardStatus::Disabled,
+    ];
+    assert_json_snapshot!("gift_card_status_variants", variants);
+}
+
+#[test]
+fn snapshot_gift_card_transaction_type_variants() {
+    let variants = vec![
+        GiftCardTransactionType::Charge,
+        GiftCardTransactionType::Refund,
+        GiftCardTransactionType::Adjustment,
+    ];
+    assert_json_snapshot!("gift_card_transaction_type_variants", variants);
+}
+
+#[test]
+fn snapshot_loyalty_program_status_variants() {
+    let variants = vec![
+        LoyaltyProgramStatus::Active,
+        LoyaltyProgramStatus::Paused,
+        LoyaltyProgramStatus::Archived,
+    ];
+    assert_json_snapshot!("loyalty_program_status_variants", variants);
+}
+
+#[test]
+fn snapshot_loyalty_transaction_type_variants() {
+    let variants = vec![
+        LoyaltyTransactionType::Earn,
+        LoyaltyTransactionType::Redeem,
+        LoyaltyTransactionType::Adjust,
+        LoyaltyTransactionType::Expire,
+        LoyaltyTransactionType::Bonus,
+        LoyaltyTransactionType::Refund,
+    ];
+    assert_json_snapshot!("loyalty_transaction_type_variants", variants);
+}
+
+#[test]
+fn snapshot_reward_type_variants() {
+    let variants = vec![
+        RewardType::Discount,
+        RewardType::FreeShipping,
+        RewardType::FreeProduct,
+        RewardType::StoreCredit,
+        RewardType::ExclusiveAccess,
+    ];
+    assert_json_snapshot!("reward_type_variants", variants);
+}
+
+#[test]
+fn snapshot_fraud_decision_variants() {
+    let variants = vec![
+        FraudDecision::Accept,
+        FraudDecision::Review,
+        FraudDecision::Reject,
+    ];
+    assert_json_snapshot!("fraud_decision_variants", variants);
+}
+
+#[test]
+fn snapshot_fraud_signal_type_variants() {
+    let variants = vec![
+        FraudSignalType::VelocitySpike,
+        FraudSignalType::AddressMismatch,
+        FraudSignalType::HighValueFirstOrder,
+        FraudSignalType::GeoIpAnomaly,
+        FraudSignalType::BinCountryMismatch,
+        FraudSignalType::DeviceFingerprint,
+        FraudSignalType::ProxyVpn,
+        FraudSignalType::DisposableEmail,
+        FraudSignalType::PaymentRetries,
+        FraudSignalType::UnusualTime,
+    ];
+    assert_json_snapshot!("fraud_signal_type_variants", variants);
+}
+
+#[test]
+fn snapshot_review_status_variants() {
+    let variants = vec![
+        ReviewStatus::Pending,
+        ReviewStatus::Approved,
+        ReviewStatus::Rejected,
+        ReviewStatus::Flagged,
+    ];
+    assert_json_snapshot!("review_status_variants", variants);
+}
+
+#[test]
+fn snapshot_segment_type_variants() {
+    let variants = vec![
+        SegmentType::Static,
+        SegmentType::Dynamic,
+    ];
+    assert_json_snapshot!("segment_type_variants", variants);
+}
+
+#[test]
+fn snapshot_segment_operator_variants() {
+    let variants = vec![
+        SegmentOperator::Eq,
+        SegmentOperator::Neq,
+        SegmentOperator::Gt,
+        SegmentOperator::Gte,
+        SegmentOperator::Lt,
+        SegmentOperator::Lte,
+        SegmentOperator::Contains,
+        SegmentOperator::In,
+        SegmentOperator::Between,
+        SegmentOperator::StartsWith,
+        SegmentOperator::EndsWith,
+    ];
+    assert_json_snapshot!("segment_operator_variants", variants);
+}
+
+#[test]
+fn snapshot_shipping_method_type_variants() {
+    let variants = vec![
+        ShippingMethodType::Flat,
+        ShippingMethodType::WeightBased,
+        ShippingMethodType::PriceBased,
+        ShippingMethodType::Calculated,
+        ShippingMethodType::Free,
+    ];
+    assert_json_snapshot!("shipping_method_type_variants", variants);
+}
+
+#[test]
+fn snapshot_store_credit_status_variants() {
+    let variants = vec![
+        StoreCreditStatus::Active,
+        StoreCreditStatus::Depleted,
+        StoreCreditStatus::Expired,
+        StoreCreditStatus::Voided,
+    ];
+    assert_json_snapshot!("store_credit_status_variants", variants);
 }

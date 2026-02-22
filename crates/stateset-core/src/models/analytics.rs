@@ -399,32 +399,32 @@ impl AnalyticsQuery {
     }
 
     /// Set a predefined time period
-    pub fn period(mut self, period: TimePeriod) -> Self {
+    pub const fn period(mut self, period: TimePeriod) -> Self {
         self.period = Some(period);
         self
     }
 
     /// Set a custom date range and switch to custom period
-    pub fn date_range(mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Self {
+    pub const fn date_range(mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Self {
         self.period = Some(TimePeriod::Custom);
         self.date_range = Some(DateRange { start: Some(start), end: Some(end) });
         self
     }
 
     /// Set the time granularity for time-series results
-    pub fn granularity(mut self, granularity: TimeGranularity) -> Self {
+    pub const fn granularity(mut self, granularity: TimeGranularity) -> Self {
         self.granularity = Some(granularity);
         self
     }
 
     /// Limit the number of results returned
-    pub fn limit(mut self, limit: u32) -> Self {
+    pub const fn limit(mut self, limit: u32) -> Self {
         self.limit = Some(limit);
         self
     }
 
     /// Enable or disable comparison to the previous period
-    pub fn compare_previous(mut self, compare: bool) -> Self {
+    pub const fn compare_previous(mut self, compare: bool) -> Self {
         self.compare_previous = Some(compare);
         self
     }

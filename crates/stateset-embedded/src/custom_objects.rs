@@ -20,6 +20,12 @@ pub struct CustomObjects {
     event_system: Arc<EventSystem>,
 }
 
+impl std::fmt::Debug for CustomObjects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomObjects").finish_non_exhaustive()
+    }
+}
+
 impl CustomObjects {
     #[cfg(feature = "events")]
     pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {

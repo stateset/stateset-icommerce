@@ -147,7 +147,7 @@ async function startPolling({ baseUrl, password, pollIntervalMs, onMessage, sign
   }
 
   if (verbose) {
-    console.log(`[iMessage] Polling from timestamp ${lastDate}`);
+    console.debug(`[iMessage] Polling from timestamp ${lastDate}`);
   }
 
   async function poll() {
@@ -224,12 +224,14 @@ export async function startIMessageGateway(config, shared) {
   const pollIntervalMs = config.pollIntervalMs || 3000;
   const verbose = shared.verbose || false;
 
-  console.log(`[iMessage] Connecting to BlueBubbles at ${baseUrl}`);
+  console.debug(`[iMessage] Connecting to BlueBubbles at ${baseUrl}`);
 
   // Verify connection
   try {
     const serverInfo = await bbFetch(baseUrl, password, '/api/v1/server/info');
-    console.log(`[iMessage] Connected to BlueBubbles ${serverInfo.data?.os_version || 'unknown'}`);
+    console.debug(
+      `[iMessage] Connected to BlueBubbles ${serverInfo.data?.os_version || 'unknown'}`,
+    );
   } catch (err) {
     throw new Error(`Failed to connect to BlueBubbles at ${baseUrl}: ${err.message}`);
   }
@@ -281,11 +283,11 @@ export async function startIMessageGateway(config, shared) {
     await adapter.send(targetId, BOT_PREFIX + text);
   });
 
-  console.log(`[iMessage] Gateway running (poll every ${pollIntervalMs}ms)`);
+  console.debug(`[iMessage] Gateway running (poll every ${pollIntervalMs}ms)`);
 
   return {
     shutdown() {
-      console.log('[iMessage] Shutting down...');
+      console.debug('[iMessage] Shutting down...');
       abortController.abort();
       notifier.unregister('imessage');
       sessionMgr.stopCleanup(cleanupHandle);

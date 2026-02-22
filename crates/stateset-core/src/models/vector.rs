@@ -35,32 +35,32 @@ pub enum EntityType {
 
 impl EntityType {
     /// Get the table name for this entity type's embeddings
-    pub fn embedding_table(&self) -> &'static str {
+    pub const fn embedding_table(&self) -> &'static str {
         match self {
-            EntityType::Product => "product_embeddings",
-            EntityType::Customer => "customer_embeddings",
-            EntityType::Order => "order_embeddings",
-            EntityType::InventoryItem => "inventory_embeddings",
+            Self::Product => "product_embeddings",
+            Self::Customer => "customer_embeddings",
+            Self::Order => "order_embeddings",
+            Self::InventoryItem => "inventory_embeddings",
         }
     }
 
     /// Get the ID column name for this entity type
-    pub fn id_column(&self) -> &'static str {
+    pub const fn id_column(&self) -> &'static str {
         match self {
-            EntityType::Product => "product_id",
-            EntityType::Customer => "customer_id",
-            EntityType::Order => "order_id",
-            EntityType::InventoryItem => "item_id",
+            Self::Product => "product_id",
+            Self::Customer => "customer_id",
+            Self::Order => "order_id",
+            Self::InventoryItem => "item_id",
         }
     }
 
     /// Get the source table name for this entity type
-    pub fn source_table(&self) -> &'static str {
+    pub const fn source_table(&self) -> &'static str {
         match self {
-            EntityType::Product => "products",
-            EntityType::Customer => "customers",
-            EntityType::Order => "orders",
-            EntityType::InventoryItem => "inventory_items",
+            Self::Product => "products",
+            Self::Customer => "customers",
+            Self::Order => "orders",
+            Self::InventoryItem => "inventory_items",
         }
     }
 }
@@ -68,10 +68,10 @@ impl EntityType {
 impl fmt::Display for EntityType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EntityType::Product => write!(f, "product"),
-            EntityType::Customer => write!(f, "customer"),
-            EntityType::Order => write!(f, "order"),
-            EntityType::InventoryItem => write!(f, "inventory_item"),
+            Self::Product => write!(f, "product"),
+            Self::Customer => write!(f, "customer"),
+            Self::Order => write!(f, "order"),
+            Self::InventoryItem => write!(f, "inventory_item"),
         }
     }
 }
@@ -81,10 +81,10 @@ impl std::str::FromStr for EntityType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "product" | "products" => Ok(EntityType::Product),
-            "customer" | "customers" => Ok(EntityType::Customer),
-            "order" | "orders" => Ok(EntityType::Order),
-            "inventory_item" | "inventory" | "inventory_items" => Ok(EntityType::InventoryItem),
+            "product" | "products" => Ok(Self::Product),
+            "customer" | "customers" => Ok(Self::Customer),
+            "order" | "orders" => Ok(Self::Order),
+            "inventory_item" | "inventory" | "inventory_items" => Ok(Self::InventoryItem),
             _ => Err(format!("Unknown entity type: {}", s)),
         }
     }

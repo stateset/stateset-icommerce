@@ -9,7 +9,8 @@ use stateset_primitives::{ProductId, PurchaseOrderId};
 use uuid::Uuid;
 
 /// Purchase order status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PurchaseOrderStatus {
@@ -34,23 +35,6 @@ pub enum PurchaseOrderStatus {
     Cancelled,
     /// On hold
     OnHold,
-}
-
-impl std::fmt::Display for PurchaseOrderStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Draft => write!(f, "draft"),
-            Self::PendingApproval => write!(f, "pending_approval"),
-            Self::Approved => write!(f, "approved"),
-            Self::Sent => write!(f, "sent"),
-            Self::Acknowledged => write!(f, "acknowledged"),
-            Self::PartiallyReceived => write!(f, "partially_received"),
-            Self::Received => write!(f, "received"),
-            Self::Completed => write!(f, "completed"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::OnHold => write!(f, "on_hold"),
-        }
-    }
 }
 
 impl std::str::FromStr for PurchaseOrderStatus {

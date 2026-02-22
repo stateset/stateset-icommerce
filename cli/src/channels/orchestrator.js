@@ -276,7 +276,7 @@ export class ChannelOrchestrator {
       const skillsDiscovered = discoverSkills({ verbose: shared.verbose ?? false });
       skillRegistry.loadFromDiscovered(skillsDiscovered);
       registerSkillHooks(skillRegistry);
-      console.log(
+      console.info(
         `[Orchestrator] Loaded ${skillRegistry.count()} skills across ${skillRegistry.getCategories().length} categories`,
       );
     } catch (err) {
@@ -315,7 +315,7 @@ export class ChannelOrchestrator {
           sandbox: httpConfig.sandbox || null,
         });
         const addr = await this._httpGateway.start();
-        console.log(`[Orchestrator] HTTP gateway listening on ${addr.host}:${addr.port}`);
+        console.info(`[Orchestrator] HTTP gateway listening on ${addr.host}:${addr.port}`);
       } catch (err) {
         console.error(`[Orchestrator] HTTP gateway failed to start: ${err.message}`);
         this._httpGateway = null;
@@ -327,7 +327,7 @@ export class ChannelOrchestrator {
       try {
         const { getVoiceModeController } = await import('../voice/voice-mode.js');
         this._voice = getVoiceModeController(this.config.voice);
-        console.log('[Orchestrator] Voice subsystem initialized.');
+        console.info('[Orchestrator] Voice subsystem initialized.');
       } catch (err) {
         console.error(`[Orchestrator] Voice subsystem failed: ${err.message}`);
       }
@@ -337,7 +337,7 @@ export class ChannelOrchestrator {
       try {
         const { getBrowserTools } = await import('../browser/browser-tools.js');
         this._browser = getBrowserTools(this.config.browser);
-        console.log('[Orchestrator] Browser subsystem initialized.');
+        console.info('[Orchestrator] Browser subsystem initialized.');
       } catch (err) {
         console.error(`[Orchestrator] Browser subsystem failed: ${err.message}`);
       }
@@ -347,7 +347,7 @@ export class ChannelOrchestrator {
       try {
         const { getVectorMemoryStore } = await import('../memory/vector-store.js');
         this._memory = getVectorMemoryStore(this.config.memory);
-        console.log('[Orchestrator] Memory subsystem initialized.');
+        console.info('[Orchestrator] Memory subsystem initialized.');
       } catch (err) {
         console.error(`[Orchestrator] Memory subsystem failed: ${err.message}`);
       }
@@ -358,7 +358,7 @@ export class ChannelOrchestrator {
       try {
         await autonomousEngine.initHeartbeat(this.config.heartbeat, shared.commerce || null);
         this._heartbeat = autonomousEngine.heartbeat;
-        console.log('[Orchestrator] Heartbeat monitor initialized.');
+        console.info('[Orchestrator] Heartbeat monitor initialized.');
       } catch (err) {
         console.error(`[Orchestrator] Heartbeat init failed: ${err.message}`);
       }
@@ -376,7 +376,7 @@ export class ChannelOrchestrator {
         if (runtime) {
           runtime.vectorAutoIndex = this._vectorAutoIndex;
         }
-        console.log(
+        console.info(
           '[Orchestrator] Vector auto-index enabled — new entities will be embedded automatically.',
         );
       } catch (err) {
@@ -416,7 +416,7 @@ export class ChannelOrchestrator {
 
     for (const [name, channelConfig] of channelEntries) {
       if (channelConfig.enabled === false) {
-        console.log(`[Orchestrator] Skipping disabled channel: ${name}`);
+        console.info(`[Orchestrator] Skipping disabled channel: ${name}`);
         continue;
       }
 
@@ -428,13 +428,13 @@ export class ChannelOrchestrator {
       }
 
       try {
-        console.log(`[Orchestrator] Starting ${name}...`);
+        console.info(`[Orchestrator] Starting ${name}...`);
         // Merge shared opts with per-channel config (channel-specific wins)
         const mergedConfig = { ...sharedOpts, ...channelConfig };
         const gateway = await launcher(channelConfig, mergedConfig);
         this.gateways.set(name, gateway);
         started.push(name);
-        console.log(`[Orchestrator] ${name} started successfully.`);
+        console.info(`[Orchestrator] ${name} started successfully.`);
       } catch (err) {
         failed.push({ channel: name, error: err.message });
         console.error(`[Orchestrator] Failed to start ${name}: ${err.message}`);
@@ -446,7 +446,7 @@ export class ChannelOrchestrator {
     for (const service of pluginRegistry.getServices()) {
       try {
         await service.start();
-        console.log(`[Orchestrator] Started plugin service: ${service.name}`);
+        console.info(`[Orchestrator] Started plugin service: ${service.name}`);
       } catch (err) {
         console.error(
           `[Orchestrator] Failed to start plugin service ${service.name}: ${err.message}`,
@@ -463,7 +463,7 @@ export class ChannelOrchestrator {
           for (const route of routes) {
             pluginRegistry._routes.push(route);
           }
-          console.log(`[Orchestrator] Mounted ${routes.length} webchat routes into HTTP gateway.`);
+          console.info(`[Orchestrator] Mounted ${routes.length} webchat routes into HTTP gateway.`);
         }
       } catch (err) {
         console.error(`[Orchestrator] Failed to mount webchat routes: ${err.message}`);
@@ -481,7 +481,7 @@ export class ChannelOrchestrator {
    * Stop all running gateways.
    */
   async shutdown() {
-    console.log('[Orchestrator] Shutting down all channels...');
+    console.info('[Orchestrator] Shutting down all channels...');
 
     const pluginRegistry = getPluginRegistry();
 
@@ -492,7 +492,7 @@ export class ChannelOrchestrator {
     if (this._httpGateway) {
       try {
         await this._httpGateway.stop();
-        console.log('[Orchestrator] HTTP gateway stopped.');
+        console.info('[Orchestrator] HTTP gateway stopped.');
       } catch (err) {
         console.error(`[Orchestrator] Error stopping HTTP gateway: ${err.message}`);
       }
@@ -529,7 +529,7 @@ export class ChannelOrchestrator {
     if (this._eventBridge) {
       this._eventBridge.stop();
       this._eventBridge = null;
-      console.log('[Orchestrator] Event bridge stopped.');
+      console.info('[Orchestrator] Event bridge stopped.');
     }
 
     // Unregister autonomous commands
@@ -539,7 +539,7 @@ export class ChannelOrchestrator {
     for (const service of pluginRegistry.getServices()) {
       try {
         await service.stop();
-        console.log(`[Orchestrator] Stopped plugin service: ${service.name}`);
+        console.info(`[Orchestrator] Stopped plugin service: ${service.name}`);
       } catch (err) {
         console.error(
           `[Orchestrator] Error stopping plugin service ${service.name}: ${err.message}`,
@@ -552,7 +552,7 @@ export class ChannelOrchestrator {
         if (typeof gateway.shutdown === 'function') {
           await gateway.shutdown();
         }
-        console.log(`[Orchestrator] ${name} shut down.`);
+        console.info(`[Orchestrator] ${name} shut down.`);
       } catch (err) {
         console.error(`[Orchestrator] Error shutting down ${name}: ${err.message}`);
       }
@@ -571,7 +571,7 @@ export class ChannelOrchestrator {
     }
 
     this._running = false;
-    console.log('[Orchestrator] All channels stopped.');
+    console.info('[Orchestrator] All channels stopped.');
   }
 
   /**

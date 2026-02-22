@@ -2,9 +2,11 @@ use super::Commerce;
 
 use crate::{
     AccountsPayable, AccountsReceivable, Analytics, Backorders, Bom, Carts, CostAccounting, Credit,
-    CurrencyOps, CustomObjects, Customers, Erc8004, Fulfillment, GeneralLedger, Inventory,
-    Invoices, Lots, Orders, Payments, Products, Promotions, PurchaseOrders, Quality, Receiving,
-    Returns, Serials, Shipments, Subscriptions, Tax, WarehouseOps, Warranties, WorkOrders, X402,
+    CurrencyOps, CustomObjects, Customers, Erc8004, Fraud, Fulfillment, GeneralLedger, GiftCards,
+    Inventory, Invoices, Lots, Loyalty, Orders, Payments, Products, Promotions, PurchaseOrders,
+    Quality, Receiving, Returns, Reviews, SearchConfigs, Segments, Serials, Shipments,
+    ShippingZones, StoreCredits, Subscriptions, Tax, WarehouseOps, Warranties, Wishlists,
+    WorkOrders, X402,
 };
 
 impl Commerce {
@@ -1078,6 +1080,70 @@ impl Commerce {
     /// for trustless agent discovery across organizational boundaries.
     pub fn erc8004(&self) -> Erc8004 {
         Erc8004::new(self.db.clone())
+    }
+
+    /// Access gift card operations.
+    ///
+    /// Provides gift card issuance, charging, refunding, and transaction history.
+    pub fn gift_cards(&self) -> GiftCards {
+        GiftCards::new(self.db.clone())
+    }
+
+    /// Access store credit operations.
+    ///
+    /// Provides store credit management including balance adjustments and application to orders.
+    pub fn store_credits(&self) -> StoreCredits {
+        StoreCredits::new(self.db.clone())
+    }
+
+    /// Access customer segment operations.
+    ///
+    /// Provides customer grouping, membership management, and segment targeting.
+    pub fn segments(&self) -> Segments {
+        Segments::new(self.db.clone())
+    }
+
+    /// Access shipping zone and method operations.
+    ///
+    /// Provides shipping zone management, method configuration, and rate calculation.
+    pub fn shipping_zones(&self) -> ShippingZones {
+        ShippingZones::new(self.db.clone())
+    }
+
+    /// Access product review operations.
+    ///
+    /// Provides review creation, moderation, summaries, and helpful/reported tracking.
+    pub fn reviews(&self) -> Reviews {
+        Reviews::new(self.db.clone())
+    }
+
+    /// Access wishlist operations.
+    ///
+    /// Provides wishlist creation, item management, and customer wish tracking.
+    pub fn wishlists(&self) -> Wishlists {
+        Wishlists::new(self.db.clone())
+    }
+
+    /// Access loyalty program operations.
+    ///
+    /// Provides loyalty program management, customer enrollment, points tracking,
+    /// and reward catalog operations.
+    pub fn loyalty(&self) -> Loyalty {
+        Loyalty::new(self.db.clone())
+    }
+
+    /// Access fraud detection operations.
+    ///
+    /// Provides fraud risk assessment, rule management, and manual review workflows.
+    pub fn fraud(&self) -> Fraud {
+        Fraud::new(self.db.clone())
+    }
+
+    /// Access search configuration operations.
+    ///
+    /// Provides search configuration management including active config selection.
+    pub fn search_config(&self) -> SearchConfigs {
+        SearchConfigs::new(self.db.clone())
     }
 
     /// Calculate and apply tax to a cart based on its shipping address.

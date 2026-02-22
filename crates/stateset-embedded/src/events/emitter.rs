@@ -10,9 +10,15 @@ pub struct EventEmitter {
     bus: Arc<EventBus>,
 }
 
+impl std::fmt::Debug for EventEmitter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventEmitter").finish_non_exhaustive()
+    }
+}
+
 impl EventEmitter {
     /// Create a new event emitter connected to the given bus
-    pub fn new(bus: Arc<EventBus>) -> Self {
+    pub const fn new(bus: Arc<EventBus>) -> Self {
         Self { bus }
     }
 
@@ -47,7 +53,7 @@ impl EventEmitter {
 
 /// Helper macros and builders for creating events
 impl EventEmitter {
-    /// Create and emit an OrderCreated event
+    /// Create and emit an `OrderCreated` event
     pub fn order_created(
         &self,
         order_id: stateset_core::OrderId,
@@ -64,7 +70,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit an OrderStatusChanged event
+    /// Create and emit an `OrderStatusChanged` event
     pub fn order_status_changed(
         &self,
         order_id: stateset_core::OrderId,
@@ -79,7 +85,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit an OrderCancelled event
+    /// Create and emit an `OrderCancelled` event
     pub fn order_cancelled(&self, order_id: stateset_core::OrderId, reason: Option<String>) {
         self.emit(CommerceEvent::OrderCancelled {
             order_id,
@@ -88,7 +94,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit an InventoryAdjusted event
+    /// Create and emit an `InventoryAdjusted` event
     pub fn inventory_adjusted(
         &self,
         item_id: i64,
@@ -109,7 +115,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit a LowStockAlert event
+    /// Create and emit a `LowStockAlert` event
     pub fn low_stock_alert(
         &self,
         sku: String,
@@ -126,7 +132,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit a CustomerCreated event
+    /// Create and emit a `CustomerCreated` event
     pub fn customer_created(&self, customer_id: stateset_core::CustomerId, email: String) {
         self.emit(CommerceEvent::CustomerCreated {
             customer_id,
@@ -135,7 +141,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit a ProductCreated event
+    /// Create and emit a `ProductCreated` event
     pub fn product_created(&self, product_id: stateset_core::ProductId, name: String, slug: String) {
         self.emit(CommerceEvent::ProductCreated {
             product_id,
@@ -145,7 +151,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit a ReturnRequested event
+    /// Create and emit a `ReturnRequested` event
     pub fn return_requested(
         &self,
         return_id: stateset_core::ReturnId,
@@ -164,7 +170,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit a ReturnApproved event
+    /// Create and emit a `ReturnApproved` event
     pub fn return_approved(&self, return_id: stateset_core::ReturnId, order_id: stateset_core::OrderId) {
         self.emit(CommerceEvent::ReturnApproved {
             return_id,
@@ -173,7 +179,7 @@ impl EventEmitter {
         });
     }
 
-    /// Create and emit a RefundIssued event
+    /// Create and emit a `RefundIssued` event
     pub fn refund_issued(
         &self,
         return_id: stateset_core::ReturnId,

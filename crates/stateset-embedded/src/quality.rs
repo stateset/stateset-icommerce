@@ -41,6 +41,12 @@ pub struct Quality {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for Quality {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Quality").finish_non_exhaustive()
+    }
+}
+
 impl Quality {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
@@ -92,7 +98,7 @@ impl Quality {
         self.db.quality().update_inspection(id, input)
     }
 
-    /// Start an inspection (set status to InProgress).
+    /// Start an inspection (set status to `InProgress`).
     pub fn start_inspection(&self, id: Uuid) -> Result<Inspection> {
         self.db.quality().start_inspection(id)
     }

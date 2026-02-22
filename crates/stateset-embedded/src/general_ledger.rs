@@ -44,6 +44,12 @@ pub struct GeneralLedger {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for GeneralLedger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeneralLedger").finish_non_exhaustive()
+    }
+}
+
 impl GeneralLedger {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }

@@ -23,5 +23,8 @@
     "globals": "^17.3.0",
     "husky": "^9.1.7",
     "prettier": "^3.8.1"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.0.1"
   }
 }

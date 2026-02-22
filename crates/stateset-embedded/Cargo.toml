@@ -16,7 +16,6 @@ autobenches = false
 stateset-core = { workspace = true }
 stateset-db = { workspace = true }
 stateset-observability = { workspace = true }
-thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 rust_decimal = { workspace = true }
@@ -25,12 +24,10 @@ serde_json = { workspace = true }
 tokio = { version = "1.0", features = ["rt-multi-thread", "sync", "time"] }
 futures = "0.3"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 opentelemetry = { version = "0.23", optional = true }
 opentelemetry-otlp = { version = "0.16", optional = true }
 opentelemetry_sdk = { version = "0.23", features = ["rt-tokio"], optional = true }
 tracing-opentelemetry = { version = "0.24", optional = true }
-metrics = "0.23"
 prometheus = { workspace = true, optional = true }
 # This is only used when the `postgres` feature is enabled (for the async event store).
 # Keep it lean and avoid SQLx default features (notably `any`).

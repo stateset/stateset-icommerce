@@ -1,4 +1,4 @@
-//! Embedding service for generating vector embeddings via OpenAI API
+//! Embedding service for generating vector embeddings via `OpenAI` API
 
 use crate::{CommerceError, Customer, InventoryItem, Order, Product, Result};
 use serde::{Deserialize, Serialize};
@@ -224,7 +224,7 @@ impl EmbeddingService {
     }
 
     /// Get the configured dimensions
-    pub fn dimensions(&self) -> usize {
+    pub const fn dimensions(&self) -> usize {
         self.dimensions
     }
 }

@@ -11994,3 +11994,172 @@ impl VectorSearch {
         Ok(count as u32)
     }
 }
+
+// =============================================================================
+// VES v1.0 Cryptographic Operations (stateset-crypto)
+// =============================================================================
+
+/// Canonicalize a JSON string per RFC 8785 JCS
+#[napi]
+pub fn jcs_canonicalize(json_str: String) -> Result<String> {
+    let value: serde_json::Value = serde_json::from_str(&json_str)
+        .map_err(|e| Error::from_reason(format!("Invalid JSON: {}", e)))?;
+    stateset_crypto::canonicalize::canonicalize_json(&value)
+        .map_err(|e| Error::from_reason(format!("JCS error: {}", e)))
+}
+
+/// Compute domain-separated SHA-256 hash
+///
+/// domain: one of "PAYLOAD_PLAIN", "PAYLOAD_AAD", "PAYLOAD_CIPHER", "RECIPIENTS",
+///         "EVENTSIG", "LEAF", "NODE", "PAD_LEAF", "STREAM", "RECEIPT"
+/// data: hex-encoded data to hash (after the domain prefix)
+#[napi]
+pub fn domain_hash(domain: String, data: Buffer) -> Result<Buffer> {
+    use sha2::{Digest, Sha256};
+
+    let prefix: &[u8] = match domain.as_str() {
+        "PAYLOAD_PLAIN" => stateset_crypto::domain::PAYLOAD_PLAIN,
+        "PAYLOAD_AAD" => stateset_crypto::domain::PAYLOAD_AAD,
+        "PAYLOAD_CIPHER" => stateset_crypto::domain::PAYLOAD_CIPHER,
+        "RECIPIENTS" => stateset_crypto::domain::RECIPIENTS,
+        "EVENTSIG" => stateset_crypto::domain::EVENTSIG,
+        "LEAF" => stateset_crypto::domain::LEAF,
+        "NODE" => stateset_crypto::domain::NODE,
+        "PAD_LEAF" => stateset_crypto::domain::PAD_LEAF,
+        "STREAM" => stateset_crypto::domain::STREAM,
+        "RECEIPT" => stateset_crypto::domain::RECEIPT,
+        _ => return Err(Error::from_reason(format!("Unknown domain: {}", domain))),
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(prefix);
+    hasher.update(data.as_ref());
+    let result: [u8; 32] = hasher.finalize().into();
+    Ok(Buffer::from(result.as_slice()))
+}
+
+/// Sign a 32-byte hash with Ed25519
+///
+/// Returns 64-byte signature
+#[napi]
+pub fn ed25519_sign(hash: Buffer, private_key: Buffer) -> Result<Buffer> {
+    if hash.len() != 32 {
+        return Err(Error::from_reason("Hash must be 32 bytes"));
+    }
+    if private_key.len() != 32 {
+        return Err(Error::from_reason("Private key must be 32 bytes"));
+    }
+    let mut hash_arr = [0u8; 32];
+    hash_arr.copy_from_slice(hash.as_ref());
+    let mut key_arr = [0u8; 32];
+    key_arr.copy_from_slice(private_key.as_ref());
+
+    let sig = stateset_crypto::sign::sign_event_hash(&hash_arr, &key_arr)
+        .map_err(|e| Error::from_reason(format!("Sign error: {}", e)))?;
+    Ok(Buffer::from(sig.as_slice()))
+}
+
+/// Verify an Ed25519 signature
+///
+/// Returns true if signature is valid
+#[napi]
+pub fn ed25519_verify(hash: Buffer, signature: Buffer, public_key: Buffer) -> Result<bool> {
+    if hash.len() != 32 || signature.len() != 64 || public_key.len() != 32 {
+        return Ok(false);
+    }
+    let mut hash_arr = [0u8; 32];
+    hash_arr.copy_from_slice(hash.as_ref());
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(signature.as_ref());
+    let mut key_arr = [0u8; 32];
+    key_arr.copy_from_slice(public_key.as_ref());
+
+    Ok(stateset_crypto::sign::verify_event_signature(&hash_arr, &sig_arr, &key_arr))
+}
+
+/// Encrypt a buffer with AES-256-GCM
+///
+/// Returns nonce (12 bytes) || ciphertext || tag (16 bytes)
+#[napi]
+pub fn aes_gcm_encrypt(plaintext: Buffer, key: Buffer, aad: Buffer) -> Result<Buffer> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+
+    if key.len() != 32 {
+        return Err(Error::from_reason("Key must be 32 bytes"));
+    }
+
+    let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
+    let cipher = Aes256Gcm::new(aes_key);
+
+    let mut nonce_bytes = [0u8; 12];
+    use rand::RngCore;
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let payload = aes_gcm::aead::Payload {
+        msg: plaintext.as_ref(),
+        aad: aad.as_ref(),
+    };
+    let ciphertext_tag = cipher
+        .encrypt(nonce, payload)
+        .map_err(|e| Error::from_reason(format!("Encryption failed: {}", e)))?;
+
+    let mut result = Vec::with_capacity(12 + ciphertext_tag.len());
+    result.extend_from_slice(&nonce_bytes);
+    result.extend_from_slice(&ciphertext_tag);
+    Ok(Buffer::from(result))
+}
+
+/// Decrypt a buffer with AES-256-GCM
+///
+/// Input: nonce (12 bytes) || ciphertext || tag (16 bytes)
+#[napi]
+pub fn aes_gcm_decrypt(encrypted: Buffer, key: Buffer, aad: Buffer) -> Result<Buffer> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+
+    if key.len() != 32 {
+        return Err(Error::from_reason("Key must be 32 bytes"));
+    }
+    if encrypted.len() < 28 {
+        return Err(Error::from_reason("Encrypted data too short (need at least nonce + tag)"));
+    }
+
+    let nonce = Nonce::from_slice(&encrypted[..12]);
+    let ciphertext_tag = &encrypted[12..];
+
+    let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
+    let cipher = Aes256Gcm::new(aes_key);
+
+    let payload = aes_gcm::aead::Payload {
+        msg: ciphertext_tag,
+        aad: aad.as_ref(),
+    };
+    let plaintext = cipher
+        .decrypt(nonce, payload)
+        .map_err(|e| Error::from_reason(format!("Decryption failed: {}", e)))?;
+
+    Ok(Buffer::from(plaintext))
+}
+
+/// Compute Merkle root from an array of 32-byte leaf hashes
+#[napi]
+pub fn merkle_root(leaves: Vec<Buffer>) -> Result<Buffer> {
+    let leaf_arrays: std::result::Result<Vec<[u8; 32]>, _> = leaves
+        .iter()
+        .map(|b| {
+            if b.len() != 32 {
+                Err(Error::from_reason("Each leaf must be 32 bytes"))
+            } else {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(b.as_ref());
+                Ok(arr)
+            }
+        })
+        .collect();
+
+    let leaf_arrays = leaf_arrays?;
+    let root = stateset_crypto::merkle::compute_merkle_root(&leaf_arrays);
+    Ok(Buffer::from(root.as_slice()))
+}

@@ -99,7 +99,7 @@ export async function startWhatsAppGateway({
   sessionStore,
   middleware = [],
 } = {}) {
-  console.log('Starting StateSet WhatsApp Gateway...');
+  console.info('Starting StateSet WhatsApp Gateway...');
 
   const sessionManager = createSessionManager({ store: sessionStore, channel: 'whatsapp' });
   const cleanupHandle = sessionManager.startCleanup();
@@ -199,13 +199,13 @@ export async function startWhatsAppGateway({
     await waitForConnection(sock);
     hasConnectedOnce = true;
     reconnectAttempts = 0;
-    console.log('WhatsApp connected. Gateway is ready for messages.');
+    console.info('WhatsApp connected. Gateway is ready for messages.');
 
     const handleMessage = buildHandler(sock);
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify' && type !== 'append') return;
-      if (verbose) console.log(`[messages.upsert] type=${type}, count=${messages?.length}`);
+      if (verbose) console.debug(`[messages.upsert] type=${type}, count=${messages?.length}`);
 
       for (const msg of messages) {
         try {
@@ -239,7 +239,7 @@ export async function startWhatsAppGateway({
 
         if (closeReason.loggedOut) {
           if (!hasConnectedOnce) {
-            console.log('Stale credentials detected. Clearing auth and retrying with fresh QR...');
+            console.info('Stale credentials detected. Clearing auth and retrying with fresh QR...');
             clearAuth(resolvedAuthDir);
             reconnectAttempts = 0;
             await sleep(1_000);
@@ -264,7 +264,7 @@ export async function startWhatsAppGateway({
 
         const delay = computeBackoff(RECONNECT_POLICY, reconnectAttempts);
         const statusCode = closeReason.statusCode || 'unknown';
-        console.log(
+        console.info(
           `WhatsApp disconnected (status ${statusCode}). Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${reconnectAttempts}/${RECONNECT_POLICY.maxAttempts})...`,
         );
 
@@ -276,7 +276,7 @@ export async function startWhatsAppGateway({
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
 
         if (isLoggedOut && !hasConnectedOnce) {
-          console.log('Stale credentials detected. Clearing auth and retrying with fresh QR...');
+          console.info('Stale credentials detected. Clearing auth and retrying with fresh QR...');
           clearAuth(resolvedAuthDir);
           reconnectAttempts = 0;
           await sleep(1_000);
@@ -314,7 +314,7 @@ export async function startWhatsAppGateway({
     } catch (err) {
       console.warn('[whatsapp] Socket close error:', err.message);
     }
-    console.log('WhatsApp gateway shut down.');
+    console.info('WhatsApp gateway shut down.');
   };
 
   // Wait for the first connection to succeed before returning

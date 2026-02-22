@@ -81,7 +81,7 @@ export async function startGoogleChatGateway({
     );
   }
 
-  console.log('Starting StateSet Google Chat Gateway...');
+  console.info('Starting StateSet Google Chat Gateway...');
 
   // Initialize Google Chat API client
   const auth = new google.auth.GoogleAuth({
@@ -157,7 +157,7 @@ export async function startGoogleChatGateway({
       }
 
       if (verbose) {
-        console.log(`[Google Chat] Received event type=${data.type} from ${data.user?.name}`);
+        console.debug(`[Google Chat] Received event type=${data.type} from ${data.user?.name}`);
       }
 
       await handleMessage(data);
@@ -174,7 +174,7 @@ export async function startGoogleChatGateway({
     console.error('Pub/Sub subscription error:', err.message);
   });
 
-  console.log(`Google Chat gateway connected. Listening on subscription: ${subscription}`);
+  console.info(`Google Chat gateway connected. Listening on subscription: ${subscription}`);
 
   // Register with notifier
   getNotifier().registerChannel('google-chat', {
@@ -188,7 +188,7 @@ export async function startGoogleChatGateway({
     sessionManager.stopCleanup(cleanupHandle);
     sub.removeAllListeners();
     await sub.close();
-    console.log('Google Chat gateway shut down.');
+    console.info('Google Chat gateway shut down.');
   };
 
   return { shutdown };

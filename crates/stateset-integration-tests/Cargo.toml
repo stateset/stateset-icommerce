@@ -1,0 +1,31 @@
+[package]
+name = "stateset-integration-tests"
+description = "Cross-boundary integration tests for StateSet iCommerce"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+stateset-primitives = { workspace = true }
+stateset-core = { workspace = true }
+stateset-db = { workspace = true, features = ["sqlite"] }
+stateset-embedded = { workspace = true, features = ["sqlite", "events"] }
+stateset-observability = { workspace = true }
+stateset-crypto = { workspace = true }
+stateset-test-utils = { workspace = true }
+stateset-policy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

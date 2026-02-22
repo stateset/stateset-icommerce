@@ -6,6 +6,23 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-02-22
+
+### Added
+- Added a `stateset-setup` CLI binary entry in `package.json`.
+- Added `@clack/prompts` dependency to support interactive CLI UI flows.
+- Added `stateset-crypto` to the workspace dependency set and Node wrapper dependency graph.
+
+### Changed
+- Bumped workspace and cross-language release metadata from `0.7.2` to `0.7.3` across Rust crates, CLI packages, language bindings, examples, and docs.
+- Updated CLI/version runtime references (`CLI_VERSION`, health endpoint fallback, scaffold templates, WhatsApp user agent) to `0.7.3`.
+- Updated npm lockfiles and package manifests to reference `0.7.3`.
+- Adjusted select CLI logs from `console.log` to `console.debug`/`console.info`.
+- Updated lockfile dependency graph for crypto-related workspace crates.
+
+### Fixed
+- Aligned version checks and dependency specifiers in examples to `0.7.3`.
+
 ## [0.7.2] - 2026-02-20
 
 ### Changed

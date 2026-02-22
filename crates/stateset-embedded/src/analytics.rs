@@ -40,6 +40,12 @@ pub struct Analytics {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for Analytics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Analytics").finish_non_exhaustive()
+    }
+}
+
 impl Analytics {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }

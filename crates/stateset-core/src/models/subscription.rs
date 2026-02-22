@@ -52,16 +52,16 @@ pub enum BillingInterval {
 
 impl BillingInterval {
     /// Get the number of days in this interval
-    pub fn days(&self) -> i64 {
+    pub const fn days(&self) -> i64 {
         match self {
-            BillingInterval::Weekly => 7,
-            BillingInterval::Biweekly => 14,
-            BillingInterval::Monthly => 30,
-            BillingInterval::Bimonthly => 60,
-            BillingInterval::Quarterly => 90,
-            BillingInterval::Semiannual => 180,
-            BillingInterval::Annual => 365,
-            BillingInterval::Custom => 30, // Default, should use custom_interval_days
+            Self::Weekly => 7,
+            Self::Biweekly => 14,
+            Self::Monthly => 30,
+            Self::Bimonthly => 60,
+            Self::Quarterly => 90,
+            Self::Semiannual => 180,
+            Self::Annual => 365,
+            Self::Custom => 30, // Default, should use custom_interval_days
         }
     }
 }
@@ -208,7 +208,7 @@ pub struct SubscriptionPlan {
 
     // Billing configuration
     pub billing_interval: BillingInterval,
-    /// Custom interval in days (when billing_interval is Custom)
+    /// Custom interval in days (when `billing_interval` is Custom)
     pub custom_interval_days: Option<i32>,
     /// Base price per billing cycle
     pub price: Decimal,
@@ -346,7 +346,7 @@ pub struct SubscriptionItem {
     pub quantity: i32,
     /// Price per unit
     pub unit_price: Decimal,
-    /// Line total (quantity * unit_price)
+    /// Line total (quantity * `unit_price`)
     pub line_total: Decimal,
 }
 
@@ -407,7 +407,7 @@ pub struct SubscriptionEvent {
     pub description: String,
     /// Detailed event data
     pub data: Option<serde_json::Value>,
-    /// Who triggered this event (customer_id, "system", "admin")
+    /// Who triggered this event (`customer_id`, "system", "admin")
     pub triggered_by: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -717,12 +717,12 @@ pub fn generate_plan_code(name: &str) -> String {
 
 impl Subscription {
     /// Check if subscription is in an active billing state
-    pub fn is_active(&self) -> bool {
+    pub const fn is_active(&self) -> bool {
         matches!(self.status, SubscriptionStatus::Active | SubscriptionStatus::Trial)
     }
 
     /// Check if subscription can be paused
-    pub fn can_pause(&self) -> bool {
+    pub const fn can_pause(&self) -> bool {
         matches!(self.status, SubscriptionStatus::Active | SubscriptionStatus::Trial)
     }
 
@@ -732,7 +732,7 @@ impl Subscription {
     }
 
     /// Check if subscription can be cancelled
-    pub fn can_cancel(&self) -> bool {
+    pub const fn can_cancel(&self) -> bool {
         !matches!(self.status, SubscriptionStatus::Cancelled | SubscriptionStatus::Expired)
     }
 

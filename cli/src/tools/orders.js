@@ -16,7 +16,14 @@ export const orderTools = [
     description:
       'List all orders. Shows order number, status, customer, total amount, and item count.',
     inputSchema: {
-      limit: z.number().optional().default(50).describe('Maximum number of orders to return'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .default(50)
+        .describe('Maximum number of orders to return'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -50,7 +57,7 @@ export const orderTools = [
     description:
       'Get a specific order by ID or order number. Returns full order details including line items.',
     inputSchema: {
-      identifier: z.string().describe('Order ID (UUID) or order number'),
+      identifier: z.string().min(1).describe('Order ID (UUID) or order number'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -92,19 +99,21 @@ export const orderTools = [
     name: 'create_order',
     description: 'Create a new order for a customer with line items.',
     inputSchema: {
-      customerId: z.string().describe('Customer ID (UUID)'),
+      customerId: z.string().min(1).describe('Customer ID (UUID)'),
       items: z
         .array(
           z.object({
-            sku: z.string().describe('Product SKU'),
-            name: z.string().describe('Product name'),
-            quantity: z.number().describe('Quantity'),
-            unitPrice: z.number().describe('Unit price'),
+            sku: z.string().min(1).max(100).describe('Product SKU'),
+            name: z.string().min(1).max(255).describe('Product name'),
+            quantity: z.number().int().min(1).describe('Quantity'),
+            unitPrice: z.number().positive().describe('Unit price'),
           }),
         )
+        .min(1)
+        .max(100)
         .describe('Order line items'),
-      currency: z.string().optional().default('USD').describe('Currency code'),
-      notes: z.string().optional().describe('Order notes'),
+      currency: z.string().max(10).optional().default('USD').describe('Currency code'),
+      notes: z.string().max(1000).optional().describe('Order notes'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply, autoIndexEntity }) => {
@@ -142,7 +151,7 @@ export const orderTools = [
     description:
       'Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded.',
     inputSchema: {
-      orderId: z.string().describe('Order ID (UUID)'),
+      orderId: z.string().min(1).describe('Order ID (UUID)'),
       status: z
         .enum([
           'pending',
@@ -186,7 +195,7 @@ export const orderTools = [
     name: 'ship_order',
     description: 'Mark an order as shipped with optional tracking number.',
     inputSchema: {
-      orderId: z.string().describe('Order ID (UUID)'),
+      orderId: z.string().min(1).describe('Order ID (UUID)'),
       trackingNumber: z.string().optional().describe('Shipping tracking number'),
     },
     permission: 'write',
@@ -221,7 +230,7 @@ export const orderTools = [
     name: 'cancel_order',
     description: 'Cancel an order. Only pending or confirmed orders can be cancelled.',
     inputSchema: {
-      orderId: z.string().describe('Order ID (UUID)'),
+      orderId: z.string().min(1).describe('Order ID (UUID)'),
     },
     permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {

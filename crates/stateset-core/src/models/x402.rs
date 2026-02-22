@@ -94,7 +94,7 @@ pub enum X402Network {
 
 impl X402Network {
     /// Get the chain ID for this network
-    pub fn chain_id(&self) -> u64 {
+    pub const fn chain_id(&self) -> u64 {
         match self {
             Self::SetChain => 84532001,        // Set Chain mainnet
             Self::SetChainTestnet => 84532002, // Set Chain testnet
@@ -110,7 +110,7 @@ impl X402Network {
     }
 
     /// Check if this is a testnet
-    pub fn is_testnet(&self) -> bool {
+    pub const fn is_testnet(&self) -> bool {
         matches!(
             self,
             Self::SetChainTestnet | Self::ArcTestnet | Self::BaseSepolia | Self::EthereumSepolia
@@ -179,7 +179,7 @@ pub enum X402Asset {
 
 impl X402Asset {
     /// Get the number of decimals for this asset
-    pub fn decimals(&self) -> u8 {
+    pub const fn decimals(&self) -> u8 {
         match self {
             Self::Usdc | Self::Usdt | Self::SsUsd | Self::WssUsd => 6,
             Self::Dai | Self::Eth => 18,
@@ -187,7 +187,7 @@ impl X402Asset {
     }
 
     /// Get the token contract address for a given network
-    pub fn contract_address(&self, network: X402Network) -> Option<&'static str> {
+    pub const fn contract_address(&self, network: X402Network) -> Option<&'static str> {
         match (self, network) {
             // Set Chain addresses
             (Self::Usdc, X402Network::SetChain) => {
@@ -251,7 +251,8 @@ impl std::str::FromStr for X402Asset {
 // =============================================================================
 
 /// Status of an x402 payment intent
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum X402IntentStatus {
@@ -272,21 +273,6 @@ pub enum X402IntentStatus {
     Failed,
     /// Intent cancelled by payer
     Cancelled,
-}
-
-impl std::fmt::Display for X402IntentStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Created => write!(f, "created"),
-            Self::Signed => write!(f, "signed"),
-            Self::Sequenced => write!(f, "sequenced"),
-            Self::Batched => write!(f, "batched"),
-            Self::Settled => write!(f, "settled"),
-            Self::Expired => write!(f, "expired"),
-            Self::Failed => write!(f, "failed"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
 }
 
 impl std::str::FromStr for X402IntentStatus {
@@ -423,10 +409,10 @@ pub struct X402PaymentIntent {
     // Cryptographic Fields
     // =========================================================================
     /// Signing hash (SHA-256 of canonical payment data)
-    /// Format: SHA256(X402_DOMAIN_SEPARATOR || canonical_json)
+    /// Format: `SHA256(X402_DOMAIN_SEPARATOR` || `canonical_json`)
     pub signing_hash: Option<String>,
 
-    /// Payer's Ed25519 signature over signing_hash (hex-encoded)
+    /// Payer's Ed25519 signature over `signing_hash` (hex-encoded)
     pub payer_signature: Option<String>,
 
     /// Payer's public key (hex-encoded, 32 bytes)
@@ -543,7 +529,7 @@ impl X402PaymentIntent {
     }
 
     /// Set the nonce for replay protection
-    pub fn with_nonce(mut self, nonce: u64) -> Self {
+    pub const fn with_nonce(mut self, nonce: u64) -> Self {
         self.nonce = nonce;
         self
     }
@@ -562,7 +548,7 @@ impl X402PaymentIntent {
     }
 
     /// Set the associated order ID
-    pub fn with_order(mut self, order_id: Uuid) -> Self {
+    pub const fn with_order(mut self, order_id: Uuid) -> Self {
         self.order_id = Some(order_id);
         self
     }
@@ -615,7 +601,7 @@ impl X402PaymentIntent {
         serde_jcs::to_string(&payload).unwrap_or_default()
     }
 
-    /// Compute sequencer-compatible signing hash (X402_PAYMENT_V1)
+    /// Compute sequencer-compatible signing hash (`X402_PAYMENT_V1`)
     pub fn sequencer_signing_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
 
@@ -954,7 +940,8 @@ pub struct X402CreditTransactionFilter {
 // =============================================================================
 
 /// Status of a payment batch
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum X402BatchStatus {

@@ -22,6 +22,12 @@ pub struct Customers {
     event_system: Arc<EventSystem>,
 }
 
+impl std::fmt::Debug for Customers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Customers").finish_non_exhaustive()
+    }
+}
+
 impl Customers {
     #[cfg(feature = "events")]
     pub(crate) fn new(

@@ -10,7 +10,7 @@
  * Default base URL: http://localhost:11434
  */
 
-import { ModelProvider } from './base.js';
+import { ModelProvider, DEFAULT_MAX_TOKENS } from './base.js';
 import { PROVIDERS } from '../config.js';
 
 export class OllamaProvider extends ModelProvider {
@@ -76,7 +76,7 @@ export class OllamaProvider extends ModelProvider {
       messages: ollamaMessages,
       stream,
       options: {
-        num_predict: options.maxTokens || 4096,
+        num_predict: options.maxTokens || DEFAULT_MAX_TOKENS,
         temperature: options.temperature ?? 0.7,
       },
     };

@@ -15,6 +15,12 @@ pub struct Erc8004 {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for Erc8004 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Erc8004").finish_non_exhaustive()
+    }
+}
+
 impl Erc8004 {
     /// Create a new ERC-8004 operations instance
     pub fn new(db: Arc<dyn Database>) -> Self {

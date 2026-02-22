@@ -435,11 +435,11 @@ impl Default for LogLevel {
 impl std::fmt::Display for LogLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LogLevel::Trace => write!(f, "trace"),
-            LogLevel::Debug => write!(f, "debug"),
-            LogLevel::Info => write!(f, "info"),
-            LogLevel::Warn => write!(f, "warn"),
-            LogLevel::Error => write!(f, "error"),
+            Self::Trace => write!(f, "trace"),
+            Self::Debug => write!(f, "debug"),
+            Self::Info => write!(f, "info"),
+            Self::Warn => write!(f, "warn"),
+            Self::Error => write!(f, "error"),
         }
     }
 }
@@ -479,24 +479,28 @@ impl LogEntry {
     }
 
     /// Set the log target/module
+    #[must_use]
     pub fn with_target(mut self, target: &str) -> Self {
         self.target = Some(target.to_string());
         self
     }
 
     /// Attach a trace ID for distributed tracing
+    #[must_use]
     pub fn with_trace_id(mut self, trace_id: &str) -> Self {
         self.trace_id = Some(trace_id.to_string());
         self
     }
 
     /// Attach a span ID for distributed tracing
+    #[must_use]
     pub fn with_span_id(mut self, span_id: &str) -> Self {
         self.span_id = Some(span_id.to_string());
         self
     }
 
     /// Add an arbitrary structured field
+    #[must_use]
     pub fn with_field<V: Serialize>(mut self, key: &str, value: V) -> Self {
         if let Ok(json_value) = serde_json::to_value(value) {
             self.fields.insert(key.to_string(), json_value);
@@ -505,6 +509,7 @@ impl LogEntry {
     }
 
     /// Render as JSON string
+    #[must_use]
     pub fn to_json(&self) -> String {
         serde_json::to_string(self)
             .unwrap_or_else(|_| format!("{{\"message\": \"{}\"}}", self.message))

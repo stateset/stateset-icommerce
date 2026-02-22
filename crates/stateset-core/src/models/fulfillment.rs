@@ -130,7 +130,8 @@ pub struct ShipTask {
 // ============================================================================
 
 /// Status of a wave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WaveStatus {
@@ -142,34 +143,23 @@ pub enum WaveStatus {
     Cancelled,
 }
 
-impl std::fmt::Display for WaveStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WaveStatus::Draft => write!(f, "draft"),
-            WaveStatus::Released => write!(f, "released"),
-            WaveStatus::InProgress => write!(f, "in_progress"),
-            WaveStatus::Completed => write!(f, "completed"),
-            WaveStatus::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
 impl FromStr for WaveStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "draft" => Ok(WaveStatus::Draft),
-            "released" => Ok(WaveStatus::Released),
-            "in_progress" | "inprogress" => Ok(WaveStatus::InProgress),
-            "completed" => Ok(WaveStatus::Completed),
-            "cancelled" | "canceled" => Ok(WaveStatus::Cancelled),
+            "draft" => Ok(Self::Draft),
+            "released" => Ok(Self::Released),
+            "in_progress" | "inprogress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
             _ => Err(format!("Unknown wave status: {}", s)),
         }
     }
 }
 
 /// Status of a pick task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PickStatus {
@@ -182,36 +172,24 @@ pub enum PickStatus {
     Cancelled,
 }
 
-impl std::fmt::Display for PickStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PickStatus::Pending => write!(f, "pending"),
-            PickStatus::Assigned => write!(f, "assigned"),
-            PickStatus::InProgress => write!(f, "in_progress"),
-            PickStatus::Completed => write!(f, "completed"),
-            PickStatus::Short => write!(f, "short"),
-            PickStatus::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
 impl FromStr for PickStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(PickStatus::Pending),
-            "assigned" => Ok(PickStatus::Assigned),
-            "in_progress" | "inprogress" => Ok(PickStatus::InProgress),
-            "completed" => Ok(PickStatus::Completed),
-            "short" => Ok(PickStatus::Short),
-            "cancelled" | "canceled" => Ok(PickStatus::Cancelled),
+            "pending" => Ok(Self::Pending),
+            "assigned" => Ok(Self::Assigned),
+            "in_progress" | "inprogress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "short" => Ok(Self::Short),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
             _ => Err(format!("Unknown pick status: {}", s)),
         }
     }
 }
 
 /// Status of a pack task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PackStatus {
@@ -224,29 +202,16 @@ pub enum PackStatus {
     Cancelled,
 }
 
-impl std::fmt::Display for PackStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PackStatus::Pending => write!(f, "pending"),
-            PackStatus::Assigned => write!(f, "assigned"),
-            PackStatus::ReadyToPack => write!(f, "ready_to_pack"),
-            PackStatus::InProgress => write!(f, "in_progress"),
-            PackStatus::Completed => write!(f, "completed"),
-            PackStatus::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
 impl FromStr for PackStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(PackStatus::Pending),
-            "assigned" => Ok(PackStatus::Assigned),
-            "ready_to_pack" | "readytopack" => Ok(PackStatus::ReadyToPack),
-            "in_progress" | "inprogress" => Ok(PackStatus::InProgress),
-            "completed" => Ok(PackStatus::Completed),
-            "cancelled" | "canceled" => Ok(PackStatus::Cancelled),
+            "pending" => Ok(Self::Pending),
+            "assigned" => Ok(Self::Assigned),
+            "ready_to_pack" | "readytopack" => Ok(Self::ReadyToPack),
+            "in_progress" | "inprogress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
             _ => Err(format!("Unknown pack status: {}", s)),
         }
     }
@@ -268,11 +233,11 @@ pub enum ShipStatus {
 impl std::fmt::Display for ShipStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ShipStatus::Pending => write!(f, "pending"),
-            ShipStatus::ReadyToShip => write!(f, "ready_to_ship"),
-            ShipStatus::LabelPrinted => write!(f, "label_printed"),
-            ShipStatus::Shipped => write!(f, "shipped"),
-            ShipStatus::Cancelled => write!(f, "cancelled"),
+            Self::Pending => write!(f, "pending"),
+            Self::ReadyToShip => write!(f, "ready_to_ship"),
+            Self::LabelPrinted => write!(f, "label_printed"),
+            Self::Shipped => write!(f, "shipped"),
+            Self::Cancelled => write!(f, "cancelled"),
         }
     }
 }
@@ -281,11 +246,11 @@ impl FromStr for ShipStatus {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(ShipStatus::Pending),
-            "ready_to_ship" | "readytoship" => Ok(ShipStatus::ReadyToShip),
-            "label_printed" | "labelprinted" => Ok(ShipStatus::LabelPrinted),
-            "shipped" => Ok(ShipStatus::Shipped),
-            "cancelled" | "canceled" => Ok(ShipStatus::Cancelled),
+            "pending" => Ok(Self::Pending),
+            "ready_to_ship" | "readytoship" => Ok(Self::ReadyToShip),
+            "label_printed" | "labelprinted" => Ok(Self::LabelPrinted),
+            "shipped" => Ok(Self::Shipped),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
             _ => Err(format!("Unknown ship status: {}", s)),
         }
     }
@@ -307,11 +272,11 @@ pub enum PackageType {
 impl std::fmt::Display for PackageType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PackageType::Box => write!(f, "box"),
-            PackageType::Envelope => write!(f, "envelope"),
-            PackageType::Tube => write!(f, "tube"),
-            PackageType::Pallet => write!(f, "pallet"),
-            PackageType::Custom => write!(f, "custom"),
+            Self::Box => write!(f, "box"),
+            Self::Envelope => write!(f, "envelope"),
+            Self::Tube => write!(f, "tube"),
+            Self::Pallet => write!(f, "pallet"),
+            Self::Custom => write!(f, "custom"),
         }
     }
 }
@@ -320,11 +285,11 @@ impl FromStr for PackageType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "box" => Ok(PackageType::Box),
-            "envelope" => Ok(PackageType::Envelope),
-            "tube" => Ok(PackageType::Tube),
-            "pallet" => Ok(PackageType::Pallet),
-            "custom" => Ok(PackageType::Custom),
+            "box" => Ok(Self::Box),
+            "envelope" => Ok(Self::Envelope),
+            "tube" => Ok(Self::Tube),
+            "pallet" => Ok(Self::Pallet),
+            "custom" => Ok(Self::Custom),
             _ => Err(format!("Unknown package type: {}", s)),
         }
     }
@@ -349,10 +314,10 @@ pub enum WaveType {
 impl std::fmt::Display for WaveType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WaveType::Batch => write!(f, "batch"),
-            WaveType::Priority => write!(f, "priority"),
-            WaveType::Zone => write!(f, "zone"),
-            WaveType::Single => write!(f, "single"),
+            Self::Batch => write!(f, "batch"),
+            Self::Priority => write!(f, "priority"),
+            Self::Zone => write!(f, "zone"),
+            Self::Single => write!(f, "single"),
         }
     }
 }
@@ -361,10 +326,10 @@ impl FromStr for WaveType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "batch" => Ok(WaveType::Batch),
-            "priority" => Ok(WaveType::Priority),
-            "zone" => Ok(WaveType::Zone),
-            "single" | "single_order" | "singleorder" => Ok(WaveType::Single),
+            "batch" => Ok(Self::Batch),
+            "priority" => Ok(Self::Priority),
+            "zone" => Ok(Self::Zone),
+            "single" | "single_order" | "singleorder" => Ok(Self::Single),
             _ => Err(format!("Unknown wave type: {}", s)),
         }
     }

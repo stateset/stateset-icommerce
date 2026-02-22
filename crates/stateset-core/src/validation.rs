@@ -82,13 +82,14 @@ pub trait Validate {
 /// assert!(result.is_ok());
 /// ```
 #[derive(Debug, Default)]
+#[must_use]
 pub struct ValidationBuilder {
     errors: Vec<(String, String)>,
 }
 
 impl ValidationBuilder {
     /// Create a new validation builder
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { errors: Vec::new() }
     }
 

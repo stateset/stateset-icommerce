@@ -84,6 +84,24 @@ import {
 /**
  * REST client for the sequencer (fallback when gRPC not available)
  */
+
+const ALLOWED_SEQUENCER_PROTOCOLS = new Set(['grpc:', 'grpcs:', 'http:', 'https:']);
+
+function parseSequencerUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) {
+    throw new Error('Sequencer URL must be a non-empty string');
+  }
+
+  const parsed = new URL(url.trim());
+  if (!ALLOWED_SEQUENCER_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(`Unsupported sequencer protocol: ${parsed.protocol}`);
+  }
+  if (!parsed.hostname) {
+    throw new Error('Sequencer URL must include a host');
+  }
+  return parsed;
+}
+
 export class SequencerClient {
   /**
    * @param {import('./config.js').SyncConfig} config
@@ -93,7 +111,7 @@ export class SequencerClient {
     this._connected = false;
 
     // Parse URL to determine REST endpoint
-    const url = new URL(config.sequencerUrl);
+    const url = parseSequencerUrl(config.sequencerUrl);
     if (url.protocol === 'grpc:' || url.protocol === 'grpcs:') {
       // Convert gRPC URL to REST
       const restProtocol = url.protocol === 'grpcs:' ? 'https:' : 'http:';

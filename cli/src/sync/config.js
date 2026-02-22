@@ -103,6 +103,23 @@ const DEFAULT_CONFIG = {
   },
 };
 
+const ALLOWED_SEQUENCER_PROTOCOLS = new Set(['grpc:', 'grpcs:', 'http:', 'https:']);
+
+function parseSequencerUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) {
+    throw new Error('Sequencer URL must be a non-empty string');
+  }
+
+  const parsed = new URL(url.trim());
+  if (!ALLOWED_SEQUENCER_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(`Unsupported sequencer protocol: ${parsed.protocol}`);
+  }
+  if (!parsed.hostname) {
+    throw new Error('Sequencer URL must include a host');
+  }
+  return parsed;
+}
+
 /**
  * Get the config directory path
  * @param {string} [cwd] - Current working directory
@@ -218,12 +235,14 @@ export function saveSyncConfig(config, cwd = process.cwd()) {
  * @returns {SyncConfig}
  */
 export function createSyncConfig(options, cwd = process.cwd()) {
-  const url = new URL(options.sequencerUrl);
+  const sequencerUrl =
+    typeof options.sequencerUrl === 'string' ? options.sequencerUrl.trim() : options.sequencerUrl;
+  const url = parseSequencerUrl(sequencerUrl);
   const isSecure = url.protocol === 'grpcs:' || url.protocol === 'https:';
 
   const config = {
     sequencer: {
-      url: options.sequencerUrl,
+      url: sequencerUrl,
       tls: isSecure,
       insecure: !isSecure,
     },
@@ -268,6 +287,10 @@ export function createSyncConfig(options, cwd = process.cwd()) {
  * @returns {SyncConfig} Updated configuration
  */
 export function updateSyncConfig(updates, cwd = process.cwd()) {
+  if (updates?.sequencer?.url) {
+    parseSequencerUrl(updates.sequencer.url);
+  }
+
   const current = loadSyncConfig(cwd) || DEFAULT_CONFIG;
 
   const updated = {
@@ -318,6 +341,12 @@ export function validateSyncConfig(config) {
 
   if (!config.sequencer?.url) {
     errors.push('Sequencer URL is required');
+  } else {
+    try {
+      parseSequencerUrl(config.sequencer.url);
+    } catch (error) {
+      errors.push(`Invalid sequencer URL: ${error.message}`);
+    }
   }
 
   if (!config.identity?.tenantId) {

@@ -5,18 +5,22 @@
  * and consistent styling for CLI output.
  */
 
+import { PALETTE } from './theme.js';
+
 // ============================================================================
 // ANSI Color Codes (for terminal styling)
+// Sourced from the central theme palette where possible.
 // ============================================================================
 
 const COLORS = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  italic: '\x1b[3m',
-  underline: '\x1b[4m',
+  reset: PALETTE.reset,
+  bold: PALETTE.bold,
+  dim: PALETTE.dim,
+  italic: PALETTE.italic,
+  underline: PALETTE.underline,
 
-  // Foreground colors
+  // Foreground colors — standard 4-bit codes for backward compatibility
+  // (cards, status badges, etc. still reference these by name)
   black: '\x1b[30m',
   red: '\x1b[31m',
   green: '\x1b[32m',
@@ -77,7 +81,7 @@ export const ICONS = {
  */
 export class RichOutput {
   constructor(options = {}) {
-    this.color = options.color !== false && process.stdout.isTTY;
+    this.color = Boolean(options.color !== false && process.stdout.isTTY && !process.env.NO_COLOR);
     this.format = options.format || 'pretty'; // 'pretty' | 'json' | 'minimal'
     this.width = options.width || process.stdout.columns || 80;
   }

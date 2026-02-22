@@ -111,8 +111,8 @@ export async function startMatrixGateway({
   // Normalise homeserver URL (strip trailing slash)
   const hs = homeserver.replace(/\/+$/, '');
 
-  console.log('Starting StateSet Matrix Gateway...');
-  console.log(`Homeserver: ${hs}`);
+  console.info('Starting StateSet Matrix Gateway...');
+  console.info(`Homeserver: ${hs}`);
 
   // --------------------------------------------------------------------
   // Identify the bot's own user ID via /account/whoami
@@ -121,7 +121,7 @@ export async function startMatrixGateway({
   try {
     const whoami = await matrixFetch(hs, accessToken, 'GET', '/_matrix/client/v3/account/whoami');
     botUserId = whoami.user_id;
-    console.log(`Authenticated as ${botUserId}`);
+    console.info(`Authenticated as ${botUserId}`);
   } catch (err) {
     throw new Error(`Failed to authenticate with Matrix homeserver: ${err.message}`);
   }
@@ -275,7 +275,7 @@ export async function startMatrixGateway({
         await matrixFetch(hs, accessToken, 'POST', `/_matrix/client/v3/join/${encodedRoomId}`, {
           body: {},
         });
-        console.log(`[Matrix] Auto-joined room ${roomId}`);
+        console.info(`[Matrix] Auto-joined room ${roomId}`);
       } catch (err) {
         console.error(`[Matrix] Failed to auto-join room ${roomId}: ${err.message}`);
       }
@@ -321,13 +321,13 @@ export async function startMatrixGateway({
       }
 
       if (verbose) {
-        console.log(`[Matrix] Initial sync complete, next_batch: ${nextBatch}`);
+        console.debug(`[Matrix] Initial sync complete, next_batch: ${nextBatch}`);
       }
     } catch (err) {
       throw new Error(`Matrix initial sync failed: ${err.message}`);
     }
 
-    console.log('Matrix gateway connected. Listening for messages...');
+    console.info('Matrix gateway connected. Listening for messages...');
 
     // Long-poll loop
     while (!stopped) {
@@ -453,7 +453,7 @@ export async function startMatrixGateway({
       }
     }
 
-    console.log('Matrix gateway shut down.');
+    console.info('Matrix gateway shut down.');
   }
 
   return { shutdown, _syncPromise: syncPromise };

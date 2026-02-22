@@ -1,0 +1,12 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+expression: variants
+---
+[
+  "earn",
+  "redeem",
+  "adjust",
+  "expire",
+  "bonus",
+  "refund"
+]

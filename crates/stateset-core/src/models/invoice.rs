@@ -9,7 +9,8 @@ use stateset_primitives::{CustomerId, InvoiceId, OrderId, OrderItemId, ProductId
 use uuid::Uuid;
 
 /// Invoice status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum InvoiceStatus {
@@ -34,22 +35,6 @@ pub enum InvoiceStatus {
     Disputed,
 }
 
-impl std::fmt::Display for InvoiceStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Draft => write!(f, "draft"),
-            Self::Sent => write!(f, "sent"),
-            Self::Viewed => write!(f, "viewed"),
-            Self::PartiallyPaid => write!(f, "partially_paid"),
-            Self::Paid => write!(f, "paid"),
-            Self::Overdue => write!(f, "overdue"),
-            Self::Voided => write!(f, "voided"),
-            Self::WrittenOff => write!(f, "written_off"),
-            Self::Disputed => write!(f, "disputed"),
-        }
-    }
-}
-
 impl std::str::FromStr for InvoiceStatus {
     type Err = String;
 
@@ -70,7 +55,8 @@ impl std::str::FromStr for InvoiceStatus {
 }
 
 /// Invoice type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum InvoiceType {
@@ -87,19 +73,6 @@ pub enum InvoiceType {
     Recurring,
     /// Final invoice
     Final,
-}
-
-impl std::fmt::Display for InvoiceType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Standard => write!(f, "standard"),
-            Self::CreditMemo => write!(f, "credit_memo"),
-            Self::DebitMemo => write!(f, "debit_memo"),
-            Self::Proforma => write!(f, "proforma"),
-            Self::Recurring => write!(f, "recurring"),
-            Self::Final => write!(f, "final"),
-        }
-    }
 }
 
 impl std::str::FromStr for InvoiceType {
@@ -250,7 +223,7 @@ pub struct InvoiceItem {
     pub discount_amount: Decimal,
     /// Tax amount for this line
     pub tax_amount: Decimal,
-    /// Line total (quantity * unit_price - discount + tax)
+    /// Line total (quantity * `unit_price` - discount + tax)
     pub line_total: Decimal,
     /// Sort order
     pub sort_order: i32,
@@ -273,7 +246,7 @@ pub struct CreateInvoice {
     pub invoice_date: Option<DateTime<Utc>>,
     /// Due date (defaults to invoice date + payment terms)
     pub due_date: Option<DateTime<Utc>>,
-    /// Days until due (used if due_date not provided)
+    /// Days until due (used if `due_date` not provided)
     pub days_until_due: Option<i32>,
     /// Payment terms description
     pub payment_terms: Option<String>,

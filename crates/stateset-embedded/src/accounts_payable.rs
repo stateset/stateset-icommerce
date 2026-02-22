@@ -48,6 +48,12 @@ pub struct AccountsPayable {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for AccountsPayable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountsPayable").finish_non_exhaustive()
+    }
+}
+
 impl AccountsPayable {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
@@ -323,7 +329,7 @@ impl AccountsPayable {
             payment_date: input.payment_date,
             payment_method: input.payment_method,
             amount: input.amount,
-            currency: Some(bill.currency.clone()),
+            currency: Some(bill.currency),
             reference_number: input.reference_number,
             bank_account: None,
             check_number: None,

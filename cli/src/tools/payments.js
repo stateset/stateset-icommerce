@@ -28,7 +28,7 @@ export const paymentTools = [
     name: 'get_payment',
     description: 'Get a payment by ID.',
     inputSchema: {
-      paymentId: z.string().describe('Payment ID'),
+      paymentId: z.string().min(1).describe('Payment ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -42,9 +42,9 @@ export const paymentTools = [
     name: 'create_payment',
     description: 'Create a payment for an order.',
     inputSchema: {
-      orderId: z.string().describe('Order ID'),
-      amount: z.number().describe('Payment amount'),
-      currency: z.string().optional().describe('Currency (default: USD)'),
+      orderId: z.string().min(1).describe('Order ID'),
+      amount: z.number().positive().describe('Payment amount'),
+      currency: z.string().max(10).optional().describe('Currency (default: USD)'),
       method: z
         .string()
         .optional()
@@ -70,7 +70,7 @@ export const paymentTools = [
     name: 'complete_payment',
     description: 'Mark a payment as completed.',
     inputSchema: {
-      paymentId: z.string().describe('Payment ID'),
+      paymentId: z.string().min(1).describe('Payment ID'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -88,9 +88,9 @@ export const paymentTools = [
     name: 'create_refund',
     description: 'Create a refund for a payment.',
     inputSchema: {
-      paymentId: z.string().describe('Payment ID to refund'),
-      amount: z.number().describe('Refund amount'),
-      reason: z.string().optional().describe('Refund reason'),
+      paymentId: z.string().min(1).describe('Payment ID to refund'),
+      amount: z.number().positive().describe('Refund amount'),
+      reason: z.string().max(500).optional().describe('Refund reason'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

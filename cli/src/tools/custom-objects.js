@@ -44,7 +44,7 @@ export const customObjectTools = [
     name: 'get_custom_object_type',
     description: 'Get a custom object type (schema) by ID.',
     inputSchema: {
-      id: z.string().describe('Custom object type ID (UUID)'),
+      id: z.string().min(1).describe('Custom object type ID (UUID)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -58,7 +58,7 @@ export const customObjectTools = [
     name: 'get_custom_object_type_by_handle',
     description: 'Get a custom object type (schema) by handle.',
     inputSchema: {
-      handle: z.string().describe('Custom object type handle (e.g., warranty_registration)'),
+      handle: z.string().min(1).describe('Custom object type handle (e.g., warranty_registration)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -75,15 +75,17 @@ export const customObjectTools = [
     inputSchema: {
       handle: z
         .string()
+        .min(1)
         .describe('Stable handle for the type (safe ASCII, e.g., warranty_registration)'),
-      displayName: z.string().describe('Human display name'),
+      displayName: z.string().min(1).describe('Human display name'),
       description: z.string().optional().describe('Optional description'),
       fields: z
         .array(
           z.object({
-            key: z.string().describe('Field key (safe ASCII, e.g., serial_number)'),
+            key: z.string().min(1).describe('Field key (safe ASCII, e.g., serial_number)'),
             fieldType: z
               .string()
+              .min(1)
               .describe('Field type: string|integer|decimal|boolean|date_time|uuid|json'),
             required: z.boolean().optional().default(false),
             list: z.boolean().optional().default(false),
@@ -124,7 +126,7 @@ export const customObjectTools = [
     description:
       'Update a custom object type (schema). Updating fields replaces the full field definition list.',
     inputSchema: {
-      id: z.string().describe('Custom object type ID (UUID)'),
+      id: z.string().min(1).describe('Custom object type ID (UUID)'),
       displayName: z.string().optional().describe('New display name'),
       description: z.string().optional().describe('New description'),
       fields: z
@@ -165,7 +167,7 @@ export const customObjectTools = [
     description:
       'Delete a custom object type (schema). Records of this type must be deleted first.',
     inputSchema: {
-      id: z.string().describe('Custom object type ID (UUID)'),
+      id: z.string().min(1).describe('Custom object type ID (UUID)'),
     },
     permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
@@ -215,7 +217,7 @@ export const customObjectTools = [
     name: 'get_custom_object',
     description: 'Get a custom object record by ID.',
     inputSchema: {
-      id: z.string().describe('Custom object record ID (UUID)'),
+      id: z.string().min(1).describe('Custom object record ID (UUID)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -229,8 +231,8 @@ export const customObjectTools = [
     name: 'get_custom_object_by_handle',
     description: 'Get a custom object record by (typeHandle, objectHandle).',
     inputSchema: {
-      typeHandle: z.string().describe('Custom object type handle'),
-      objectHandle: z.string().describe('Custom object record handle'),
+      typeHandle: z.string().min(1).describe('Custom object type handle'),
+      objectHandle: z.string().min(1).describe('Custom object record handle'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -248,7 +250,7 @@ export const customObjectTools = [
     description:
       'Create a custom object record. Provide `values` (object) or `valuesJson` (string). Values are validated against the type schema.',
     inputSchema: {
-      typeHandle: z.string().describe('Custom object type handle'),
+      typeHandle: z.string().min(1).describe('Custom object type handle'),
       handle: z.string().optional().describe('Optional record handle (unique within type)'),
       ownerType: z
         .string()
@@ -291,7 +293,7 @@ export const customObjectTools = [
     description:
       'Update a custom object record. Provide `values` (object) or `valuesJson` (string) to update record values.',
     inputSchema: {
-      id: z.string().describe('Custom object record ID (UUID)'),
+      id: z.string().min(1).describe('Custom object record ID (UUID)'),
       handle: z.string().optional().describe('New handle'),
       ownerType: z.string().optional().describe('New owner type'),
       ownerId: z.string().optional().describe('New owner id'),
@@ -334,7 +336,7 @@ export const customObjectTools = [
     name: 'delete_custom_object',
     description: 'Delete a custom object record by ID.',
     inputSchema: {
-      id: z.string().describe('Custom object record ID (UUID)'),
+      id: z.string().min(1).describe('Custom object record ID (UUID)'),
     },
     permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {

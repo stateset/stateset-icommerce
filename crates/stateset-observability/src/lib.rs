@@ -21,7 +21,7 @@
 //!   downstream applications.
 //! - **[`metrics`]** — Lock-free atomic counters for business events (orders,
 //!   payments, inventory adjustments, etc.) with a snapshot API for periodic
-//!   export to Prometheus, StatsD, or any other metrics backend.
+//!   export to Prometheus, `StatsD`, or any other metrics backend.
 //!
 //! # Features
 //!

@@ -143,11 +143,14 @@ mod currency;
 mod custom_objects;
 mod customers;
 mod erc8004;
+mod fraud;
 mod fulfillment;
 mod general_ledger;
+mod gift_cards;
 mod inventory;
 mod invoices;
 mod lots;
+mod loyalty;
 mod orders;
 mod payments;
 mod products;
@@ -156,12 +159,18 @@ mod purchase_orders;
 mod quality;
 mod receiving;
 mod returns;
+mod reviews;
+mod search_config;
+mod segments;
 mod serials;
 mod shipments;
+mod shipping_zones;
+mod store_credits;
 mod subscriptions;
 mod tax;
 mod warehouse;
 mod warranties;
+mod wishlists;
 mod work_orders;
 mod x402;
 
@@ -198,11 +207,14 @@ pub use currency::CurrencyOps;
 pub use custom_objects::CustomObjects;
 pub use customers::Customers;
 pub use erc8004::Erc8004;
+pub use fraud::Fraud;
 pub use fulfillment::Fulfillment;
 pub use general_ledger::GeneralLedger;
+pub use gift_cards::GiftCards;
 pub use inventory::Inventory;
 pub use invoices::Invoices;
 pub use lots::Lots;
+pub use loyalty::Loyalty;
 pub use orders::Orders;
 pub use payments::Payments;
 pub use products::Products;
@@ -211,12 +223,18 @@ pub use purchase_orders::PurchaseOrders;
 pub use quality::Quality;
 pub use receiving::Receiving;
 pub use returns::Returns;
+pub use reviews::Reviews;
+pub use search_config::SearchConfigs;
+pub use segments::Segments;
 pub use serials::Serials;
 pub use shipments::Shipments;
+pub use shipping_zones::ShippingZones;
+pub use store_credits::StoreCredits;
 pub use subscriptions::Subscriptions;
 pub use tax::Tax;
 pub use warehouse::WarehouseOps;
 pub use warranties::Warranties;
+pub use wishlists::Wishlists;
 pub use work_orders::WorkOrders;
 pub use x402::X402;
 
@@ -419,12 +437,16 @@ pub use stateset_core::{
     CreateCouponCode,
     // Credit types
     CreateCreditAccount,
+    // Fraud types
+    CreateFraudAssessment,
     CreateCreditMemo,
     CreateCustomObject,
     CreateCustomObjectType,
     CreateCustomer,
     CreateCustomerAddress,
     CreateDefectCode,
+    // Gift Card types
+    CreateGiftCard,
     CreateGlAccount,
     CreateGlPeriod,
     CreateInspection,
@@ -436,6 +458,8 @@ pub use stateset_core::{
     CreateJournalEntry,
     CreateJournalEntryLine,
     CreateLocation,
+    // Loyalty types
+    CreateLoyaltyProgram,
     CreateLot,
     CreateNcr,
     CreateNonConformance,
@@ -462,13 +486,23 @@ pub use stateset_core::{
     CreateRefund,
     // Return types
     CreateReturn,
+    // Review types
+    CreateReview,
     CreateReturnItem,
+    // Search Config types
+    CreateSearchConfig,
+    // Segment types
+    CreateSegment,
     CreateSerial,
     CreateSerialNumber,
     CreateSerialNumbersBulk,
     CreateShipTask,
     CreateShipment,
     CreateShipmentItem,
+    // Shipping Zone types
+    CreateShippingZone,
+    // Store Credit types
+    CreateStoreCredit,
     CreateSubscription,
     CreateSubscriptionItem,
     CreateSubscriptionPlan,
@@ -481,6 +515,8 @@ pub use stateset_core::{
     CreateWarehouseLocation,
     CreateWarranty,
     CreateWarrantyClaim,
+    // Wishlist types
+    CreateWishlist,
     CreateWave,
     CreateWorkOrder,
     CreateWorkOrderTask,
@@ -738,6 +774,7 @@ pub use stateset_core::{
     SetCartShipping,
     SetExchangeRate,
     SetItemCost,
+    SegmentType,
     Severity,
     ShipStatus,
     ShipTask,
@@ -760,6 +797,7 @@ pub use stateset_core::{
     StatementLineItem,
     StatementTransactionType,
     StockLevel,
+    StoreCreditReason,
     StoreCurrencySettings,
     SubmitCreditApplication,
     Subscription,

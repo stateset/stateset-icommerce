@@ -39,7 +39,8 @@ pub struct SeasonalityPattern {
 }
 
 /// Type of seasonality pattern
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SeasonalityType {
@@ -141,7 +142,8 @@ pub struct Anomaly {
 }
 
 /// Type of anomaly detected
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AnomalyType {
@@ -381,6 +383,7 @@ pub struct ForecastingEngine;
 
 impl ForecastingEngine {
     /// Calculate simple moving average
+    #[must_use]
     pub fn moving_average(data: &[Decimal], window: usize) -> Vec<Decimal> {
         if data.len() < window {
             return vec![];
@@ -395,6 +398,7 @@ impl ForecastingEngine {
     }
 
     /// Calculate exponential moving average
+    #[must_use]
     pub fn exponential_moving_average(data: &[Decimal], alpha: Decimal) -> Vec<Decimal> {
         if data.is_empty() {
             return vec![];
@@ -409,6 +413,7 @@ impl ForecastingEngine {
     }
 
     /// Detect weekly seasonality from daily data
+    #[must_use]
     pub fn detect_weekly_seasonality(data: &[TimeSeriesPoint]) -> Option<SeasonalityPattern> {
         if data.len() < 14 {
             // Need at least 2 weeks of data
@@ -476,6 +481,7 @@ impl ForecastingEngine {
     }
 
     /// Detect anomalies using z-score method
+    #[must_use]
     pub fn detect_anomalies_zscore(data: &[TimeSeriesPoint], threshold: Decimal) -> Vec<Anomaly> {
         if data.len() < 3 {
             return vec![];
@@ -528,6 +534,7 @@ impl ForecastingEngine {
     }
 
     /// Calculate mean of values
+    #[must_use]
     pub fn mean(values: &[Decimal]) -> Decimal {
         if values.is_empty() {
             return dec!(0);
@@ -537,6 +544,7 @@ impl ForecastingEngine {
     }
 
     /// Calculate standard deviation
+    #[must_use]
     pub fn std_dev(values: &[Decimal], mean: Decimal) -> Decimal {
         if values.len() < 2 {
             return dec!(0);
@@ -576,6 +584,7 @@ impl ForecastingEngine {
     }
 
     /// Linear regression for trend
+    #[must_use]
     pub fn linear_trend(values: &[Decimal]) -> (Decimal, Decimal) {
         let n = values.len();
         if n < 2 {

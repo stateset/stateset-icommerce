@@ -15,7 +15,14 @@ export const productTools = [
     name: 'list_products',
     description: 'List all products in the catalog.',
     inputSchema: {
-      limit: z.number().optional().default(50).describe('Maximum number of products to return'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .default(50)
+        .describe('Maximum number of products to return'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -43,7 +50,7 @@ export const productTools = [
     name: 'get_product',
     description: 'Get a specific product by ID.',
     inputSchema: {
-      productId: z.string().describe('Product ID (UUID)'),
+      productId: z.string().min(1).describe('Product ID (UUID)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -65,7 +72,7 @@ export const productTools = [
     name: 'get_product_variant',
     description: 'Get a product variant by SKU.',
     inputSchema: {
-      sku: z.string().describe('Product variant SKU'),
+      sku: z.string().min(1).describe('Product variant SKU'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -87,17 +94,22 @@ export const productTools = [
     name: 'create_product',
     description: 'Create a new product with optional variants.',
     inputSchema: {
-      name: z.string().describe('Product name'),
-      description: z.string().optional().describe('Product description'),
+      name: z.string().min(1).max(255).describe('Product name'),
+      description: z.string().max(5000).optional().describe('Product description'),
       variants: z
         .array(
           z.object({
-            sku: z.string().describe('Variant SKU'),
-            name: z.string().optional().describe('Variant name'),
-            price: z.number().describe('Variant price'),
-            compareAtPrice: z.number().optional().describe('Compare at price (original price)'),
+            sku: z.string().min(1).max(100).describe('Variant SKU'),
+            name: z.string().max(255).optional().describe('Variant name'),
+            price: z.number().positive().describe('Variant price'),
+            compareAtPrice: z
+              .number()
+              .positive()
+              .optional()
+              .describe('Compare at price (original price)'),
           }),
         )
+        .max(100)
         .optional()
         .describe('Product variants'),
     },

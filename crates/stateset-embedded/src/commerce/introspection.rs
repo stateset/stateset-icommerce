@@ -38,12 +38,12 @@ impl Commerce {
     }
 
     /// Get the active database backend kind.
-    pub fn backend(&self) -> CommerceBackend {
+    pub const fn backend(&self) -> CommerceBackend {
         self.backend
     }
 
     /// Access engine metrics handle.
-    pub fn metrics(&self) -> &Metrics {
+    pub const fn metrics(&self) -> &Metrics {
         &self.metrics
     }
 

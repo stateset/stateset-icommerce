@@ -345,7 +345,7 @@ export function registerAutonomousCommands(_engine) {
     }
   }
 
-  console.log(`[AutonomousCommands] Registered ${_registeredCommands.length} commands`);
+  console.debug(`[AutonomousCommands] Registered ${_registeredCommands.length} commands`);
 }
 
 /**
@@ -361,5 +361,5 @@ export function unregisterAutonomousCommands() {
   const count = _registeredCommands.length;
   _registeredCommands.length = 0;
 
-  console.log(`[AutonomousCommands] Unregistered ${count} commands`);
+  console.debug(`[AutonomousCommands] Unregistered ${count} commands`);
 }

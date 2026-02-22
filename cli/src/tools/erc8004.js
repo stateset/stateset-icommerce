@@ -15,12 +15,12 @@ export const erc8004Tools = [
     name: 'erc8004_register_identity',
     description: 'Register or update an ERC-8004 agent identity record.',
     inputSchema: {
-      registry: z.string().describe('Agent registry URI'),
-      agentId: z.string().describe('Agent ID'),
-      agentUri: z.string().describe('Agent URI'),
-      agentWallet: z.string().optional().describe('Agent wallet address'),
-      ownerAddress: z.string().optional().describe('Owner address'),
-      agentCardId: z.string().optional().describe('Agent card ID'),
+      registry: z.string().min(1).describe('Agent registry URI'),
+      agentId: z.string().min(1).describe('Agent ID'),
+      agentUri: z.string().min(1).describe('Agent URI'),
+      agentWallet: z.string().min(1).optional().describe('Agent wallet address'),
+      ownerAddress: z.string().min(1).optional().describe('Owner address'),
+      agentCardId: z.string().min(1).optional().describe('Agent card ID'),
       registration: z.string().optional().describe('Registration payload'),
       registrationHash: z.string().optional().describe('Registration hash'),
       walletProofType: z.enum(['eip712', 'erc1271']).optional().describe('Wallet proof type'),
@@ -63,9 +63,9 @@ export const erc8004Tools = [
     name: 'erc8004_link_wallet',
     description: 'Link a wallet to an existing ERC-8004 identity record.',
     inputSchema: {
-      registry: z.string().describe('Agent registry URI'),
-      agentId: z.string().describe('Agent ID'),
-      agentWallet: z.string().describe('Wallet address'),
+      registry: z.string().min(1).describe('Agent registry URI'),
+      agentId: z.string().min(1).describe('Agent ID'),
+      agentWallet: z.string().min(1).describe('Wallet address'),
       walletProofType: z.enum(['eip712', 'erc1271']).optional().describe('Wallet proof type'),
       walletProof: z.string().optional().describe('Wallet proof signature'),
       walletProofChainId: z.number().optional().describe('Wallet proof chain id'),
@@ -99,8 +99,8 @@ export const erc8004Tools = [
     name: 'erc8004_get_identity',
     description: 'Get an ERC-8004 identity by registry + agent id.',
     inputSchema: {
-      registry: z.string().describe('Agent registry URI'),
-      agentId: z.string().describe('Agent ID'),
+      registry: z.string().min(1).describe('Agent registry URI'),
+      agentId: z.string().min(1).describe('Agent ID'),
     },
     permission: 'read',
     handler: async ({ params, dbPath }) => {
@@ -115,7 +115,7 @@ export const erc8004Tools = [
     name: 'erc8004_get_by_wallet',
     description: 'Get an ERC-8004 identity by wallet address.',
     inputSchema: {
-      wallet: z.string().describe('Wallet address'),
+      wallet: z.string().min(1).describe('Wallet address'),
     },
     permission: 'read',
     handler: async ({ params, dbPath }) => {

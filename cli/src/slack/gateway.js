@@ -68,7 +68,7 @@ export async function startSlackGateway({
     );
   }
 
-  console.log('Starting StateSet Slack Gateway...');
+  console.info('Starting StateSet Slack Gateway...');
 
   const app = new App({
     token: botToken,
@@ -266,7 +266,7 @@ export async function startSlackGateway({
 
   // Bolt handles reconnection internally via Socket Mode
   await app.start();
-  console.log('Slack bot connected. Gateway is ready for messages.');
+  console.info('Slack bot connected. Gateway is ready for messages.');
 
   // Register with notifier
   getNotifier().registerChannel('slack', {
@@ -279,7 +279,7 @@ export async function startSlackGateway({
     getNotifier().unregisterChannel('slack');
     sessionManager.stopCleanup(cleanupHandle);
     await app.stop();
-    console.log('Slack gateway shut down.');
+    console.info('Slack gateway shut down.');
   };
 
   return { shutdown };

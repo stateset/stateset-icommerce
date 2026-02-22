@@ -27,10 +27,10 @@ export const supplierTools = [
     name: 'create_supplier',
     description: 'Create a new supplier.',
     inputSchema: {
-      name: z.string().describe('Supplier name'),
-      email: z.string().optional().describe('Contact email'),
-      phone: z.string().optional().describe('Phone number'),
-      address: z.string().optional().describe('Address'),
+      name: z.string().min(1).max(255).describe('Supplier name'),
+      email: z.string().email().optional().describe('Contact email'),
+      phone: z.string().max(30).optional().describe('Phone number'),
+      address: z.string().max(500).optional().describe('Address'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -64,9 +64,10 @@ export const supplierTools = [
     name: 'create_purchase_order',
     description: 'Create a purchase order to a supplier.',
     inputSchema: {
-      supplierId: z.string().describe('Supplier ID'),
+      supplierId: z.string().min(1).describe('Supplier ID'),
       items: z
         .string()
+        .min(1)
         .describe('JSON array: [{"sku":"X","name":"Y","quantity":10,"unitPrice":5.00}]'),
       notes: z.string().optional().describe('Notes'),
     },
@@ -98,8 +99,8 @@ export const supplierTools = [
     name: 'approve_purchase_order',
     description: 'Approve a purchase order.',
     inputSchema: {
-      purchaseOrderId: z.string().describe('PO ID'),
-      approvedBy: z.string().describe('Approver name'),
+      purchaseOrderId: z.string().min(1).describe('PO ID'),
+      approvedBy: z.string().min(1).describe('Approver name'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -117,7 +118,7 @@ export const supplierTools = [
     name: 'send_purchase_order',
     description: 'Send a PO to the supplier.',
     inputSchema: {
-      purchaseOrderId: z.string().describe('PO ID'),
+      purchaseOrderId: z.string().min(1).describe('PO ID'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

@@ -232,7 +232,7 @@ export async function startTeamsGateway({
     );
   }
 
-  console.log('Starting StateSet Microsoft Teams Gateway...');
+  console.info('Starting StateSet Microsoft Teams Gateway...');
 
   // ---- Session management ----
   const sessionManager = createSessionManager({ store: sessionStore, channel: 'teams' });
@@ -515,7 +515,14 @@ export async function startTeamsGateway({
   // ---- HTTP webhook server ----
 
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    let url;
+    try {
+      url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    } catch {
+      sendJson(res, 400, { error: 'Invalid request URL' });
+      return;
+    }
+
     const pathname = url.pathname;
     const method = req.method.toUpperCase();
 
@@ -537,7 +544,7 @@ export async function startTeamsGateway({
       }
 
       if (verbose) {
-        console.log(
+        console.debug(
           `[Teams] Received activity type=${activity.type} from=${activity.from?.name || activity.from?.id || 'unknown'}`,
         );
       }
@@ -598,7 +605,7 @@ export async function startTeamsGateway({
 
           default:
             if (verbose) {
-              console.log(`[Teams] Ignoring activity type: ${activity.type}`);
+              console.debug(`[Teams] Ignoring activity type: ${activity.type}`);
             }
             break;
         }
@@ -617,9 +624,9 @@ export async function startTeamsGateway({
   await new Promise((resolve, reject) => {
     server.listen(webhookPort, () => {
       const addr = server.address();
-      console.log(`Teams webhook server listening on port ${addr.port}`);
-      console.log(`Messaging endpoint: http://localhost:${addr.port}/api/messages`);
-      console.log('Teams gateway is ready for messages.');
+      console.info(`Teams webhook server listening on port ${addr.port}`);
+      console.info(`Messaging endpoint: http://localhost:${addr.port}/api/messages`);
+      console.info('Teams gateway is ready for messages.');
       resolve();
     });
     server.on('error', (err) => {
@@ -645,7 +652,7 @@ export async function startTeamsGateway({
 
     await new Promise((resolve) => {
       server.close(() => {
-        console.log('Teams gateway shut down.');
+        console.info('Teams gateway shut down.');
         resolve();
       });
     });

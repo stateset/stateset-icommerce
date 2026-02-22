@@ -312,14 +312,14 @@ pub struct CustomObjectTypeFilter {
 }
 
 /// Custom object record (instance of a type definition).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomObject {
     pub id: Uuid,
     pub type_id: Uuid,
     pub type_handle: String,
     /// Optional stable handle (unique within type) for human-friendly addressing.
     pub handle: Option<String>,
-    /// Optional owner link. When set, both owner_type and owner_id must be set.
+    /// Optional owner link. When set, both `owner_type` and `owner_id` must be set.
     pub owner_type: Option<String>,
     pub owner_id: Option<String>,
     /// Record values (JSON object).

@@ -402,7 +402,7 @@ export class PluginRegistry {
     };
 
     this._plugins.set(pluginId, entry);
-    console.log(`[PluginRegistry] Registered plugin: ${pluginId}`);
+    console.debug(`[PluginRegistry] Registered plugin: ${pluginId}`);
 
     return entry;
   }
@@ -441,7 +441,7 @@ export class PluginRegistry {
     this._routes = this._routes.filter((r) => r.pluginId !== pluginId);
 
     this._plugins.delete(pluginId);
-    console.log(`[PluginRegistry] Unregistered plugin: ${pluginId}`);
+    console.debug(`[PluginRegistry] Unregistered plugin: ${pluginId}`);
 
     return true;
   }

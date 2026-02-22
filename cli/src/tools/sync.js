@@ -247,8 +247,9 @@ export const syncTools = [
     inputSchema: {
       entityType: z
         .string()
+        .min(1)
         .describe('Entity type (order, customer, product, inventory, return, cart)'),
-      entityId: z.string().describe('Entity ID'),
+      entityId: z.string().min(1).describe('Entity ID'),
     },
     permission: 'read',
     handler: async ({ params }) => {
@@ -364,7 +365,7 @@ export const syncTools = [
     description:
       'Resolve a specific sync conflict using a resolution strategy. Requires --apply flag.',
     inputSchema: {
-      conflictId: z.string().describe('The conflict ID to resolve'),
+      conflictId: z.string().min(1).describe('The conflict ID to resolve'),
       strategy: z
         .enum(['remote-wins', 'local-wins', 'merge'])
         .optional()

@@ -40,7 +40,7 @@ export const manufacturingTools = [
     name: 'get_bom',
     description: 'Get a Bill of Materials by ID, including all components/ingredients.',
     inputSchema: {
-      bomId: z.string().describe('BOM ID or BOM number'),
+      bomId: z.string().min(1).describe('BOM ID or BOM number'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -62,8 +62,8 @@ export const manufacturingTools = [
     description:
       'Create a new Bill of Materials for a product. Defines what components/ingredients are needed.',
     inputSchema: {
-      name: z.string().describe('BOM name (e.g., "Classic Pickled Onions Recipe")'),
-      productId: z.string().describe('Product ID this BOM is for'),
+      name: z.string().min(1).describe('BOM name (e.g., "Classic Pickled Onions Recipe")'),
+      productId: z.string().min(1).describe('Product ID this BOM is for'),
       description: z.string().optional().describe('Description of this BOM'),
       revision: z.string().optional().describe('Revision number (default: A)'),
     },
@@ -101,10 +101,10 @@ export const manufacturingTools = [
     name: 'add_bom_component',
     description: 'Add a component/ingredient to a Bill of Materials.',
     inputSchema: {
-      bomId: z.string().describe('BOM ID to add component to'),
-      name: z.string().describe('Component name (e.g., "Yellow Onions")'),
+      bomId: z.string().min(1).describe('BOM ID to add component to'),
+      name: z.string().min(1).describe('Component name (e.g., "Yellow Onions")'),
       sku: z.string().optional().describe('Component SKU if from inventory'),
-      quantity: z.number().describe('Quantity needed per unit produced'),
+      quantity: z.number().positive().describe('Quantity needed per unit produced'),
       unitOfMeasure: z.string().optional().describe('Unit (e.g., "kg", "lbs", "each", "ml")'),
       notes: z.string().optional().describe('Notes about this component'),
     },
@@ -137,7 +137,7 @@ export const manufacturingTools = [
     name: 'activate_bom',
     description: 'Activate a BOM to make it available for work orders.',
     inputSchema: {
-      bomId: z.string().describe('BOM ID to activate'),
+      bomId: z.string().min(1).describe('BOM ID to activate'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -189,7 +189,7 @@ export const manufacturingTools = [
     name: 'get_work_order',
     description: 'Get a work order by ID with full details.',
     inputSchema: {
-      workOrderId: z.string().describe('Work order ID or number'),
+      workOrderId: z.string().min(1).describe('Work order ID or number'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -206,9 +206,9 @@ export const manufacturingTools = [
     name: 'create_work_order',
     description: 'Create a manufacturing work order to produce a quantity of product.',
     inputSchema: {
-      productId: z.string().describe('Product ID to manufacture'),
+      productId: z.string().min(1).describe('Product ID to manufacture'),
       bomId: z.string().optional().describe('BOM ID to use (optional)'),
-      quantityToBuild: z.number().describe('Number of units to produce'),
+      quantityToBuild: z.number().int().min(1).describe('Number of units to produce'),
       priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Priority level'),
       scheduledStart: z.string().optional().describe('Scheduled start date (ISO format)'),
       scheduledEnd: z.string().optional().describe('Scheduled end date (ISO format)'),
@@ -250,7 +250,7 @@ export const manufacturingTools = [
     name: 'start_work_order',
     description: 'Start a work order (begin production).',
     inputSchema: {
-      workOrderId: z.string().describe('Work order ID to start'),
+      workOrderId: z.string().min(1).describe('Work order ID to start'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -280,8 +280,8 @@ export const manufacturingTools = [
     name: 'complete_work_order',
     description: 'Complete a work order with the quantity produced.',
     inputSchema: {
-      workOrderId: z.string().describe('Work order ID to complete'),
-      quantityCompleted: z.number().describe('Number of units actually produced'),
+      workOrderId: z.string().min(1).describe('Work order ID to complete'),
+      quantityCompleted: z.number().int().min(0).describe('Number of units actually produced'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -312,7 +312,7 @@ export const manufacturingTools = [
     name: 'cancel_work_order',
     description: 'Cancel a work order.',
     inputSchema: {
-      workOrderId: z.string().describe('Work order ID to cancel'),
+      workOrderId: z.string().min(1).describe('Work order ID to cancel'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

@@ -153,9 +153,12 @@ pub use services::*;
 // Re-export strongly-typed primitives so downstream crates can import from
 // `stateset_core` directly without depending on `stateset-primitives`.
 pub use stateset_primitives::{
-    AgentId, CartId, CreditId, CurrencyCode, CustomerId, FulfillmentId, InventoryItemId,
-    InvoiceId, Money, OrderId, OrderItemId, PaymentId, ProductId, PromotionId, PurchaseOrderId,
-    ReturnId, ShipmentId, Sku, SubscriptionId, WarehouseId, WarrantyId,
+    AgentId, CartId, CreditId, CurrencyCode, CustomerId, FraudRuleId, FulfillmentId,
+    GiftCardId, GiftCardTransactionId, InventoryItemId, InvoiceId, LoyaltyAccountId,
+    LoyaltyProgramId, LoyaltyTransactionId, Money, OrderId, OrderItemId, PaymentId, ProductId,
+    PromotionId, PurchaseOrderId, ReturnId, ReviewId, RewardId, SearchConfigId, SegmentId,
+    ShipmentId, ShippingMethodId, ShippingZoneId, Sku, StoreCreditId, StoreCreditTransactionId,
+    SubscriptionId, WarehouseId, WarrantyId, WishlistId,
 };
 
 /// Re-export common types for convenience
@@ -168,8 +171,11 @@ pub mod prelude {
 
     // Typed IDs and value types
     pub use stateset_primitives::{
-        AgentId, CartId, CreditId, CurrencyCode, CustomerId, FulfillmentId, InventoryItemId,
-        InvoiceId, Money, OrderId, OrderItemId, PaymentId, ProductId, PromotionId, PurchaseOrderId,
-        ReturnId, ShipmentId, Sku, SubscriptionId, WarehouseId, WarrantyId,
+        AgentId, CartId, CreditId, CurrencyCode, CustomerId, FraudRuleId, FulfillmentId,
+        GiftCardId, GiftCardTransactionId, InventoryItemId, InvoiceId, LoyaltyAccountId,
+        LoyaltyProgramId, LoyaltyTransactionId, Money, OrderId, OrderItemId, PaymentId,
+        ProductId, PromotionId, PurchaseOrderId, ReturnId, ReviewId, RewardId, SearchConfigId,
+        SegmentId, ShipmentId, ShippingMethodId, ShippingZoneId, Sku, StoreCreditId,
+        StoreCreditTransactionId, SubscriptionId, WarehouseId, WarrantyId, WishlistId,
     };
 }

@@ -244,8 +244,8 @@ export const x402Tools = [
     description:
       'Create an x402 payment intent for AI agent commerce. Returns a signing hash that the payer agent must sign with Ed25519.',
     inputSchema: {
-      payerAddress: z.string().describe('Payer wallet address (sender)'),
-      payeeAddress: z.string().describe('Payee wallet address (recipient)'),
+      payerAddress: z.string().min(1).describe('Payer wallet address (sender)'),
+      payeeAddress: z.string().min(1).describe('Payee wallet address (recipient)'),
       amount: z.number().describe('Amount in smallest unit (e.g., 1000000 = 1 USDC)'),
       asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
       network: z
@@ -299,7 +299,7 @@ export const x402Tools = [
     description:
       'Sign an x402 payment intent with an Ed25519 signature. Supports manual signature/public key or local agent-key signing.',
     inputSchema: {
-      intentId: z.string().describe('Payment intent ID to sign'),
+      intentId: z.string().min(1).describe('Payment intent ID to sign'),
       signature: z
         .string()
         .optional()
@@ -363,14 +363,19 @@ export const x402Tools = [
         const effectiveAgentId =
           requestedAgentId || (resolveTreasuryAgentId ? await resolveTreasuryAgentId() : 'default');
 
-        const locallySigned = await signIntentWithLocalAgent({
-          commerce,
-          intentId,
-          agentId: effectiveAgentId,
-          keyId: params.keyId,
-          chain: params.chain,
-          configDir: '.stateset',
-        });
+        let locallySigned;
+        try {
+          locallySigned = await signIntentWithLocalAgent({
+            commerce,
+            intentId,
+            agentId: effectiveAgentId,
+            keyId: params.keyId,
+            chain: params.chain,
+            configDir: '.stateset',
+          });
+        } catch (err) {
+          return { success: false, error: `Local signing failed: ${err.message}` };
+        }
 
         return {
           success: true,
@@ -419,7 +424,7 @@ export const x402Tools = [
     name: 'x402_get_intent',
     description: 'Get details of an x402 payment intent.',
     inputSchema: {
-      intentId: z.string().describe('Payment intent ID'),
+      intentId: z.string().min(1).describe('Payment intent ID'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -498,7 +503,7 @@ export const x402Tools = [
     description:
       'Execute a signed x402 intent on-chain using an agent wallet, then mark the intent as settled.',
     inputSchema: {
-      intentId: z.string().describe('x402 payment intent ID'),
+      intentId: z.string().min(1).describe('x402 payment intent ID'),
       agentId: z
         .string()
         .optional()
@@ -1050,18 +1055,23 @@ export const x402Tools = [
         return { success: false, error: 'x402 createIntent did not return an intent id' };
       }
 
-      const localSigning = await signIntentWithLocalAgent({
-        commerce,
-        intentId: normalizedIntent.id,
-        agentId: effectivePayerAgentId,
-        keyId,
-        chain: chainId,
-        configDir: '.stateset',
-      });
+      let localSigning;
+      try {
+        localSigning = await signIntentWithLocalAgent({
+          commerce,
+          intentId: normalizedIntent.id,
+          agentId: effectivePayerAgentId,
+          keyId,
+          chain: chainId,
+          configDir: '.stateset',
+        });
+      } catch (err) {
+        return { success: false, error: `Local signing failed: ${err.message}` };
+      }
 
       const settleTool = x402Tools.find((tool) => tool.name === 'x402_settle_intent_onchain');
       if (!settleTool) {
-        throw new Error('x402_settle_intent_onchain tool is not registered');
+        return { success: false, error: 'x402_settle_intent_onchain tool is not registered' };
       }
 
       const settlement = await settleTool.handler({
@@ -1134,8 +1144,8 @@ export const x402Tools = [
     description:
       'Record a settled x402 intent as an incoming treasury deposit for a local payee agent.',
     inputSchema: {
-      intentId: z.string().describe('Settled x402 payment intent ID'),
-      payeeAgentId: z.string().describe('Local payee agent ID to credit'),
+      intentId: z.string().min(1).describe('Settled x402 payment intent ID'),
+      payeeAgentId: z.string().min(1).describe('Local payee agent ID to credit'),
       chain: z.string().optional().describe('Optional chain override (default: intent network)'),
       token: z
         .string()
@@ -1345,8 +1355,8 @@ export const x402Tools = [
     description:
       'Mark an x402 payment intent as settled on-chain. Called after blockchain confirmation.',
     inputSchema: {
-      intentId: z.string().describe('Payment intent ID'),
-      txHash: z.string().describe('On-chain transaction hash'),
+      intentId: z.string().min(1).describe('Payment intent ID'),
+      txHash: z.string().min(1).describe('On-chain transaction hash'),
       blockNumber: z.number().describe('Block number where settled'),
     },
     permission: 'write',
@@ -1379,7 +1389,7 @@ export const x402Tools = [
     name: 'x402_get_next_nonce',
     description: 'Get the next nonce for a payer address. Used for replay protection.',
     inputSchema: {
-      payerAddress: z.string().describe('Payer wallet address'),
+      payerAddress: z.string().min(1).describe('Payer wallet address'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -1398,7 +1408,7 @@ export const x402Tools = [
     name: 'x402_credit_balance',
     description: 'Get x402 credit balance for a payer (prepaid meter for streaming usage).',
     inputSchema: {
-      payerAddress: z.string().describe('Payer wallet address'),
+      payerAddress: z.string().min(1).describe('Payer wallet address'),
       asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
       network: z
         .string()
@@ -1427,7 +1437,7 @@ export const x402Tools = [
     name: 'x402_credit_deposit',
     description: 'Credit (deposit) x402 balance for metered usage. Requires --apply.',
     inputSchema: {
-      payerAddress: z.string().describe('Payer wallet address'),
+      payerAddress: z.string().min(1).describe('Payer wallet address'),
       amount: z.number().describe('Amount in smallest unit (e.g., 1000000 = 1 USDC)'),
       asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
       network: z
@@ -1477,7 +1487,7 @@ export const x402Tools = [
     name: 'x402_credit_debit',
     description: 'Debit x402 balance for metered usage. Requires --apply.',
     inputSchema: {
-      payerAddress: z.string().describe('Payer wallet address'),
+      payerAddress: z.string().min(1).describe('Payer wallet address'),
       amount: z.number().describe('Amount in smallest unit (e.g., 1000000 = 1 USDC)'),
       asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
       network: z

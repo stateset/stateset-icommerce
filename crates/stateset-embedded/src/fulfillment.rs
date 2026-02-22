@@ -48,6 +48,12 @@ pub struct Fulfillment {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for Fulfillment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Fulfillment").finish_non_exhaustive()
+    }
+}
+
 impl Fulfillment {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }

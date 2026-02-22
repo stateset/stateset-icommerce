@@ -24,6 +24,12 @@ pub struct Orders {
     event_system: Arc<EventSystem>,
 }
 
+impl std::fmt::Debug for Orders {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Orders").finish_non_exhaustive()
+    }
+}
+
 impl Orders {
     #[cfg(feature = "events")]
     pub(crate) fn new(

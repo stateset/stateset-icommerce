@@ -308,19 +308,19 @@ export default function init(api, { config }) {
       pruneTimer = setInterval(() => {
         const pruned = store.prune();
         if (pruned > 0) {
-          console.log(
+          console.debug(
             `[memory-vector] Pruned ${pruned} expired memories. Remaining: ${store.size}`,
           );
         }
       }, interval);
-      console.log(`[memory-vector] Pruner started (interval: ${interval}ms)`);
+      console.debug(`[memory-vector] Pruner started (interval: ${interval}ms)`);
     },
     stop: async () => {
       if (pruneTimer) {
         clearInterval(pruneTimer);
         pruneTimer = null;
       }
-      console.log('[memory-vector] Pruner stopped.');
+      console.debug('[memory-vector] Pruner stopped.');
     },
   });
 }

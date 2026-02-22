@@ -23,7 +23,7 @@ pub struct Product {
 }
 
 /// Product variant (SKU-level)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductVariant {
     pub id: Uuid,
     pub product_id: ProductId,

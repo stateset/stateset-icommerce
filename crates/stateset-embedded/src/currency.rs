@@ -43,6 +43,12 @@ pub struct CurrencyOps {
     db: Arc<dyn Database>,
 }
 
+impl std::fmt::Debug for CurrencyOps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CurrencyOps").finish_non_exhaustive()
+    }
+}
+
 impl CurrencyOps {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }

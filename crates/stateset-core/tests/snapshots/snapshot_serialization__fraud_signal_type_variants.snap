@@ -1,0 +1,16 @@
+---
+source: crates/stateset-core/tests/snapshot_serialization.rs
+expression: variants
+---
+[
+  "velocity_spike",
+  "address_mismatch",
+  "high_value_first_order",
+  "geo_ip_anomaly",
+  "bin_country_mismatch",
+  "device_fingerprint",
+  "proxy_vpn",
+  "disposable_email",
+  "payment_retries",
+  "unusual_time"
+]

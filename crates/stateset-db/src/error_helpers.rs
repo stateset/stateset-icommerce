@@ -1,7 +1,7 @@
 //! Error conversion helpers for database backends
 //!
 //! This module provides utilities for converting database-specific errors
-//! to the unified DbError type from stateset-core.
+//! to the unified `DbError` type from stateset-core.
 
 use stateset_core::{CommerceError, DbError};
 

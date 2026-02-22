@@ -27,6 +27,7 @@ macro_rules! define_id {
         $(#[$meta])*
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
+        #[must_use]
         pub struct $name(Uuid);
 
         impl $name {
@@ -62,7 +63,7 @@ macro_rules! define_id {
 
             /// Returns `true` if this is a nil (all-zeros) ID.
             #[inline]
-            pub fn is_nil(&self) -> bool {
+            pub const fn is_nil(&self) -> bool {
                 self.0.is_nil()
             }
         }
@@ -231,6 +232,81 @@ define_id! {
 define_id! {
     /// Strongly-typed agent identifier (A2A commerce).
     AgentId
+}
+
+define_id! {
+    /// Strongly-typed gift card identifier.
+    GiftCardId
+}
+
+define_id! {
+    /// Strongly-typed store credit identifier.
+    StoreCreditId
+}
+
+define_id! {
+    /// Strongly-typed customer segment identifier.
+    SegmentId
+}
+
+define_id! {
+    /// Strongly-typed shipping zone identifier.
+    ShippingZoneId
+}
+
+define_id! {
+    /// Strongly-typed shipping method identifier.
+    ShippingMethodId
+}
+
+define_id! {
+    /// Strongly-typed product review identifier.
+    ReviewId
+}
+
+define_id! {
+    /// Strongly-typed wishlist identifier.
+    WishlistId
+}
+
+define_id! {
+    /// Strongly-typed loyalty program identifier.
+    LoyaltyProgramId
+}
+
+define_id! {
+    /// Strongly-typed reward identifier.
+    RewardId
+}
+
+define_id! {
+    /// Strongly-typed gift card transaction identifier.
+    GiftCardTransactionId
+}
+
+define_id! {
+    /// Strongly-typed store credit transaction identifier.
+    StoreCreditTransactionId
+}
+
+define_id! {
+    /// Strongly-typed loyalty transaction identifier.
+    LoyaltyTransactionId
+}
+
+define_id! {
+    /// Strongly-typed fraud rule identifier.
+    FraudRuleId
+}
+
+define_id! {
+    /// Strongly-typed search configuration identifier.
+    SearchConfigId
+}
+
+define_id! {
+    /// Strongly-typed loyalty account identifier.
+    LoyaltyAccountId
 }
 
 #[cfg(test)]

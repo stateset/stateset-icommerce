@@ -12,6 +12,15 @@ pub struct EventBus {
     events_publish_failures: AtomicU64,
 }
 
+impl std::fmt::Debug for EventBus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventBus")
+            .field("events_published", &self.events_published.load(Ordering::Relaxed))
+            .field("receiver_count", &self.sender.receiver_count())
+            .finish_non_exhaustive()
+    }
+}
+
 impl EventBus {
     /// Create a new event bus with the specified channel capacity
     pub fn new(capacity: usize) -> Self {
@@ -80,8 +89,14 @@ pub struct EventReceiver {
     inner: broadcast::Receiver<CommerceEvent>,
 }
 
+impl std::fmt::Debug for EventReceiver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventReceiver").finish_non_exhaustive()
+    }
+}
+
 impl EventReceiver {
-    fn new(receiver: broadcast::Receiver<CommerceEvent>) -> Self {
+    const fn new(receiver: broadcast::Receiver<CommerceEvent>) -> Self {
         Self { inner: receiver }
     }
 
@@ -124,6 +139,12 @@ impl EventReceiver {
 /// An event subscription that can be used to receive events
 pub struct EventSubscription {
     receiver: EventReceiver,
+}
+
+impl std::fmt::Debug for EventSubscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventSubscription").finish_non_exhaustive()
+    }
 }
 
 impl EventSubscription {

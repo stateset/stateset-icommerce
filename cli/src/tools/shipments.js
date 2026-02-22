@@ -28,7 +28,7 @@ export const shipmentTools = [
     name: 'create_shipment',
     description: 'Create a shipment for an order.',
     inputSchema: {
-      orderId: z.string().describe('Order ID'),
+      orderId: z.string().min(1).describe('Order ID'),
       carrier: z.string().optional().describe('Carrier: USPS, UPS, FedEx, DHL'),
       service: z.string().optional().describe('Service level'),
     },
@@ -51,7 +51,7 @@ export const shipmentTools = [
     name: 'deliver_shipment',
     description: 'Mark a shipment as delivered.',
     inputSchema: {
-      shipmentId: z.string().describe('Shipment ID'),
+      shipmentId: z.string().min(1).describe('Shipment ID'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

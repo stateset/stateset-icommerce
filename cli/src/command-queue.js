@@ -25,6 +25,13 @@
  */
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+const POLL_INTERVAL_MS = 100;
+const CLEANUP_CHECK_INTERVAL_MS = 60_000;
+
+// ============================================================================
 // Lane
 // ============================================================================
 
@@ -295,7 +302,7 @@ export class CommandQueue {
     this.parallelLanes = new Map();
 
     // Start idle lane cleanup
-    this._cleanupInterval = setInterval(() => this._cleanupIdleLanes(), 60000);
+    this._cleanupInterval = setInterval(() => this._cleanupIdleLanes(), CLEANUP_CHECK_INTERVAL_MS);
     this._cleanupInterval.unref?.();
   }
 
@@ -341,7 +348,7 @@ export class CommandQueue {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       if (lane.idle) return;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
 
     throw new Error(`Timeout waiting for lane ${laneId} to become idle`);
@@ -370,7 +377,7 @@ export class CommandQueue {
         }
       }
       if (allIdle) return;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
 
     throw new Error('Timeout waiting for all lanes to become idle');

@@ -9,8 +9,8 @@ export const currencyTools = [
     name: 'get_exchange_rate',
     description: 'Get the exchange rate between two currencies.',
     inputSchema: {
-      from: z.string().describe('Source currency code (e.g., USD, EUR, GBP)'),
-      to: z.string().describe('Target currency code (e.g., EUR, USD, GBP)'),
+      from: z.string().min(1).describe('Source currency code (e.g., USD, EUR, GBP)'),
+      to: z.string().min(1).describe('Target currency code (e.g., EUR, USD, GBP)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -61,9 +61,9 @@ export const currencyTools = [
     name: 'convert_currency',
     description: 'Convert an amount from one currency to another using current exchange rates.',
     inputSchema: {
-      from: z.string().describe('Source currency code (e.g., USD)'),
-      to: z.string().describe('Target currency code (e.g., EUR)'),
-      amount: z.number().describe('Amount to convert'),
+      from: z.string().min(1).describe('Source currency code (e.g., USD)'),
+      to: z.string().min(1).describe('Target currency code (e.g., EUR)'),
+      amount: z.number().positive().describe('Amount to convert'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -91,8 +91,8 @@ export const currencyTools = [
     name: 'set_exchange_rate',
     description: 'Set or update an exchange rate between two currencies.',
     inputSchema: {
-      baseCurrency: z.string().describe('Base currency code (e.g., USD)'),
-      quoteCurrency: z.string().describe('Quote currency code (e.g., EUR)'),
+      baseCurrency: z.string().min(1).describe('Base currency code (e.g., USD)'),
+      quoteCurrency: z.string().min(1).describe('Quote currency code (e.g., EUR)'),
       rate: z.number().describe('Exchange rate (e.g., 0.92 for USD to EUR)'),
       source: z
         .string()
@@ -156,7 +156,9 @@ export const currencyTools = [
   {
     name: 'set_base_currency',
     description: "Set the store's base currency.",
-    inputSchema: { currency: z.string().describe('Currency code to set as base (e.g., USD, EUR)') },
+    inputSchema: {
+      currency: z.string().min(1).describe('Currency code to set as base (e.g., USD, EUR)'),
+    },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { currency } = params;
@@ -214,7 +216,7 @@ export const currencyTools = [
     description: 'Format an amount with currency symbol.',
     inputSchema: {
       amount: z.number().describe('Amount to format'),
-      currency: z.string().describe('Currency code (e.g., USD, EUR)'),
+      currency: z.string().min(1).describe('Currency code (e.g., USD, EUR)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {

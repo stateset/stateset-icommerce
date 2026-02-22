@@ -39,6 +39,95 @@ const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
 };
 
+const MAX_BROWSER_EXPRESSION_LENGTH = 4_000;
+const MAX_BROWSER_URL_LENGTH = 2_048;
+const ALLOWED_BROWSER_PROTOCOLS = new Set(['http:', 'https:']);
+const BLOCKED_BROWSER_EXPRESSION_PATTERNS = [
+  /\bprocess\b/i,
+  /\bglobalThis\b/i,
+  /\bFunction\b/i,
+  /\bfetch\s*\(/i,
+  /\bXMLHttpRequest\b/,
+  /\bimport\s*\(/i,
+  /\brequire\s*\(/i,
+  /\beval\s*\(/i,
+  /\bdocument\.cookie\b/i,
+  /\bwindow\.location\b/i,
+];
+
+function sanitizeHostHeader(hostHeader) {
+  if (typeof hostHeader !== 'string') return 'localhost';
+  const trimmed = hostHeader.trim();
+  if (!trimmed) return 'localhost';
+
+  const ipv6 = trimmed.match(/^\[([^\]]+)\]/);
+  const host = ipv6 ? ipv6[1] : trimmed.split(':')[0];
+  return host.replace(/[^A-Za-z0-9\-.:\u005B\u005D]/g, '') || 'localhost';
+}
+
+function safeParseUrl(reqUrl, hostHeader) {
+  try {
+    return new URL(reqUrl, `http://${sanitizeHostHeader(hostHeader)}`);
+  } catch {
+    return null;
+  }
+}
+
+function validateBrowserExpression(expression) {
+  if (typeof expression !== 'string') {
+    return 'Missing required field: expression';
+  }
+
+  const trimmed = expression.trim();
+  if (!trimmed) {
+    return 'Missing required field: expression';
+  }
+
+  if (trimmed.length > MAX_BROWSER_EXPRESSION_LENGTH) {
+    return `Expression exceeds maximum length of ${MAX_BROWSER_EXPRESSION_LENGTH} characters`;
+  }
+
+  for (const pattern of BLOCKED_BROWSER_EXPRESSION_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return 'Expression contains blocked patterns for safety';
+    }
+  }
+
+  return null;
+}
+
+function validateBrowserUrl(value) {
+  if (typeof value !== 'string') {
+    return 'Missing required field: url';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 'Missing required field: url';
+  }
+
+  if (trimmed.length > MAX_BROWSER_URL_LENGTH) {
+    return `URL exceeds maximum length of ${MAX_BROWSER_URL_LENGTH} characters`;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return 'Invalid URL';
+  }
+
+  if (!ALLOWED_BROWSER_PROTOCOLS.has(parsed.protocol)) {
+    return 'Only http(s) URLs are allowed';
+  }
+
+  if (!parsed.hostname) {
+    return 'Invalid URL';
+  }
+
+  return null;
+}
+
 /**
  * Parse JSON body from an incoming request.
  * @param {http.IncomingMessage} req
@@ -346,7 +435,11 @@ export class HttpGateway {
    * @private
    */
   async _handleRequest(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const url = safeParseUrl(req.url, req.headers.host);
+    if (!url) {
+      return sendJson(res, 400, { error: 'Invalid request URL' });
+    }
+
     const pathname = url.pathname;
     const method = req.method.toUpperCase();
     const clientIp = req.socket.remoteAddress || 'unknown';
@@ -983,9 +1076,11 @@ export class HttpGateway {
           return sendJson(res, 501, { error: 'Browser subsystem not enabled' });
         }
         const body = await parseBody(req);
-        if (!body.url) return sendJson(res, 400, { error: 'Missing required field: url' });
-        await this._subsystems.browser.navigate(body.url);
-        return sendJson(res, 200, { ok: true, url: body.url });
+        const targetUrl = typeof body.url === 'string' ? body.url.trim() : body.url;
+        const error = validateBrowserUrl(targetUrl);
+        if (error) return sendJson(res, 400, { error });
+        await this._subsystems.browser.navigate(targetUrl);
+        return sendJson(res, 200, { ok: true, url: targetUrl });
       }
 
       if (method === 'POST' && pathname === '/browser/screenshot') {
@@ -1001,10 +1096,20 @@ export class HttpGateway {
         if (!this._subsystems.browser) {
           return sendJson(res, 501, { error: 'Browser subsystem not enabled' });
         }
+        if (
+          !authResult ||
+          !authResult.identity ||
+          LEVELS[authResult.identity.level] < LEVELS.admin
+        ) {
+          return sendJson(res, 403, {
+            error: 'Forbidden',
+            reason: 'Route /browser/evaluate requires admin permission',
+          });
+        }
         const body = await parseBody(req);
-        if (!body.expression)
-          return sendJson(res, 400, { error: 'Missing required field: expression' });
-        const result = await this._subsystems.browser.evaluate(body.expression);
+        const validation = validateBrowserExpression(body.expression);
+        if (validation) return sendJson(res, 400, { error: validation });
+        const result = await this._subsystems.browser.evaluate(body.expression.trim());
         return sendJson(res, 200, { result });
       }
 

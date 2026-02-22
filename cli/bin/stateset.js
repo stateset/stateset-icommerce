@@ -31,6 +31,8 @@ let configMod = null;
 let outputMod = null;
 let confirmMod = null;
 let stateConfigMod = null;
+let validatorsMod = null;
+let errorHintsMod = null;
 
 try {
   process.argv = __savedArgv.slice(0, 2);
@@ -41,6 +43,8 @@ try {
   outputMod = await import('../src/output.js');
   confirmMod = await import('../src/utils/confirm.js');
   stateConfigMod = await import('./stateset-config.js');
+  validatorsMod = await import('../src/utils/validators.js');
+  errorHintsMod = await import('../src/utils/error-hints.js');
 } finally {
   process.argv = __savedArgv;
 }
@@ -51,6 +55,9 @@ const { DEFAULT_MODEL, CLI_VERSION } = configMod;
 const { formatStructuredOutput } = outputMod;
 const { createConfirmHandler } = confirmMod;
 const { getProfileConfig } = stateConfigMod;
+const { validateFormat, validateBudget, validateProvider, validateModel, validateThinkLevel } =
+  validatorsMod;
+const { getErrorHint } = errorHintsMod;
 
 // Available agent names for validation
 const AVAILABLE_AGENTS = Object.keys(AGENTS);
@@ -119,6 +126,7 @@ OPTIONS:
   --timeout <ms>     Abort requests that exceed this duration
   --yes, -y          Skip confirmation prompts
   --quiet, -q        Minimal output (for scripting)
+  --no-color         Disable colored output (also respects NO_COLOR env var)
   --help, -h         Show this help message
   --version, -v      Show version
 
@@ -175,6 +183,7 @@ AGENTS:
     storefront         E-commerce website scaffolding
 
 SPECIALIZED COMMANDS:
+  stateset-setup           Guided first-time setup wizard
   stateset-chat            Interactive multi-turn REPL
   stateset-direct          Direct CLI (no AI, structured commands)
   stateset-pay             Native stablecoin payments
@@ -720,6 +729,7 @@ async function main() {
       stats: { type: 'boolean', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
       quiet: { type: 'boolean', short: 'q', default: false },
+      color: { type: 'boolean', default: true },
       stdin: { type: 'boolean', default: false },
       batch: { type: 'string' },
       parallel: { type: 'string' },
@@ -770,7 +780,7 @@ async function main() {
     : null;
 
   // Initialize output formatter
-  const output = new RichOutput({ color: !isQuiet });
+  const output = new RichOutput({ color: !isQuiet && values.color });
 
   // Handle help
   if (values.help) {
@@ -830,6 +840,35 @@ async function main() {
     return;
   }
 
+  // ── Input validation (fail fast with helpful messages) ──────────────
+  if (values.format && values.format !== 'table') {
+    const fmtResult = validateFormat(values.format);
+    if (!fmtResult.valid) {
+      console.error(`Error: ${fmtResult.error}`);
+      process.exit(1);
+    }
+  }
+  if (values.budget !== undefined) {
+    const budgetResult = validateBudget(values.budget);
+    if (!budgetResult.valid) {
+      console.error(`Error: ${budgetResult.error}`);
+      process.exit(1);
+    }
+  }
+  if (values.provider) {
+    const provResult = validateProvider(values.provider);
+    if (!provResult.valid) {
+      console.error(`Error: ${provResult.error}`);
+      process.exit(1);
+    }
+  }
+  if (values.model) {
+    const modelResult = validateModel(values.model);
+    if (modelResult.warning && !isQuiet) {
+      console.warn(`Warning: ${modelResult.warning}`);
+    }
+  }
+
   if (values.stream && isJsonOutput) {
     console.error(
       'Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.',
@@ -853,16 +892,26 @@ async function main() {
   // Get request from positionals
   const request = positionals.join(' ').trim();
   if (!request) {
-    console.error('Error: No request provided');
-    console.error('Usage: stateset "<your request>"');
-    console.error('Run stateset --help for more information');
+    // Detect first-run: no request and no API key
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.log('\nWelcome to StateSet iCommerce CLI!');
+      console.log('Get started by setting up your API key:\n');
+      console.log('  stateset-config set-key anthropic');
+      console.log('  stateset-setup                     (guided setup)\n');
+      console.log('Run stateset --help for all options');
+    } else {
+      console.error('Error: No request provided');
+      console.error('Usage: stateset "<your request>"');
+      console.error('Run stateset --help for more information');
+    }
     process.exit(1);
   }
 
   // Validate think level
   const thinkLevel = values.think || 'off';
-  if (!['off', 'low', 'medium', 'high'].includes(thinkLevel)) {
-    console.error(`Error: Invalid think level '${thinkLevel}'. Use: off, low, medium, high`);
+  const thinkResult = validateThinkLevel(thinkLevel);
+  if (!thinkResult.valid) {
+    console.error(`Error: ${thinkResult.error}`);
     process.exit(1);
   }
 
@@ -1085,10 +1134,17 @@ async function main() {
 
     process.exit(0);
   } catch (error) {
+    const hint = getErrorHint(error);
     if (values.json) {
-      console.log(JSON.stringify({ error: error.message }));
+      console.log(JSON.stringify({ error: error.message, hint: hint || undefined }));
     } else {
       console.error(`\n${output.status('error', error.message)}`);
+      if (hint) {
+        console.error(`\n${output.dim('Suggestion:')}`);
+        for (const line of hint.split('\n')) {
+          console.error(`  ${output.dim(line)}`);
+        }
+      }
     }
     process.exit(1);
   }

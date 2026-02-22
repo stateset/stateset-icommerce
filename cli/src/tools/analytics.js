@@ -41,7 +41,14 @@ export const analyticsTools = [
     description: 'Get top selling products by revenue or units sold.',
     inputSchema: {
       period: periodEnum.default('last30days').describe('Time period'),
-      limit: z.number().optional().default(10).describe('Maximum number of products to return'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(10)
+        .describe('Maximum number of products to return'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -88,7 +95,14 @@ export const analyticsTools = [
     description: 'Get top customers by total spend.',
     inputSchema: {
       period: periodEnum.default('all_time').describe('Time period'),
-      limit: z.number().optional().default(10).describe('Maximum number of customers to return'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(10)
+        .describe('Maximum number of customers to return'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {

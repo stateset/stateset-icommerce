@@ -105,6 +105,16 @@ export class MemoryStore {
     this._deleteByIdStmt = this._db.prepare(`
       DELETE FROM conversation_memory WHERE id = ?
     `);
+
+    // Entity search — searches across summary and facts for entity references
+    this._entitySearchStmt = this._db.prepare(`
+      SELECT id, channel, sender_id, session_id, summary, facts, agent, created_at, token_count
+      FROM conversation_memory
+      WHERE channel = ? AND sender_id = ?
+        AND (summary LIKE ? OR facts LIKE ?)
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `);
   }
 
   /**
@@ -162,6 +172,30 @@ export class MemoryStore {
    */
   search(channel = 'cli', senderId = 'local', query = '', limit = 5) {
     return this._searchStmt.all(channel, senderId, `%${query}%`, limit).map(this._deserialize);
+  }
+
+  /**
+   * Search memories that mention a specific entity (order, customer, product, return).
+   *
+   * Performs a LIKE search over the summary and facts columns for the entity ID,
+   * so it works with existing stored memories regardless of schema version.
+   *
+   * @param {string} channel
+   * @param {string} senderId
+   * @param {string} entityType - 'order' | 'customer' | 'product' | 'return'
+   * @param {string} entityId   - The entity identifier (e.g. 'ORD-12345')
+   * @param {number} [limit=5]
+   * @returns {Object[]}
+   */
+  searchByEntity(channel = 'cli', senderId = 'local', entityType, entityId, limit = 5) {
+    if (!entityId) return [];
+    // Escape LIKE wildcards in the entity ID itself so literal % or _ are matched safely
+    const escaped = entityId.replace(/[%_\\]/g, (c) => `\\${c}`);
+    const pattern = `%${escaped}%`;
+    return this._entitySearchStmt
+      .all(channel, senderId, pattern, pattern, limit)
+      .map(this._deserialize)
+      .map((row) => ({ ...row, entityType, entityId }));
   }
 
   /**

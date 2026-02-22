@@ -24,6 +24,7 @@ use std::fmt;
 /// assert_eq!(format!("{}", price), "29.99 USD");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[must_use]
 pub struct Money {
     amount: Decimal,
     currency: CurrencyCode,
@@ -38,7 +39,7 @@ impl Money {
 
     /// Create a zero amount in the given currency.
     #[inline]
-    pub fn zero(currency: CurrencyCode) -> Self {
+    pub const fn zero(currency: CurrencyCode) -> Self {
         Self { amount: Decimal::ZERO, currency }
     }
 
@@ -56,23 +57,24 @@ impl Money {
 
     /// Returns `true` if the amount is zero.
     #[inline]
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.amount.is_zero()
     }
 
     /// Returns `true` if the amount is positive.
     #[inline]
-    pub fn is_positive(&self) -> bool {
+    pub const fn is_positive(&self) -> bool {
         self.amount.is_sign_positive() && !self.amount.is_zero()
     }
 
     /// Returns `true` if the amount is negative.
     #[inline]
-    pub fn is_negative(&self) -> bool {
+    pub const fn is_negative(&self) -> bool {
         self.amount.is_sign_negative()
     }
 
     /// Add two monetary values. Returns `None` if currencies don't match.
+    #[must_use]
     pub fn checked_add(self, other: Self) -> Option<Self> {
         if self.currency != other.currency {
             return None;
@@ -81,6 +83,7 @@ impl Money {
     }
 
     /// Subtract two monetary values. Returns `None` if currencies don't match.
+    #[must_use]
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         if self.currency != other.currency {
             return None;
@@ -90,6 +93,7 @@ impl Money {
 
     /// Round to a given number of decimal places.
     #[inline]
+    #[must_use]
     pub fn round_dp(self, dp: u32) -> Self {
         Self { amount: self.amount.round_dp(dp), currency: self.currency }
     }
@@ -145,6 +149,7 @@ impl CurrencyCode {
     /// Create a currency code from 3 ASCII uppercase bytes.
     ///
     /// Returns `None` if any byte is not ASCII uppercase.
+    #[must_use]
     pub const fn from_bytes(bytes: [u8; 3]) -> Option<Self> {
         if bytes[0].is_ascii_uppercase()
             && bytes[1].is_ascii_uppercase()
@@ -158,6 +163,7 @@ impl CurrencyCode {
 
     /// Get the currency code as a string slice.
     #[inline]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         // SAFETY: We validate ASCII uppercase in all constructors.
         std::str::from_utf8(&self.0).expect("CurrencyCode is always valid ASCII")

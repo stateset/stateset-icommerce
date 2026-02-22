@@ -104,7 +104,7 @@ export const importTools = [
     description:
       'List external ID to StateSet ID mappings for a platform. Useful for verifying imported data.',
     inputSchema: {
-      platform: z.string().describe('Platform name (e.g., "shopify")'),
+      platform: z.string().min(1).describe('Platform name (e.g., "shopify")'),
       entityType: z
         .string()
         .optional()
@@ -135,7 +135,7 @@ export const importTools = [
     description:
       'Import data from a CSV file. Auto-detects Shopify format or uses generic column mapping.',
     inputSchema: {
-      filePath: z.string().describe('Path to CSV file'),
+      filePath: z.string().min(1).describe('Path to CSV file'),
       entityType: z
         .enum(['customers', 'products', 'orders', 'inventory'])
         .describe('Type of data in the CSV'),
@@ -192,7 +192,7 @@ export const importTools = [
     name: 'import_json',
     description: 'Import data from a JSON file (Shopify REST API response format or array).',
     inputSchema: {
-      filePath: z.string().describe('Path to JSON file'),
+      filePath: z.string().min(1).describe('Path to JSON file'),
       entityType: z
         .enum(['customers', 'products', 'orders', 'inventory'])
         .describe('Type of data in the JSON'),

@@ -37,7 +37,8 @@ use super::x402::{X402Asset, X402Network};
 // =============================================================================
 
 /// Status of an A2A payment
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum A2APaymentStatus {
@@ -56,19 +57,6 @@ pub enum A2APaymentStatus {
     Refunded,
 }
 
-impl std::fmt::Display for A2APaymentStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Submitted => write!(f, "submitted"),
-            Self::Completed => write!(f, "completed"),
-            Self::Failed => write!(f, "failed"),
-            Self::Cancelled => write!(f, "cancelled"),
-            Self::Refunded => write!(f, "refunded"),
-        }
-    }
-}
-
 /// A2A Payment - Direct transfer between agents
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct A2APayment {
@@ -81,13 +69,13 @@ pub struct A2APayment {
     // =========================================================================
     // Participants
     // =========================================================================
-    /// Sender agent ID (from agent_cards)
+    /// Sender agent ID (from `agent_cards`)
     pub sender_agent_id: Option<Uuid>,
 
     /// Sender wallet address
     pub sender_address: String,
 
-    /// Recipient agent ID (from agent_cards)
+    /// Recipient agent ID (from `agent_cards`)
     pub recipient_agent_id: Option<Uuid>,
 
     /// Recipient wallet address
@@ -117,7 +105,7 @@ pub struct A2APayment {
     /// Reference to what this payment is for
     pub reference_type: Option<A2AReferenceType>,
 
-    /// Reference ID (quote_id, request_id, order_id, etc.)
+    /// Reference ID (`quote_id`, `request_id`, `order_id`, etc.)
     pub reference_id: Option<Uuid>,
 
     /// Idempotency key for deduplication
@@ -196,13 +184,13 @@ impl A2APayment {
     }
 
     /// Set network
-    pub fn with_network(mut self, network: X402Network) -> Self {
+    pub const fn with_network(mut self, network: X402Network) -> Self {
         self.network = network;
         self
     }
 
     /// Set reference
-    pub fn with_reference(mut self, ref_type: A2AReferenceType, ref_id: Uuid) -> Self {
+    pub const fn with_reference(mut self, ref_type: A2AReferenceType, ref_id: Uuid) -> Self {
         self.reference_type = Some(ref_type);
         self.reference_id = Some(ref_id);
         self
@@ -219,7 +207,8 @@ impl A2APayment {
 }
 
 /// Reference type for A2A payments
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum A2AReferenceType {
@@ -246,7 +235,8 @@ pub enum A2AReferenceType {
 // =============================================================================
 
 /// Status of a payment request
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentRequestStatus {
@@ -265,20 +255,6 @@ pub enum PaymentRequestStatus {
     Expired,
     /// Request cancelled by requester
     Cancelled,
-}
-
-impl std::fmt::Display for PaymentRequestStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Viewed => write!(f, "viewed"),
-            Self::Processing => write!(f, "processing"),
-            Self::Paid => write!(f, "paid"),
-            Self::Declined => write!(f, "declined"),
-            Self::Expired => write!(f, "expired"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
 }
 
 /// Payment Request - Agent requests payment from another agent
@@ -344,7 +320,7 @@ pub struct PaymentRequest {
     /// Whether partial payments are accepted
     pub allow_partial: bool,
 
-    /// Minimum partial amount (if allow_partial)
+    /// Minimum partial amount (if `allow_partial`)
     pub minimum_amount: Option<u64>,
 
     // =========================================================================
@@ -426,13 +402,13 @@ impl PaymentRequest {
     }
 
     /// Set expiry
-    pub fn with_expiry(mut self, expires_at: DateTime<Utc>) -> Self {
+    pub const fn with_expiry(mut self, expires_at: DateTime<Utc>) -> Self {
         self.expires_at = expires_at;
         self
     }
 
     /// Allow partial payments
-    pub fn with_partial(mut self, minimum: Option<u64>) -> Self {
+    pub const fn with_partial(mut self, minimum: Option<u64>) -> Self {
         self.allow_partial = true;
         self.minimum_amount = minimum;
         self
@@ -444,7 +420,7 @@ impl PaymentRequest {
     }
 
     /// Check if fully paid
-    pub fn is_fully_paid(&self) -> bool {
+    pub const fn is_fully_paid(&self) -> bool {
         self.amount_paid >= self.amount
     }
 
@@ -717,7 +693,7 @@ impl A2AQuoteItem {
     }
 
     /// Calculate total for this line item
-    pub fn total(&self) -> u64 {
+    pub const fn total(&self) -> u64 {
         self.unit_price * self.quantity as u64
     }
 }
@@ -835,7 +811,7 @@ pub struct CreateA2APayment {
     pub recipient_agent_id: Option<Uuid>,
     pub recipient_address: Option<String>,
 
-    /// Amount in smallest unit (or use amount_decimal)
+    /// Amount in smallest unit (or use `amount_decimal`)
     pub amount: Option<u64>,
     pub amount_decimal: Option<Decimal>,
 

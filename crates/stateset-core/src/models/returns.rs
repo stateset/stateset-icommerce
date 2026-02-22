@@ -183,12 +183,12 @@ impl Return {
     }
 
     /// Check if return can be completed
-    pub fn can_complete(&self) -> bool {
+    pub const fn can_complete(&self) -> bool {
         matches!(self.status, ReturnStatus::Received | ReturnStatus::Inspecting)
     }
 
     /// Check if refund is eligible based on reason
-    pub fn is_refund_eligible(&self) -> bool {
+    pub const fn is_refund_eligible(&self) -> bool {
         matches!(
             self.reason,
             ReturnReason::Defective

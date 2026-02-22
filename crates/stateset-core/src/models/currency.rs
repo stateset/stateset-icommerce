@@ -90,194 +90,194 @@ pub enum Currency {
 
 impl Currency {
     /// Get the currency code as a string
-    pub fn code(&self) -> &'static str {
+    pub const fn code(&self) -> &'static str {
         match self {
-            Currency::USD => "USD",
-            Currency::EUR => "EUR",
-            Currency::GBP => "GBP",
-            Currency::JPY => "JPY",
-            Currency::CAD => "CAD",
-            Currency::AUD => "AUD",
-            Currency::CHF => "CHF",
-            Currency::CNY => "CNY",
-            Currency::HKD => "HKD",
-            Currency::SGD => "SGD",
-            Currency::SEK => "SEK",
-            Currency::NOK => "NOK",
-            Currency::DKK => "DKK",
-            Currency::NZD => "NZD",
-            Currency::MXN => "MXN",
-            Currency::INR => "INR",
-            Currency::BRL => "BRL",
-            Currency::KRW => "KRW",
-            Currency::ZAR => "ZAR",
-            Currency::RUB => "RUB",
-            Currency::TRY => "TRY",
-            Currency::PLN => "PLN",
-            Currency::THB => "THB",
-            Currency::IDR => "IDR",
-            Currency::MYR => "MYR",
-            Currency::PHP => "PHP",
-            Currency::CZK => "CZK",
-            Currency::ILS => "ILS",
-            Currency::AED => "AED",
-            Currency::SAR => "SAR",
-            Currency::TWD => "TWD",
-            Currency::VND => "VND",
-            Currency::BTC => "BTC",
-            Currency::ETH => "ETH",
-            Currency::USDC => "USDC",
-            Currency::USDT => "USDT",
+            Self::USD => "USD",
+            Self::EUR => "EUR",
+            Self::GBP => "GBP",
+            Self::JPY => "JPY",
+            Self::CAD => "CAD",
+            Self::AUD => "AUD",
+            Self::CHF => "CHF",
+            Self::CNY => "CNY",
+            Self::HKD => "HKD",
+            Self::SGD => "SGD",
+            Self::SEK => "SEK",
+            Self::NOK => "NOK",
+            Self::DKK => "DKK",
+            Self::NZD => "NZD",
+            Self::MXN => "MXN",
+            Self::INR => "INR",
+            Self::BRL => "BRL",
+            Self::KRW => "KRW",
+            Self::ZAR => "ZAR",
+            Self::RUB => "RUB",
+            Self::TRY => "TRY",
+            Self::PLN => "PLN",
+            Self::THB => "THB",
+            Self::IDR => "IDR",
+            Self::MYR => "MYR",
+            Self::PHP => "PHP",
+            Self::CZK => "CZK",
+            Self::ILS => "ILS",
+            Self::AED => "AED",
+            Self::SAR => "SAR",
+            Self::TWD => "TWD",
+            Self::VND => "VND",
+            Self::BTC => "BTC",
+            Self::ETH => "ETH",
+            Self::USDC => "USDC",
+            Self::USDT => "USDT",
         }
     }
 
     /// Get the currency symbol
-    pub fn symbol(&self) -> &'static str {
+    pub const fn symbol(&self) -> &'static str {
         match self {
-            Currency::USD => "$",
-            Currency::EUR => "€",
-            Currency::GBP => "£",
-            Currency::JPY => "¥",
-            Currency::CAD => "C$",
-            Currency::AUD => "A$",
-            Currency::CHF => "CHF",
-            Currency::CNY => "¥",
-            Currency::HKD => "HK$",
-            Currency::SGD => "S$",
-            Currency::SEK => "kr",
-            Currency::NOK => "kr",
-            Currency::DKK => "kr",
-            Currency::NZD => "NZ$",
-            Currency::MXN => "$",
-            Currency::INR => "₹",
-            Currency::BRL => "R$",
-            Currency::KRW => "₩",
-            Currency::ZAR => "R",
-            Currency::RUB => "₽",
-            Currency::TRY => "₺",
-            Currency::PLN => "zł",
-            Currency::THB => "฿",
-            Currency::IDR => "Rp",
-            Currency::MYR => "RM",
-            Currency::PHP => "₱",
-            Currency::CZK => "Kč",
-            Currency::ILS => "₪",
-            Currency::AED => "د.إ",
-            Currency::SAR => "﷼",
-            Currency::TWD => "NT$",
-            Currency::VND => "₫",
-            Currency::BTC => "₿",
-            Currency::ETH => "Ξ",
-            Currency::USDC => "USDC",
-            Currency::USDT => "USDT",
+            Self::USD => "$",
+            Self::EUR => "€",
+            Self::GBP => "£",
+            Self::JPY => "¥",
+            Self::CAD => "C$",
+            Self::AUD => "A$",
+            Self::CHF => "CHF",
+            Self::CNY => "¥",
+            Self::HKD => "HK$",
+            Self::SGD => "S$",
+            Self::SEK => "kr",
+            Self::NOK => "kr",
+            Self::DKK => "kr",
+            Self::NZD => "NZ$",
+            Self::MXN => "$",
+            Self::INR => "₹",
+            Self::BRL => "R$",
+            Self::KRW => "₩",
+            Self::ZAR => "R",
+            Self::RUB => "₽",
+            Self::TRY => "₺",
+            Self::PLN => "zł",
+            Self::THB => "฿",
+            Self::IDR => "Rp",
+            Self::MYR => "RM",
+            Self::PHP => "₱",
+            Self::CZK => "Kč",
+            Self::ILS => "₪",
+            Self::AED => "د.إ",
+            Self::SAR => "﷼",
+            Self::TWD => "NT$",
+            Self::VND => "₫",
+            Self::BTC => "₿",
+            Self::ETH => "Ξ",
+            Self::USDC => "USDC",
+            Self::USDT => "USDT",
         }
     }
 
     /// Get the currency name
-    pub fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
-            Currency::USD => "US Dollar",
-            Currency::EUR => "Euro",
-            Currency::GBP => "British Pound",
-            Currency::JPY => "Japanese Yen",
-            Currency::CAD => "Canadian Dollar",
-            Currency::AUD => "Australian Dollar",
-            Currency::CHF => "Swiss Franc",
-            Currency::CNY => "Chinese Yuan",
-            Currency::HKD => "Hong Kong Dollar",
-            Currency::SGD => "Singapore Dollar",
-            Currency::SEK => "Swedish Krona",
-            Currency::NOK => "Norwegian Krone",
-            Currency::DKK => "Danish Krone",
-            Currency::NZD => "New Zealand Dollar",
-            Currency::MXN => "Mexican Peso",
-            Currency::INR => "Indian Rupee",
-            Currency::BRL => "Brazilian Real",
-            Currency::KRW => "South Korean Won",
-            Currency::ZAR => "South African Rand",
-            Currency::RUB => "Russian Ruble",
-            Currency::TRY => "Turkish Lira",
-            Currency::PLN => "Polish Zloty",
-            Currency::THB => "Thai Baht",
-            Currency::IDR => "Indonesian Rupiah",
-            Currency::MYR => "Malaysian Ringgit",
-            Currency::PHP => "Philippine Peso",
-            Currency::CZK => "Czech Koruna",
-            Currency::ILS => "Israeli Shekel",
-            Currency::AED => "UAE Dirham",
-            Currency::SAR => "Saudi Riyal",
-            Currency::TWD => "Taiwan Dollar",
-            Currency::VND => "Vietnamese Dong",
-            Currency::BTC => "Bitcoin",
-            Currency::ETH => "Ethereum",
-            Currency::USDC => "USD Coin",
-            Currency::USDT => "Tether",
+            Self::USD => "US Dollar",
+            Self::EUR => "Euro",
+            Self::GBP => "British Pound",
+            Self::JPY => "Japanese Yen",
+            Self::CAD => "Canadian Dollar",
+            Self::AUD => "Australian Dollar",
+            Self::CHF => "Swiss Franc",
+            Self::CNY => "Chinese Yuan",
+            Self::HKD => "Hong Kong Dollar",
+            Self::SGD => "Singapore Dollar",
+            Self::SEK => "Swedish Krona",
+            Self::NOK => "Norwegian Krone",
+            Self::DKK => "Danish Krone",
+            Self::NZD => "New Zealand Dollar",
+            Self::MXN => "Mexican Peso",
+            Self::INR => "Indian Rupee",
+            Self::BRL => "Brazilian Real",
+            Self::KRW => "South Korean Won",
+            Self::ZAR => "South African Rand",
+            Self::RUB => "Russian Ruble",
+            Self::TRY => "Turkish Lira",
+            Self::PLN => "Polish Zloty",
+            Self::THB => "Thai Baht",
+            Self::IDR => "Indonesian Rupiah",
+            Self::MYR => "Malaysian Ringgit",
+            Self::PHP => "Philippine Peso",
+            Self::CZK => "Czech Koruna",
+            Self::ILS => "Israeli Shekel",
+            Self::AED => "UAE Dirham",
+            Self::SAR => "Saudi Riyal",
+            Self::TWD => "Taiwan Dollar",
+            Self::VND => "Vietnamese Dong",
+            Self::BTC => "Bitcoin",
+            Self::ETH => "Ethereum",
+            Self::USDC => "USD Coin",
+            Self::USDT => "Tether",
         }
     }
 
     /// Get the number of decimal places for this currency
-    pub fn decimal_places(&self) -> u8 {
+    pub const fn decimal_places(&self) -> u8 {
         match self {
             // Zero decimal currencies
-            Currency::JPY | Currency::KRW | Currency::VND => 0,
+            Self::JPY | Self::KRW | Self::VND => 0,
             // Crypto with 8 decimals
-            Currency::BTC => 8,
+            Self::BTC => 8,
             // Crypto with 18 decimals (but we'll use 8 for practical purposes)
-            Currency::ETH => 8,
+            Self::ETH => 8,
             // All others use 2 decimals
             _ => 2,
         }
     }
 
     /// Check if this is a cryptocurrency
-    pub fn is_crypto(&self) -> bool {
-        matches!(self, Currency::BTC | Currency::ETH | Currency::USDC | Currency::USDT)
+    pub const fn is_crypto(&self) -> bool {
+        matches!(self, Self::BTC | Self::ETH | Self::USDC | Self::USDT)
     }
 
     /// Check if this is a fiat currency
-    pub fn is_fiat(&self) -> bool {
+    pub const fn is_fiat(&self) -> bool {
         !self.is_crypto()
     }
 
     /// Get all supported currencies
-    pub fn all() -> Vec<Currency> {
+    pub fn all() -> Vec<Self> {
         vec![
-            Currency::USD,
-            Currency::EUR,
-            Currency::GBP,
-            Currency::JPY,
-            Currency::CAD,
-            Currency::AUD,
-            Currency::CHF,
-            Currency::CNY,
-            Currency::HKD,
-            Currency::SGD,
-            Currency::SEK,
-            Currency::NOK,
-            Currency::DKK,
-            Currency::NZD,
-            Currency::MXN,
-            Currency::INR,
-            Currency::BRL,
-            Currency::KRW,
-            Currency::ZAR,
-            Currency::RUB,
-            Currency::TRY,
-            Currency::PLN,
-            Currency::THB,
-            Currency::IDR,
-            Currency::MYR,
-            Currency::PHP,
-            Currency::CZK,
-            Currency::ILS,
-            Currency::AED,
-            Currency::SAR,
-            Currency::TWD,
-            Currency::VND,
-            Currency::BTC,
-            Currency::ETH,
-            Currency::USDC,
-            Currency::USDT,
+            Self::USD,
+            Self::EUR,
+            Self::GBP,
+            Self::JPY,
+            Self::CAD,
+            Self::AUD,
+            Self::CHF,
+            Self::CNY,
+            Self::HKD,
+            Self::SGD,
+            Self::SEK,
+            Self::NOK,
+            Self::DKK,
+            Self::NZD,
+            Self::MXN,
+            Self::INR,
+            Self::BRL,
+            Self::KRW,
+            Self::ZAR,
+            Self::RUB,
+            Self::TRY,
+            Self::PLN,
+            Self::THB,
+            Self::IDR,
+            Self::MYR,
+            Self::PHP,
+            Self::CZK,
+            Self::ILS,
+            Self::AED,
+            Self::SAR,
+            Self::TWD,
+            Self::VND,
+            Self::BTC,
+            Self::ETH,
+            Self::USDC,
+            Self::USDT,
         ]
     }
 }
@@ -293,42 +293,42 @@ impl FromStr for Currency {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
-            "USD" => Ok(Currency::USD),
-            "EUR" => Ok(Currency::EUR),
-            "GBP" => Ok(Currency::GBP),
-            "JPY" => Ok(Currency::JPY),
-            "CAD" => Ok(Currency::CAD),
-            "AUD" => Ok(Currency::AUD),
-            "CHF" => Ok(Currency::CHF),
-            "CNY" => Ok(Currency::CNY),
-            "HKD" => Ok(Currency::HKD),
-            "SGD" => Ok(Currency::SGD),
-            "SEK" => Ok(Currency::SEK),
-            "NOK" => Ok(Currency::NOK),
-            "DKK" => Ok(Currency::DKK),
-            "NZD" => Ok(Currency::NZD),
-            "MXN" => Ok(Currency::MXN),
-            "INR" => Ok(Currency::INR),
-            "BRL" => Ok(Currency::BRL),
-            "KRW" => Ok(Currency::KRW),
-            "ZAR" => Ok(Currency::ZAR),
-            "RUB" => Ok(Currency::RUB),
-            "TRY" => Ok(Currency::TRY),
-            "PLN" => Ok(Currency::PLN),
-            "THB" => Ok(Currency::THB),
-            "IDR" => Ok(Currency::IDR),
-            "MYR" => Ok(Currency::MYR),
-            "PHP" => Ok(Currency::PHP),
-            "CZK" => Ok(Currency::CZK),
-            "ILS" => Ok(Currency::ILS),
-            "AED" => Ok(Currency::AED),
-            "SAR" => Ok(Currency::SAR),
-            "TWD" => Ok(Currency::TWD),
-            "VND" => Ok(Currency::VND),
-            "BTC" => Ok(Currency::BTC),
-            "ETH" => Ok(Currency::ETH),
-            "USDC" => Ok(Currency::USDC),
-            "USDT" => Ok(Currency::USDT),
+            "USD" => Ok(Self::USD),
+            "EUR" => Ok(Self::EUR),
+            "GBP" => Ok(Self::GBP),
+            "JPY" => Ok(Self::JPY),
+            "CAD" => Ok(Self::CAD),
+            "AUD" => Ok(Self::AUD),
+            "CHF" => Ok(Self::CHF),
+            "CNY" => Ok(Self::CNY),
+            "HKD" => Ok(Self::HKD),
+            "SGD" => Ok(Self::SGD),
+            "SEK" => Ok(Self::SEK),
+            "NOK" => Ok(Self::NOK),
+            "DKK" => Ok(Self::DKK),
+            "NZD" => Ok(Self::NZD),
+            "MXN" => Ok(Self::MXN),
+            "INR" => Ok(Self::INR),
+            "BRL" => Ok(Self::BRL),
+            "KRW" => Ok(Self::KRW),
+            "ZAR" => Ok(Self::ZAR),
+            "RUB" => Ok(Self::RUB),
+            "TRY" => Ok(Self::TRY),
+            "PLN" => Ok(Self::PLN),
+            "THB" => Ok(Self::THB),
+            "IDR" => Ok(Self::IDR),
+            "MYR" => Ok(Self::MYR),
+            "PHP" => Ok(Self::PHP),
+            "CZK" => Ok(Self::CZK),
+            "ILS" => Ok(Self::ILS),
+            "AED" => Ok(Self::AED),
+            "SAR" => Ok(Self::SAR),
+            "TWD" => Ok(Self::TWD),
+            "VND" => Ok(Self::VND),
+            "BTC" => Ok(Self::BTC),
+            "ETH" => Ok(Self::ETH),
+            "USDC" => Ok(Self::USDC),
+            "USDT" => Ok(Self::USDT),
             _ => Err(format!("Unknown currency code: {}", s)),
         }
     }
@@ -349,32 +349,32 @@ pub struct Money {
 
 impl Money {
     /// Create a new Money instance
-    pub fn new(amount: Decimal, currency: Currency) -> Self {
+    pub const fn new(amount: Decimal, currency: Currency) -> Self {
         Self { amount, currency }
     }
 
     /// Create Money from a major unit amount (e.g., dollars, not cents)
-    pub fn from_major(amount: Decimal, currency: Currency) -> Self {
+    pub const fn from_major(amount: Decimal, currency: Currency) -> Self {
         Self { amount, currency }
     }
 
     /// Create zero money in a currency
-    pub fn zero(currency: Currency) -> Self {
+    pub const fn zero(currency: Currency) -> Self {
         Self { amount: Decimal::ZERO, currency }
     }
 
     /// Check if the amount is zero
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.amount.is_zero()
     }
 
     /// Check if the amount is positive
-    pub fn is_positive(&self) -> bool {
+    pub const fn is_positive(&self) -> bool {
         self.amount.is_sign_positive() && !self.amount.is_zero()
     }
 
     /// Check if the amount is negative
-    pub fn is_negative(&self) -> bool {
+    pub const fn is_negative(&self) -> bool {
         self.amount.is_sign_negative()
     }
 
@@ -541,7 +541,7 @@ pub struct MultiCurrencyPrice {
 
 impl MultiCurrencyPrice {
     /// Create a new multi-currency price with just the base
-    pub fn new(base: Money) -> Self {
+    pub const fn new(base: Money) -> Self {
         Self { base, prices: Vec::new() }
     }
 
@@ -641,11 +641,11 @@ pub enum RoundingMode {
 impl fmt::Display for RoundingMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RoundingMode::HalfUp => write!(f, "half_up"),
-            RoundingMode::HalfDown => write!(f, "half_down"),
-            RoundingMode::Up => write!(f, "up"),
-            RoundingMode::Down => write!(f, "down"),
-            RoundingMode::HalfEven => write!(f, "half_even"),
+            Self::HalfUp => write!(f, "half_up"),
+            Self::HalfDown => write!(f, "half_down"),
+            Self::Up => write!(f, "up"),
+            Self::Down => write!(f, "down"),
+            Self::HalfEven => write!(f, "half_even"),
         }
     }
 }
@@ -655,12 +655,12 @@ impl FromStr for RoundingMode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "half_up" | "halfup" | "half-up" => Ok(RoundingMode::HalfUp),
-            "half_down" | "halfdown" | "half-down" => Ok(RoundingMode::HalfDown),
-            "up" => Ok(RoundingMode::Up),
-            "down" => Ok(RoundingMode::Down),
+            "half_up" | "halfup" | "half-up" => Ok(Self::HalfUp),
+            "half_down" | "halfdown" | "half-down" => Ok(Self::HalfDown),
+            "up" => Ok(Self::Up),
+            "down" => Ok(Self::Down),
             "half_even" | "halfeven" | "half-even" | "bankers" | "bankers_rounding" => {
-                Ok(RoundingMode::HalfEven)
+                Ok(Self::HalfEven)
             }
             _ => Err(format!("Unknown rounding mode: {}", s)),
         }

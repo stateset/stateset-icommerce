@@ -20,7 +20,7 @@ pub struct InventoryItem {
 }
 
 /// Inventory balance at a location
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryBalance {
     pub id: i64,
     pub item_id: i64,
@@ -36,7 +36,7 @@ pub struct InventoryBalance {
 }
 
 /// Inventory transaction (audit trail)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryTransaction {
     pub id: i64,
     pub item_id: i64,
@@ -51,7 +51,7 @@ pub struct InventoryTransaction {
 }
 
 /// Inventory reservation
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InventoryReservation {
     pub id: Uuid,
     pub item_id: i64,

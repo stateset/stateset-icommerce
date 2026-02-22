@@ -65,12 +65,15 @@ use stateset_core::{
     A2ACommerceRepository, AnalyticsRepository, BackorderRepository, BomRepository,
     CartRepository, CostAccountingRepository, CreditRepository, CurrencyRepository,
     CustomObjectRepository,
-    CustomerRepository, FulfillmentRepository, GeneralLedgerRepository, InventoryRepository,
-    InvoiceRepository, LotRepository, OrderRepository, PaymentRepository, ProductRepository,
-    PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result,
-    ReturnRepository, SerialRepository, ShipmentRepository, SubscriptionRepository, TaxRepository,
-    WarehouseRepository, WarrantyRepository, WorkOrderRepository, X402CreditRepository,
-    X402PaymentIntentRepository,
+    CustomerRepository, FraudRepository, FulfillmentRepository, GeneralLedgerRepository,
+    GiftCardRepository, InventoryRepository, InvoiceRepository, LotRepository,
+    LoyaltyProgramRepository, OrderRepository, PaymentRepository, ProductRepository,
+    PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository,
+    Result, ReturnRepository, ReviewRepository, RewardRepository, SearchConfigRepository,
+    SegmentRepository, SerialRepository, ShipmentRepository, ShippingZoneRepository,
+    StoreCreditRepository, SubscriptionRepository, TaxRepository, WarehouseRepository,
+    WarrantyRepository, WishlistRepository, WorkOrderRepository, X402CreditRepository,
+    X402PaymentIntentRepository, ZoneShippingMethodRepository,
 };
 
 // ============================================================================
@@ -94,6 +97,7 @@ pub trait TransactionContext: Send + Sync {
 
 /// Options for transaction execution
 #[derive(Debug, Clone, Default)]
+#[must_use]
 pub struct TransactionOptions {
     /// Timeout for the transaction in milliseconds (default: 30000)
     pub timeout_ms: Option<u64>,
@@ -114,13 +118,13 @@ impl TransactionOptions {
     }
 
     /// Set the timeout
-    pub fn timeout_ms(mut self, ms: u64) -> Self {
+    pub const fn timeout_ms(mut self, ms: u64) -> Self {
         self.timeout_ms = Some(ms);
         self
     }
 
     /// Set the isolation level
-    pub fn isolation(mut self, level: TransactionIsolation) -> Self {
+    pub const fn isolation(mut self, level: TransactionIsolation) -> Self {
         self.isolation = level;
         self
     }
@@ -129,7 +133,7 @@ impl TransactionOptions {
     ///
     /// If enabled, the transaction closure may re-run on transient database failures.
     /// Ensure the closure body is idempotent (or safely handles retry) when enabling this option.
-    pub fn with_retries(mut self, max_retries: u32) -> Self {
+    pub const fn with_retries(mut self, max_retries: u32) -> Self {
         self.retry_on_conflict = true;
         self.max_retries = max_retries;
         self
@@ -235,6 +239,31 @@ pub trait Database: Send + Sync {
     fn agent_reputation(&self) -> Box<dyn AgentReputationRepository + '_>;
     /// Get the agent validation registry repository (ERC-8004)
     fn agent_validation(&self) -> Box<dyn AgentValidationRepository + '_>;
+
+    // --- New domain repositories ---
+
+    /// Get the gift card repository
+    fn gift_cards(&self) -> Box<dyn GiftCardRepository + '_>;
+    /// Get the store credit repository
+    fn store_credits(&self) -> Box<dyn StoreCreditRepository + '_>;
+    /// Get the customer segment repository
+    fn segments(&self) -> Box<dyn SegmentRepository + '_>;
+    /// Get the shipping zone repository
+    fn shipping_zones(&self) -> Box<dyn ShippingZoneRepository + '_>;
+    /// Get the zone shipping method repository
+    fn zone_shipping_methods(&self) -> Box<dyn ZoneShippingMethodRepository + '_>;
+    /// Get the product review repository
+    fn reviews(&self) -> Box<dyn ReviewRepository + '_>;
+    /// Get the wishlist repository
+    fn wishlists(&self) -> Box<dyn WishlistRepository + '_>;
+    /// Get the loyalty program repository
+    fn loyalty_programs(&self) -> Box<dyn LoyaltyProgramRepository + '_>;
+    /// Get the reward catalog repository
+    fn rewards(&self) -> Box<dyn RewardRepository + '_>;
+    /// Get the fraud detection repository
+    fn fraud(&self) -> Box<dyn FraudRepository + '_>;
+    /// Get the search configuration repository
+    fn search_configs(&self) -> Box<dyn SearchConfigRepository + '_>;
 }
 
 /// Extension trait for database transaction support.
@@ -493,6 +522,52 @@ macro_rules! impl_database_accessors {
 
             fn agent_validation(&self) -> Box<dyn AgentValidationRepository + '_> {
                 Box::new(self.agent_validation())
+            }
+
+            // --- New domain repositories ---
+
+            fn gift_cards(&self) -> Box<dyn GiftCardRepository + '_> {
+                Box::new(self.gift_cards())
+            }
+
+            fn store_credits(&self) -> Box<dyn StoreCreditRepository + '_> {
+                Box::new(self.store_credits())
+            }
+
+            fn segments(&self) -> Box<dyn SegmentRepository + '_> {
+                Box::new(self.segments())
+            }
+
+            fn shipping_zones(&self) -> Box<dyn ShippingZoneRepository + '_> {
+                Box::new(self.shipping_zones())
+            }
+
+            fn zone_shipping_methods(&self) -> Box<dyn ZoneShippingMethodRepository + '_> {
+                Box::new(self.zone_shipping_methods())
+            }
+
+            fn reviews(&self) -> Box<dyn ReviewRepository + '_> {
+                Box::new(self.reviews())
+            }
+
+            fn wishlists(&self) -> Box<dyn WishlistRepository + '_> {
+                Box::new(self.wishlists())
+            }
+
+            fn loyalty_programs(&self) -> Box<dyn LoyaltyProgramRepository + '_> {
+                Box::new(self.loyalty_programs())
+            }
+
+            fn rewards(&self) -> Box<dyn RewardRepository + '_> {
+                Box::new(self.rewards())
+            }
+
+            fn fraud(&self) -> Box<dyn FraudRepository + '_> {
+                Box::new(self.fraud())
+            }
+
+            fn search_configs(&self) -> Box<dyn SearchConfigRepository + '_> {
+                Box::new(self.search_configs())
             }
         }
     };

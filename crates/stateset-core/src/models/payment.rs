@@ -51,7 +51,7 @@ pub enum PaymentMethodType {
     /// Bank transfer / ACH
     #[strum(serialize = "bank_transfer", serialize = "ach")]
     BankTransfer,
-    /// PayPal
+    /// `PayPal`
     #[strum(serialize = "paypal")]
     PayPal,
     /// Apple Pay
@@ -291,7 +291,7 @@ pub struct CreatePayment {
     // =========================================================================
     // Blockchain/Stablecoin Payment Fields
     // =========================================================================
-    /// Blockchain network (solana, set_chain, base, etc.)
+    /// Blockchain network (solana, `set_chain`, base, etc.)
     pub blockchain_network: Option<BlockchainNetwork>,
     /// Stablecoin type (USDC, USDT, ssUSD)
     pub stablecoin_type: Option<StablecoinType>,

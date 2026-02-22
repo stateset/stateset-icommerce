@@ -12,7 +12,14 @@ export const returnTools = [
     name: 'list_returns',
     description: 'List all returns. Shows return status, order, and reason.',
     inputSchema: {
-      limit: z.number().optional().default(50).describe('Maximum number of returns to show'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .default(50)
+        .describe('Maximum number of returns to show'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -40,7 +47,7 @@ export const returnTools = [
     name: 'get_return',
     description: 'Get a specific return by ID.',
     inputSchema: {
-      returnId: z.string().describe('Return ID (UUID)'),
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -59,7 +66,7 @@ export const returnTools = [
     name: 'create_return',
     description: 'Create a return request for an order.',
     inputSchema: {
-      orderId: z.string().describe('Order ID (UUID)'),
+      orderId: z.string().min(1).describe('Order ID (UUID)'),
       reason: z
         .enum([
           'defective',
@@ -72,14 +79,20 @@ export const returnTools = [
           'other',
         ])
         .describe('Return reason'),
-      reasonDetails: z.string().optional().describe('Additional details about the return reason'),
+      reasonDetails: z
+        .string()
+        .max(1000)
+        .optional()
+        .describe('Additional details about the return reason'),
       items: z
         .array(
           z.object({
-            orderItemId: z.string().describe('Order item ID to return'),
-            quantity: z.number().describe('Quantity to return'),
+            orderItemId: z.string().min(1).describe('Order item ID to return'),
+            quantity: z.number().int().min(1).describe('Quantity to return'),
           }),
         )
+        .min(1)
+        .max(50)
         .describe('Items to return'),
     },
     permission: 'write',
@@ -111,7 +124,7 @@ export const returnTools = [
     name: 'approve_return',
     description: 'Approve a return request.',
     inputSchema: {
-      returnId: z.string().describe('Return ID (UUID)'),
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -139,8 +152,8 @@ export const returnTools = [
     name: 'reject_return',
     description: 'Reject a return request with a reason.',
     inputSchema: {
-      returnId: z.string().describe('Return ID (UUID)'),
-      reason: z.string().describe('Reason for rejection'),
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
+      reason: z.string().min(1).max(500).describe('Reason for rejection'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

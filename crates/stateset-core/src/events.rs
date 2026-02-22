@@ -372,7 +372,7 @@ pub enum CommerceEvent {
 
 impl CommerceEvent {
     /// Get event type as string
-    pub fn event_type(&self) -> &'static str {
+    pub const fn event_type(&self) -> &'static str {
         match self {
             Self::OrderCreated { .. } => "order_created",
             Self::OrderStatusChanged { .. } => "order_status_changed",
@@ -431,7 +431,7 @@ impl CommerceEvent {
     }
 
     /// Get timestamp from event
-    pub fn timestamp(&self) -> DateTime<Utc> {
+    pub const fn timestamp(&self) -> DateTime<Utc> {
         match self {
             Self::OrderCreated { timestamp, .. }
             | Self::OrderStatusChanged { timestamp, .. }
@@ -490,6 +490,7 @@ impl CommerceEvent {
     }
 
     /// Serialize event to JSON
+    #[must_use = "serialization result should not be discarded"]
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }
