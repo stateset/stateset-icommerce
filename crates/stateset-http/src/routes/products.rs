@@ -158,7 +158,7 @@ mod tests {
         let id = ProductId::new();
         let resp = app()
             .oneshot(
-                Request::get(&format!("/products/{id}"))
+                Request::get(format!("/products/{id}"))
                     .body(Body::empty())
                     .unwrap(),
             )

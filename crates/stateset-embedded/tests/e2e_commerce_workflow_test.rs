@@ -83,9 +83,9 @@ fn test_full_commerce_lifecycle() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
-                product_id: product.id.into(),
+                product_id: product.id,
                 sku: product_sku.clone(),
                 name: "Premium Widget".into(),
                 quantity: 2,
@@ -167,7 +167,7 @@ fn test_full_commerce_lifecycle() {
     let shipment = commerce
         .shipments()
         .create(CreateShipment {
-            order_id: order.id.into(),
+            order_id: order.id,
             carrier: Some(ShippingCarrier::FedEx),
             shipping_method: Some(ShippingMethod::Express),
             tracking_number: Some("FEDEX-E2E-123456".into()),
@@ -205,11 +205,11 @@ fn test_full_commerce_lifecycle() {
     let ret = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: ReturnReason::Defective,
             reason_details: Some("Widget stopped working after 1 week".into()),
             items: vec![CreateReturnItem {
-                order_item_id: delivered_order.items[0].id.into(),
+                order_item_id: delivered_order.items[0].id,
                 quantity: 1,
                 condition: Some(ItemCondition::Defective),
             }],
@@ -309,7 +309,7 @@ fn test_multi_product_order_partial_return() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer_id.into(),
+            customer_id,
             items: vec![
                 CreateOrderItem {
                     product_id: Uuid::new_v4().into(),
@@ -344,10 +344,10 @@ fn test_multi_product_order_partial_return() {
     let ret = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: ReturnReason::WrongItem,
             items: vec![CreateReturnItem {
-                order_item_id: order.items[0].id.into(),
+                order_item_id: order.items[0].id,
                 quantity: 1,
                 condition: Some(ItemCondition::New),
             }],

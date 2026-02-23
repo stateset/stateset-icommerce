@@ -6,7 +6,7 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AnalyticsQuery, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
-    TimePeriod,
+    ProductId, TimePeriod,
 };
 use tempfile::NamedTempFile;
 use uuid::Uuid;
@@ -91,7 +91,7 @@ fn bench_create_order(c: &mut Criterion) {
                     .create(CreateOrder {
                         customer_id,
                         items: vec![CreateOrderItem {
-                            product_id: Uuid::new_v4(),
+                            product_id: ProductId::new(),
                             sku: "SKU-001".into(),
                             name: "Widget".into(),
                             quantity: 1,
@@ -137,7 +137,7 @@ fn bench_sales_summary(c: &mut Criterion) {
             .create(CreateOrder {
                 customer_id,
                 items: vec![CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: ProductId::new(),
                     sku: "SKU-001".into(),
                     name: "Widget".into(),
                     quantity: 1,

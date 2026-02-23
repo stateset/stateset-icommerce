@@ -42,7 +42,7 @@ impl std::fmt::Display for SplitPaymentStatus {
 impl SplitPaymentStatus {
     /// Return the set of states this status can transition to.
     #[must_use]
-    pub const fn allowed_transitions(self) -> &'static [SplitPaymentStatus] {
+    pub const fn allowed_transitions(self) -> &'static [Self] {
         match self {
             Self::Pending => &[Self::Processing],
             Self::Processing => &[Self::Completed, Self::Partial, Self::Failed],

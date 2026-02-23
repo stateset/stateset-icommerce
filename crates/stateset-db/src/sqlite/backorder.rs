@@ -69,7 +69,7 @@ pub struct SqliteBackorderRepository {
 }
 
 impl SqliteBackorderRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

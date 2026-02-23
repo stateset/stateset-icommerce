@@ -12,14 +12,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of AgentValidationRepository
+/// SQLite implementation of `AgentValidationRepository`
 #[derive(Debug)]
 pub struct SqliteAgentValidationRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteAgentValidationRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

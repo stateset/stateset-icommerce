@@ -47,7 +47,7 @@ fn set_status(db: &SqliteDatabase, order_id: OrderId, status: OrderStatus) {
 fn sqlite_rejects_invalid_status_transition() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     let customer = create_customer(&db, "transition@example.com");
-    let order = create_order(&db, customer.id.into());
+    let order = create_order(&db, customer.id);
 
     let result = db.orders().update(
         order.id,
@@ -61,7 +61,7 @@ fn sqlite_rejects_invalid_status_transition() {
 fn sqlite_rejects_cancel_after_shipped() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     let customer = create_customer(&db, "cancel@example.com");
-    let order = create_order(&db, customer.id.into());
+    let order = create_order(&db, customer.id);
 
     set_status(&db, order.id, OrderStatus::Confirmed);
     set_status(&db, order.id, OrderStatus::Processing);
@@ -79,7 +79,7 @@ fn sqlite_rejects_cancel_after_shipped() {
 fn sqlite_requires_payment_for_refund() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     let customer = create_customer(&db, "refund@example.com");
-    let order = create_order(&db, customer.id.into());
+    let order = create_order(&db, customer.id);
 
     set_status(&db, order.id, OrderStatus::Confirmed);
     set_status(&db, order.id, OrderStatus::Processing);
@@ -98,7 +98,7 @@ fn sqlite_requires_payment_for_refund() {
 fn sqlite_allows_refund_with_payment_status() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
     let customer = create_customer(&db, "refund-paid@example.com");
-    let order = create_order(&db, customer.id.into());
+    let order = create_order(&db, customer.id);
 
     set_status(&db, order.id, OrderStatus::Confirmed);
     set_status(&db, order.id, OrderStatus::Processing);
@@ -137,7 +137,7 @@ fn sqlite_ship_fails_when_reservation_expired() {
     let order = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
                 product_id: ProductId::new(),
                 sku: "EXP-SKU-001".to_string(),
@@ -164,7 +164,7 @@ fn sqlite_ship_fails_when_reservation_expired() {
 
     conn.execute(
         "UPDATE inventory_reservations SET expires_at = datetime('now', '-1 hour') WHERE id = ?",
-        params![reservation_id.clone()],
+        params![reservation_id],
     )
     .expect("expire reservation");
 
@@ -212,7 +212,7 @@ fn sqlite_ship_does_not_confirm_other_reservations_when_one_expired() {
     let order = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![
                 CreateOrderItem {
                     product_id: ProductId::new(),

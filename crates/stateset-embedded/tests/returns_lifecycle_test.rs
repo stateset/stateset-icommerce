@@ -84,7 +84,7 @@ fn create_test_return(commerce: &Commerce, order: &stateset_embedded::Order) -> 
         .iter()
         .take(1)
         .map(|item| CreateReturnItem {
-            order_item_id: item.id.into(),
+            order_item_id: item.id,
             quantity: 1,
             condition: Some(ItemCondition::Defective),
         })
@@ -93,7 +93,7 @@ fn create_test_return(commerce: &Commerce, order: &stateset_embedded::Order) -> 
     commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: ReturnReason::Defective,
             reason_details: Some("Product stopped working after 2 days".into()),
             items,
@@ -239,7 +239,7 @@ fn test_return_list_for_order() {
     create_test_return(&commerce, &order);
     create_test_return(&commerce, &order);
 
-    let returns = commerce.returns().list_for_order(order.id.into()).expect("Failed to list returns");
+    let returns = commerce.returns().list_for_order(order.id).expect("Failed to list returns");
     assert_eq!(returns.len(), 2);
 }
 
@@ -304,10 +304,10 @@ fn test_return_filter_by_reason() {
     commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: ReturnReason::ChangedMind,
             items: vec![CreateReturnItem {
-                order_item_id: order.items[0].id.into(),
+                order_item_id: order.items[0].id,
                 quantity: 1,
                 ..Default::default()
             }],
@@ -363,10 +363,10 @@ fn test_return_all_reasons() {
         let ret = commerce
             .returns()
             .create(CreateReturn {
-                order_id: order.id.into(),
+                order_id: order.id,
                 reason,
                 items: vec![CreateReturnItem {
-                    order_item_id: order.items[0].id.into(),
+                    order_item_id: order.items[0].id,
                     quantity: 1,
                     ..Default::default()
                 }],
@@ -410,11 +410,11 @@ fn test_return_idempotency_key() {
     let ret1 = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: ReturnReason::Defective,
             idempotency_key: Some(key.clone()),
             items: vec![CreateReturnItem {
-                order_item_id: order.items[0].id.into(),
+                order_item_id: order.items[0].id,
                 quantity: 1,
                 ..Default::default()
             }],
@@ -425,11 +425,11 @@ fn test_return_idempotency_key() {
     let ret2 = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: ReturnReason::Defective,
             idempotency_key: Some(key),
             items: vec![CreateReturnItem {
-                order_item_id: order.items[0].id.into(),
+                order_item_id: order.items[0].id,
                 quantity: 1,
                 ..Default::default()
             }],
@@ -517,7 +517,7 @@ fn test_return_multiple_items() {
         .items
         .iter()
         .map(|item| CreateReturnItem {
-            order_item_id: item.id.into(),
+            order_item_id: item.id,
             quantity: 1,
             condition: Some(ItemCondition::Damaged),
         })
@@ -526,7 +526,7 @@ fn test_return_multiple_items() {
     let ret = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: ReturnReason::Damaged,
             items,
             ..Default::default()

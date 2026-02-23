@@ -4064,6 +4064,7 @@ dependencies = [
  "hex",
  "hkdf",
  "insta",
+ "proptest",
  "rand 0.8.5",
  "serde",
  "serde_jcs",
@@ -4392,6 +4393,7 @@ name = "stateset-pricing"
 version = "0.7.3"
 dependencies = [
  "chrono",
+ "proptest",
  "rust_decimal",
  "rust_decimal_macros",
  "serde",

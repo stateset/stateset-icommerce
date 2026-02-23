@@ -1382,7 +1382,7 @@ fn test_inventory_uniqueness() {
 
     // Try to create second item with same SKU - should fail
     let result = commerce.inventory().create_item(CreateInventoryItem {
-        sku: sku.clone(),
+        sku,
         name: "Duplicate Item".into(),
         initial_quantity: Some(dec!(50)),
         ..Default::default()

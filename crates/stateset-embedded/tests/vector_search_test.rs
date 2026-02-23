@@ -1,8 +1,8 @@
 //! Vector search integration tests
 //!
 //! Tests the full embed → store → search round-trip using the embedded commerce engine.
-//! Requires OPENAI_API_KEY environment variable and the `vector` feature. Run with:
-//!   OPENAI_API_KEY=sk-... cargo test --test vector_search_test --features vector -- --ignored
+//! Requires `OPENAI_API_KEY` environment variable and the `vector` feature. Run with:
+//!   `OPENAI_API_KEY=sk`-... cargo test --test `vector_search_test` --features vector -- --ignored
 //!
 //! All tests are #[ignore] by default so they don't run in CI without the API key.
 

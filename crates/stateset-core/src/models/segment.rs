@@ -54,7 +54,7 @@ pub enum SegmentOperator {
 /// A single rule in a dynamic segment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentRule {
-    /// The customer field to evaluate (e.g., "total_orders", "city", "tags")
+    /// The customer field to evaluate (e.g., "`total_orders`", "city", "tags")
     pub field: String,
     /// The comparison operator
     pub operator: SegmentOperator,

@@ -376,7 +376,7 @@ fn unwrap_dek(
 
 /// Generate an X25519 keypair for key wrapping
 ///
-/// Returns (private_key, public_key) as 32-byte arrays.
+/// Returns (`private_key`, `public_key`) as 32-byte arrays.
 pub fn generate_x25519_keypair() -> ([u8; 32], [u8; 32]) {
     let mut rng = rand::thread_rng();
     let secret = StaticSecret::random_from_rng(&mut rng);

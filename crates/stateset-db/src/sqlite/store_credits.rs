@@ -15,7 +15,7 @@ pub struct SqliteStoreCreditRepository {
 }
 
 impl SqliteStoreCreditRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

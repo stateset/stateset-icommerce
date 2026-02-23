@@ -99,7 +99,7 @@ mod tests {
         let id = ReturnId::new();
         let resp = app()
             .oneshot(
-                Request::get(&format!("/returns/{id}"))
+                Request::get(format!("/returns/{id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -115,7 +115,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("PATCH")
-                    .uri(&format!("/returns/{id}/approve"))
+                    .uri(format!("/returns/{id}/approve"))
                     .body(Body::empty())
                     .unwrap(),
             )

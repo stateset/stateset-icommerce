@@ -14,14 +14,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of BomRepository
+/// SQLite implementation of `BomRepository`
 #[derive(Debug)]
 pub struct SqliteBomRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteBomRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

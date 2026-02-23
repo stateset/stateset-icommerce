@@ -40,7 +40,7 @@ fn stress_test_bulk_order_creation() {
         commerce
             .orders()
             .create(CreateOrder {
-                customer_id: customer_id.into(),
+                customer_id,
                 items: vec![CreateOrderItem {
                     product_id: Uuid::new_v4().into(),
                     sku: format!("BULK-{}", i),
@@ -213,7 +213,7 @@ fn stress_test_concurrent_orders() {
 
             for i in 0..orders_per_thread {
                 let result = commerce_clone.orders().create(CreateOrder {
-                    customer_id: cid.into(),
+                    customer_id: cid,
                     items: vec![CreateOrderItem {
                         product_id: Uuid::new_v4().into(),
                         sku: format!("THREAD-{}-ORDER-{}", t, i),
@@ -527,7 +527,7 @@ fn stress_test_large_batch_insert() {
 
         commerce
             .orders()
-            .create(CreateOrder { customer_id: customer_id.into(), items, ..Default::default() })
+            .create(CreateOrder { customer_id, items, ..Default::default() })
             .expect("Failed to create order");
     }
 
@@ -618,7 +618,7 @@ fn stress_test_long_running_operations() {
         let order = commerce
             .orders()
             .create(CreateOrder {
-                customer_id: customer.id.into(),
+                customer_id: customer.id,
                 items: vec![CreateOrderItem {
                     product_id: Uuid::new_v4().into(),
                     sku: format!("LONG-RUN-{}", i),

@@ -113,7 +113,7 @@ mod tests {
         let id = CustomerId::new();
         let resp = app()
             .oneshot(
-                Request::get(&format!("/customers/{id}"))
+                Request::get(format!("/customers/{id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -165,7 +165,7 @@ mod tests {
         let app2 = router().with_state(state);
         let resp = app2
             .oneshot(
-                Request::get(&format!("/customers/{id}"))
+                Request::get(format!("/customers/{id}"))
                     .body(Body::empty())
                     .unwrap(),
             )

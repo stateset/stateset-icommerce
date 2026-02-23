@@ -61,7 +61,7 @@ pub struct ZoneShippingMethod {
     pub zone_id: ShippingZoneId,
     /// Method name (e.g., "Standard Shipping", "Express")
     pub name: String,
-    /// Carrier name (e.g., "USPS", "FedEx", "DHL")
+    /// Carrier name (e.g., "USPS", "`FedEx`", "DHL")
     pub carrier: Option<String>,
     /// Pricing type
     pub method_type: ShippingMethodType,
@@ -228,8 +228,8 @@ impl ZoneShippingMethod {
             ShippingMethodType::WeightBased => {
                 if let Some(w) = weight {
                     for condition in &self.conditions {
-                        let above_min = condition.min_weight.map_or(true, |min| w >= min);
-                        let below_max = condition.max_weight.map_or(true, |max| w <= max);
+                        let above_min = condition.min_weight.is_none_or(|min| w >= min);
+                        let below_max = condition.max_weight.is_none_or(|max| w <= max);
                         if above_min && below_max {
                             return condition.rate;
                         }
@@ -240,8 +240,8 @@ impl ZoneShippingMethod {
             ShippingMethodType::PriceBased => {
                 if let Some(total) = order_total {
                     for condition in &self.conditions {
-                        let above_min = condition.min_price.map_or(true, |min| total >= min);
-                        let below_max = condition.max_price.map_or(true, |max| total <= max);
+                        let above_min = condition.min_price.is_none_or(|min| total >= min);
+                        let below_max = condition.max_price.is_none_or(|max| total <= max);
                         if above_min && below_max {
                             return condition.rate;
                         }

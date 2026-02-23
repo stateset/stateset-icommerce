@@ -186,7 +186,7 @@ mod tests {
         let id = OrderId::new();
         let resp = app()
             .oneshot(
-                Request::get(&format!("/orders/{id}"))
+                Request::get(format!("/orders/{id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -234,7 +234,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("PATCH")
-                    .uri(&format!("/orders/{id}/cancel"))
+                    .uri(format!("/orders/{id}/cancel"))
                     .body(Body::empty())
                     .unwrap(),
             )

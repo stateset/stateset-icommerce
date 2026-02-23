@@ -47,7 +47,7 @@ impl std::fmt::Display for SubscriptionStatus {
 impl SubscriptionStatus {
     /// Return the set of states this status can transition to.
     #[must_use]
-    pub const fn allowed_transitions(self) -> &'static [SubscriptionStatus] {
+    pub const fn allowed_transitions(self) -> &'static [Self] {
         match self {
             Self::Trial => &[Self::Active, Self::Cancelled],
             Self::Active => &[Self::Paused, Self::PastDue, Self::Cancelled],

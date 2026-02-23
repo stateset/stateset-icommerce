@@ -13,14 +13,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of CustomObjectRepository
+/// SQLite implementation of `CustomObjectRepository`
 #[derive(Debug)]
 pub struct SqliteCustomObjectRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteCustomObjectRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -218,7 +218,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         let next_description =
             input.description.clone().unwrap_or_else(|| current_description.clone());
 
-        let next_fields_json = if let Some(fields) = input.fields.clone() {
+        let next_fields_json = if let Some(fields) = input.fields {
             // Validate keys uniqueness and format.
             let mut keys = std::collections::HashSet::new();
             for f in &fields {
@@ -237,7 +237,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
                 ))
             })?
         } else {
-            current_fields.clone()
+            current_fields
         };
 
         let now = Utc::now();
@@ -441,9 +441,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         }
         if input.owner_type.is_some() || input.owner_id.is_some() {
             // This update requires both to be present (we don't support partial mutation here).
-            let owner_type = input.owner_type.clone();
-            let owner_id = input.owner_id.clone();
-            Self::validate_owner_pair(&owner_type, &owner_id)?;
+            Self::validate_owner_pair(&input.owner_type, &input.owner_id)?;
         }
 
         let mut conn = self.conn()?;
@@ -518,12 +516,12 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
             }
         }
 
-        let next_owner_type = input.owner_type.clone().or(current_owner_type.clone());
-        let next_owner_id = input.owner_id.clone().or(current_owner_id.clone());
+        let next_owner_type = input.owner_type.or(current_owner_type);
+        let next_owner_id = input.owner_id.or(current_owner_id);
 
         Self::validate_owner_pair(&next_owner_type, &next_owner_id)?;
 
-        let next_values = if let Some(values) = input.values.clone() {
+        let next_values = if let Some(values) = input.values {
             ty.validate_values(&values)?;
             serde_json::to_string(&values).map_err(|e| {
                 CommerceError::DatabaseError(format!(
@@ -532,7 +530,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
                 ))
             })?
         } else {
-            current_values_json.clone()
+            current_values_json
         };
 
         let now = Utc::now();

@@ -183,7 +183,7 @@ fn test_customer_empty_email() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     let result = commerce.customers().create(CreateCustomer {
-        email: "".into(), // Empty email
+        email: String::new(), // Empty email
         first_name: "Test".into(),
         last_name: "User".into(),
         ..Default::default()
@@ -419,7 +419,7 @@ fn test_return_approve_already_approved() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
                 product_id: Uuid::new_v4().into(),
                 sku: "RET-001".into(),
@@ -441,11 +441,11 @@ fn test_return_approve_already_approved() {
     let ret = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: stateset_embedded::ReturnReason::Defective,
             reason_details: None,
             items: vec![stateset_embedded::CreateReturnItem {
-                order_item_id: order_item.id.into(),
+                order_item_id: order_item.id,
                 quantity: 1,
                 condition: None,
             }],
@@ -598,7 +598,7 @@ fn test_concurrent_order_creation() {
         let cid = customer_id;
         let handle = thread::spawn(move || {
             let result = commerce_clone.orders().create(CreateOrder {
-                customer_id: cid.into(),
+                customer_id: cid,
                 items: vec![CreateOrderItem {
                     product_id: Uuid::new_v4().into(),
                     sku: format!("THREAD-{}", i),
@@ -657,7 +657,7 @@ fn test_very_long_strings() {
 
     let result = commerce.customers().create(CreateCustomer {
         email: "long@example.com".into(),
-        first_name: long_string.clone(),
+        first_name: long_string,
         last_name: "Short".into(),
         ..Default::default()
     });
@@ -699,7 +699,7 @@ fn test_decimal_precision() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
                 product_id: Uuid::new_v4().into(),
                 sku: "PRECISION-001".into(),

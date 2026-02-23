@@ -20,14 +20,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of OrderRepository
+/// SQLite implementation of `OrderRepository`
 #[derive(Debug)]
 pub struct SqliteOrderRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteOrderRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -341,8 +341,7 @@ impl SqliteOrderRepository {
             None
         };
 
-        // Clone so the retry closure can run multiple times.
-        let input = input.clone();
+        // The Fn closure borrows `input` by shared reference, so no clone is needed.
 
         with_immediate_transaction(&self.pool, |tx| {
             let inserted = if idempotent_by_cart_id {

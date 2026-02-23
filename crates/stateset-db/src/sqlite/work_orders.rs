@@ -18,14 +18,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of WorkOrderRepository
+/// SQLite implementation of `WorkOrderRepository`
 #[derive(Debug)]
 pub struct SqliteWorkOrderRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteWorkOrderRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

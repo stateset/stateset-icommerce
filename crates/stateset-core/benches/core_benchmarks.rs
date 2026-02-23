@@ -142,7 +142,7 @@ fn create_test_cart(item_count: usize) -> Cart {
 fn benchmark_order_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("order_creation");
 
-    for item_count in [1, 5, 10, 50, 100].iter() {
+    for item_count in &[1, 5, 10, 50, 100] {
         group.bench_with_input(BenchmarkId::new("items", item_count), item_count, |b, &count| {
             b.iter(|| create_test_order(black_box(count)));
         });
@@ -154,7 +154,7 @@ fn benchmark_order_creation(c: &mut Criterion) {
 fn benchmark_cart_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("cart_creation");
 
-    for item_count in [1, 5, 10, 50, 100].iter() {
+    for item_count in &[1, 5, 10, 50, 100] {
         group.bench_with_input(BenchmarkId::new("items", item_count), item_count, |b, &count| {
             b.iter(|| create_test_cart(black_box(count)));
         });
@@ -166,7 +166,7 @@ fn benchmark_cart_creation(c: &mut Criterion) {
 fn benchmark_order_serialization(c: &mut Criterion) {
     let mut group = c.benchmark_group("order_serialization");
 
-    for item_count in [1, 10, 100].iter() {
+    for item_count in &[1, 10, 100] {
         let order = create_test_order(*item_count);
 
         group.bench_with_input(BenchmarkId::new("to_json", item_count), &order, |b, order| {
@@ -174,7 +174,7 @@ fn benchmark_order_serialization(c: &mut Criterion) {
         });
     }
 
-    for item_count in [1, 10, 100].iter() {
+    for item_count in &[1, 10, 100] {
         let order = create_test_order(*item_count);
         let json = serde_json::to_string(&order).unwrap();
 
@@ -198,7 +198,7 @@ fn benchmark_order_lifecycle(c: &mut Criterion) {
 
     group.bench_function("status_transition_checks", |b| {
         b.iter(|| {
-            for (from, to) in transitions.iter() {
+            for (from, to) in &transitions {
                 black_box(from.can_transition_to(*to));
             }
         });
@@ -219,7 +219,7 @@ fn benchmark_inventory_concurrent_reservations(c: &mut Criterion) {
     let mut group = c.benchmark_group("inventory_reservation_concurrent");
     let reservations_per_thread = 100;
 
-    for thread_count in [2, 4, 8].iter() {
+    for thread_count in &[2, 4, 8] {
         group.bench_with_input(
             BenchmarkId::new("threads", thread_count),
             thread_count,
@@ -261,7 +261,7 @@ fn benchmark_batch_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_operations");
     let error = CommerceError::ValidationError("invalid".to_string());
 
-    for batch_size in [10, 100, 1000].iter() {
+    for batch_size in &[10, 100, 1000] {
         group.bench_with_input(
             BenchmarkId::new("record_success", batch_size),
             batch_size,

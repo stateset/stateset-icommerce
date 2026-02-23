@@ -200,7 +200,7 @@ fn test_concurrent_order_creation_preserves_consistency() {
         let commerce = Arc::clone(&commerce);
         let handle = std::thread::spawn(move || {
             commerce.orders().create(CreateOrder {
-                customer_id: customer_id.into(),
+                customer_id,
                 items: vec![CreateOrderItem {
                     product_id: Uuid::new_v4().into(),
                     sku: format!("SKU-{:03}", i),

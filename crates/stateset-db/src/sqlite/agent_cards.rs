@@ -15,14 +15,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of AgentCardRepository
+/// SQLite implementation of `AgentCardRepository`
 #[derive(Debug)]
 pub struct SqliteAgentCardRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteAgentCardRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

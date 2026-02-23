@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn config_accessor() {
         let config = make_config();
-        let engine = SyncEngine::new(config.clone());
+        let engine = SyncEngine::new(config);
         assert_eq!(engine.config().agent_id, "agent-1");
     }
 

@@ -32,6 +32,7 @@ use stateset_db::sqlite::SqliteVectorRepository;
 use std::sync::Arc;
 
 /// Vector search operations
+#[derive(Debug)]
 pub struct Vector {
     repo: SqliteVectorRepository,
     embedding_service: Arc<EmbeddingService>,

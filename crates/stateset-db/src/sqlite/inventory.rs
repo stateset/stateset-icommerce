@@ -18,7 +18,7 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of InventoryRepository
+/// SQLite implementation of `InventoryRepository`
 #[derive(Debug)]
 pub struct SqliteInventoryRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -31,7 +31,7 @@ pub(crate) enum ReservationConfirmOutcome {
 }
 
 impl SqliteInventoryRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -223,7 +223,7 @@ impl SqliteInventoryRepository {
         if balance.quantity_available < quantity {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                 CommerceError::InsufficientStock {
-                    sku: sku.clone(),
+                    sku,
                     requested: quantity.to_string(),
                     available: balance.quantity_available.to_string(),
                 },
@@ -849,7 +849,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let location_id = input.location_id.unwrap_or(1);
         let reference_type = input.reference_type.clone();
         let reference_id = input.reference_id.clone();
-        let reason = input.reason.clone();
+        let reason = input.reason;
 
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
@@ -1216,12 +1216,11 @@ impl InventoryRepository for SqliteInventoryRepository {
                 )
                 .map_err(map_db_error)?;
 
-            let skus = stmt
+            stmt
                 .query_map([], |row| row.get::<_, String>(0))
                 .map_err(map_db_error)?
                 .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(map_db_error)?;
-            skus
+                .map_err(map_db_error)?
         };
 
         let mut result = Vec::with_capacity(skus.len());

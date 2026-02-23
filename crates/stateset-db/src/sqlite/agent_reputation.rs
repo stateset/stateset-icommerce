@@ -14,14 +14,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of AgentReputationRepository
+/// SQLite implementation of `AgentReputationRepository`
 #[derive(Debug)]
 pub struct SqliteAgentReputationRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteAgentReputationRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -334,7 +334,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
         let max_decimals = values.iter().map(|(_, d)| *d).max().unwrap_or(0);
 
         let mut sum: i128 = 0;
-        for (value, decimals) in values.iter() {
+        for (value, decimals) in &values {
             let scaled = Self::scale_value(*value, *decimals, max_decimals)?;
             sum = sum.checked_add(scaled).ok_or_else(|| {
                 CommerceError::ValidationError("feedback summary overflow".to_string())

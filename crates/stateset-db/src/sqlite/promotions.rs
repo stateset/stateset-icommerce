@@ -26,7 +26,7 @@ pub struct SqlitePromotionRepository {
 }
 
 impl SqlitePromotionRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -794,7 +794,7 @@ impl SqlitePromotionRepository {
         }
     }
 
-    fn compare_i32(&self, actual: i32, op: ConditionOperator, expected: i32) -> bool {
+    const fn compare_i32(&self, actual: i32, op: ConditionOperator, expected: i32) -> bool {
         match op {
             ConditionOperator::Equals => actual == expected,
             ConditionOperator::NotEquals => actual != expected,
@@ -1145,55 +1145,55 @@ impl SqlitePromotionRepository {
 
 impl PromotionRepository for SqlitePromotionRepository {
     fn create(&self, input: CreatePromotion) -> Result<Promotion> {
-        SqlitePromotionRepository::create(self, input)
+        Self::create(self, input)
     }
 
     fn get(&self, id: PromotionId) -> Result<Option<Promotion>> {
-        SqlitePromotionRepository::get(self, id)
+        Self::get(self, id)
     }
 
     fn get_by_code(&self, code: &str) -> Result<Option<Promotion>> {
-        SqlitePromotionRepository::get_by_code(self, code)
+        Self::get_by_code(self, code)
     }
 
     fn list(&self, filter: PromotionFilter) -> Result<Vec<Promotion>> {
-        SqlitePromotionRepository::list(self, filter)
+        Self::list(self, filter)
     }
 
     fn update(&self, id: PromotionId, input: UpdatePromotion) -> Result<Promotion> {
-        SqlitePromotionRepository::update(self, id, input)
+        Self::update(self, id, input)
     }
 
     fn delete(&self, id: PromotionId) -> Result<()> {
-        SqlitePromotionRepository::delete(self, id)
+        Self::delete(self, id)
     }
 
     fn activate(&self, id: PromotionId) -> Result<Promotion> {
-        SqlitePromotionRepository::activate(self, id)
+        Self::activate(self, id)
     }
 
     fn deactivate(&self, id: PromotionId) -> Result<Promotion> {
-        SqlitePromotionRepository::deactivate(self, id)
+        Self::deactivate(self, id)
     }
 
     fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {
-        SqlitePromotionRepository::create_coupon(self, input)
+        Self::create_coupon(self, input)
     }
 
     fn get_coupon(&self, id: Uuid) -> Result<Option<CouponCode>> {
-        SqlitePromotionRepository::get_coupon(self, id)
+        Self::get_coupon(self, id)
     }
 
     fn get_coupon_by_code(&self, code: &str) -> Result<Option<CouponCode>> {
-        SqlitePromotionRepository::get_coupon_by_code(self, code)
+        Self::get_coupon_by_code(self, code)
     }
 
     fn list_coupons(&self, filter: CouponFilter) -> Result<Vec<CouponCode>> {
-        SqlitePromotionRepository::list_coupons(self, filter)
+        Self::list_coupons(self, filter)
     }
 
     fn apply_promotions(&self, request: ApplyPromotionsRequest) -> Result<ApplyPromotionsResult> {
-        SqlitePromotionRepository::apply_promotions(self, request)
+        Self::apply_promotions(self, request)
     }
 
     fn record_usage(
@@ -1206,7 +1206,7 @@ impl PromotionRepository for SqlitePromotionRepository {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
-        SqlitePromotionRepository::record_usage(
+        Self::record_usage(
             self,
             promotion_id,
             coupon_id,

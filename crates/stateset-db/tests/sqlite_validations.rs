@@ -24,7 +24,7 @@ fn sqlite_order_rejects_invalid_sku() {
     let customer = create_customer(&db, "valid@example.com");
 
     let result = db.orders().create(CreateOrder {
-        customer_id: customer.id.into(),
+        customer_id: customer.id,
         items: vec![CreateOrderItem {
             product_id: ProductId::new(),
             sku: "BAD SKU".to_string(),
@@ -48,7 +48,7 @@ fn sqlite_order_rejects_discount_exceeding_subtotal() {
     let customer = create_customer(&db, "discount@example.com");
 
     let result = db.orders().create(CreateOrder {
-        customer_id: customer.id.into(),
+        customer_id: customer.id,
         items: vec![CreateOrderItem {
             product_id: ProductId::new(),
             sku: "SKU-100".to_string(),
@@ -70,7 +70,7 @@ fn sqlite_customer_address_rejects_invalid_postal_code() {
     let customer = create_customer(&db, "address@example.com");
 
     let result = db.customers().add_address(CreateCustomerAddress {
-        customer_id: customer.id.into(),
+        customer_id: customer.id,
         address_type: None,
         first_name: "Test".to_string(),
         last_name: "User".to_string(),
@@ -139,7 +139,7 @@ fn sqlite_add_address_sets_default_ids() {
     let billing = db
         .customers()
         .add_address(CreateCustomerAddress {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             address_type: Some(AddressType::Billing),
             first_name: "Test".to_string(),
             last_name: "User".to_string(),
@@ -158,7 +158,7 @@ fn sqlite_add_address_sets_default_ids() {
     let shipping = db
         .customers()
         .add_address(CreateCustomerAddress {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             address_type: Some(AddressType::Shipping),
             first_name: "Test".to_string(),
             last_name: "User".to_string(),
@@ -188,7 +188,7 @@ fn sqlite_delete_default_address_clears_customer_default() {
     let shipping = db
         .customers()
         .add_address(CreateCustomerAddress {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             address_type: Some(AddressType::Shipping),
             first_name: "Test".to_string(),
             last_name: "User".to_string(),

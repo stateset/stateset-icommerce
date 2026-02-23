@@ -16,7 +16,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "0.7.3"
+//! stateset-sdk = "0.7.4"
 //! ```
 //!
 //! ```rust,ignore
@@ -43,7 +43,7 @@
 
 // ── Core (always available) ──────────────────────────────────────────
 
-/// Primitive types: Money, CurrencyCode, Sku, typed IDs.
+/// Primitive types: Money, `CurrencyCode`, Sku, typed IDs.
 pub use stateset_primitives as primitives;
 
 /// Domain models, errors, events, validation, and repository traits.

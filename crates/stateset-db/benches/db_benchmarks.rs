@@ -7,13 +7,11 @@ use rust_decimal_macros::dec;
 use std::sync::Arc;
 use std::thread;
 use tempfile::TempDir;
-use uuid::Uuid;
-
 use stateset_core::{
     CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct,
-    CustomerFilter, CustomerRepository, FulfillmentStatus, InventoryRepository, OrderFilter,
-    OrderRepository, OrderStatus, PaymentStatus, ProductFilter, ProductRepository,
-    ReserveInventory, UpdateOrder,
+    CustomerId, CustomerFilter, CustomerRepository, FulfillmentStatus, InventoryRepository,
+    OrderFilter, OrderRepository, OrderStatus, PaymentStatus, ProductFilter, ProductId,
+    ProductRepository, ReserveInventory, UpdateOrder,
 };
 use stateset_db::{DatabaseConfig, SqliteDatabase};
 
@@ -85,7 +83,7 @@ fn create_test_inventory_item(idx: usize) -> CreateInventoryItem {
 
 fn create_test_order_item(idx: usize) -> CreateOrderItem {
     CreateOrderItem {
-        product_id: Uuid::new_v4(),
+        product_id: ProductId::new(),
         variant_id: None,
         sku: format!("SKU-{:06}", idx),
         name: format!("Product {}", idx),
@@ -96,7 +94,7 @@ fn create_test_order_item(idx: usize) -> CreateOrderItem {
     }
 }
 
-fn create_test_order(customer_id: Uuid, item_count: usize) -> CreateOrder {
+fn create_test_order(customer_id: CustomerId, item_count: usize) -> CreateOrder {
     CreateOrder {
         customer_id,
         currency: Some("USD".to_string()),
@@ -156,7 +154,7 @@ fn benchmark_customer_read(c: &mut Criterion) {
 fn benchmark_customer_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("customer_batch");
 
-    for batch_size in [10, 50, 100, 500].iter() {
+    for batch_size in &[10, 50, 100, 500] {
         group.bench_with_input(
             BenchmarkId::new("create_batch", batch_size),
             batch_size,
@@ -303,7 +301,7 @@ fn benchmark_inventory_reservation(c: &mut Criterion) {
             // Reserve
             let reservation = inventory
                 .reserve(stateset_core::ReserveInventory {
-                    sku: sku.clone(),
+                    sku,
                     location_id: None,
                     quantity: dec!(1),
                     reference_type: "benchmark".to_string(),
@@ -324,7 +322,7 @@ fn benchmark_inventory_concurrent_reservations(c: &mut Criterion) {
     let mut group = c.benchmark_group("inventory_reservation_concurrent");
     let reservations_per_thread = 25;
 
-    for thread_count in [2, 4, 8].iter() {
+    for thread_count in &[2, 4, 8] {
         let bench_db = setup_database_with_max_connections(*thread_count as u32);
         let inventory = bench_db.db.inventory();
         let item_count = thread_count * 2;
@@ -387,7 +385,7 @@ fn benchmark_order_create(c: &mut Criterion) {
     let customers = db.customers();
     let customer = customers.create(create_test_customer(0)).unwrap();
 
-    for item_count in [1, 5, 10, 25].iter() {
+    for item_count in &[1, 5, 10, 25] {
         group.bench_with_input(
             BenchmarkId::new("create_with_items", item_count),
             item_count,
@@ -485,7 +483,7 @@ fn benchmark_order_lifecycle(c: &mut Criterion) {
 fn benchmark_batch_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_operations");
 
-    for batch_size in [10, 50, 100].iter() {
+    for batch_size in &[10, 50, 100] {
         group.bench_with_input(
             BenchmarkId::new("customers_partial", batch_size),
             batch_size,

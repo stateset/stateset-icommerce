@@ -54,7 +54,7 @@ impl BillingInterval {
     }
 
     /// All valid billing interval values.
-    pub const ALL: &'static [BillingInterval] = &[
+    pub const ALL: &'static [Self] = &[
         Self::Weekly,
         Self::Biweekly,
         Self::Monthly,

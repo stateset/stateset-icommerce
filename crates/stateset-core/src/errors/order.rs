@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn other_variant() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "disk full");
+        let io_err = std::io::Error::other("disk full");
         let err = OrderError::Other(Box::new(io_err));
         assert!(err.to_string().contains("disk full"));
     }

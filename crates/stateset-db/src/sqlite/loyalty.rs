@@ -15,7 +15,7 @@ pub struct SqliteLoyaltyProgramRepository {
 }
 
 impl SqliteLoyaltyProgramRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

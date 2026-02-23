@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn resolver_clone() {
         let resolver = ConflictResolver::new(ConflictStrategy::LocalWins);
-        let cloned = resolver.clone();
+        let cloned = resolver;
         assert_eq!(cloned.strategy(), ConflictStrategy::LocalWins);
     }
 
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn resolution_merge_variant() {
         let event = make_event_at("merged", 0);
-        let resolution = Resolution::Merge(event.clone());
+        let resolution = Resolution::Merge(event);
         if let Resolution::Merge(merged) = resolution {
             assert_eq!(merged.event_type, "merged");
         } else {

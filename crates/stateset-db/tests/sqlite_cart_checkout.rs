@@ -85,7 +85,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
         .items
         .iter()
         .map(|item| CreateOrderItem {
-            product_id: item.product_id.expect("product_id set on cart item").into(),
+            product_id: item.product_id.expect("product_id set on cart item"),
             variant_id: item.variant_id,
             sku: item.sku.clone(),
             name: item.name.clone(),
@@ -100,14 +100,14 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
         .create_from_cart(
             cart.id.into(),
             CreateOrder {
-                customer_id: customer.id.into(),
+                customer_id: customer.id,
                 items: order_items,
                 currency: Some(cart_for_order.currency.clone()),
                 shipping_address: cart_for_order.shipping_address.clone().map(Into::into),
                 billing_address: None,
                 notes: cart_for_order.notes.clone(),
                 payment_method: cart_for_order.payment_method.clone(),
-                shipping_method: cart_for_order.shipping_method.clone(),
+                shipping_method: cart_for_order.shipping_method,
             },
         )
         .expect("create order for cart");

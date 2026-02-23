@@ -27,7 +27,7 @@ pub struct SqliteWarehouseRepository {
 }
 
 impl SqliteWarehouseRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -996,7 +996,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 params![
                     input.to_location_id,
                     input.sku,
-                    lot_id_str.clone(),
+                    lot_id_str,
                     input.quantity.to_string(),
                     now_str,
                 ],

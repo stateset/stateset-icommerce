@@ -26,7 +26,7 @@ pub struct SqliteAccountsPayableRepository {
 }
 
 impl SqliteAccountsPayableRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -303,7 +303,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             ).map_err(map_db_error)?;
         }
 
-        for item in items.iter() {
+        for item in &items {
             self.add_bill_item(
                 id,
                 CreateBillItem {

@@ -25,7 +25,7 @@ fn sqlite_revenue_by_period_quarter_groups_correctly() {
     let order1 = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
                 product_id: ProductId::new(),
                 sku: "SKU-Q1".into(),
@@ -41,7 +41,7 @@ fn sqlite_revenue_by_period_quarter_groups_correctly() {
     let order2 = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
                 product_id: ProductId::new(),
                 sku: "SKU-Q2".into(),

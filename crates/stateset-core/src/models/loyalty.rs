@@ -77,7 +77,7 @@ pub struct LoyaltyProgram {
     pub description: Option<String>,
     /// Points earned per dollar spent
     pub points_per_dollar: u32,
-    /// Program tiers (ordered by min_points ascending)
+    /// Program tiers (ordered by `min_points` ascending)
     pub tiers: Vec<LoyaltyTier>,
     /// Program status
     pub status: LoyaltyProgramStatus,
@@ -266,7 +266,7 @@ impl LoyaltyProgram {
 
 impl LoyaltyAccount {
     /// Whether the account has enough points to redeem a reward
-    pub fn can_redeem(&self, points_cost: u64) -> bool {
+    pub const fn can_redeem(&self, points_cost: u64) -> bool {
         self.points_balance >= 0 && (self.points_balance as u64) >= points_cost
     }
 }

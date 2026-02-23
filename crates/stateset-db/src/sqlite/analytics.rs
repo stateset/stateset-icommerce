@@ -23,7 +23,7 @@ pub struct SqliteAnalyticsRepository {
 }
 
 impl SqliteAnalyticsRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -31,7 +31,7 @@ impl SqliteAnalyticsRepository {
         self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn start_of_day(date: NaiveDate) -> DateTime<Utc> {
+    const fn start_of_day(date: NaiveDate) -> DateTime<Utc> {
         DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
     }
 
@@ -895,7 +895,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let start = (Utc::now() - Duration::days(days_back)).to_rfc3339();
 
         // Build SKU filter
-        let mut params: Vec<Box<dyn ToSql>> = vec![Box::new(start.clone())];
+        let mut params: Vec<Box<dyn ToSql>> = vec![Box::new(start)];
         let where_clause = match &skus {
             Some(sku_list) if !sku_list.is_empty() => {
                 let placeholders = sku_list.iter().map(|_| "?").collect::<Vec<_>>().join(", ");

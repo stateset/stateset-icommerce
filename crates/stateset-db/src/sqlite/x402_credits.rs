@@ -14,14 +14,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of X402CreditRepository
+/// SQLite implementation of `X402CreditRepository`
 #[derive(Debug)]
 pub struct SqliteX402CreditRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteX402CreditRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

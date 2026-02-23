@@ -256,7 +256,7 @@ fn test_serial_lookup_with_related_data() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             sku: Some("SERIAL-LOOKUP-SKU".into()),
             serial_number: Some(serial.serial.clone()),
             warranty_type: Some(WarrantyType::Standard),
@@ -435,7 +435,7 @@ fn test_credit_account_create_and_get() {
     let account = commerce
         .credit()
         .create_credit_account(CreateCreditAccount {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             credit_limit: dec!(5000.00),
             risk_rating: Some(RiskRating::Low),
             ..Default::default()
@@ -477,7 +477,7 @@ fn test_backorder_create_and_list() {
     let order = commerce
         .orders()
         .create(stateset_embedded::CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![stateset_embedded::CreateOrderItem {
                 product_id: Uuid::new_v4().into(),
                 sku: "BO-SKU-001".into(),
@@ -664,7 +664,7 @@ fn test_shipment_tracking_flow() {
     let order = commerce
         .orders()
         .create(stateset_embedded::CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![stateset_embedded::CreateOrderItem {
                 product_id: Uuid::new_v4().into(),
                 sku: "SHIP-SKU-001".into(),
@@ -682,7 +682,7 @@ fn test_shipment_tracking_flow() {
     let shipment = commerce
         .shipments()
         .create(CreateShipment {
-            order_id: order.id.into(),
+            order_id: order.id,
             carrier: Some(ShippingCarrier::Ups),
             recipient_name: "Alice Smith".into(),
             shipping_address: "123 Main St, City, ST 12345".into(),
@@ -738,7 +738,7 @@ fn test_warranty_claim_lifecycle() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             sku: Some("WRN-SKU-001".into()),
             warranty_type: Some(WarrantyType::Standard),
             duration_months: Some(12),
@@ -795,7 +795,7 @@ fn test_warranty_claim_invalid_transitions() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             sku: Some("WRN-SKU-002".into()),
             warranty_type: Some(WarrantyType::Standard),
             duration_months: Some(12),
@@ -867,7 +867,7 @@ fn test_warranty_status_transition_guards() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             sku: Some("WRN-SKU-003".into()),
             warranty_type: Some(WarrantyType::Standard),
             duration_months: Some(12),
@@ -902,7 +902,7 @@ fn test_warranty_update_claim_transitions() {
     let warranty = commerce
         .warranties()
         .create(CreateWarranty {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             sku: Some("WRN-SKU-004".into()),
             warranty_type: Some(WarrantyType::Standard),
             duration_months: Some(12),
@@ -1105,7 +1105,7 @@ fn test_invoice_send_and_payment() {
     let invoice = commerce
         .invoices()
         .create(CreateInvoice {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateInvoiceItem {
                 description: "Implementation services".into(),
                 quantity: dec!(2),

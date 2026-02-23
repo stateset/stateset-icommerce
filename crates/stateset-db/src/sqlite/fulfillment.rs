@@ -26,7 +26,7 @@ pub struct SqliteFulfillmentRepository {
 }
 
 impl SqliteFulfillmentRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

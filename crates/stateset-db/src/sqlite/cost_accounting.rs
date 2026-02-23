@@ -25,7 +25,7 @@ pub struct SqliteCostAccountingRepository {
 }
 
 impl SqliteCostAccountingRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -325,7 +325,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                         material_cost.as_ref().map(|c| c.to_string()),
                         labor_cost.as_ref().map(|c| c.to_string()),
                         overhead_cost.as_ref().map(|c| c.to_string()),
-                        currency.clone(),
+                        currency,
                         now.to_rfc3339(),
                         now.to_rfc3339(),
                         &sku,

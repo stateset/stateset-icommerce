@@ -92,9 +92,9 @@ impl TestContext {
         self.commerce
             .orders()
             .create(CreateOrder {
-                customer_id: self.customer_id.into(),
+                customer_id: self.customer_id,
                 items: vec![CreateOrderItem {
-                    product_id: self.product_id.into(),
+                    product_id: self.product_id,
                     sku: "TEST-SKU-001".into(),
                     name: "Test Product".into(),
                     quantity: 2,
@@ -113,7 +113,7 @@ impl TestContext {
             .into_iter()
             .map(|mut item| {
                 if item.product_id.is_nil() {
-                    item.product_id = self.product_id.into();
+                    item.product_id = self.product_id;
                 }
                 item
             })
@@ -121,7 +121,7 @@ impl TestContext {
 
         self.commerce
             .orders()
-            .create(CreateOrder { customer_id: self.customer_id.into(), items, ..Default::default() })
+            .create(CreateOrder { customer_id: self.customer_id, items, ..Default::default() })
             .expect("Failed to create order")
             .id
     }

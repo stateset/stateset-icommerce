@@ -24,14 +24,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of CartRepository
+/// SQLite implementation of `CartRepository`
 #[derive(Debug)]
 pub struct SqliteCartRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteCartRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -1205,7 +1205,7 @@ impl CartRepository for SqliteCartRepository {
             _ => Decimal::ZERO, // Other types not fully implemented
         };
 
-        let discount_description = Some(promotion.name.clone());
+        let discount_description = Some(promotion.name);
 
         // Update the cart with the discount
         {
@@ -1348,7 +1348,7 @@ impl CartRepository for SqliteCartRepository {
         )?;
 
         let order_id = order.id;
-        let order_number = order.order_number.clone();
+        let order_number = order.order_number;
         let now = Utc::now();
         {
             let conn = self.conn()?;

@@ -2,17 +2,17 @@ use crate::CryptoError;
 
 /// Encode u32 as big-endian bytes
 #[must_use]
-pub fn u32_be(n: u32) -> [u8; 4] {
+pub const fn u32_be(n: u32) -> [u8; 4] {
     n.to_be_bytes()
 }
 
 /// Encode u64 as big-endian bytes
 #[must_use]
-pub fn u64_be(n: u64) -> [u8; 8] {
+pub const fn u64_be(n: u64) -> [u8; 8] {
     n.to_be_bytes()
 }
 
-/// Encode string with length prefix (VES ENC_STR)
+/// Encode string with length prefix (VES `ENC_STR`)
 #[must_use]
 pub fn encode_string(s: &str) -> Vec<u8> {
     let bytes = s.as_bytes();

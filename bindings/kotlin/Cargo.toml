@@ -30,3 +30,6 @@ thiserror = { workspace = true }
 
 [build-dependencies]
 jni = "0.21"
+
+[lints]
+workspace = true

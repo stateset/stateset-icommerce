@@ -64,7 +64,7 @@ pub struct Condition {
 impl Condition {
     /// Create a `SellerFulfilled` condition.
     #[must_use]
-    pub fn seller_fulfilled(quote_id: Option<Uuid>) -> Self {
+    pub const fn seller_fulfilled(quote_id: Option<Uuid>) -> Self {
         Self {
             condition_type: ConditionType::SellerFulfilled,
             completed: false,
@@ -76,7 +76,7 @@ impl Condition {
 
     /// Create a `BuyerConfirmed` condition.
     #[must_use]
-    pub fn buyer_confirmed() -> Self {
+    pub const fn buyer_confirmed() -> Self {
         Self {
             condition_type: ConditionType::BuyerConfirmed,
             completed: false,
@@ -88,7 +88,7 @@ impl Condition {
 
     /// Create a `TimeLock` condition.
     #[must_use]
-    pub fn time_lock(release_after: DateTime<Utc>) -> Self {
+    pub const fn time_lock(release_after: DateTime<Utc>) -> Self {
         Self {
             condition_type: ConditionType::TimeLock,
             completed: false,
@@ -111,7 +111,7 @@ impl Condition {
     }
 
     /// Mark this condition as completed.
-    pub fn confirm(&mut self) {
+    pub const fn confirm(&mut self) {
         self.completed = true;
     }
 }
@@ -129,7 +129,7 @@ pub struct ConditionEvaluation {
 ///
 /// Met if and only if `completed` is `true`.
 #[must_use]
-pub fn evaluate_buyer_confirmed(condition: &Condition) -> bool {
+pub const fn evaluate_buyer_confirmed(condition: &Condition) -> bool {
     condition.completed
 }
 
@@ -140,14 +140,14 @@ pub fn evaluate_buyer_confirmed(condition: &Condition) -> bool {
 pub fn evaluate_time_lock(condition: &Condition, now: DateTime<Utc>) -> bool {
     condition
         .release_after
-        .map_or(false, |release_after| now >= release_after)
+        .is_some_and(|release_after| now >= release_after)
 }
 
 /// Evaluate a `Milestone` condition.
 ///
 /// Met if and only if `completed` is `true`.
 #[must_use]
-pub fn evaluate_milestone(condition: &Condition) -> bool {
+pub const fn evaluate_milestone(condition: &Condition) -> bool {
     condition.completed
 }
 
@@ -389,7 +389,7 @@ mod tests {
         let quote_id = Uuid::new_v4();
         let c = Condition::seller_fulfilled(Some(quote_id));
 
-        let (all_met, _) = evaluate_all_conditions(&[c.clone()], now(), |id| {
+        let (all_met, _) = evaluate_all_conditions(std::slice::from_ref(&c), now(), |id| {
             if id == Some(&quote_id) {
                 Some("fulfilled".into())
             } else {

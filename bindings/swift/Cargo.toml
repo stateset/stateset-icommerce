@@ -30,3 +30,6 @@ libc = "0.2"
 
 [build-dependencies]
 cbindgen = "0.27"
+
+[lints]
+workspace = true

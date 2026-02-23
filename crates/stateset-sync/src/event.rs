@@ -179,7 +179,7 @@ mod tests {
         let e2 = SyncEvent::new("b", "x", "2", json!({})).with_sequence(2);
         let e3 = SyncEvent::new("c", "x", "3", json!({})).with_sequence(3);
 
-        let mut events = vec![e3.clone(), e1.clone(), e2.clone()];
+        let mut events = vec![e3, e1, e2];
         events.sort();
         assert_eq!(events[0].sequence, 1);
         assert_eq!(events[1].sequence, 2);

@@ -251,7 +251,7 @@ impl ValidationBuilder {
             let digit_count = value.chars().filter(|c| c.is_ascii_digit()).count();
             self.check(
                 field,
-                !invalid_char && digit_count >= 7 && digit_count <= 15,
+                !invalid_char && (7..=15).contains(&digit_count),
                 "must have 7-15 digits",
             )
         }
@@ -450,7 +450,7 @@ mod tests {
         assert!(valid.validate().is_ok());
         assert!(valid.is_valid());
 
-        let invalid = TestModel { name: "".to_string(), price: dec!(10.00) };
+        let invalid = TestModel { name: String::new(), price: dec!(10.00) };
         assert!(invalid.validate().is_err());
         assert!(!invalid.is_valid());
     }

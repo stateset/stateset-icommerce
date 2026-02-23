@@ -27,7 +27,7 @@ pub struct SqliteSubscriptionRepository {
 }
 
 impl SqliteSubscriptionRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -891,7 +891,7 @@ impl SqliteSubscriptionRepository {
         }
 
         let reason =
-            input.reason.clone().unwrap_or_else(|| "Customer skipped billing cycle".to_string());
+            input.reason.unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
         let interval_days = if sub.billing_interval == BillingInterval::Custom {
             sub.custom_interval_days.unwrap_or(30) as i64
@@ -1043,7 +1043,7 @@ impl SqliteSubscriptionRepository {
         let discount = sub.discount_amount.unwrap_or(Decimal::ZERO)
             + (sub.discount_percent.unwrap_or(Decimal::ZERO) * subtotal);
         let total = (subtotal - discount).max(Decimal::ZERO);
-        let currency = sub.currency.clone();
+        let currency = sub.currency;
 
         // Insert billing cycle - connection scoped to this block
         {
@@ -1539,75 +1539,75 @@ impl SqliteSubscriptionRepository {
 
 impl SubscriptionRepository for SqliteSubscriptionRepository {
     fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan> {
-        SqliteSubscriptionRepository::create_plan(self, input)
+        Self::create_plan(self, input)
     }
 
     fn get_plan(&self, id: Uuid) -> Result<Option<SubscriptionPlan>> {
-        SqliteSubscriptionRepository::get_plan(self, id)
+        Self::get_plan(self, id)
     }
 
     fn get_plan_by_code(&self, code: &str) -> Result<Option<SubscriptionPlan>> {
-        SqliteSubscriptionRepository::get_plan_by_code(self, code)
+        Self::get_plan_by_code(self, code)
     }
 
     fn list_plans(&self, filter: SubscriptionPlanFilter) -> Result<Vec<SubscriptionPlan>> {
-        SqliteSubscriptionRepository::list_plans(self, filter)
+        Self::list_plans(self, filter)
     }
 
     fn update_plan(&self, id: Uuid, input: UpdateSubscriptionPlan) -> Result<SubscriptionPlan> {
-        SqliteSubscriptionRepository::update_plan(self, id, input)
+        Self::update_plan(self, id, input)
     }
 
     fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
-        SqliteSubscriptionRepository::activate_plan(self, id)
+        Self::activate_plan(self, id)
     }
 
     fn archive_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
-        SqliteSubscriptionRepository::archive_plan(self, id)
+        Self::archive_plan(self, id)
     }
 
     fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
-        SqliteSubscriptionRepository::create_subscription(self, input)
+        Self::create_subscription(self, input)
     }
 
     fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
-        SqliteSubscriptionRepository::get_subscription(self, id)
+        Self::get_subscription(self, id)
     }
 
     fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>> {
-        SqliteSubscriptionRepository::get_subscription_by_number(self, number)
+        Self::get_subscription_by_number(self, number)
     }
 
     fn list_subscriptions(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>> {
-        SqliteSubscriptionRepository::list_subscriptions(self, filter)
+        Self::list_subscriptions(self, filter)
     }
 
     fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription> {
-        SqliteSubscriptionRepository::update_subscription(self, id, input)
+        Self::update_subscription(self, id, input)
     }
 
     fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription> {
-        SqliteSubscriptionRepository::cancel_subscription(self, id, input)
+        Self::cancel_subscription(self, id, input)
     }
 
     fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription> {
-        SqliteSubscriptionRepository::pause_subscription(self, id, input)
+        Self::pause_subscription(self, id, input)
     }
 
     fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription> {
-        SqliteSubscriptionRepository::resume_subscription(self, id)
+        Self::resume_subscription(self, id)
     }
 
     fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
-        SqliteSubscriptionRepository::create_billing_cycle(self, input)
+        Self::create_billing_cycle(self, input)
     }
 
     fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>> {
-        SqliteSubscriptionRepository::get_billing_cycle(self, id)
+        Self::get_billing_cycle(self, id)
     }
 
     fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>> {
-        SqliteSubscriptionRepository::list_billing_cycles(self, filter)
+        Self::list_billing_cycles(self, filter)
     }
 
     fn update_billing_cycle_status(
@@ -1615,11 +1615,11 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         id: Uuid,
         status: BillingCycleStatus,
     ) -> Result<BillingCycle> {
-        SqliteSubscriptionRepository::update_billing_cycle_status(self, id, status, None, None)
+        Self::update_billing_cycle_status(self, id, status, None, None)
     }
 
     fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
-        SqliteSubscriptionRepository::skip_billing_cycle(self, id, input)
+        Self::skip_billing_cycle(self, id, input)
     }
 
     fn record_event(
@@ -1629,7 +1629,7 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         notes: Option<String>,
     ) -> Result<SubscriptionEvent> {
         let description = notes.as_deref().unwrap_or("");
-        SqliteSubscriptionRepository::record_event(
+        Self::record_event(
             self,
             subscription_id,
             event_type,
@@ -1640,6 +1640,6 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
     }
 
     fn get_subscription_events(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionEvent>> {
-        SqliteSubscriptionRepository::get_subscription_events(self, subscription_id, None)
+        Self::get_subscription_events(self, subscription_id, None)
     }
 }

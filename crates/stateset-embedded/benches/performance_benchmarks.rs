@@ -15,7 +15,7 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AnalyticsQuery, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
-    CustomerFilter, OrderFilter, TimePeriod,
+    CustomerId, CustomerFilter, OrderFilter, ProductId, TimePeriod,
 };
 use tempfile::NamedTempFile;
 use uuid::Uuid;
@@ -27,7 +27,7 @@ fn create_test_commerce() -> (Commerce, NamedTempFile) {
     (commerce, temp_file)
 }
 
-fn create_test_customer(commerce: &Commerce, i: usize) -> Uuid {
+fn create_test_customer(commerce: &Commerce, i: usize) -> CustomerId {
     commerce
         .customers()
         .create(CreateCustomer {
@@ -56,7 +56,7 @@ fn setup_test_data(commerce: &Commerce) {
 
     // Create customers
     for i in 1..=100 {
-        create_test_customer(commerce, i);
+        let _ = create_test_customer(commerce, i);
     }
 
     // Create products (simulated via orders)
@@ -75,7 +75,7 @@ fn setup_test_data(commerce: &Commerce) {
             .create(CreateOrder {
                 customer_id,
                 items: vec![CreateOrderItem {
-                    product_id: Uuid::new_v4(),
+                    product_id: ProductId::new(),
                     sku: format!("SKU-{:03}", (i % 10) + 1),
                     name: format!("Product {}", (i % 10) + 1),
                     quantity: (i % 5) + 1,
@@ -169,7 +169,7 @@ fn bench_order_creation(c: &mut Criterion) {
         .expect("Failed to create inventory item");
 
     let customer_id = create_test_customer(&commerce, 1);
-    let product_id = Uuid::new_v4();
+    let product_id = ProductId::new();
 
     let mut group = c.benchmark_group("order_creation");
 
@@ -250,7 +250,7 @@ fn bench_order_status_transitions(c: &mut Criterion) {
                 .create(CreateOrder {
                     customer_id,
                     items: vec![CreateOrderItem {
-                        product_id: Uuid::new_v4(),
+                        product_id: ProductId::new(),
                         sku: "SKU-001".into(),
                         name: "Widget".into(),
                         quantity: 1,
@@ -277,7 +277,7 @@ fn bench_order_status_transitions(c: &mut Criterion) {
                 .create(CreateOrder {
                     customer_id,
                     items: vec![CreateOrderItem {
-                        product_id: Uuid::new_v4(),
+                        product_id: ProductId::new(),
                         sku: "SKU-001".into(),
                         name: "Widget".into(),
                         quantity: 1,
@@ -358,13 +358,13 @@ fn bench_query_performance(c: &mut Criterion) {
 fn bench_scalability(c: &mut Criterion) {
     let mut group = c.benchmark_group("scalability");
 
-    for size in [10usize, 100, 1000].iter() {
+    for size in &[10usize, 100, 1000] {
         group.bench_with_input(BenchmarkId::new("list_customers", size), size, |b, &size| {
             let (commerce, _temp) = create_test_commerce();
 
             // Create customers
             for i in 0..size {
-                create_test_customer(&commerce, i);
+                let _ = create_test_customer(&commerce, i);
             }
 
             b.iter(|| {

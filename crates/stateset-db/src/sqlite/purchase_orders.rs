@@ -36,7 +36,7 @@ pub struct SqlitePurchaseOrderRepository {
 }
 
 impl SqlitePurchaseOrderRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

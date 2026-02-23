@@ -2,7 +2,7 @@
 
 ## A Technical Review of an Embedded Commerce Runtime
 
-**Version 0.7.3 | February 2026**
+**Version 0.7.4 | February 2026**
 
 ---
 
@@ -159,7 +159,7 @@ The core crate defines **48 domain models** organized into modules. Each model f
 | **Accounting** | AccountsPayable, AccountsReceivable, GeneralLedger, CostAccounting |
 | **Warehouse** | Warehouse, Lot, Serial, Receiving, Fulfillment, Backorder |
 | **Quality** | QualityInspection, InspectionResult |
-| **New (v0.7.3)** | Fraud, GiftCard, Loyalty, Review, Segment, ShippingZone, StoreCredit, Wishlist |
+| **New (v0.7.4)** | Fraud, GiftCard, Loyalty, Review, Segment, ShippingZone, StoreCredit, Wishlist |
 
 ### 3.2 State Machines
 
@@ -1213,7 +1213,7 @@ The project has undergone 18+ rounds of quality elevation:
 | 0.6.0 | 2026-02 | A2A commerce, VES crypto, channel orchestrator |
 | 0.7.0 | 2026-02 | 1,842 tests, ESLint, Prettier, commitlint, 40+ test files |
 | 0.7.2 | 2026-02 | Cross-language version alignment |
-| 0.7.3 | 2026-02 | Setup wizard, @clack prompts, stateset-crypto crate |
+| 0.7.4 | 2026-02 | Setup wizard, @clack prompts, stateset-crypto crate |
 
 ## Appendix B: Dependency Policy
 
@@ -1242,4 +1242,4 @@ MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, MPL-2.0, Unicode-3.0, Un
 
 ---
 
-*This document was generated from a full codebase audit of stateset-icommerce v0.7.3, covering approximately 50 source files across 7 Rust crates and 143 JavaScript modules.*
+*This document was generated from a full codebase audit of stateset-icommerce v0.7.4, covering approximately 50 source files across 7 Rust crates and 143 JavaScript modules.*

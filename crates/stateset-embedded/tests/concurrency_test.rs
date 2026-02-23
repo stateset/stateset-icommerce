@@ -23,7 +23,7 @@ fn setup_concurrent_test() -> Commerce {
     commerce
         .inventory()
         .create_item(CreateInventoryItem {
-            sku: sku.clone(),
+            sku,
             name: "Concurrent Test Item".into(),
             initial_quantity: Some(dec!(10)),
             ..Default::default()
@@ -363,10 +363,10 @@ fn test_no_deadlock_with_circular_dependencies() {
             .expect("Failed to reserve item 2");
     });
 
-    let commerce2 = commerce.clone();
+    let commerce2 = commerce;
     let sku2_clone2 = sku2.to_string();
     let sku1_clone2 = sku1.to_string();
-    let barrier2 = barrier.clone();
+    let barrier2 = barrier;
 
     let handle2 = thread::spawn(move || {
         barrier2.wait();

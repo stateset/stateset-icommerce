@@ -148,11 +148,11 @@ fn test_complete_order_lifecycle_from_cart_to_return() {
     let return_order = commerce
         .returns()
         .create(CreateReturn {
-            order_id: order.id.into(),
+            order_id: order.id,
             reason: ReturnReason::Damaged,
             reason_details: Some("Product damaged".into()),
             items: vec![CreateReturnItem {
-                order_item_id: order_item_id.into(),
+                order_item_id,
                 quantity: 1,
                 condition: Some(ItemCondition::Damaged),
             }],
@@ -438,7 +438,7 @@ fn test_backorder_workflow() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer_id.into(),
+            customer_id,
             items: vec![CreateOrderItem {
                 product_id: Uuid::new_v4().into(),
                 sku: "SKU-001".into(),

@@ -14,7 +14,7 @@ pub mod sqlite {
     use super::*;
     use rusqlite::Error as SqliteError;
 
-    /// Convert a rusqlite error to CommerceError with context
+    /// Convert a rusqlite error to `CommerceError` with context
     pub fn map_error(
         table: &'static str,
         operation: &'static str,
@@ -82,14 +82,14 @@ pub mod sqlite {
         }
     }
 
-    /// Convert an r2d2 pool error to CommerceError
+    /// Convert an r2d2 pool error to `CommerceError`
     pub fn map_pool_error(_err: r2d2::Error) -> CommerceError {
         CommerceError::Database(DbError::PoolExhausted {
             timeout_ms: 30000, // Default timeout
         })
     }
 
-    /// Convert a connection get error to CommerceError
+    /// Convert a connection get error to `CommerceError`
     pub fn map_connection_error<E: std::fmt::Display>(err: E) -> CommerceError {
         CommerceError::Database(DbError::ConnectionFailed {
             url: "sqlite-pool".to_string(),

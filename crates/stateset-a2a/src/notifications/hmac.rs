@@ -1,6 +1,6 @@
 //! HMAC-SHA256 webhook signing and verification.
 //!
-//! Matches the JavaScript implementation: `createHmac('sha256', secret).update(payload).digest('hex')`.
+//! Matches the `JavaScript` implementation: `createHmac('sha256', secret).update(payload).digest('hex')`.
 
 use ::hmac::{Hmac, Mac};
 use sha2::Sha256;

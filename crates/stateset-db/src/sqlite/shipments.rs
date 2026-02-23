@@ -14,14 +14,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of ShipmentRepository
+/// SQLite implementation of `ShipmentRepository`
 #[derive(Debug)]
 pub struct SqliteShipmentRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteShipmentRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

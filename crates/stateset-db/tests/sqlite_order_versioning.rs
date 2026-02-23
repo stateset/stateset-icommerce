@@ -23,7 +23,7 @@ fn sqlite_order_item_changes_increment_version_and_total() {
     let order = db
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
                 product_id: ProductId::new(),
                 sku: "SKU-1".to_string(),

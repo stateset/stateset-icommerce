@@ -451,12 +451,12 @@ impl SqliteDatabase {
     }
 
     /// Get underlying pool (for advanced use)
-    pub fn pool(&self) -> &Pool<SqliteConnectionManager> {
+    pub const fn pool(&self) -> &Pool<SqliteConnectionManager> {
         &self.pool
     }
 }
 
-/// Helper function to convert rusqlite errors to CommerceError
+/// Helper function to convert rusqlite errors to `CommerceError`
 pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
     match e {
         rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
@@ -498,7 +498,7 @@ pub(crate) use parse_helpers::{
 // ============================================================================
 
 /// Build SQL IN clause with placeholders for the given count
-/// Example: build_in_clause(3) returns "?, ?, ?"
+/// Example: `build_in_clause(3)` returns "?, ?, ?"
 pub(crate) fn build_in_clause(count: usize) -> String {
     if count == 0 {
         return "NULL".to_string();

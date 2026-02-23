@@ -24,7 +24,7 @@ fn create_test_customer(commerce: &Commerce) -> CustomerId {
             ..Default::default()
         })
         .expect("Failed to create test customer");
-    customer.id.into()
+    customer.id
 }
 
 /// Helper to create a test order with default items
@@ -206,8 +206,8 @@ fn test_create_order_with_addresses() {
                 unit_price: dec!(29.99),
                 ..Default::default()
             }],
-            shipping_address: Some(shipping_address.clone()),
-            billing_address: Some(billing_address.clone()),
+            shipping_address: Some(shipping_address),
+            billing_address: Some(billing_address),
             ..Default::default()
         })
         .expect("Failed to create order");
@@ -797,7 +797,7 @@ fn test_update_order_shipping_address() {
         .orders()
         .update(
             order.id,
-            UpdateOrder { shipping_address: Some(new_address.clone()), ..Default::default() },
+            UpdateOrder { shipping_address: Some(new_address), ..Default::default() },
         )
         .expect("Failed to update order");
 

@@ -3,7 +3,7 @@ use thiserror::Error;
 /// Errors that can occur during VES cryptographic operations
 #[derive(Debug, Error)]
 pub enum CryptoError {
-    /// JCS does not support Infinity or NaN values
+    /// JCS does not support Infinity or `NaN` values
     #[error("JCS does not support Infinity or NaN")]
     JcsInvalidNumber,
     /// Cannot canonicalize the given type

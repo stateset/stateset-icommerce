@@ -490,7 +490,7 @@ fn test_cart_with_shipping_address() {
 
     let updated = commerce
         .carts()
-        .set_shipping_address(cart.id, address.clone())
+        .set_shipping_address(cart.id, address)
         .expect("Failed to set shipping address");
 
     assert!(updated.shipping_address.is_some());
@@ -953,7 +953,7 @@ fn test_cart_checkout_creates_order() {
         .get(result.order_id)
         .expect("Failed to get order")
         .expect("Order not found");
-    assert_eq!(order.customer_id, customer_id.into());
+    assert_eq!(order.customer_id, customer_id);
 }
 
 #[test]

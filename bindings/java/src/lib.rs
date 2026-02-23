@@ -51,11 +51,11 @@ where
 // Helper Functions
 // =============================================================================
 
-fn get_string(env: &mut JNIEnv, s: &JString) -> String {
+fn get_string(env: &mut JNIEnv<'_>, s: &JString<'_>) -> String {
     env.get_string(s).map(|s| s.into()).unwrap_or_default()
 }
 
-fn throw_exception(env: &mut JNIEnv, msg: &str) {
+fn throw_exception(env: &mut JNIEnv<'_>, msg: &str) {
     let _ = env.throw_new("com/stateset/embedded/StateSetException", msg);
 }
 
@@ -418,7 +418,7 @@ fn create_return_object<'a>(env: &mut JNIEnv<'a>, ret: &stateset_core::Return) -
 // Commerce Class
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Commerce_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -435,7 +435,7 @@ pub extern "system" fn Java_com_stateset_embedded_Commerce_nativeCreate<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Commerce_nativeDestroy<'local>(
     _env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -451,7 +451,7 @@ pub extern "system" fn Java_com_stateset_embedded_Commerce_nativeDestroy<'local>
 // Customers API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Customers_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -485,7 +485,7 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeCreate<'local>
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Customers_nativeGet<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -502,7 +502,7 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeGet<'local>(
     };
 
     let result =
-        use_handle(ptr, |commerce| commerce.customers().get(uuid).map_err(|e| e.to_string()));
+        use_handle(ptr, |commerce| commerce.customers().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(customer)) => create_customer_object(&mut env, &customer),
@@ -514,7 +514,7 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeGet<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Customers_nativeList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -561,7 +561,7 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeList<'local>(
 // Products API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Products_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -600,7 +600,7 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeCreate<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Products_nativeGet<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -630,7 +630,7 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeGet<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Products_nativeList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -677,7 +677,7 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeList<'local>(
 // Inventory API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeCreateItem<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -711,7 +711,7 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeCreateItem<'lo
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeAdjust<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -743,7 +743,7 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeAdjust<'local>
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeGet<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -766,7 +766,7 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeGet<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeReserve<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -789,7 +789,7 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeReserve<'local
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeRelease<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -807,7 +807,7 @@ pub extern "system" fn Java_com_stateset_embedded_Inventory_nativeRelease<'local
 // Orders API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Orders_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -830,7 +830,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeCreate<'local>(
         commerce
             .orders()
             .create(CreateOrder {
-                customer_id: uuid,
+                customer_id: uuid.into(),
                 currency: Some(if currency_str.is_empty() {
                     "USD".to_string()
                 } else {
@@ -851,7 +851,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeCreate<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Orders_nativeGet<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -867,7 +867,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeGet<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| commerce.orders().get(uuid).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| commerce.orders().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(order)) => create_order_object(&mut env, &order),
@@ -879,7 +879,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeGet<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Orders_nativeList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -922,7 +922,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeList<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Orders_nativeUpdateStatus<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -951,7 +951,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeUpdateStatus<'loc
             "cancelled" => OrderStatus::Cancelled,
             _ => OrderStatus::Pending,
         };
-        commerce.orders().update_status(uuid, status).map_err(|e| e.to_string())
+        commerce.orders().update_status(uuid.into(), status).map_err(|e| e.to_string())
     });
 
     if let Err(e) = result {
@@ -963,7 +963,7 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeUpdateStatus<'loc
 // Carts API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -984,7 +984,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCreate<'local>(
         commerce
             .carts()
             .create(CreateCart {
-                customer_id: customer_uuid,
+                customer_id: customer_uuid.map(Into::into),
                 customer_email: None,
                 customer_name: None,
                 currency: if currency_str.is_empty() { None } else { Some(currency_str) },
@@ -1002,7 +1002,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCreate<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Carts_nativeGet<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1018,7 +1018,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeGet<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| commerce.carts().get(uuid).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| commerce.carts().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(cart)) => create_cart_object(&mut env, &cart),
@@ -1030,7 +1030,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeGet<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Carts_nativeAddItem<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1058,7 +1058,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeAddItem<'local>(
         commerce
             .carts()
             .add_item(
-                uuid,
+                uuid.into(),
                 AddCartItem {
                     sku: sku_str,
                     name: name_str,
@@ -1071,7 +1071,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeAddItem<'local>(
         // Return the updated cart
         commerce
             .carts()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Cart not found".to_string())
     });
@@ -1085,7 +1085,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeAddItem<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCheckout<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1103,7 +1103,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCheckout<'local>(
     };
 
     let result = use_handle(ptr, |commerce| {
-        let checkout_result = commerce.carts().complete(uuid).map_err(|e| e.to_string())?;
+        let checkout_result = commerce.carts().complete(uuid.into()).map_err(|e| e.to_string())?;
         // Get the order
         commerce
             .orders()
@@ -1125,7 +1125,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCheckout<'local>(
 // Payments API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Payments_nativeRecordPayment<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1164,7 +1164,7 @@ pub extern "system" fn Java_com_stateset_embedded_Payments_nativeRecordPayment<'
         commerce
             .payments()
             .create(CreatePayment {
-                order_id: Some(uuid),
+                order_id: Some(uuid.into()),
                 amount: amt,
                 currency: Some("USD".to_string()),
                 payment_method,
@@ -1183,7 +1183,7 @@ pub extern "system" fn Java_com_stateset_embedded_Payments_nativeRecordPayment<'
 // Returns API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Returns_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1213,7 +1213,7 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeCreate<'local>(
     };
 
     let result = use_handle(ptr, |commerce| {
-        let order = commerce.orders().get(uuid).map_err(|e| e.to_string())?;
+        let order = commerce.orders().get(uuid.into()).map_err(|e| e.to_string())?;
         let order = order.ok_or_else(|| format!("Order not found: {}", uuid))?;
         let items: Vec<CreateReturnItem> = order
             .items
@@ -1230,7 +1230,7 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeCreate<'local>(
         commerce
             .returns()
             .create(CreateReturn {
-                order_id: uuid,
+                order_id: uuid.into(),
                 reason: reason_enum,
                 items,
                 ..Default::default()
@@ -1247,7 +1247,7 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeCreate<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Returns_nativeProcess<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1265,14 +1265,14 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeProcess<'local>(
     };
 
     let result =
-        use_handle(ptr, |commerce| commerce.returns().approve(uuid).map_err(|e| e.to_string()));
+        use_handle(ptr, |commerce| commerce.returns().approve(uuid.into()).map_err(|e| e.to_string()));
 
     if let Err(e) = result {
         throw_exception(&mut env, &e);
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Returns_nativeRefund<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1292,7 +1292,7 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeRefund<'local>(
     };
 
     let result =
-        use_handle(ptr, |commerce| commerce.returns().complete(uuid).map_err(|e| e.to_string()));
+        use_handle(ptr, |commerce| commerce.returns().complete(uuid.into()).map_err(|e| e.to_string()));
 
     if let Err(e) = result {
         throw_exception(&mut env, &e);
@@ -1303,7 +1303,7 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeRefund<'local>(
 // Analytics API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Analytics_nativeSalesSummary<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1342,14 +1342,14 @@ pub extern "system" fn Java_com_stateset_embedded_Analytics_nativeSalesSummary<'
 // Quality Control API
 // =============================================================================
 
-fn to_json_string<'a>(env: &mut JNIEnv<'a>, data: &impl serde::Serialize) -> JObject<'a> {
+fn to_json_string<'a>(env: &JNIEnv<'a>, data: &impl serde::Serialize) -> JObject<'a> {
     match serde_json::to_string(data) {
         Ok(json) => env.new_string(&json).map(|s| s.into()).unwrap_or(JObject::null()),
         Err(_) => JObject::null(),
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateInspection<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1388,7 +1388,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateInspection
     });
 
     match result {
-        Ok(inspection) => to_json_string(&mut env, &inspection),
+        Ok(inspection) => to_json_string(&env, &inspection),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1396,7 +1396,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateInspection
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Quality_nativeListInspections<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1406,7 +1406,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeListInspections<
         commerce.quality().list_inspections(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(inspections) => to_json_string(&mut env, &inspections),
+        Ok(inspections) => to_json_string(&env, &inspections),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1414,7 +1414,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeListInspections<
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateNcr<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1440,7 +1440,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateNcr<'local
     });
 
     match result {
-        Ok(ncr) => to_json_string(&mut env, &ncr),
+        Ok(ncr) => to_json_string(&env, &ncr),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1448,7 +1448,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateNcr<'local
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateHold<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1474,7 +1474,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateHold<'loca
     });
 
     match result {
-        Ok(hold) => to_json_string(&mut env, &hold),
+        Ok(hold) => to_json_string(&env, &hold),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1486,7 +1486,7 @@ pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateHold<'loca
 // Lots/Batch Tracking API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Lots_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1512,7 +1512,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeCreate<'local>(
     });
 
     match result {
-        Ok(lot) => to_json_string(&mut env, &lot),
+        Ok(lot) => to_json_string(&env, &lot),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1520,7 +1520,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeCreate<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Lots_nativeList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1530,7 +1530,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeList<'local>(
         commerce.lots().list(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(lots) => to_json_string(&mut env, &lots),
+        Ok(lots) => to_json_string(&env, &lots),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1538,7 +1538,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeList<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetBySku<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1550,7 +1550,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetBySku<'local>(
         commerce.lots().get_available_lots_for_sku(&sku_str).map_err(|e| e.to_string())
     });
     match result {
-        Ok(lots) => to_json_string(&mut env, &lots),
+        Ok(lots) => to_json_string(&env, &lots),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1558,7 +1558,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetBySku<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetExpiring<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1569,7 +1569,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetExpiring<'local>
         commerce.lots().get_expiring_lots(days).map_err(|e| e.to_string())
     });
     match result {
-        Ok(lots) => to_json_string(&mut env, &lots),
+        Ok(lots) => to_json_string(&env, &lots),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1581,7 +1581,7 @@ pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetExpiring<'local>
 // Serial Numbers API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Serials_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1604,7 +1604,7 @@ pub extern "system" fn Java_com_stateset_embedded_Serials_nativeCreate<'local>(
     });
 
     match result {
-        Ok(serial) => to_json_string(&mut env, &serial),
+        Ok(serial) => to_json_string(&env, &serial),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1612,7 +1612,7 @@ pub extern "system" fn Java_com_stateset_embedded_Serials_nativeCreate<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Serials_nativeList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1622,7 +1622,7 @@ pub extern "system" fn Java_com_stateset_embedded_Serials_nativeList<'local>(
         commerce.serials().list(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(serials) => to_json_string(&mut env, &serials),
+        Ok(serials) => to_json_string(&env, &serials),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1630,7 +1630,7 @@ pub extern "system" fn Java_com_stateset_embedded_Serials_nativeList<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Serials_nativeGetByNumber<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1642,7 +1642,7 @@ pub extern "system" fn Java_com_stateset_embedded_Serials_nativeGetByNumber<'loc
         commerce.serials().get_by_serial(&serial_str).map_err(|e| e.to_string())
     });
     match result {
-        Ok(Some(serial)) => to_json_string(&mut env, &serial),
+        Ok(Some(serial)) => to_json_string(&env, &serial),
         Ok(None) => JObject::null(),
         Err(e) => {
             throw_exception(&mut env, &e);
@@ -1655,7 +1655,7 @@ pub extern "system" fn Java_com_stateset_embedded_Serials_nativeGetByNumber<'loc
 // Warehouse API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1678,7 +1678,7 @@ pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeCreate<'local>
     });
 
     match result {
-        Ok(warehouse) => to_json_string(&mut env, &warehouse),
+        Ok(warehouse) => to_json_string(&env, &warehouse),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1686,7 +1686,7 @@ pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeCreate<'local>
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1696,7 +1696,7 @@ pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeList<'local>(
         commerce.warehouse().list_warehouses(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(warehouses) => to_json_string(&mut env, &warehouses),
+        Ok(warehouses) => to_json_string(&env, &warehouses),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1704,7 +1704,7 @@ pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeList<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeCreateLocation<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1726,7 +1726,7 @@ pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeCreateLocation
     });
 
     match result {
-        Ok(location) => to_json_string(&mut env, &location),
+        Ok(location) => to_json_string(&env, &location),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1738,7 +1738,7 @@ pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeCreateLocation
 // Receiving API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeCreateReceipt<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1752,7 +1752,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeCreateReceipt<
     });
 
     match result {
-        Ok(receipt) => to_json_string(&mut env, &receipt),
+        Ok(receipt) => to_json_string(&env, &receipt),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1760,7 +1760,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeCreateReceipt<
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeListReceipts<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1770,7 +1770,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeListReceipts<'
         commerce.receiving().list_receipts(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(receipts) => to_json_string(&mut env, &receipts),
+        Ok(receipts) => to_json_string(&env, &receipts),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1778,7 +1778,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeListReceipts<'
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeAddLine<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1823,7 +1823,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeAddLine<'local
     });
 
     match result {
-        Ok(line) => to_json_string(&mut env, &line),
+        Ok(line) => to_json_string(&env, &line),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1831,7 +1831,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeAddLine<'local
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeComplete<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1852,7 +1852,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeComplete<'loca
     });
 
     match result {
-        Ok(receipt) => to_json_string(&mut env, &receipt),
+        Ok(receipt) => to_json_string(&env, &receipt),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1864,7 +1864,7 @@ pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeComplete<'loca
 // Fulfillment API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreateWave<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1879,7 +1879,7 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreateWave<'
     });
 
     match result {
-        Ok(wave) => to_json_string(&mut env, &wave),
+        Ok(wave) => to_json_string(&env, &wave),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1887,7 +1887,7 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreateWave<'
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeListWaves<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1897,7 +1897,7 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeListWaves<'l
         commerce.fulfillment().list_waves(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(waves) => to_json_string(&mut env, &waves),
+        Ok(waves) => to_json_string(&env, &waves),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1905,7 +1905,7 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeListWaves<'l
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreatePickTask<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1925,11 +1925,11 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreatePickTa
 
     // Create all pick tasks for the order at once
     let result = use_handle(ptr, |commerce| {
-        commerce.fulfillment().create_picks_for_order(uuid, warehouse_id).map_err(|e| e.to_string())
+        commerce.fulfillment().create_picks_for_order(uuid.into(), warehouse_id).map_err(|e| e.to_string())
     });
 
     match result {
-        Ok(tasks) => to_json_string(&mut env, &tasks),
+        Ok(tasks) => to_json_string(&env, &tasks),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1941,7 +1941,7 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreatePickTa
 // Accounts Payable API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeCreateBill<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1978,7 +1978,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeCreateBi
     });
 
     match result {
-        Ok(bill) => to_json_string(&mut env, &bill),
+        Ok(bill) => to_json_string(&env, &bill),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -1986,7 +1986,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeCreateBi
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeListBills<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -1996,7 +1996,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeListBill
         commerce.accounts_payable().list_bills(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(bills) => to_json_string(&mut env, &bills),
+        Ok(bills) => to_json_string(&env, &bills),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2004,7 +2004,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeListBill
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeGetAgingSummary<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2014,7 +2014,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeGetAging
         commerce.accounts_payable().get_aging_summary().map_err(|e| e.to_string())
     });
     match result {
-        Ok(summary) => to_json_string(&mut env, &summary),
+        Ok(summary) => to_json_string(&env, &summary),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2026,7 +2026,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeGetAging
 // Accounts Receivable API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetAgingSummary<
     'local,
 >(
@@ -2038,7 +2038,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetAg
         commerce.accounts_receivable().get_aging_summary().map_err(|e| e.to_string())
     });
     match result {
-        Ok(summary) => to_json_string(&mut env, &summary),
+        Ok(summary) => to_json_string(&env, &summary),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2046,7 +2046,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetAg
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetDso<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2065,7 +2065,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetDs
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeCreateCreditMemo<
     'local,
 >(
@@ -2113,7 +2113,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeCreat
     });
 
     match result {
-        Ok(memo) => to_json_string(&mut env, &memo),
+        Ok(memo) => to_json_string(&env, &memo),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2125,7 +2125,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeCreat
 // Cost Accounting API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetItemCost<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2137,7 +2137,7 @@ pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetItemCo
         commerce.cost_accounting().get_item_cost(&sku_str).map_err(|e| e.to_string())
     });
     match result {
-        Ok(Some(cost)) => to_json_string(&mut env, &cost),
+        Ok(Some(cost)) => to_json_string(&env, &cost),
         Ok(None) => JObject::null(),
         Err(e) => {
             throw_exception(&mut env, &e);
@@ -2146,7 +2146,7 @@ pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetItemCo
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeSetItemCost<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2169,7 +2169,7 @@ pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeSetItemCo
     });
 
     match result {
-        Ok(item_cost) => to_json_string(&mut env, &item_cost),
+        Ok(item_cost) => to_json_string(&env, &item_cost),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2177,7 +2177,7 @@ pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeSetItemCo
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetTotalInventoryValue<
     'local,
 >(
@@ -2201,7 +2201,7 @@ pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetTotalI
 // Credit Management API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCreateAccount<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2224,7 +2224,7 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCreateAccount<'lo
         commerce
             .credit()
             .create_credit_account(stateset_core::CreateCreditAccount {
-                customer_id: uuid,
+                customer_id: uuid.into(),
                 credit_limit: limit,
                 ..Default::default()
             })
@@ -2232,7 +2232,7 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCreateAccount<'lo
     });
 
     match result {
-        Ok(account) => to_json_string(&mut env, &account),
+        Ok(account) => to_json_string(&env, &account),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2240,7 +2240,7 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCreateAccount<'lo
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCheckCredit<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2260,11 +2260,11 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCheckCredit<'loca
     };
 
     let result = use_handle(ptr, |commerce| {
-        commerce.credit().check_credit(uuid, amount).map_err(|e| e.to_string())
+        commerce.credit().check_credit(uuid.into(), amount).map_err(|e| e.to_string())
     });
 
     match result {
-        Ok(check_result) => to_json_string(&mut env, &check_result),
+        Ok(check_result) => to_json_string(&env, &check_result),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2272,7 +2272,7 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCheckCredit<'loca
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Credit_nativeGetOverLimitCustomers<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2282,7 +2282,7 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeGetOverLimitCusto
         commerce.credit().get_over_limit_customers().map_err(|e| e.to_string())
     });
     match result {
-        Ok(customers) => to_json_string(&mut env, &customers),
+        Ok(customers) => to_json_string(&env, &customers),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2294,7 +2294,7 @@ pub extern "system" fn Java_com_stateset_embedded_Credit_nativeGetOverLimitCusto
 // Backorder Management API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeCreate<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2343,7 +2343,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeCreate<'local
     });
 
     match result {
-        Ok(backorder) => to_json_string(&mut env, &backorder),
+        Ok(backorder) => to_json_string(&env, &backorder),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2351,7 +2351,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeCreate<'local
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2361,7 +2361,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeList<'local>(
         commerce.backorder().list_backorders(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(backorders) => to_json_string(&mut env, &backorders),
+        Ok(backorders) => to_json_string(&env, &backorders),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2369,7 +2369,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeList<'local>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetSummary<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2378,7 +2378,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetSummary<'l
     let result =
         use_handle(ptr, |commerce| commerce.backorder().get_summary().map_err(|e| e.to_string()));
     match result {
-        Ok(summary) => to_json_string(&mut env, &summary),
+        Ok(summary) => to_json_string(&env, &summary),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2386,7 +2386,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetSummary<'l
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetOverdue<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2396,7 +2396,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetOverdue<'l
         commerce.backorder().get_overdue_backorders().map_err(|e| e.to_string())
     });
     match result {
-        Ok(backorders) => to_json_string(&mut env, &backorders),
+        Ok(backorders) => to_json_string(&env, &backorders),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2408,7 +2408,7 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetOverdue<'l
 // General Ledger API
 // =============================================================================
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeCreateAccount<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2448,7 +2448,7 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeCreateAcco
     });
 
     match result {
-        Ok(account) => to_json_string(&mut env, &account),
+        Ok(account) => to_json_string(&env, &account),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2456,7 +2456,7 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeCreateAcco
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeListAccounts<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2466,7 +2466,7 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeListAccoun
         commerce.general_ledger().list_accounts(Default::default()).map_err(|e| e.to_string())
     });
     match result {
-        Ok(accounts) => to_json_string(&mut env, &accounts),
+        Ok(accounts) => to_json_string(&env, &accounts),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()
@@ -2474,7 +2474,7 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeListAccoun
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeGetTrialBalance<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -2486,7 +2486,7 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeGetTrialBa
         commerce.general_ledger().get_trial_balance(today).map_err(|e| e.to_string())
     });
     match result {
-        Ok(balance) => to_json_string(&mut env, &balance),
+        Ok(balance) => to_json_string(&env, &balance),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()

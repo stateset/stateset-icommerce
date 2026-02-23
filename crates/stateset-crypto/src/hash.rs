@@ -1,6 +1,6 @@
 //! Domain-separated SHA-256 hashing per VES v1.0
 //!
-//! All hash functions use the pattern: SHA256(domain_prefix || structured_data)
+//! All hash functions use the pattern: `SHA256(domain_prefix` || `structured_data`)
 
 use sha2::{Digest, Sha256};
 
@@ -8,9 +8,9 @@ use crate::canonicalize::canonicalize_json;
 use crate::encoding::{encode_string, u32_be, uuid_to_bytes};
 use crate::{domain, CryptoError, ZERO_HASH};
 
-/// Compute payload_plain_hash per VES v1.0 Section 5.2
+/// Compute `payload_plain_hash` per VES v1.0 Section 5.2
 ///
-/// H = SHA256(DOMAIN.PAYLOAD_PLAIN || \[salt\] || JCS(payload))
+/// H = `SHA256(DOMAIN.PAYLOAD_PLAIN` || \[salt\] || JCS(payload))
 ///
 /// # Errors
 ///
@@ -61,7 +61,7 @@ pub struct PayloadCipherParams<'a> {
     pub recipients_hash: &'a [u8],
 }
 
-/// Compute payload_cipher_hash per VES v1.0 Section 5.3
+/// Compute `payload_cipher_hash` per VES v1.0 Section 5.3
 ///
 /// For plaintext events, returns `ZERO_HASH` (32 zero bytes).
 #[must_use]

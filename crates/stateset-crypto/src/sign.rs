@@ -41,7 +41,7 @@ pub fn verify_event_signature(
 
 /// Generate a new Ed25519 keypair
 ///
-/// Returns (private_key, public_key) as 32-byte arrays.
+/// Returns (`private_key`, `public_key`) as 32-byte arrays.
 pub fn generate_keypair() -> ([u8; 32], [u8; 32]) {
     let mut rng = rand::thread_rng();
     let signing_key = SigningKey::generate(&mut rng);

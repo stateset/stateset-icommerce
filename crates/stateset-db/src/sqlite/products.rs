@@ -16,14 +16,14 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of ProductRepository
+/// SQLite implementation of `ProductRepository`
 #[derive(Debug)]
 pub struct SqliteProductRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteProductRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

@@ -116,7 +116,7 @@ where
 // =============================================================================
 
 /// Free a string allocated by Rust
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_string_free(s: *mut c_char) {
     if !s.is_null() {
         unsafe {
@@ -131,7 +131,7 @@ pub extern "C" fn stateset_string_free(s: *mut c_char) {
 
 /// Create a new Commerce instance
 /// Returns a handle pointer, or null on error
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_commerce_new(db_path: *const c_char) -> *mut CommerceHandle {
     let path = match cstr_to_string(db_path) {
         Some(p) => p,
@@ -145,7 +145,7 @@ pub extern "C" fn stateset_commerce_new(db_path: *const c_char) -> *mut Commerce
 }
 
 /// Destroy a Commerce instance
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_commerce_free(handle: *mut CommerceHandle) {
     if !handle.is_null() {
         unsafe {
@@ -159,7 +159,7 @@ pub extern "C" fn stateset_commerce_free(handle: *mut CommerceHandle) {
 // =============================================================================
 
 /// Create a customer, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_customer_create(
     handle: *mut CommerceHandle,
     email: *const c_char,
@@ -192,7 +192,7 @@ pub extern "C" fn stateset_customer_create(
 }
 
 /// Get a customer by ID, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_customer_get(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -208,7 +208,7 @@ pub extern "C" fn stateset_customer_get(
     };
 
     let result =
-        use_handle(handle, |commerce| commerce.customers().get(uuid).map_err(|e| e.to_string()));
+        use_handle(handle, |commerce| commerce.customers().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(customer)) => to_json_cstr(&customer),
@@ -217,7 +217,7 @@ pub extern "C" fn stateset_customer_get(
 }
 
 /// List all customers, returns JSON array string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_customer_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.customers().list(CustomerFilter::default()).map_err(|e| e.to_string())
@@ -230,7 +230,7 @@ pub extern "C" fn stateset_customer_list(handle: *mut CommerceHandle) -> *mut c_
 }
 
 /// Delete a customer by ID, returns 1 on success, 0 on failure
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_customer_delete(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -246,7 +246,7 @@ pub extern "C" fn stateset_customer_delete(
     };
 
     let result =
-        use_handle(handle, |commerce| commerce.customers().delete(uuid).map_err(|e| e.to_string()));
+        use_handle(handle, |commerce| commerce.customers().delete(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(_) => 1,
@@ -259,7 +259,7 @@ pub extern "C" fn stateset_customer_delete(
 // =============================================================================
 
 /// Create a product, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_product_create(
     handle: *mut CommerceHandle,
     name: *const c_char,
@@ -296,7 +296,7 @@ pub extern "C" fn stateset_product_create(
 }
 
 /// Get a product by ID, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_product_get(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -312,7 +312,7 @@ pub extern "C" fn stateset_product_get(
     };
 
     let result =
-        use_handle(handle, |commerce| commerce.products().get(uuid).map_err(|e| e.to_string()));
+        use_handle(handle, |commerce| commerce.products().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(product)) => to_json_cstr(&product),
@@ -321,7 +321,7 @@ pub extern "C" fn stateset_product_get(
 }
 
 /// List all products, returns JSON array string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_product_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.products().list(ProductFilter::default()).map_err(|e| e.to_string())
@@ -338,7 +338,7 @@ pub extern "C" fn stateset_product_list(handle: *mut CommerceHandle) -> *mut c_c
 // =============================================================================
 
 /// Create an order, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_order_create(
     handle: *mut CommerceHandle,
     customer_id: *const c_char,
@@ -366,7 +366,7 @@ pub extern "C" fn stateset_order_create(
         commerce
             .orders()
             .create(CreateOrder {
-                customer_id: customer_uuid,
+                customer_id: customer_uuid.into(),
                 items,
                 currency: Some(currency_str),
                 ..Default::default()
@@ -381,7 +381,7 @@ pub extern "C" fn stateset_order_create(
 }
 
 /// Get an order by ID, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_order_get(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -397,7 +397,7 @@ pub extern "C" fn stateset_order_get(
     };
 
     let result =
-        use_handle(handle, |commerce| commerce.orders().get(uuid).map_err(|e| e.to_string()));
+        use_handle(handle, |commerce| commerce.orders().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(order)) => to_json_cstr(&order),
@@ -406,7 +406,7 @@ pub extern "C" fn stateset_order_get(
 }
 
 /// List all orders, returns JSON array string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_order_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.orders().list(OrderFilter::default()).map_err(|e| e.to_string())
@@ -419,7 +419,7 @@ pub extern "C" fn stateset_order_list(handle: *mut CommerceHandle) -> *mut c_cha
 }
 
 /// Update order status, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_order_update_status(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -448,7 +448,7 @@ pub extern "C" fn stateset_order_update_status(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.orders().update_status(uuid, order_status).map_err(|e| e.to_string())
+        commerce.orders().update_status(uuid.into(), order_status).map_err(|e| e.to_string())
     });
 
     match result {
@@ -462,7 +462,7 @@ pub extern "C" fn stateset_order_update_status(
 // =============================================================================
 
 /// Create an inventory item, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_inventory_create_item(
     handle: *mut CommerceHandle,
     sku: *const c_char,
@@ -492,7 +492,7 @@ pub extern "C" fn stateset_inventory_create_item(
 }
 
 /// Adjust inventory, returns 1 on success, 0 on failure
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_inventory_adjust(
     handle: *mut CommerceHandle,
     sku: *const c_char,
@@ -514,7 +514,7 @@ pub extern "C" fn stateset_inventory_adjust(
 }
 
 /// Get stock level, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_inventory_get_level(
     handle: *mut CommerceHandle,
     sku: *const c_char,
@@ -536,7 +536,7 @@ pub extern "C" fn stateset_inventory_get_level(
 // =============================================================================
 
 /// Create a cart, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_cart_create(
     handle: *mut CommerceHandle,
     customer_id: *const c_char,
@@ -552,7 +552,7 @@ pub extern "C" fn stateset_cart_create(
         commerce
             .carts()
             .create(CreateCart {
-                customer_id: customer_uuid,
+                customer_id: customer_uuid.map(Into::into),
                 currency: currency_str,
                 ..Default::default()
             })
@@ -566,7 +566,7 @@ pub extern "C" fn stateset_cart_create(
 }
 
 /// Add item to cart, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_cart_add_item(
     handle: *mut CommerceHandle,
     cart_id: *const c_char,
@@ -596,7 +596,7 @@ pub extern "C" fn stateset_cart_add_item(
         commerce
             .carts()
             .add_item(
-                cart_uuid,
+                cart_uuid.into(),
                 AddCartItem { variant_id: Some(variant_uuid), quantity, ..Default::default() },
             )
             .map_err(|e| e.to_string())
@@ -609,7 +609,7 @@ pub extern "C" fn stateset_cart_add_item(
 }
 
 /// Get cart, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_cart_get(
     handle: *mut CommerceHandle,
     cart_id: *const c_char,
@@ -625,7 +625,7 @@ pub extern "C" fn stateset_cart_get(
     };
 
     let result =
-        use_handle(handle, |commerce| commerce.carts().get(cart_uuid).map_err(|e| e.to_string()));
+        use_handle(handle, |commerce| commerce.carts().get(cart_uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(cart)) => to_json_cstr(&cart),
@@ -638,7 +638,7 @@ pub extern "C" fn stateset_cart_get(
 // =============================================================================
 
 /// Create a return, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_return_create(
     handle: *mut CommerceHandle,
     order_id: *const c_char,
@@ -667,7 +667,7 @@ pub extern "C" fn stateset_return_create(
     };
 
     let result = use_handle(handle, |commerce| {
-        let order = commerce.orders().get(order_uuid).map_err(|e| e.to_string())?;
+        let order = commerce.orders().get(order_uuid.into()).map_err(|e| e.to_string())?;
         let order = order.ok_or_else(|| format!("Order not found: {}", order_uuid))?;
         let items: Vec<CreateReturnItem> = order
             .items
@@ -684,7 +684,7 @@ pub extern "C" fn stateset_return_create(
         commerce
             .returns()
             .create(CreateReturn {
-                order_id: order_uuid,
+                order_id: order_uuid.into(),
                 reason: return_reason,
                 notes: notes_str,
                 items,
@@ -700,7 +700,7 @@ pub extern "C" fn stateset_return_create(
 }
 
 /// List all returns, returns JSON array string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_return_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.returns().list(Default::default()).map_err(|e| e.to_string())
@@ -717,7 +717,7 @@ pub extern "C" fn stateset_return_list(handle: *mut CommerceHandle) -> *mut c_ch
 // =============================================================================
 
 /// Create a payment, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_payment_create(
     handle: *mut CommerceHandle,
     order_id: *const c_char,
@@ -753,7 +753,7 @@ pub extern "C" fn stateset_payment_create(
         commerce
             .payments()
             .create(CreatePayment {
-                order_id: Some(order_uuid),
+                order_id: Some(order_uuid.into()),
                 amount: amount_decimal,
                 currency: Some(currency_str),
                 payment_method,
@@ -773,7 +773,7 @@ pub extern "C" fn stateset_payment_create(
 // =============================================================================
 
 /// Get sales summary, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_analytics_sales_summary(
     handle: *mut CommerceHandle,
     period: *const c_char,
@@ -804,7 +804,7 @@ pub extern "C" fn stateset_analytics_sales_summary(
 }
 
 /// Get top products, returns JSON array string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_analytics_top_products(
     handle: *mut CommerceHandle,
     limit: c_int,
@@ -823,7 +823,7 @@ pub extern "C" fn stateset_analytics_top_products(
 }
 
 /// Get top customers, returns JSON array string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_analytics_top_customers(
     handle: *mut CommerceHandle,
     limit: c_int,
@@ -846,7 +846,7 @@ pub extern "C" fn stateset_analytics_top_customers(
 // =============================================================================
 
 /// Create a shipment, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_shipment_create(
     handle: *mut CommerceHandle,
     order_id: *const c_char,
@@ -879,7 +879,7 @@ pub extern "C" fn stateset_shipment_create(
         commerce
             .shipments()
             .create(CreateShipment {
-                order_id: order_uuid,
+                order_id: order_uuid.into(),
                 recipient_name: recipient_name_str,
                 shipping_address: shipping_address_str,
                 carrier: shipping_carrier,
@@ -895,7 +895,7 @@ pub extern "C" fn stateset_shipment_create(
 }
 
 /// Get a shipment by ID, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_shipment_get(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -911,7 +911,7 @@ pub extern "C" fn stateset_shipment_get(
     };
 
     let result =
-        use_handle(handle, |commerce| commerce.shipments().get(uuid).map_err(|e| e.to_string()));
+        use_handle(handle, |commerce| commerce.shipments().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(shipment)) => to_json_cstr(&shipment),
@@ -920,7 +920,7 @@ pub extern "C" fn stateset_shipment_get(
 }
 
 /// List all shipments, returns JSON array string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_shipment_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.shipments().list(Default::default()).map_err(|e| e.to_string())
@@ -933,7 +933,7 @@ pub extern "C" fn stateset_shipment_list(handle: *mut CommerceHandle) -> *mut c_
 }
 
 /// Ship a shipment, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_shipment_ship(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -951,7 +951,7 @@ pub extern "C" fn stateset_shipment_ship(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.shipments().ship(uuid, tracking).map_err(|e| e.to_string())
+        commerce.shipments().ship(uuid.into(), tracking).map_err(|e| e.to_string())
     });
 
     match result {
@@ -961,7 +961,7 @@ pub extern "C" fn stateset_shipment_ship(
 }
 
 /// Mark shipment as delivered, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_shipment_deliver(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -977,7 +977,7 @@ pub extern "C" fn stateset_shipment_deliver(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.shipments().mark_delivered(uuid).map_err(|e| e.to_string())
+        commerce.shipments().mark_delivered(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -987,7 +987,7 @@ pub extern "C" fn stateset_shipment_deliver(
 }
 
 /// Cancel shipment, returns JSON string (caller must free)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_shipment_cancel(
     handle: *mut CommerceHandle,
     id: *const c_char,
@@ -1003,7 +1003,7 @@ pub extern "C" fn stateset_shipment_cancel(
     };
 
     let result =
-        use_handle(handle, |commerce| commerce.shipments().cancel(uuid).map_err(|e| e.to_string()));
+        use_handle(handle, |commerce| commerce.shipments().cancel(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(shipment) => to_json_cstr(&shipment),
@@ -1016,7 +1016,7 @@ pub extern "C" fn stateset_shipment_cancel(
 // =============================================================================
 
 /// Create a quality inspection
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_quality_create_inspection(
     handle: *mut CommerceHandle,
     reference_type: *const c_char,
@@ -1060,7 +1060,7 @@ pub extern "C" fn stateset_quality_create_inspection(
 }
 
 /// List quality inspections
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_quality_list_inspections(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.quality().list_inspections(Default::default()).map_err(|e| e.to_string())
@@ -1076,7 +1076,7 @@ pub extern "C" fn stateset_quality_list_inspections(handle: *mut CommerceHandle)
 // =============================================================================
 
 /// Create a warehouse
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_warehouse_create(
     handle: *mut CommerceHandle,
     code: *const c_char,
@@ -1110,7 +1110,7 @@ pub extern "C" fn stateset_warehouse_create(
 }
 
 /// List warehouses
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_warehouse_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.warehouse().list_warehouses(Default::default()).map_err(|e| e.to_string())
@@ -1122,7 +1122,7 @@ pub extern "C" fn stateset_warehouse_list(handle: *mut CommerceHandle) -> *mut c
 }
 
 /// Create a location in a warehouse
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_warehouse_create_location(
     handle: *mut CommerceHandle,
     warehouse_id: c_int,
@@ -1156,7 +1156,7 @@ pub extern "C" fn stateset_warehouse_create_location(
 // =============================================================================
 
 /// Create a lot
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_lots_create(
     handle: *mut CommerceHandle,
     sku: *const c_char,
@@ -1188,7 +1188,7 @@ pub extern "C" fn stateset_lots_create(
 }
 
 /// List lots
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_lots_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.lots().list(Default::default()).map_err(|e| e.to_string())
@@ -1204,7 +1204,7 @@ pub extern "C" fn stateset_lots_list(handle: *mut CommerceHandle) -> *mut c_char
 // =============================================================================
 
 /// Create a serial number
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_serials_create(
     handle: *mut CommerceHandle,
     sku: *const c_char,
@@ -1230,7 +1230,7 @@ pub extern "C" fn stateset_serials_create(
 }
 
 /// List serial numbers
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_serials_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.serials().list(Default::default()).map_err(|e| e.to_string())
@@ -1246,7 +1246,7 @@ pub extern "C" fn stateset_serials_list(handle: *mut CommerceHandle) -> *mut c_c
 // =============================================================================
 
 /// Create a bill
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_ap_create_bill(
     handle: *mut CommerceHandle,
     supplier_id: *const c_char,
@@ -1282,7 +1282,7 @@ pub extern "C" fn stateset_ap_create_bill(
 }
 
 /// List bills
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_ap_list_bills(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.accounts_payable().list_bills(Default::default()).map_err(|e| e.to_string())
@@ -1294,7 +1294,7 @@ pub extern "C" fn stateset_ap_list_bills(handle: *mut CommerceHandle) -> *mut c_
 }
 
 /// Get AP aging summary
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_ap_aging_summary(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.accounts_payable().get_aging_summary().map_err(|e| e.to_string())
@@ -1310,7 +1310,7 @@ pub extern "C" fn stateset_ap_aging_summary(handle: *mut CommerceHandle) -> *mut
 // =============================================================================
 
 /// Get AR aging summary
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_ar_aging_summary(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.accounts_receivable().get_aging_summary().map_err(|e| e.to_string())
@@ -1322,7 +1322,7 @@ pub extern "C" fn stateset_ar_aging_summary(handle: *mut CommerceHandle) -> *mut
 }
 
 /// Get Days Sales Outstanding
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_ar_get_dso(handle: *mut CommerceHandle, days: c_int) -> c_double {
     let result = use_handle(handle, |commerce| {
         commerce.accounts_receivable().get_dso(days).map_err(|e| e.to_string())
@@ -1338,7 +1338,7 @@ pub extern "C" fn stateset_ar_get_dso(handle: *mut CommerceHandle, days: c_int) 
 // =============================================================================
 
 /// Set item cost
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_cost_set_item_cost(
     handle: *mut CommerceHandle,
     sku: *const c_char,
@@ -1367,7 +1367,7 @@ pub extern "C" fn stateset_cost_set_item_cost(
 }
 
 /// Get item cost
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_cost_get_item_cost(
     handle: *mut CommerceHandle,
     sku: *const c_char,
@@ -1392,7 +1392,7 @@ pub extern "C" fn stateset_cost_get_item_cost(
 // =============================================================================
 
 /// Create credit account
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_credit_create_account(
     handle: *mut CommerceHandle,
     customer_id: *const c_char,
@@ -1422,7 +1422,7 @@ pub extern "C" fn stateset_credit_create_account(
 }
 
 /// Check credit
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_credit_check(
     handle: *mut CommerceHandle,
     customer_id: *const c_char,
@@ -1458,7 +1458,7 @@ pub extern "C" fn stateset_credit_check(
 // =============================================================================
 
 /// Create backorder
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_backorder_create(
     handle: *mut CommerceHandle,
     order_id: *const c_char,
@@ -1506,7 +1506,7 @@ pub extern "C" fn stateset_backorder_create(
 }
 
 /// List backorders
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_backorder_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce.backorder().list_backorders(Default::default()).map_err(|e| e.to_string())
@@ -1522,7 +1522,7 @@ pub extern "C" fn stateset_backorder_list(handle: *mut CommerceHandle) -> *mut c
 // =============================================================================
 
 /// Create GL account
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_gl_create_account(
     handle: *mut CommerceHandle,
     account_number: *const c_char,
@@ -1570,7 +1570,7 @@ pub extern "C" fn stateset_gl_create_account(
 }
 
 /// Get trial balance
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn stateset_gl_trial_balance(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
         commerce

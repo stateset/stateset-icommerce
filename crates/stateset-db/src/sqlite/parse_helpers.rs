@@ -35,7 +35,7 @@ use uuid::Uuid;
 /// # Arguments
 /// * `s` - The string to parse
 /// * `entity` - The entity name (e.g., "order", "customer")
-/// * `field` - The field name (e.g., "id", "customer_id")
+/// * `field` - The field name (e.g., "id", "`customer_id`")
 pub(crate) fn parse_uuid(s: &str, entity: &str, field: &str) -> Result<Uuid> {
     Uuid::parse_str(s).map_err(|e| {
         CommerceError::DatabaseError(format!(
@@ -59,7 +59,7 @@ pub(crate) fn parse_uuid_opt(s: Option<String>, entity: &str, field: &str) -> Re
 // DateTime Parsing
 // ============================================================================
 
-/// Parse a required DateTime<Utc> from RFC3339 or SQLite datetime strings.
+/// Parse a required `DateTime<Utc>` from RFC3339 or SQLite datetime strings.
 ///
 /// Returns an error with context if parsing fails.
 pub(crate) fn parse_datetime(s: &str, entity: &str, field: &str) -> Result<DateTime<Utc>> {
@@ -71,7 +71,7 @@ pub(crate) fn parse_datetime(s: &str, entity: &str, field: &str) -> Result<DateT
     })
 }
 
-/// Parse an optional DateTime from an Option<String>.
+/// Parse an optional `DateTime` from an `Option<String>`.
 ///
 /// Returns Ok(None) if the input is None or empty.
 pub(crate) fn parse_datetime_opt(
@@ -85,7 +85,7 @@ pub(crate) fn parse_datetime_opt(
     }
 }
 
-/// Parse a required NaiveDate from a string (YYYY-MM-DD format).
+/// Parse a required `NaiveDate` from a string (YYYY-MM-DD format).
 #[allow(dead_code)]
 pub(crate) fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
@@ -96,7 +96,7 @@ pub(crate) fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate
     })
 }
 
-/// Parse an optional NaiveDate from an Option<String>.
+/// Parse an optional `NaiveDate` from an `Option<String>`.
 #[allow(dead_code)]
 pub(crate) fn parse_date_opt(
     s: Option<String>,
@@ -190,7 +190,7 @@ pub(crate) fn parse_json_or_default<T: DeserializeOwned + Default>(s: &str) -> T
 // Enum Parsing
 // ============================================================================
 
-/// Parse a required enum from a string using FromStr.
+/// Parse a required enum from a string using `FromStr`.
 ///
 /// The enum type must implement `std::str::FromStr`.
 pub(crate) fn parse_enum<T>(s: &str, entity: &str, field: &str) -> Result<T>
@@ -297,7 +297,7 @@ macro_rules! parse_ctx {
 // ============================================================================
 
 /// Parse a UUID within a rusqlite row mapping context.
-/// Returns rusqlite::Error for compatibility with query_map closures.
+/// Returns `rusqlite::Error` for compatibility with `query_map` closures.
 pub(crate) fn parse_uuid_row(
     s: &str,
     entity: &str,
@@ -327,7 +327,7 @@ pub(crate) fn parse_uuid_opt_row(
     }
 }
 
-/// Parse a DateTime within a rusqlite row mapping context.
+/// Parse a `DateTime` within a rusqlite row mapping context.
 pub(crate) fn parse_datetime_row(
     s: &str,
     entity: &str,
@@ -348,7 +348,7 @@ pub(crate) fn parse_datetime_row(
     })
 }
 
-/// Parse an optional DateTime within a rusqlite row mapping context.
+/// Parse an optional `DateTime` within a rusqlite row mapping context.
 pub(crate) fn parse_datetime_opt_row(
     s: Option<String>,
     entity: &str,
@@ -421,7 +421,7 @@ pub(crate) fn parse_json_opt_row<T: DeserializeOwned>(
     }
 }
 
-/// Parse NaiveDate within a rusqlite row mapping context.
+/// Parse `NaiveDate` within a rusqlite row mapping context.
 pub(crate) fn parse_date_row(
     s: &str,
     entity: &str,

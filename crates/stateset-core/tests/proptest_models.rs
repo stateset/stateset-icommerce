@@ -1,6 +1,6 @@
 //! Property-based tests for stateset-core models
 //!
-//! Run with: cargo test --test proptest_models
+//! Run with: cargo test --test `proptest_models`
 
 use proptest::prelude::*;
 use rust_decimal::Decimal;

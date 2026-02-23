@@ -176,7 +176,7 @@ impl EventSystem {
     }
 
     #[cfg(test)]
-    fn is_webhooks_enabled(&self) -> bool {
+    const fn is_webhooks_enabled(&self) -> bool {
         self.webhook_manager.is_some()
     }
 }

@@ -1,7 +1,7 @@
 //! SSRF (Server-Side Request Forgery) protection for webhook URLs.
 //!
 //! Blocks requests to private/internal IP ranges and special TLDs,
-//! mirroring the JavaScript `safeValidateUrl()` implementation.
+//! mirroring the `JavaScript` `safeValidateUrl()` implementation.
 
 use crate::error::{A2AError, A2AResult};
 

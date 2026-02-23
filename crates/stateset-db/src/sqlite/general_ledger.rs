@@ -52,7 +52,7 @@ fn parse_decimal_required(value: String, column: usize) -> rusqlite::Result<Deci
 }
 
 impl SqliteGeneralLedgerRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

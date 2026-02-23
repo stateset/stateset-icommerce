@@ -36,7 +36,7 @@ fn bench_money_round(c: &mut Criterion) {
         group.bench_function(format!("dp_{dp}"), |bencher| {
             bencher.iter(|| {
                 for v in &values {
-                    black_box(v.round_dp(black_box(dp)));
+                    let _ = black_box(v.round_dp(black_box(dp)));
                 }
             });
         });

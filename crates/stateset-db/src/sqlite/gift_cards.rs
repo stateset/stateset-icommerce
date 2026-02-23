@@ -15,7 +15,7 @@ pub struct SqliteGiftCardRepository {
 }
 
 impl SqliteGiftCardRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

@@ -17,14 +17,14 @@ use stateset_core::{
 use std::collections::HashMap;
 use uuid::Uuid;
 
-/// SQLite implementation of X402PaymentIntentRepository
+/// SQLite implementation of `X402PaymentIntentRepository`
 #[derive(Debug)]
 pub struct SqliteX402PaymentIntentRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteX402PaymentIntentRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -264,7 +264,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             format!("0x{}", hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>());
 
         // Validate signature/public key pair against the intent hash before persisting.
-        let mut signed_intent = intent.clone();
+        let mut signed_intent = intent;
         signed_intent.signing_hash = Some(signing_hash.clone());
         signed_intent.payer_signature = Some(input.signature.clone());
         signed_intent.payer_public_key = Some(input.public_key.clone());

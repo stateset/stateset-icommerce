@@ -289,7 +289,7 @@ mod tests {
         let id = inst.id;
         store.save(&inst).unwrap();
 
-        let clone = store.clone();
+        let clone = store;
         assert!(clone.get(&id).unwrap().is_some());
         assert_eq!(clone.len(), 1);
     }

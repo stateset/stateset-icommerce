@@ -54,7 +54,7 @@ impl std::fmt::Display for EscrowStatus {
 impl EscrowStatus {
     /// Return the set of states this status can transition to.
     #[must_use]
-    pub const fn allowed_transitions(self) -> &'static [EscrowStatus] {
+    pub const fn allowed_transitions(self) -> &'static [Self] {
         match self {
             Self::Created => &[Self::Funded, Self::Refunded],
             Self::Funded => &[

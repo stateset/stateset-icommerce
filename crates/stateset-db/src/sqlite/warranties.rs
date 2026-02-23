@@ -21,7 +21,7 @@ pub struct SqliteWarrantyRepository {
 }
 
 impl SqliteWarrantyRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

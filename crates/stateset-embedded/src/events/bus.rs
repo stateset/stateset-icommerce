@@ -193,7 +193,7 @@ mod tests {
         };
 
         // Publish should reach both subscribers
-        let receivers = bus.publish(event.clone());
+        let receivers = bus.publish(event);
         assert_eq!(receivers, 2);
 
         // Both subscribers should receive the event

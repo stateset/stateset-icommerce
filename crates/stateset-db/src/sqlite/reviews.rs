@@ -14,7 +14,7 @@ pub struct SqliteReviewRepository {
 }
 
 impl SqliteReviewRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

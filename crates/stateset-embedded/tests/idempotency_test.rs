@@ -23,7 +23,7 @@ fn create_order_with_item(
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
                 product_id: Uuid::new_v4().into(),
                 sku: "IDEM-001".into(),

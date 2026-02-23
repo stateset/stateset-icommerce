@@ -18,7 +18,7 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// SQLite implementation of A2ACommerceRepository
+/// SQLite implementation of `A2ACommerceRepository`
 struct QuoteValidationRow {
     buyer_agent_id: Uuid,
     seller_agent_id: Uuid,
@@ -34,7 +34,7 @@ pub struct SqliteA2ARepository {
 }
 
 impl SqliteA2ARepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
@@ -844,7 +844,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let currency = Self::normalize_currency(input.currency);
 
         let quote_id = input.quote_id;
-        let _tx = with_immediate_transaction(&self.pool, |tx| {
+        with_immediate_transaction(&self.pool, |tx| {
             tx.execute(
                 r#"
             INSERT INTO a2a_purchases (
@@ -1007,7 +1007,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
                     delivered_at.to_rfc3339(),
                     now_str,
                     signature,
-                    rating.map(|n| i64::from(n)),
+                    rating.map(i64::from),
                     feedback,
                     now_str,
                     purchase_id.to_string(),

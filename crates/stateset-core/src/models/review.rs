@@ -129,7 +129,7 @@ impl Review {
 
 impl ReviewSummary {
     /// Create an empty summary for a product with no reviews
-    pub fn empty(product_id: ProductId) -> Self {
+    pub const fn empty(product_id: ProductId) -> Self {
         Self {
             product_id,
             average_rating: 0.0,

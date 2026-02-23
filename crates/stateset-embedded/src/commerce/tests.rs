@@ -59,7 +59,7 @@ fn test_metrics_record_key_engine_operations() {
     let order = commerce
         .orders()
         .create(CreateOrder {
-            customer_id: customer.id.into(),
+            customer_id: customer.id,
             items: vec![CreateOrderItem {
                 product_id: stateset_core::ProductId::new(),
                 sku: "SKU-METRIC".into(),
@@ -125,7 +125,7 @@ fn test_metrics_record_key_engine_operations() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id.into()),
+            customer_id: Some(customer.id),
             customer_email: Some(customer.email.clone()),
             items: Some(vec![AddCartItem {
                 sku: "SKU-METRIC-CART".into(),
@@ -426,7 +426,7 @@ async fn test_event_subscription() {
         timestamp: Utc::now(),
     };
 
-    commerce.emit_event(event.clone());
+    commerce.emit_event(event);
 
     // Receive the event
     let received = subscription.try_recv();

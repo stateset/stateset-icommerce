@@ -93,7 +93,7 @@ impl Money {
 
     /// Round to a given number of decimal places.
     #[inline]
-    #[must_use]
+    #[must_use = "returns a new Money with rounded amount"]
     pub fn round_dp(self, dp: u32) -> Self {
         Self { amount: self.amount.round_dp(dp), currency: self.currency }
     }

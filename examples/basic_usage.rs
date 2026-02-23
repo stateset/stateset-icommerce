@@ -1,6 +1,6 @@
 //! Basic usage example for stateset-icommerce
 //!
-//! Run with: cargo run --example basic_usage
+//! Run with: cargo run --example `basic_usage`
 
 use rust_decimal_macros::dec;
 use stateset_embedded::{
@@ -86,10 +86,10 @@ fn main() -> Result<(), CommerceError> {
     let gadget_variant = commerce.products().get_variant_by_sku("GADGET-001")?.unwrap();
 
     let order = commerce.orders().create(CreateOrder {
-        customer_id: customer.id.into(),
+        customer_id: customer.id,
         items: vec![
             CreateOrderItem {
-                product_id: widget.id.into(),
+                product_id: widget.id,
                 variant_id: Some(widget_variant.id),
                 sku: "WIDGET-001".into(),
                 name: "Premium Widget".into(),
@@ -98,7 +98,7 @@ fn main() -> Result<(), CommerceError> {
                 ..Default::default()
             },
             CreateOrderItem {
-                product_id: gadget.id.into(),
+                product_id: gadget.id,
                 variant_id: Some(gadget_variant.id),
                 sku: "GADGET-001".into(),
                 name: "Super Gadget".into(),

@@ -21,14 +21,14 @@ use super::{
     parse_uuid_opt_row, parse_uuid_row, string_params, uuid_params,
 };
 
-/// SQLite implementation of SerialRepository
+/// SQLite implementation of `SerialRepository`
 #[derive(Debug)]
 pub struct SqliteSerialRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteSerialRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
