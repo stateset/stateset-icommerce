@@ -116,11 +116,27 @@ impl ValidationBuilder {
 
     /// Validate email format
     pub fn email(self, field: &str, value: &str) -> Self {
-        let is_valid = !value.is_empty()
-            && !value.contains(char::is_whitespace)
-            && value.contains('@')
-            && value.split('@').count() == 2
-            && value.split('@').next_back().map(|d| d.contains('.')).unwrap_or(false);
+        let value = value.trim();
+        let is_valid = {
+            if value.is_empty() || value.contains(char::is_whitespace) {
+                false
+            } else {
+                let parts: Vec<&str> = value.split('@').collect();
+                if parts.len() != 2 {
+                    false
+                } else {
+                    let domain = parts[1];
+                    if parts[0].is_empty() || domain.is_empty() {
+                        false
+                    } else {
+                        domain.contains('.')
+                            && !domain.starts_with('.')
+                            && !domain.ends_with('.')
+                            && !domain.contains("..")
+                    }
+                }
+            }
+        };
         self.check(field, is_valid, "must be a valid email address")
     }
 
@@ -134,12 +150,20 @@ impl ValidationBuilder {
 
     /// Validate string maximum length
     pub fn max_length(self, field: &str, value: &str, max: usize) -> Self {
-        self.check(field, value.len() <= max, &format!("cannot exceed {} characters", max))
+        self.check(
+            field,
+            value.trim().chars().count() <= max,
+            &format!("cannot exceed {} characters", max),
+        )
     }
 
     /// Validate string minimum length
     pub fn min_length(self, field: &str, value: &str, min: usize) -> Self {
-        self.check(field, value.len() >= min, &format!("must be at least {} characters", min))
+        self.check(
+            field,
+            value.trim().chars().count() >= min,
+            &format!("must be at least {} characters", min),
+        )
     }
 
     /// Validate string length range
@@ -198,29 +222,47 @@ impl ValidationBuilder {
 
     /// Validate a SKU format (alphanumeric, hyphens, underscores)
     pub fn sku(self, field: &str, value: &str) -> Self {
+        let value = value.trim();
         let is_valid = !value.is_empty()
-            && value.len() <= 100
-            && value.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_');
+            && value.chars().count() <= 100
+            && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
         self.check(field, is_valid, "must be a valid SKU (alphanumeric, hyphens, underscores)")
     }
 
     /// Validate a currency code (3 uppercase letters)
     pub fn currency_code(self, field: &str, value: &str) -> Self {
-        let is_valid = value.len() == 3 && value.chars().all(|c| c.is_ascii_uppercase());
+        let value = value.trim();
+        let is_valid = value.len() == 3
+            && value.chars().all(|c| c.is_ascii_uppercase() && c.is_ascii_alphabetic());
         self.check(field, is_valid, "must be a 3-letter uppercase currency code")
     }
 
     /// Validate a phone number (basic validation)
     pub fn phone(self, field: &str, value: &str) -> Self {
-        let digits: String = value.chars().filter(|c| c.is_ascii_digit()).collect();
-        self.check(field, digits.len() >= 7 && digits.len() <= 15, "must have 7-15 digits")
+        let value = value.trim();
+        if value.is_empty() {
+            self.check(field, false, "must have 7-15 digits")
+        } else {
+            let invalid_char = value.chars().any(|ch| {
+                !(ch.is_ascii_digit()
+                    || ch.is_ascii_whitespace()
+                    || matches!(ch, '+' | '-' | '(' | ')' | '.'))
+            });
+            let digit_count = value.chars().filter(|c| c.is_ascii_digit()).count();
+            self.check(
+                field,
+                !invalid_char && digit_count >= 7 && digit_count <= 15,
+                "must have 7-15 digits",
+            )
+        }
     }
 
     /// Validate a postal code (basic validation)
     pub fn postal_code(self, field: &str, value: &str) -> Self {
-        let is_valid = value.len() >= 3
-            && value.len() <= 10
-            && value.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-');
+        let value = value.trim();
+        let is_valid = value.chars().count() >= 3
+            && value.chars().count() <= 10
+            && value.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-');
         self.check(field, is_valid, "must be a valid postal code")
     }
 
@@ -290,10 +332,24 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_builder_required_trims_whitespace() {
+        assert!(ValidationBuilder::new().required("name", "  ").build().is_err());
+        assert!(ValidationBuilder::new().required("name", "  Bob  ").build().is_ok());
+    }
+
+    #[test]
     fn test_validation_builder_email_fails() {
         let result = ValidationBuilder::new().email("email", "not-an-email").build();
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validation_builder_email_rejects_whitespace_and_missing_parts() {
+        assert!(ValidationBuilder::new().email("email", "alice @example.com").build().is_err());
+        assert!(ValidationBuilder::new().email("email", "@example.com").build().is_err());
+        assert!(ValidationBuilder::new().email("email", "alice@").build().is_err());
+        assert!(ValidationBuilder::new().email("email", "alice@example").build().is_err());
     }
 
     #[test]
@@ -316,14 +372,32 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_builder_trimmed_lengths() {
+        assert!(ValidationBuilder::new().min_length("name", "  abc  ", 3).build().is_ok());
+        assert!(ValidationBuilder::new().max_length("name", "  abcd  ", 3).build().is_err());
+    }
+
+    #[test]
     fn test_validation_builder_sku() {
         // Valid SKUs
         assert!(ValidationBuilder::new().sku("sku", "SKU-001").build().is_ok());
         assert!(ValidationBuilder::new().sku("sku", "WIDGET_BLUE_XL").build().is_ok());
+        assert!(ValidationBuilder::new().sku("sku", " sku-001 ").build().is_ok());
 
         // Invalid SKUs
         assert!(ValidationBuilder::new().sku("sku", "").build().is_err());
         assert!(ValidationBuilder::new().sku("sku", "SKU 001").build().is_err());
+        assert!(ValidationBuilder::new().sku("sku", "s-kü").build().is_err());
+    }
+
+    #[test]
+    fn test_validation_builder_currency_code_trimming() {
+        assert!(ValidationBuilder::new()
+            .currency_code("currency", " usd ")
+            .build()
+            .is_err());
+        assert!(ValidationBuilder::new().currency_code("currency", "USD").build().is_ok());
+        assert!(ValidationBuilder::new().currency_code("currency", " USD ").build().is_ok());
     }
 
     #[test]
@@ -342,6 +416,18 @@ mod tests {
         } else {
             panic!("Expected ValidationError");
         }
+    }
+
+    #[test]
+    fn test_validation_builder_phone_rejects_invalid_characters() {
+        assert!(ValidationBuilder::new().phone("phone", "123-456-ABCD").build().is_err());
+        assert!(ValidationBuilder::new().phone("phone", "+1 (415) 555-2671").build().is_ok());
+    }
+
+    #[test]
+    fn test_validation_builder_postal_code_validates_ascii_only() {
+        assert!(ValidationBuilder::new().postal_code("postal", "12AB-34").build().is_ok());
+        assert!(ValidationBuilder::new().postal_code("postal", "１２３-45").build().is_err());
     }
 
     struct TestModel {

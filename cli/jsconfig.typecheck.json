@@ -1,5 +1,8 @@
 {
   "extends": "./jsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  },
   "include": ["src/workflows/**/*.js"],
   "exclude": [
     "node_modules",
