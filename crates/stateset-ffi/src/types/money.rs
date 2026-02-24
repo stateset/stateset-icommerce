@@ -39,9 +39,7 @@ impl FfiMoney {
 impl From<Money> for FfiMoney {
     fn from(m: Money) -> Self {
         // Convert the decimal to cents (minor units).
-        let cents = (m.amount() * Decimal::from(100))
-            .to_i64()
-            .unwrap_or(0);
+        let cents = (m.amount() * Decimal::from(100)).to_i64().unwrap_or(0);
 
         let mut currency = [0u8; 3];
         let code = m.currency();
@@ -50,10 +48,7 @@ impl From<Money> for FfiMoney {
         let len = code_bytes.len().min(3);
         currency[..len].copy_from_slice(&code_bytes[..len]);
 
-        Self {
-            amount_cents: cents,
-            currency,
-        }
+        Self { amount_cents: cents, currency }
     }
 }
 
@@ -61,8 +56,7 @@ impl TryFrom<FfiMoney> for Money {
     type Error = &'static str;
 
     fn try_from(ffi: FfiMoney) -> Result<Self, Self::Error> {
-        let code = CurrencyCode::from_bytes(ffi.currency)
-            .ok_or("invalid currency code bytes")?;
+        let code = CurrencyCode::from_bytes(ffi.currency).ok_or("invalid currency code bytes")?;
         let amount = Decimal::from(ffi.amount_cents) / Decimal::from(100);
         Ok(Self::new(amount, code))
     }
@@ -100,7 +94,6 @@ pub extern "C" fn stateset_money_format(money: FfiMoney) -> *mut c_char {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
 
 #[cfg(test)]
 mod tests {

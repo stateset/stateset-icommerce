@@ -26,6 +26,8 @@ NC='\033[0m'
 SEQUENCER_URL="${STATESET_SEQUENCER_URL:-http://localhost:8080}"
 DB_PATH="${STATESET_DB:-./store.db}"
 VERBOSE=false
+MIN_NODE_VERSION="20.20.0"
+MIN_NPM_VERSION="10.0.0"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -76,6 +78,35 @@ info() {
   fi
 }
 
+version_gte() {
+  local current="$1"
+  local required="$2"
+  local c_major=0 c_minor=0 c_patch=0
+  local r_major=0 r_minor=0 r_patch=0
+
+  IFS='.' read -r c_major c_minor c_patch _ <<< "$current"
+  IFS='.' read -r r_major r_minor r_patch _ <<< "$required"
+
+  c_minor="${c_minor:-0}"
+  c_patch="${c_patch:-0}"
+  r_minor="${r_minor:-0}"
+  r_patch="${r_patch:-0}"
+
+  if (( c_major > r_major )); then
+    return 0
+  fi
+  if (( c_major < r_major )); then
+    return 1
+  fi
+  if (( c_minor > r_minor )); then
+    return 0
+  fi
+  if (( c_minor < r_minor )); then
+    return 1
+  fi
+  (( c_patch >= r_patch ))
+}
+
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║          StateSet iCommerce - Setup Verification                ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
@@ -102,10 +133,27 @@ fi
 
 # Check Node.js
 if command -v node &> /dev/null; then
-  NODE_VERSION=$(node --version)
-  pass "Node.js is installed ($NODE_VERSION)"
+  NODE_VERSION_RAW=$(node --version)
+  NODE_VERSION="${NODE_VERSION_RAW#v}"
+  if version_gte "$NODE_VERSION" "$MIN_NODE_VERSION"; then
+    pass "Node.js is installed ($NODE_VERSION_RAW)"
+  else
+    fail "Node.js $NODE_VERSION_RAW is too old" "Install Node.js $MIN_NODE_VERSION+"
+  fi
 else
-  fail "Node.js not found" "Install Node.js 18+"
+  fail "Node.js not found" "Install Node.js 20.20.0+ (npm 10.0.0+)"
+fi
+
+# Check npm
+if command -v npm &> /dev/null; then
+  NPM_VERSION=$(npm --version)
+  if version_gte "$NPM_VERSION" "$MIN_NPM_VERSION"; then
+    pass "npm is installed ($NPM_VERSION)"
+  else
+    fail "npm $NPM_VERSION is too old" "Install npm $MIN_NPM_VERSION+"
+  fi
+else
+  fail "npm not found" "Install npm 10.0.0+"
 fi
 
 # Check stateset CLI

@@ -156,30 +156,16 @@ pub fn compute_order_total(input: &OrderTotalInput) -> OrderTotal {
 
     // Step 3: Shipping
     let shipping = round(input.shipping_cost, r);
-    let shipping_tax = round(
-        shipping * input.shipping_tax_rate.unwrap_or(Decimal::ZERO),
-        r,
-    );
+    let shipping_tax = round(shipping * input.shipping_tax_rate.unwrap_or(Decimal::ZERO), r);
 
     // Step 4: Fees
     let fees: Decimal = input.fees.iter().map(|f| f.amount).sum();
     let fees = round(fees, r);
 
     // Grand total
-    let grand_total = round(
-        effective_taxable + total_tax + shipping + shipping_tax + fees,
-        r,
-    );
+    let grand_total = round(effective_taxable + total_tax + shipping + shipping_tax + fees, r);
 
-    OrderTotal {
-        subtotal,
-        total_discount,
-        total_tax,
-        shipping,
-        shipping_tax,
-        fees,
-        grand_total,
-    }
+    OrderTotal { subtotal, total_discount, total_tax, shipping, shipping_tax, fees, grand_total }
 }
 
 #[cfg(test)]

@@ -170,9 +170,7 @@ impl AccountsReceivable {
         letter_type: DunningLetterType,
         sent_by: Option<&str>,
     ) -> Result<CollectionActivity> {
-        self.db
-            .accounts_receivable()
-            .send_dunning_letter(invoice_id.into(), letter_type, sent_by)
+        self.db.accounts_receivable().send_dunning_letter(invoice_id.into(), letter_type, sent_by)
     }
 
     // ========================================================================

@@ -4,16 +4,16 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rust_decimal_macros::dec;
-use std::sync::Arc;
-use std::thread;
-use tempfile::TempDir;
 use stateset_core::{
     CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct,
-    CustomerId, CustomerFilter, CustomerRepository, FulfillmentStatus, InventoryRepository,
+    CustomerFilter, CustomerId, CustomerRepository, FulfillmentStatus, InventoryRepository,
     OrderFilter, OrderRepository, OrderStatus, PaymentStatus, ProductFilter, ProductId,
     ProductRepository, ReserveInventory, UpdateOrder,
 };
 use stateset_db::{DatabaseConfig, SqliteDatabase};
+use std::sync::Arc;
+use std::thread;
+use tempfile::TempDir;
 
 fn setup_database() -> SqliteDatabase {
     SqliteDatabase::in_memory().expect("Failed to create in-memory database")

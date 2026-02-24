@@ -116,9 +116,7 @@ impl SyncBatch {
     /// [`ProtocolError::MerkleVerificationFailed`] if the root does not match.
     pub fn validate(&self) -> Result<()> {
         if self.source_node_id.is_empty() {
-            return Err(ProtocolError::InvalidBatch(
-                "source_node_id must not be empty".into(),
-            ));
+            return Err(ProtocolError::InvalidBatch("source_node_id must not be empty".into()));
         }
         if self.leaves.is_empty() {
             return Err(ProtocolError::InvalidBatch(
@@ -276,9 +274,8 @@ mod tests {
 
     #[test]
     fn verify_root_valid() {
-        let envs: Vec<EventEnvelope> = (0..3)
-            .map(|i| make_envelope(&format!("e_{i}"), format!("p_{i}").as_bytes()))
-            .collect();
+        let envs: Vec<EventEnvelope> =
+            (0..3).map(|i| make_envelope(&format!("e_{i}"), format!("p_{i}").as_bytes())).collect();
         let batch = SyncBatch::new("node", envs);
         assert!(batch.verify_merkle_root());
     }
@@ -337,10 +334,7 @@ mod tests {
         batch.merkle_root = [0xFF; 32];
         let result = batch.validate();
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ProtocolError::MerkleVerificationFailed(_)
-        ));
+        assert!(matches!(result.unwrap_err(), ProtocolError::MerkleVerificationFailed(_)));
     }
 
     // --- add_signature / add_proof tests ---
@@ -448,12 +442,8 @@ mod tests {
 
     #[test]
     fn merkle_proof_is_debug() {
-        let proof = MerkleProof {
-            leaf_index: 0,
-            leaf_hash: [0u8; 32],
-            siblings: vec![],
-            root: [0u8; 32],
-        };
+        let proof =
+            MerkleProof { leaf_index: 0, leaf_hash: [0u8; 32], siblings: vec![], root: [0u8; 32] };
         let debug = format!("{proof:?}");
         assert!(debug.contains("MerkleProof"));
     }

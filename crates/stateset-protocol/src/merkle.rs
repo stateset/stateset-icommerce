@@ -123,11 +123,8 @@ pub fn compute_merkle_proof(leaves: &[[u8; 32]], index: usize) -> Result<MerkleP
 
     while current_layer.len() > 1 {
         // Determine sibling index
-        let sibling_index = if current_index % 2 == 0 {
-            current_index + 1
-        } else {
-            current_index - 1
-        };
+        let sibling_index =
+            if current_index % 2 == 0 { current_index + 1 } else { current_index - 1 };
         siblings.push(current_layer[sibling_index]);
 
         // Build next layer
@@ -142,12 +139,7 @@ pub fn compute_merkle_proof(leaves: &[[u8; 32]], index: usize) -> Result<MerkleP
 
     let root = current_layer[0];
 
-    Ok(MerkleProof {
-        leaf_index: index,
-        leaf_hash: leaves[index],
-        siblings,
-        root,
-    })
+    Ok(MerkleProof { leaf_index: index, leaf_hash: leaves[index], siblings, root })
 }
 
 /// Verify a Merkle inclusion proof.
@@ -212,10 +204,7 @@ mod tests {
         let b = [2u8; 32];
         let c = [3u8; 32];
         let root = compute_merkle_root(&[a, b, c]);
-        let expected = node_hash(
-            &node_hash(&a, &b),
-            &node_hash(&c, &ZERO_HASH),
-        );
+        let expected = node_hash(&node_hash(&a, &b), &node_hash(&c, &ZERO_HASH));
         assert_eq!(root, expected);
     }
 
@@ -226,10 +215,7 @@ mod tests {
         let c = [3u8; 32];
         let d = [4u8; 32];
         let root = compute_merkle_root(&[a, b, c, d]);
-        let expected = node_hash(
-            &node_hash(&a, &b),
-            &node_hash(&c, &d),
-        );
+        let expected = node_hash(&node_hash(&a, &b), &node_hash(&c, &d));
         assert_eq!(root, expected);
     }
 
@@ -280,10 +266,7 @@ mod tests {
     fn proof_empty_leaves_error() {
         let result = compute_merkle_proof(&[], 0);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ProtocolError::MerkleVerificationFailed(_)
-        ));
+        assert!(matches!(result.unwrap_err(), ProtocolError::MerkleVerificationFailed(_)));
     }
 
     #[test]

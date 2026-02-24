@@ -54,13 +54,8 @@ impl BillingInterval {
     }
 
     /// All valid billing interval values.
-    pub const ALL: &'static [Self] = &[
-        Self::Weekly,
-        Self::Biweekly,
-        Self::Monthly,
-        Self::Quarterly,
-        Self::Annual,
-    ];
+    pub const ALL: &'static [Self] =
+        &[Self::Weekly, Self::Biweekly, Self::Monthly, Self::Quarterly, Self::Annual];
 }
 
 /// Compute the next billing date from a given start date and interval.
@@ -209,18 +204,9 @@ mod tests {
 
     #[test]
     fn billing_interval_from_str_valid() {
-        assert_eq!(
-            BillingInterval::from_str_checked("weekly").unwrap(),
-            BillingInterval::Weekly
-        );
-        assert_eq!(
-            BillingInterval::from_str_checked("monthly").unwrap(),
-            BillingInterval::Monthly
-        );
-        assert_eq!(
-            BillingInterval::from_str_checked("annual").unwrap(),
-            BillingInterval::Annual
-        );
+        assert_eq!(BillingInterval::from_str_checked("weekly").unwrap(), BillingInterval::Weekly);
+        assert_eq!(BillingInterval::from_str_checked("monthly").unwrap(), BillingInterval::Monthly);
+        assert_eq!(BillingInterval::from_str_checked("annual").unwrap(), BillingInterval::Annual);
     }
 
     #[test]

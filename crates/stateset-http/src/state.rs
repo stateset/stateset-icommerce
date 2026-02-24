@@ -15,9 +15,7 @@ impl AppState {
     /// Create a new `AppState` wrapping a [`Commerce`] instance.
     #[must_use]
     pub fn new(commerce: Commerce) -> Self {
-        Self {
-            commerce: Arc::new(commerce),
-        }
+        Self { commerce: Arc::new(commerce) }
     }
 
     /// Access the underlying [`Commerce`] engine.

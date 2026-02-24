@@ -21,8 +21,8 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AdjustStoreCredit, CreateStoreCredit, Result, StoreCredit, StoreCreditFilter,
-    StoreCreditId, StoreCreditTransaction,
+    AdjustStoreCredit, CreateStoreCredit, Result, StoreCredit, StoreCreditFilter, StoreCreditId,
+    StoreCreditTransaction,
 };
 use stateset_db::Database;
 use std::sync::Arc;

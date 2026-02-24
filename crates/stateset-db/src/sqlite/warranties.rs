@@ -35,7 +35,8 @@ impl SqliteWarrantyRepository {
                 Err(CommerceError::ValidationError("Warranty is already voided".to_string()))
             }
             _ => Err(CommerceError::ValidationError(format!(
-                "Cannot void warranty in status: {:?}", warranty.status
+                "Cannot void warranty in status: {:?}",
+                warranty.status
             ))),
         }
     }
@@ -50,7 +51,8 @@ impl SqliteWarrantyRepository {
                 Err(CommerceError::ValidationError("Cannot expire a voided warranty".to_string()))
             }
             _ => Err(CommerceError::ValidationError(format!(
-                "Cannot expire warranty in status: {:?}", warranty.status
+                "Cannot expire warranty in status: {:?}",
+                warranty.status
             ))),
         }
     }
@@ -72,7 +74,8 @@ impl SqliteWarrantyRepository {
                 Err(CommerceError::ValidationError("Cannot transfer a voided warranty".to_string()))
             }
             _ => Err(CommerceError::ValidationError(format!(
-                "Cannot transfer warranty in status: {:?}", warranty.status
+                "Cannot transfer warranty in status: {:?}",
+                warranty.status
             ))),
         }
     }
@@ -98,7 +101,8 @@ impl SqliteWarrantyRepository {
                 "Cannot approve a claim already in progress".to_string(),
             )),
             _ => Err(CommerceError::ValidationError(format!(
-                "Cannot approve claim in status: {:?}", claim.status
+                "Cannot approve claim in status: {:?}",
+                claim.status
             ))),
         }
     }
@@ -124,7 +128,8 @@ impl SqliteWarrantyRepository {
                 Err(CommerceError::ValidationError("Cannot deny a claim in progress".to_string()))
             }
             _ => Err(CommerceError::ValidationError(format!(
-                "Cannot deny claim in status: {:?}", claim.status
+                "Cannot deny claim in status: {:?}",
+                claim.status
             ))),
         }
     }
@@ -154,7 +159,8 @@ impl SqliteWarrantyRepository {
             }
             _ => {
                 return Err(CommerceError::ValidationError(format!(
-                    "Cannot complete claim in status: {:?}", claim.status
+                    "Cannot complete claim in status: {:?}",
+                    claim.status
                 )));
             }
         }
@@ -187,7 +193,8 @@ impl SqliteWarrantyRepository {
                 Err(CommerceError::ValidationError("Claim is already cancelled".to_string()))
             }
             _ => Err(CommerceError::ValidationError(format!(
-                "Cannot cancel claim in status: {:?}", claim.status
+                "Cannot cancel claim in status: {:?}",
+                claim.status
             ))),
         }
     }
@@ -255,17 +262,20 @@ impl SqliteWarrantyRepository {
                 row.get::<_, Option<String>>("order_id")?,
                 "warranty",
                 "order_id",
-            )?.map(OrderId::from),
+            )?
+            .map(OrderId::from),
             order_item_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("order_item_id")?,
                 "warranty",
                 "order_item_id",
-            )?.map(OrderItemId::from),
+            )?
+            .map(OrderItemId::from),
             product_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("product_id")?,
                 "warranty",
                 "product_id",
-            )?.map(ProductId::from),
+            )?
+            .map(ProductId::from),
             sku: row.get("sku")?,
             serial_number: row.get("serial_number")?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "warranty", "status")?,
@@ -358,7 +368,8 @@ impl SqliteWarrantyRepository {
                 row.get::<_, Option<String>>("replacement_product_id")?,
                 "warranty_claim",
                 "replacement_product_id",
-            )?.map(ProductId::from),
+            )?
+            .map(ProductId::from),
             refund_amount: parse_decimal_opt_row(
                 row.get::<_, Option<String>>("refund_amount")?,
                 "warranty_claim",
@@ -1051,7 +1062,10 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(WarrantyId, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(WarrantyId, UpdateWarranty)>,
+    ) -> Result<BatchResult<Warranty>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -1065,7 +1079,10 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(WarrantyId, UpdateWarranty)>) -> Result<Vec<Warranty>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(WarrantyId, UpdateWarranty)>,
+    ) -> Result<Vec<Warranty>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);

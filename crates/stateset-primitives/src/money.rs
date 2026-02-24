@@ -192,11 +192,8 @@ impl std::str::FromStr for CurrencyCode {
         }
         let arr = [bytes[0], bytes[1], bytes[2]];
         // Uppercase before validating
-        let arr = [
-            arr[0].to_ascii_uppercase(),
-            arr[1].to_ascii_uppercase(),
-            arr[2].to_ascii_uppercase(),
-        ];
+        let arr =
+            [arr[0].to_ascii_uppercase(), arr[1].to_ascii_uppercase(), arr[2].to_ascii_uppercase()];
         Self::from_bytes(arr).ok_or(CurrencyCodeError::InvalidCharacters)
     }
 }

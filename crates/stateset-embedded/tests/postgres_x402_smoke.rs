@@ -4,11 +4,10 @@ use chrono::{Duration, Utc};
 use rust_decimal_macros::dec;
 #[cfg(feature = "postgres")]
 use stateset_core::{
-    A2ASkill, A2APurchaseFilter, CreateA2APurchase, CreateA2AQuote, CreateAgentCard,
-    SkillQuoteFilter,
-    CreateX402PaymentIntent, ItemAvailability, QuotedItem, QuoteStatus, PurchaseStatus,
-    SignX402PaymentIntent, TrustLevel, X402Asset, X402CreditDirection, X402CreditTransactionFilter,
-    X402IntentStatus, X402Network,
+    A2APurchaseFilter, A2ASkill, CreateA2APurchase, CreateA2AQuote, CreateAgentCard,
+    CreateX402PaymentIntent, ItemAvailability, PurchaseStatus, QuoteStatus, QuotedItem,
+    SignX402PaymentIntent, SkillQuoteFilter, TrustLevel, X402Asset, X402CreditDirection,
+    X402CreditTransactionFilter, X402IntentStatus, X402Network,
 };
 #[cfg(feature = "postgres")]
 use stateset_embedded::AsyncCommerce;
@@ -28,12 +27,15 @@ async fn postgres_async_x402_payment_intent_smoke() {
     let url = match postgres_url() {
         Some(url) => url,
         None => {
-            eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping postgres async x402 payment test");
+            eprintln!(
+                "POSTGRES_URL or DATABASE_URL not set; skipping postgres async x402 payment test"
+            );
             return;
         }
     };
 
-    let commerce = AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
     let x402 = commerce.x402();
 
     let payer = format!("0xpayer-{}", Uuid::new_v4().as_simple());
@@ -57,20 +59,14 @@ async fn postgres_async_x402_payment_intent_smoke() {
     assert_eq!(intent.payer_address, payer);
     assert_eq!(intent.payee_address, payee);
 
-    let nonce = x402
-        .get_next_nonce(&intent.payer_address)
-        .await
-        .expect("get next nonce");
+    let nonce = x402.get_next_nonce(&intent.payer_address).await.expect("get next nonce");
     assert_eq!(nonce, 0);
 
     let intents_for_cart = x402.intents_for_cart(cart_id).await.expect("list intents by cart");
     assert!(!intents_for_cart.is_empty(), "cart should have at least one intent");
 
-    let mut to_sign = x402
-        .get_intent(intent.id)
-        .await
-        .expect("get intent")
-        .expect("intent should exist");
+    let mut to_sign =
+        x402.get_intent(intent.id).await.expect("get intent").expect("intent should exist");
     to_sign.sign_with_ed25519(&[9u8; 32]).expect("locally sign intent");
 
     let signed = x402
@@ -109,25 +105,18 @@ async fn postgres_async_x402_payment_intent_smoke() {
     assert_eq!(cart_intent.status, X402IntentStatus::Created);
     assert_eq!(cart_intent.cart_id, Some(cart_id));
 
-    let active = x402
-        .active_intent_for_cart(cart_id)
-        .await
-        .expect("find active intent");
+    let active = x402.active_intent_for_cart(cart_id).await.expect("find active intent");
     assert_eq!(active.expect("active intent for cart").id, cart_intent.id);
 
     let all_for_cart = x402.intents_for_cart(cart_id).await.expect("list intents by cart");
     assert!(all_for_cart.len() >= 2, "cart should have two intents after cart payment path");
 
-    let sequenced = x402
-        .mark_sequenced(intent.id, 42, Uuid::new_v4())
-        .await
-        .expect("mark intent sequenced");
+    let sequenced =
+        x402.mark_sequenced(intent.id, 42, Uuid::new_v4()).await.expect("mark intent sequenced");
     assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
 
-    let settled = x402
-        .mark_settled(intent.id, "0xsettled-hash", 123_456)
-        .await
-        .expect("mark intent settled");
+    let settled =
+        x402.mark_settled(intent.id, "0xsettled-hash", 123_456).await.expect("mark intent settled");
     assert_eq!(settled.status, X402IntentStatus::Settled);
 }
 
@@ -137,12 +126,15 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
     let url = match postgres_url() {
         Some(url) => url,
         None => {
-            eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping postgres async x402 A2A/agent test");
+            eprintln!(
+                "POSTGRES_URL or DATABASE_URL not set; skipping postgres async x402 A2A/agent test"
+            );
             return;
         }
     };
 
-    let commerce = AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
     let x402 = commerce.x402();
 
     let network = X402Network::SetChain;
@@ -177,7 +169,12 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
     assert_eq!(card.active, true);
 
     let sellers = x402
-        .discover_agents(Some(network), Some(asset), Some(A2ASkill::Sell), Some(TrustLevel::Sandbox))
+        .discover_agents(
+            Some(network),
+            Some(asset),
+            Some(A2ASkill::Sell),
+            Some(TrustLevel::Sandbox),
+        )
         .await
         .expect("discover agents");
     assert!(
@@ -191,10 +188,7 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
     let verified = x402.verify_agent(card.id).await.expect("verify agent");
     assert_eq!(verified.trust_level, TrustLevel::Verified);
 
-    let reactivated = x402
-        .suspend_agent(card.id, "test")
-        .await
-        .expect("suspend agent");
+    let reactivated = x402.suspend_agent(card.id, "test").await.expect("suspend agent");
     assert!(!reactivated.active, "agent should be suspended");
     let reactivated = x402.reactivate_agent(card.id).await.expect("reactivate agent");
     assert!(reactivated.active, "agent should be reactivated");
@@ -294,19 +288,13 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
     assert_eq!(quote_by_number.id, quoted.id);
 
     let counted_quotes = x402
-        .count_quotes(SkillQuoteFilter {
-            seller_agent_id: Some(card.id),
-            ..Default::default()
-        })
+        .count_quotes(SkillQuoteFilter { seller_agent_id: Some(card.id), ..Default::default() })
         .await
         .expect("count quotes");
     assert!(counted_quotes >= 1, "expected at least one quote");
 
     let listed_purchases = x402
-        .list_purchases(A2APurchaseFilter {
-            buyer_agent_id: Some(buyer_id),
-            ..Default::default()
-        })
+        .list_purchases(A2APurchaseFilter { buyer_agent_id: Some(buyer_id), ..Default::default() })
         .await
         .expect("list purchases");
     assert!(listed_purchases.iter().any(|p| p.id == purchase.id));
@@ -330,19 +318,14 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
     assert!(updated.order_id.is_some(), "purchase should have an order after linking");
 
     let counted_purchases = x402
-        .count_purchases(A2APurchaseFilter {
-            buyer_agent_id: Some(buyer_id),
-            ..Default::default()
-        })
+        .count_purchases(A2APurchaseFilter { buyer_agent_id: Some(buyer_id), ..Default::default() })
         .await
         .expect("count purchases");
     assert!(counted_purchases >= 1, "expected at least one purchase");
 
     let payer = format!("0xcredits-{}", Uuid::new_v4().as_simple());
-    let initial_balance = x402
-        .get_credit_balance(&payer, asset, network)
-        .await
-        .expect("get initial credit balance");
+    let initial_balance =
+        x402.get_credit_balance(&payer, asset, network).await.expect("get initial credit balance");
     assert_eq!(initial_balance, 0);
 
     let credit_tx = x402
@@ -375,10 +358,8 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
     assert_eq!(debit_tx.balance_after, 6_000);
     assert_eq!(debit_tx.direction, X402CreditDirection::Debit);
 
-    let after_balance = x402
-        .get_credit_balance(&payer, asset, network)
-        .await
-        .expect("get final credit balance");
+    let after_balance =
+        x402.get_credit_balance(&payer, asset, network).await.expect("get final credit balance");
     assert_eq!(after_balance, 6_000);
 
     let account = x402
@@ -407,12 +388,15 @@ async fn postgres_async_a2a_state_guards() {
     let url = match postgres_url() {
         Some(url) => url,
         None => {
-            eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping postgres async a2a state guard test");
+            eprintln!(
+                "POSTGRES_URL or DATABASE_URL not set; skipping postgres async a2a state guard test"
+            );
             return;
         }
     };
 
-    let commerce = AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
     let x402 = commerce.x402();
     let network = X402Network::SetChain;
     let asset = X402Asset::Usdc;
@@ -481,18 +465,15 @@ async fn postgres_async_a2a_state_guards() {
         .await
         .expect("create guard quote");
 
-    assert!(x402
-        .update_quote_status(quote.id, QuoteStatus::Accepted)
-        .await
-        .is_err());
+    assert!(x402.update_quote_status(quote.id, QuoteStatus::Accepted).await.is_err());
 
     let quoted = x402
         .update_quote_status(quote.id, QuoteStatus::Quoted)
         .await
         .expect("mark quote as quoted");
 
-    assert!(x402
-        .create_purchase(CreateA2APurchase {
+    assert!(
+        x402.create_purchase(CreateA2APurchase {
             buyer_agent_id: buyer_id,
             seller_agent_id: other_seller.id,
             quote_id: Some(quoted.id),
@@ -505,10 +486,11 @@ async fn postgres_async_a2a_state_guards() {
             metadata: None,
         })
         .await
-        .is_err());
+        .is_err()
+    );
 
-    assert!(x402
-        .create_purchase(CreateA2APurchase {
+    assert!(
+        x402.create_purchase(CreateA2APurchase {
             buyer_agent_id: buyer_id,
             seller_agent_id: seller.id,
             quote_id: Some(quoted.id),
@@ -521,10 +503,11 @@ async fn postgres_async_a2a_state_guards() {
             metadata: None,
         })
         .await
-        .is_err());
+        .is_err()
+    );
 
-    assert!(x402
-        .create_purchase(CreateA2APurchase {
+    assert!(
+        x402.create_purchase(CreateA2APurchase {
             buyer_agent_id: buyer_id,
             seller_agent_id: seller.id,
             quote_id: Some(quoted.id),
@@ -537,7 +520,8 @@ async fn postgres_async_a2a_state_guards() {
             metadata: None,
         })
         .await
-        .is_err());
+        .is_err()
+    );
 
     let purchase = x402
         .create_purchase(CreateA2APurchase {
@@ -557,23 +541,18 @@ async fn postgres_async_a2a_state_guards() {
 
     assert_eq!(purchase.status, PurchaseStatus::Initiated);
 
-    assert!(x402
-        .update_purchase_status(purchase.id, PurchaseStatus::Completed)
-        .await
-        .is_err());
+    assert!(x402.update_purchase_status(purchase.id, PurchaseStatus::Completed).await.is_err());
 
-    assert!(x402
-        .confirm_delivery(purchase.id, "signature", Some(5), Some("not shipped yet"))
-        .await
-        .is_err());
+    assert!(
+        x402.confirm_delivery(purchase.id, "signature", Some(5), Some("not shipped yet"))
+            .await
+            .is_err()
+    );
 
-    assert!(x402
-        .update_quote_status(quote.id, QuoteStatus::Accepted)
-        .await
-        .is_err());
+    assert!(x402.update_quote_status(quote.id, QuoteStatus::Accepted).await.is_err());
 
-    assert!(x402
-        .create_quote(CreateA2AQuote {
+    assert!(
+        x402.create_quote(CreateA2AQuote {
             buyer_agent_id: buyer_id,
             seller_agent_id: seller.id,
             items: vec![QuotedItem {
@@ -600,7 +579,8 @@ async fn postgres_async_a2a_state_guards() {
             metadata: None,
         })
         .await
-        .is_err());
+        .is_err()
+    );
 
     let quote = x402
         .create_quote(CreateA2AQuote {
@@ -644,8 +624,8 @@ async fn postgres_async_a2a_state_guards() {
 
     assert_eq!(expired.status, QuoteStatus::Expired);
 
-    assert!(x402
-        .create_purchase(CreateA2APurchase {
+    assert!(
+        x402.create_purchase(CreateA2APurchase {
             buyer_agent_id: buyer_id,
             seller_agent_id: seller.id,
             quote_id: Some(expired.id),
@@ -658,7 +638,8 @@ async fn postgres_async_a2a_state_guards() {
             metadata: None,
         })
         .await
-        .is_err());
+        .is_err()
+    );
 }
 
 #[cfg(feature = "postgres")]
@@ -667,12 +648,15 @@ async fn postgres_async_a2a_state_lifecycle_controls() {
     let url = match postgres_url() {
         Some(url) => url,
         None => {
-            eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping postgres async A2A lifecycle test");
+            eprintln!(
+                "POSTGRES_URL or DATABASE_URL not set; skipping postgres async A2A lifecycle test"
+            );
             return;
         }
     };
 
-    let commerce = AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
+    let commerce =
+        AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations");
     let x402 = commerce.x402();
     let now = Utc::now();
 
@@ -758,14 +742,16 @@ async fn postgres_async_a2a_state_lifecycle_controls() {
         .expect("no-op async purchase status update");
     assert_eq!(no_op.status, PurchaseStatus::Cancelled);
 
-    assert!(x402
-        .update_purchase_status(cancelled_purchase.id, PurchaseStatus::PaymentPending)
-        .await
-        .is_err());
-    assert!(x402
-        .confirm_delivery(cancelled_purchase.id, "sig", Some(4), Some("should fail"))
-        .await
-        .is_err());
+    assert!(
+        x402.update_purchase_status(cancelled_purchase.id, PurchaseStatus::PaymentPending)
+            .await
+            .is_err()
+    );
+    assert!(
+        x402.confirm_delivery(cancelled_purchase.id, "sig", Some(4), Some("should fail"))
+            .await
+            .is_err()
+    );
 
     let disputed_quote = x402
         .create_quote(make_quote(Uuid::new_v4(), seller.id))
@@ -798,16 +784,13 @@ async fn postgres_async_a2a_state_lifecycle_controls() {
         .expect("mark async purchase as disputed");
     assert_eq!(disputed.status, PurchaseStatus::Disputed);
 
-    assert!(x402
-        .update_purchase_status(disputed_purchase.id, PurchaseStatus::Shipped)
-        .await
-        .is_err());
-    assert!(x402
-        .confirm_delivery(disputed_purchase.id, "sig", Some(4), Some("blocked"))
-        .await
-        .is_err());
-    assert!(x402
-        .update_purchase_status(disputed_purchase.id, PurchaseStatus::Disputed)
-        .await
-        .is_ok());
+    assert!(
+        x402.update_purchase_status(disputed_purchase.id, PurchaseStatus::Shipped).await.is_err()
+    );
+    assert!(
+        x402.confirm_delivery(disputed_purchase.id, "sig", Some(4), Some("blocked")).await.is_err()
+    );
+    assert!(
+        x402.update_purchase_status(disputed_purchase.id, PurchaseStatus::Disputed).await.is_ok()
+    );
 }

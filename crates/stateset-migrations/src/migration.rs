@@ -54,13 +54,7 @@ impl Migration {
     ) -> Self {
         let up_sql = up_sql.into();
         let checksum = compute_checksum(&up_sql);
-        Self {
-            version,
-            name: name.into(),
-            up_sql,
-            down_sql: Some(down_sql.into()),
-            checksum,
-        }
+        Self { version, name: name.into(), up_sql, down_sql: Some(down_sql.into()), checksum }
     }
 
     /// Returns `true` if this migration supports rollback.
@@ -210,9 +204,6 @@ mod tests {
     fn hex_encode_known_value() {
         // SHA-256 of empty string is well-known
         let checksum = compute_checksum("");
-        assert_eq!(
-            checksum,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
+        assert_eq!(checksum, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }
 }

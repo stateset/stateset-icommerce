@@ -38,17 +38,13 @@ impl AccessDecision {
     /// Creates a [`Denied`](Self::Denied) decision with the given reason.
     #[must_use]
     pub fn denied(reason: impl Into<String>) -> Self {
-        Self::Denied {
-            reason: reason.into(),
-        }
+        Self::Denied { reason: reason.into() }
     }
 
     /// Creates a [`RequiresApproval`](Self::RequiresApproval) decision with the given reason.
     #[must_use]
     pub fn requires_approval(reason: impl Into<String>) -> Self {
-        Self::RequiresApproval {
-            reason: reason.into(),
-        }
+        Self::RequiresApproval { reason: reason.into() }
     }
 
     /// Returns `true` if the decision is [`Allowed`](Self::Allowed).
@@ -165,9 +161,6 @@ mod tests {
     fn equality() {
         assert_eq!(AccessDecision::Allowed, AccessDecision::Allowed);
         assert_ne!(AccessDecision::Allowed, AccessDecision::denied("x"));
-        assert_ne!(
-            AccessDecision::denied("a"),
-            AccessDecision::denied("b")
-        );
+        assert_ne!(AccessDecision::denied("a"), AccessDecision::denied("b"));
     }
 }

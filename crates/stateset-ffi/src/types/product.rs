@@ -43,9 +43,8 @@ impl FfiProduct {
     /// price defaults to zero since the Product model does not carry price
     /// directly — prices live on variants.
     pub fn from_domain(p: &Product) -> Self {
-        let name_ptr = CString::new(p.name.clone())
-            .map(CString::into_raw)
-            .unwrap_or(std::ptr::null_mut());
+        let name_ptr =
+            CString::new(p.name.clone()).map(CString::into_raw).unwrap_or(std::ptr::null_mut());
 
         let mut sku = [0u8; 64];
         let slug_bytes = p.slug.as_bytes();
@@ -81,7 +80,6 @@ pub extern "C" fn stateset_product_free(product: FfiProduct) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
 
 #[cfg(test)]
 mod tests {
@@ -119,9 +117,7 @@ mod tests {
         assert_eq!(name.to_str().unwrap(), "Test Widget");
 
         // SKU should contain slug bytes.
-        let sku_str = std::str::from_utf8(&ffi.sku)
-            .unwrap()
-            .trim_end_matches('\0');
+        let sku_str = std::str::from_utf8(&ffi.sku).unwrap().trim_end_matches('\0');
         assert_eq!(sku_str, "test-widget");
 
         stateset_product_free(ffi);

@@ -38,14 +38,12 @@ pub fn validate_url(url: &str) -> A2AResult<()> {
 
     // Check scheme first (before full parse) so that non-HTTP protocols
     // are rejected with SsrfBlocked even if the host portion is missing/empty.
-    let scheme_end = url.find("://").ok_or_else(|| {
-        A2AError::Validation(format!("invalid URL (no scheme): {url}"))
-    })?;
+    let scheme_end = url
+        .find("://")
+        .ok_or_else(|| A2AError::Validation(format!("invalid URL (no scheme): {url}")))?;
     let scheme = url[..scheme_end].to_lowercase();
     if scheme != "http" && scheme != "https" {
-        return Err(A2AError::SsrfBlocked(format!(
-            "unsupported protocol: {scheme}"
-        )));
+        return Err(A2AError::SsrfBlocked(format!("unsupported protocol: {scheme}")));
     }
 
     // Parse the URL to extract host
@@ -63,19 +61,15 @@ pub fn validate_url(url: &str) -> A2AResult<()> {
 fn parse_url_components(url: &str) -> A2AResult<(String, String)> {
     // Find scheme
     let Some(scheme_end) = url.find("://") else {
-        return Err(A2AError::Validation(format!(
-            "invalid URL (no scheme): {url}"
-        )));
+        return Err(A2AError::Validation(format!("invalid URL (no scheme): {url}")));
     };
 
     let scheme = url[..scheme_end].to_lowercase();
 
     // Extract host portion (after "://", before "/" or ":" port or "?")
     let after_scheme = &url[scheme_end + 3..];
-    let host_end = after_scheme
-        .find('/')
-        .or_else(|| after_scheme.find('?'))
-        .unwrap_or(after_scheme.len());
+    let host_end =
+        after_scheme.find('/').or_else(|| after_scheme.find('?')).unwrap_or(after_scheme.len());
     let host_with_port = &after_scheme[..host_end];
 
     // Disallow userinfo (`user:pass@host`) to prevent host confusion bypasses.
@@ -103,9 +97,7 @@ fn parse_url_components(url: &str) -> A2AResult<(String, String)> {
     };
 
     if host.is_empty() {
-        return Err(A2AError::Validation(format!(
-            "invalid URL (empty host): {url}"
-        )));
+        return Err(A2AError::Validation(format!("invalid URL (empty host): {url}")));
     }
 
     Ok((scheme, host))
@@ -115,32 +107,25 @@ fn parse_url_components(url: &str) -> A2AResult<(String, String)> {
 fn check_hostname(host: &str) -> A2AResult<()> {
     // Exact hostname matches
     if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" {
-        return Err(A2AError::SsrfBlocked(format!(
-            "cannot fetch internal URL: {host}"
-        )));
+        return Err(A2AError::SsrfBlocked(format!("cannot fetch internal URL: {host}")));
     }
 
     // Private IP ranges
     if host.starts_with("10.") {
-        return Err(A2AError::SsrfBlocked(format!(
-            "cannot fetch private IP: {host}"
-        )));
+        return Err(A2AError::SsrfBlocked(format!("cannot fetch private IP: {host}")));
     }
 
     if host.starts_with("192.168.") {
-        return Err(A2AError::SsrfBlocked(format!(
-            "cannot fetch private IP: {host}"
-        )));
+        return Err(A2AError::SsrfBlocked(format!("cannot fetch private IP: {host}")));
     }
 
     // 172.16.0.0 - 172.31.255.255
     if host.starts_with("172.") {
-        if let Some(second_octet_str) = host.strip_prefix("172.").and_then(|s| s.split('.').next()) {
+        if let Some(second_octet_str) = host.strip_prefix("172.").and_then(|s| s.split('.').next())
+        {
             if let Ok(second_octet) = second_octet_str.parse::<u8>() {
                 if (16..=31).contains(&second_octet) {
-                    return Err(A2AError::SsrfBlocked(format!(
-                        "cannot fetch private IP: {host}"
-                    )));
+                    return Err(A2AError::SsrfBlocked(format!("cannot fetch private IP: {host}")));
                 }
             }
         }
@@ -148,9 +133,7 @@ fn check_hostname(host: &str) -> A2AResult<()> {
 
     // Internal TLDs
     if host.ends_with(".internal") || host.ends_with(".local") || host.ends_with(".localhost") {
-        return Err(A2AError::SsrfBlocked(format!(
-            "cannot fetch internal domain: {host}"
-        )));
+        return Err(A2AError::SsrfBlocked(format!("cannot fetch internal domain: {host}")));
     }
 
     Ok(())

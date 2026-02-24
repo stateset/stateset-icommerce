@@ -216,7 +216,8 @@ impl SqliteVectorRepository {
                 &row.get::<_, String>("customer_id")?,
                 "order",
                 "customer_id",
-            )?.into(),
+            )?
+            .into(),
             status: parse_enum_row(&row.get::<_, String>("status")?, "order", "status")?,
             order_date: parse_datetime_row(
                 &row.get::<_, String>("order_date")?,

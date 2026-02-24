@@ -14,30 +14,20 @@ fn order_create_emits_order_created_event() {
     // Subscribe BEFORE creating the order so we catch the event
     let mut subscription = commerce.subscribe_events();
 
-    let customer = commerce
-        .customers()
-        .create(fixtures::create_customer_input())
-        .expect("create customer");
+    let customer =
+        commerce.customers().create(fixtures::create_customer_input()).expect("create customer");
 
     // Drain the CustomerCreated event
     let _customer_event = subscription.try_recv();
 
-    let order = commerce
-        .orders()
-        .create(fixtures::create_order_input(customer.id))
-        .expect("create order");
+    let order =
+        commerce.orders().create(fixtures::create_order_input(customer.id)).expect("create order");
 
     // The OrderCreated event should be available
     let event = subscription.try_recv().expect("should have OrderCreated event");
 
     match event {
-        CommerceEvent::OrderCreated {
-            order_id,
-            customer_id,
-            total_amount,
-            item_count,
-            ..
-        } => {
+        CommerceEvent::OrderCreated { order_id, customer_id, total_amount, item_count, .. } => {
             assert_eq!(order_id, order.id);
             assert_eq!(customer_id, customer.id);
             assert_eq!(total_amount, order.total_amount);
@@ -51,15 +41,11 @@ fn order_create_emits_order_created_event() {
 fn order_update_status_emits_status_changed_event() {
     let (commerce, _dir) = create_test_commerce();
 
-    let customer = commerce
-        .customers()
-        .create(fixtures::create_customer_input())
-        .expect("create customer");
+    let customer =
+        commerce.customers().create(fixtures::create_customer_input()).expect("create customer");
 
-    let order = commerce
-        .orders()
-        .create(fixtures::create_order_input(customer.id))
-        .expect("create order");
+    let order =
+        commerce.orders().create(fixtures::create_order_input(customer.id)).expect("create order");
 
     // Subscribe after creation to avoid draining create events
     let mut subscription = commerce.subscribe_events();
@@ -71,12 +57,7 @@ fn order_update_status_emits_status_changed_event() {
     let event = subscription.try_recv().expect("should have status changed event");
 
     match event {
-        CommerceEvent::OrderStatusChanged {
-            order_id,
-            from_status,
-            to_status,
-            ..
-        } => {
+        CommerceEvent::OrderStatusChanged { order_id, from_status, to_status, .. } => {
             assert_eq!(order_id, order.id);
             assert_eq!(from_status, stateset_core::OrderStatus::Pending);
             assert_eq!(to_status, stateset_core::OrderStatus::Cancelled);
@@ -96,16 +77,10 @@ fn customer_create_emits_customer_created_event() {
         .create(fixtures::create_customer_with_email("events@example.com"))
         .expect("create customer");
 
-    let event = subscription
-        .try_recv()
-        .expect("should have CustomerCreated event");
+    let event = subscription.try_recv().expect("should have CustomerCreated event");
 
     match event {
-        CommerceEvent::CustomerCreated {
-            customer_id,
-            email,
-            ..
-        } => {
+        CommerceEvent::CustomerCreated { customer_id, email, .. } => {
             assert_eq!(customer_id, customer.id);
             assert_eq!(email, "events@example.com");
         }
@@ -124,16 +99,10 @@ fn product_create_emits_product_created_event() {
         .create(fixtures::create_product_with_name("Event Product"))
         .expect("create product");
 
-    let event = subscription
-        .try_recv()
-        .expect("should have ProductCreated event");
+    let event = subscription.try_recv().expect("should have ProductCreated event");
 
     match event {
-        CommerceEvent::ProductCreated {
-            product_id,
-            name,
-            ..
-        } => {
+        CommerceEvent::ProductCreated { product_id, name, .. } => {
             assert_eq!(product_id, product.id);
             assert_eq!(name, "Event Product");
         }
@@ -152,17 +121,10 @@ fn inventory_create_emits_inventory_item_created_event() {
         .create_item(fixtures::create_inventory_input())
         .expect("create inventory");
 
-    let event = subscription
-        .try_recv()
-        .expect("should have InventoryItemCreated event");
+    let event = subscription.try_recv().expect("should have InventoryItemCreated event");
 
     match event {
-        CommerceEvent::InventoryItemCreated {
-            item_id,
-            sku,
-            name,
-            ..
-        } => {
+        CommerceEvent::InventoryItemCreated { item_id, sku, name, .. } => {
             assert_eq!(item_id, item.id);
             assert_eq!(sku, item.sku);
             assert_eq!(name, "Test Inventory Item");
@@ -175,15 +137,11 @@ fn inventory_create_emits_inventory_item_created_event() {
 fn return_create_emits_return_requested_event() {
     let (commerce, _dir) = create_test_commerce();
 
-    let customer = commerce
-        .customers()
-        .create(fixtures::create_customer_input())
-        .expect("create customer");
+    let customer =
+        commerce.customers().create(fixtures::create_customer_input()).expect("create customer");
 
-    let order = commerce
-        .orders()
-        .create(fixtures::create_order_input(customer.id))
-        .expect("create order");
+    let order =
+        commerce.orders().create(fixtures::create_order_input(customer.id)).expect("create order");
 
     // Subscribe after order creation
     let mut subscription = commerce.subscribe_events();
@@ -202,9 +160,7 @@ fn return_create_emits_return_requested_event() {
         })
         .expect("create return");
 
-    let event = subscription
-        .try_recv()
-        .expect("should have ReturnRequested event");
+    let event = subscription.try_recv().expect("should have ReturnRequested event");
 
     match event {
         CommerceEvent::ReturnRequested {
@@ -229,24 +185,17 @@ fn return_create_emits_return_requested_event() {
 fn order_ship_emits_multiple_status_events() {
     let (commerce, _dir) = create_test_commerce();
 
-    let customer = commerce
-        .customers()
-        .create(fixtures::create_customer_input())
-        .expect("create customer");
+    let customer =
+        commerce.customers().create(fixtures::create_customer_input()).expect("create customer");
 
-    let order = commerce
-        .orders()
-        .create(fixtures::create_order_input(customer.id))
-        .expect("create order");
+    let order =
+        commerce.orders().create(fixtures::create_order_input(customer.id)).expect("create order");
 
     // Subscribe after creation
     let mut subscription = commerce.subscribe_events();
 
     // Shipping from Pending triggers: Pending->Confirmed, Confirmed->Processing, Processing->Shipped
-    commerce
-        .orders()
-        .ship(order.id, Some("TRACK-XYZ"))
-        .expect("ship order");
+    commerce.orders().ship(order.id, Some("TRACK-XYZ")).expect("ship order");
 
     // Collect all events
     let mut events = Vec::new();
@@ -276,15 +225,10 @@ fn event_store_persists_events() {
     // Subscribe (not strictly needed but let's verify store works)
     let _subscription = commerce.subscribe_events();
 
-    let customer = commerce
-        .customers()
-        .create(fixtures::create_customer_input())
-        .expect("create customer");
+    let customer =
+        commerce.customers().create(fixtures::create_customer_input()).expect("create customer");
 
-    commerce
-        .orders()
-        .create(fixtures::create_order_input(customer.id))
-        .expect("create order");
+    commerce.orders().create(fixtures::create_order_input(customer.id)).expect("create order");
 
     // Check that the event store has recorded events
     if let Some(store) = commerce.events().event_store() {

@@ -94,14 +94,10 @@ impl SyncEngine {
     /// Returns [`SyncError::Transport`] if the transport operation fails.
     pub async fn push(&mut self, transport: &dyn Transport) -> Result<PushResult, SyncError> {
         let batch_size = self.config.batch_size;
-        let events: Vec<SyncEvent> =
-            self.outbox.peek(batch_size).into_iter().cloned().collect();
+        let events: Vec<SyncEvent> = self.outbox.peek(batch_size).into_iter().cloned().collect();
 
         if events.is_empty() {
-            return Ok(PushResult {
-                accepted: 0,
-                remote_head: self.state.remote_head,
-            });
+            return Ok(PushResult { accepted: 0, remote_head: self.state.remote_head });
         }
 
         let result = transport.push_events(&events).await?;
@@ -227,8 +223,8 @@ mod tests {
     use super::*;
     use crate::transport::NullTransport;
     use serde_json::json;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn make_config() -> SyncConfig {
         SyncConfig::new("agent-1", "tenant-1", "store-1")
@@ -308,10 +304,7 @@ mod tests {
         #[async_trait::async_trait]
         impl Transport for MockPullTransport {
             async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
-                Ok(PushResult {
-                    accepted: events.len(),
-                    remote_head: self.head,
-                })
+                Ok(PushResult { accepted: events.len(), remote_head: self.head })
             }
             async fn pull_events(
                 &self,
@@ -421,10 +414,7 @@ mod tests {
             async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
                 let new_head = self.head.fetch_add(events.len() as u64, Ordering::SeqCst)
                     + events.len() as u64;
-                Ok(PushResult {
-                    accepted: events.len(),
-                    remote_head: new_head,
-                })
+                Ok(PushResult { accepted: events.len(), remote_head: new_head })
             }
             async fn pull_events(
                 &self,
@@ -439,9 +429,7 @@ mod tests {
             }
         }
 
-        let transport = MockHeadTransport {
-            head: Arc::new(AtomicU64::new(0)),
-        };
+        let transport = MockHeadTransport { head: Arc::new(AtomicU64::new(0)) };
 
         let mut engine = SyncEngine::new(make_config());
         engine.record(make_event("a")).unwrap();
@@ -495,10 +483,7 @@ mod tests {
         #[async_trait::async_trait]
         impl Transport for PartialAcceptTransport {
             async fn push_events(&self, _events: &[SyncEvent]) -> Result<PushResult, SyncError> {
-                Ok(PushResult {
-                    accepted: 1,
-                    remote_head: 1,
-                })
+                Ok(PushResult { accepted: 1, remote_head: 1 })
             }
 
             async fn pull_events(
@@ -506,11 +491,7 @@ mod tests {
                 _since: u64,
                 _limit: usize,
             ) -> Result<PullResult, SyncError> {
-                Ok(PullResult {
-                    events: vec![],
-                    remote_head: 1,
-                    has_more: false,
-                })
+                Ok(PullResult { events: vec![], remote_head: 1, has_more: false })
             }
         }
 
@@ -533,10 +514,7 @@ mod tests {
         #[async_trait::async_trait]
         impl Transport for ConflictTransport {
             async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
-                Ok(PushResult {
-                    accepted: events.len(),
-                    remote_head: 10,
-                })
+                Ok(PushResult { accepted: events.len(), remote_head: 10 })
             }
             async fn pull_events(
                 &self,
@@ -547,23 +525,13 @@ mod tests {
                 let remote_event =
                     SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "remote"}))
                         .with_sequence(5);
-                Ok(PullResult {
-                    events: vec![remote_event],
-                    remote_head: 5,
-                    has_more: false,
-                })
+                Ok(PullResult { events: vec![remote_event], remote_head: 5, has_more: false })
             }
         }
 
-        let mut engine =
-            SyncEngine::with_strategy(make_config(), ConflictStrategy::RemoteWins);
+        let mut engine = SyncEngine::with_strategy(make_config(), ConflictStrategy::RemoteWins);
         engine
-            .record(SyncEvent::new(
-                "order.updated",
-                "order",
-                "ORD-1",
-                json!({"status": "local"}),
-            ))
+            .record(SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "local"})))
             .unwrap();
 
         let transport = ConflictTransport;

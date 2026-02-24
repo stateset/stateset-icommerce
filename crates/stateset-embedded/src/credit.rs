@@ -30,7 +30,7 @@ use rust_decimal::Decimal;
 use stateset_core::{
     CreateCreditAccount, CreditAccount, CreditAccountFilter, CreditAgingBucket, CreditApplication,
     CreditApplicationFilter, CreditCheckResult, CreditHold, CreditHoldFilter, CreditId,
-    CreditTransaction, CreditTransactionFilter, CustomerId, CustomerCreditSummary, OrderId,
+    CreditTransaction, CreditTransactionFilter, CustomerCreditSummary, CustomerId, OrderId,
     PlaceCreditHold, RecordCreditTransaction, ReleaseCreditHold, Result, ReviewCreditApplication,
     SubmitCreditApplication, UpdateCreditAccount,
 };
@@ -136,7 +136,11 @@ impl Credit {
     }
 
     /// Suspend a credit account.
-    pub fn suspend_credit_account(&self, customer_id: CustomerId, reason: &str) -> Result<CreditAccount> {
+    pub fn suspend_credit_account(
+        &self,
+        customer_id: CustomerId,
+        reason: &str,
+    ) -> Result<CreditAccount> {
         self.db.credit().suspend_credit_account(customer_id, reason)
     }
 
@@ -354,7 +358,10 @@ impl Credit {
     // ========================================================================
 
     /// Get credit summary for a customer.
-    pub fn get_customer_summary(&self, customer_id: CustomerId) -> Result<Option<CustomerCreditSummary>> {
+    pub fn get_customer_summary(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Option<CustomerCreditSummary>> {
         self.db.credit().get_customer_summary(customer_id)
     }
 

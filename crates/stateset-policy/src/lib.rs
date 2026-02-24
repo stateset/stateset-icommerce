@@ -81,25 +81,25 @@
 //! println!("Loaded {count} policy sets");
 //! ```
 
-mod error;
-mod operator;
-mod context;
-mod condition;
 mod action;
-mod rule;
-mod policy_set;
+mod condition;
+mod context;
 mod engine;
+mod error;
 mod explanation;
 mod loader;
+mod operator;
+mod policy_set;
+mod rule;
 pub mod templates;
 
-pub use error::*;
-pub use operator::*;
-pub use context::*;
-pub use condition::*;
 pub use action::*;
-pub use rule::*;
-pub use policy_set::*;
+pub use condition::*;
+pub use context::*;
 pub use engine::*;
+pub use error::*;
 pub use explanation::*;
 pub use loader::*;
+pub use operator::*;
+pub use policy_set::*;
+pub use rule::*;

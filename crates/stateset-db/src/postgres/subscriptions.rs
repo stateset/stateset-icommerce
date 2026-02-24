@@ -1555,15 +1555,27 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         super::block_on(self.list_subscriptions_async(filter))
     }
 
-    fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription> {
+    fn update_subscription(
+        &self,
+        id: SubscriptionId,
+        input: UpdateSubscription,
+    ) -> Result<Subscription> {
         super::block_on(self.update_subscription_async(id, input))
     }
 
-    fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription> {
+    fn cancel_subscription(
+        &self,
+        id: SubscriptionId,
+        input: CancelSubscription,
+    ) -> Result<Subscription> {
         super::block_on(self.cancel_subscription_async(id, input))
     }
 
-    fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription> {
+    fn pause_subscription(
+        &self,
+        id: SubscriptionId,
+        input: PauseSubscription,
+    ) -> Result<Subscription> {
         super::block_on(self.pause_subscription_async(id, input))
     }
 
@@ -1591,7 +1603,11 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         super::block_on(self.update_billing_cycle_status_async(id, status))
     }
 
-    fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
+    fn skip_billing_cycle(
+        &self,
+        id: SubscriptionId,
+        input: SkipBillingCycle,
+    ) -> Result<Subscription> {
         super::block_on(self.skip_billing_cycle_async(id, input))
     }
 
@@ -1611,7 +1627,10 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         ))
     }
 
-    fn get_subscription_events(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionEvent>> {
+    fn get_subscription_events(
+        &self,
+        subscription_id: SubscriptionId,
+    ) -> Result<Vec<SubscriptionEvent>> {
         super::block_on(self.get_subscription_events_async(subscription_id))
     }
 }

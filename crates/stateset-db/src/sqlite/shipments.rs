@@ -868,7 +868,10 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
+    ) -> Result<BatchResult<Shipment>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -882,7 +885,10 @@ impl ShipmentRepository for SqliteShipmentRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<Vec<Shipment>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
+    ) -> Result<Vec<Shipment>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);

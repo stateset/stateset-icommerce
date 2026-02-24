@@ -1,14 +1,14 @@
 #![cfg(feature = "postgres")]
 
 use chrono::{Duration, Utc};
-use std::collections::HashMap;
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
-    CustomerId, CustomerRepository, InventoryRepository, OrderRepository, OrderStatus,
-    PaymentStatus, ProductId, ReservationStatus, UpdateOrder,
+    CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CustomerId,
+    CustomerRepository, InventoryRepository, OrderRepository, OrderStatus, PaymentStatus,
+    ProductId, ReservationStatus, UpdateOrder,
 };
 use stateset_db::PostgresDatabase;
+use std::collections::HashMap;
 use std::env;
 use uuid::Uuid;
 
@@ -27,11 +27,7 @@ async fn setup_db() -> Option<PostgresDatabase> {
         }
     };
 
-    Some(
-        PostgresDatabase::connect(&url)
-            .await
-            .expect("connect to postgres and run migrations"),
-    )
+    Some(PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations"))
 }
 
 #[cfg(feature = "postgres")]
@@ -95,12 +91,16 @@ async fn postgres_rejects_invalid_order_status_transition() {
         return;
     };
 
-    let customer = create_customer(&db, &format!("transition-{}@example.com", Uuid::new_v4())).await;
+    let customer =
+        create_customer(&db, &format!("transition-{}@example.com", Uuid::new_v4())).await;
     let order = create_order(&db, customer.id, "TRANS-001").await;
 
     let result = db
         .orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
+        )
         .await;
 
     assert!(matches!(result, Err(CommerceError::InvalidOrderStatusTransition { .. })));
@@ -117,21 +117,33 @@ async fn postgres_rejects_cancel_after_shipped() {
     let order = create_order(&db, customer.id, "SHIP-001").await;
 
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
+        )
         .await
         .expect("update order to confirmed");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
+        )
         .await
         .expect("update order to processing");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
+        )
         .await
         .expect("update order to shipped");
 
     let result = db
         .orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )
         .await;
 
     assert!(matches!(result, Err(CommerceError::OrderCannotBeCancelled(_))));
@@ -148,19 +160,31 @@ async fn postgres_rejects_refund_without_paid_status() {
     let order = create_order(&db, customer.id, "REF-001").await;
 
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
+        )
         .await
         .expect("update order to confirmed");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
+        )
         .await
         .expect("update order to processing");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
+        )
         .await
         .expect("update order to shipped");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
+        )
         .await
         .expect("update order to delivered");
 
@@ -168,7 +192,11 @@ async fn postgres_rejects_refund_without_paid_status() {
         .orders()
         .update_async(
             order.id,
-            UpdateOrder { status: Some(OrderStatus::Refunded), payment_status: Some(PaymentStatus::Pending), ..Default::default() },
+            UpdateOrder {
+                status: Some(OrderStatus::Refunded),
+                payment_status: Some(PaymentStatus::Pending),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -182,23 +210,36 @@ async fn postgres_allows_refund_with_paid_status() {
         return;
     };
 
-    let customer = create_customer(&db, &format!("refund-paid-{}@example.com", Uuid::new_v4())).await;
+    let customer =
+        create_customer(&db, &format!("refund-paid-{}@example.com", Uuid::new_v4())).await;
     let order = create_order(&db, customer.id, "REF-002").await;
 
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
+        )
         .await
         .expect("update order to confirmed");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
+        )
         .await
         .expect("update order to processing");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
+        )
         .await
         .expect("update order to shipped");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
+        )
         .await
         .expect("update order to delivered");
 
@@ -206,7 +247,11 @@ async fn postgres_allows_refund_with_paid_status() {
         .orders()
         .update_async(
             order.id,
-            UpdateOrder { status: Some(OrderStatus::Refunded), payment_status: Some(PaymentStatus::Paid), ..Default::default() },
+            UpdateOrder {
+                status: Some(OrderStatus::Refunded),
+                payment_status: Some(PaymentStatus::Paid),
+                ..Default::default()
+            },
         )
         .await
         .expect("refund order");
@@ -224,7 +269,8 @@ async fn postgres_ship_fails_when_reservation_expired() {
     let sku = format!("SHIP-EXPIRE-{}", Uuid::new_v4());
     create_inventory_item(&db, &sku).await;
 
-    let customer = create_customer(&db, &format!("expired-reservation-{}@example.com", Uuid::new_v4())).await;
+    let customer =
+        create_customer(&db, &format!("expired-reservation-{}@example.com", Uuid::new_v4())).await;
     let order = create_order(&db, customer.id, &sku).await;
 
     let reservations = db
@@ -244,7 +290,10 @@ async fn postgres_ship_fails_when_reservation_expired() {
 
     let result = db
         .orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
+        )
         .await;
 
     match result {
@@ -265,7 +314,8 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
     create_inventory_item(&db, &sku_a).await;
     create_inventory_item(&db, &sku_b).await;
 
-    let customer = create_customer(&db, &format!("partial-expire-{}@example.com", Uuid::new_v4())).await;
+    let customer =
+        create_customer(&db, &format!("partial-expire-{}@example.com", Uuid::new_v4())).await;
     let order = db
         .orders()
         .create_async(CreateOrder {
@@ -294,11 +344,17 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
         .expect("create order");
 
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
+        )
         .await
         .expect("update order to confirmed");
     db.orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
+        )
         .await
         .expect("update order to processing");
 
@@ -321,7 +377,10 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
 
     let result = db
         .orders()
-        .update_async(order.id, UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() })
+        .update_async(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
+        )
         .await;
 
     match result {
@@ -329,12 +388,8 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
         other => panic!("expected ReservationExpired, got {other:?}"),
     }
 
-    let refreshed = db
-        .orders()
-        .get_async(order.id)
-        .await
-        .expect("get order")
-        .expect("order exists");
+    let refreshed =
+        db.orders().get_async(order.id).await.expect("get order").expect("order exists");
     assert_eq!(refreshed.status, OrderStatus::Processing);
 
     let updated = db
@@ -344,10 +399,7 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
         .expect("list reservations");
     assert_eq!(updated.len(), 2);
 
-    let by_id = updated
-        .into_iter()
-        .map(|r| (r.id, r.status))
-        .collect::<HashMap<_, _>>();
+    let by_id = updated.into_iter().map(|r| (r.id, r.status)).collect::<HashMap<_, _>>();
 
     assert_eq!(by_id.get(&expired), Some(&ReservationStatus::Expired));
     assert_eq!(by_id.get(&kept), Some(&ReservationStatus::Pending));

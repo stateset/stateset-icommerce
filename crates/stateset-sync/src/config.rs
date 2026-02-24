@@ -37,7 +37,11 @@ pub struct SyncConfig {
 impl SyncConfig {
     /// Create a new `SyncConfig` with sensible defaults.
     #[must_use]
-    pub fn new(agent_id: impl Into<String>, tenant_id: impl Into<String>, store_id: impl Into<String>) -> Self {
+    pub fn new(
+        agent_id: impl Into<String>,
+        tenant_id: impl Into<String>,
+        store_id: impl Into<String>,
+    ) -> Self {
         Self {
             agent_id: agent_id.into(),
             tenant_id: tenant_id.into(),
@@ -78,9 +82,7 @@ mod tests {
 
     #[test]
     fn config_builder_pattern() {
-        let config = SyncConfig::new("a", "t", "s")
-            .with_buffer_capacity(500)
-            .with_batch_size(50);
+        let config = SyncConfig::new("a", "t", "s").with_buffer_capacity(500).with_batch_size(50);
         assert_eq!(config.buffer_capacity, 500);
         assert_eq!(config.batch_size, 50);
     }

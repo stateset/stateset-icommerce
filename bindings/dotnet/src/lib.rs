@@ -201,8 +201,9 @@ pub extern "C" fn stateset_customer_get(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.customers().get(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.customers().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(customer)) => to_json_cstr(&customer),
@@ -241,8 +242,9 @@ pub extern "C" fn stateset_customer_delete(
         Err(_) => return 0,
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.customers().delete(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.customers().delete(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(_) => 1,
@@ -323,8 +325,9 @@ pub extern "C" fn stateset_product_get(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.products().get(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.products().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(product)) => to_json_cstr(&product),
@@ -412,8 +415,9 @@ pub extern "C" fn stateset_order_get(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.orders().get(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.orders().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(order)) => to_json_cstr(&order),
@@ -650,8 +654,9 @@ pub extern "C" fn stateset_cart_get(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.carts().get(cart_uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.carts().get(cart_uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(cart)) => to_json_cstr(&cart),
@@ -947,8 +952,9 @@ pub extern "C" fn stateset_shipment_get(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.shipments().get(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.shipments().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(shipment)) => to_json_cstr(&shipment),
@@ -1043,8 +1049,9 @@ pub extern "C" fn stateset_shipment_cancel(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.shipments().cancel(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.shipments().cancel(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(shipment) => to_json_cstr(&shipment),

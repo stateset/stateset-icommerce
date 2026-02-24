@@ -4,8 +4,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    AdjustStoreCredit, CommerceError, CreateStoreCredit, Result, StoreCredit,
-    StoreCreditFilter, StoreCreditId, StoreCreditRepository, StoreCreditTransaction,
+    AdjustStoreCredit, CommerceError, CreateStoreCredit, Result, StoreCredit, StoreCreditFilter,
+    StoreCreditId, StoreCreditRepository, StoreCreditTransaction,
 };
 
 #[derive(Debug)]
@@ -21,9 +21,7 @@ impl SqliteStoreCreditRepository {
 
     #[allow(dead_code)]
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 }
 

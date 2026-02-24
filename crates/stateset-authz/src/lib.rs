@@ -84,22 +84,22 @@
 //! assert_eq!(redact_string("secret123"), "sec***123");
 //! ```
 
-mod permission;
-mod resource;
-mod decision;
-mod role;
-mod rate_limit;
 mod audit;
-mod redaction;
-mod error;
+mod decision;
 mod engine;
+mod error;
+mod permission;
+mod rate_limit;
+mod redaction;
+mod resource;
+mod role;
 
-pub use permission::*;
-pub use resource::*;
-pub use decision::*;
-pub use role::*;
-pub use rate_limit::*;
 pub use audit::*;
-pub use redaction::*;
-pub use error::*;
+pub use decision::*;
 pub use engine::*;
+pub use error::*;
+pub use permission::*;
+pub use rate_limit::*;
+pub use redaction::*;
+pub use resource::*;
+pub use role::*;

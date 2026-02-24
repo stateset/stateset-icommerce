@@ -8,9 +8,9 @@ use serde_json::Value;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CartAddress, CommerceError, CreateA2APurchase,
-    CreateA2AQuote, QuoteStatus, Result, SkillQuote, SkillQuoteFilter, PurchaseStatus,
-    QuotedItem, validate_batch_size, X402Asset, X402Network,
+    A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CartAddress, CommerceError,
+    CreateA2APurchase, CreateA2AQuote, PurchaseStatus, QuoteStatus, QuotedItem, Result, SkillQuote,
+    SkillQuoteFilter, X402Asset, X402Network, validate_batch_size,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -94,21 +94,13 @@ impl PgA2ARepository {
     fn generate_quote_number() -> String {
         let now = Utc::now();
         let random = Uuid::new_v4();
-        format!(
-            "QTE-{}-{:08X}",
-            now.timestamp_millis(),
-            (random.as_u128() & 0xFFFFFFFF) as u32
-        )
+        format!("QTE-{}-{:08X}", now.timestamp_millis(), (random.as_u128() & 0xFFFFFFFF) as u32)
     }
 
     fn generate_purchase_number() -> String {
         let now = Utc::now();
         let random = Uuid::new_v4();
-        format!(
-            "PUR-{}-{:08X}",
-            now.timestamp_millis(),
-            (random.as_u128() & 0xFFFFFFFF) as u32
-        )
+        format!("PUR-{}-{:08X}", now.timestamp_millis(), (random.as_u128() & 0xFFFFFFFF) as u32)
     }
 
     fn parse_quote_status(value: &str, entity: &str, field: &str) -> Result<QuoteStatus> {
@@ -168,7 +160,12 @@ impl PgA2ARepository {
 
         match current {
             PurchaseStatus::Initiated => {
-                matches!(next, PurchaseStatus::PaymentPending | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
+                matches!(
+                    next,
+                    PurchaseStatus::PaymentPending
+                        | PurchaseStatus::Cancelled
+                        | PurchaseStatus::Disputed
+                )
             }
             PurchaseStatus::PaymentPending => {
                 matches!(
@@ -190,7 +187,10 @@ impl PgA2ARepository {
                 )
             }
             PurchaseStatus::Fulfilling => {
-                matches!(next, PurchaseStatus::Shipped | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
+                matches!(
+                    next,
+                    PurchaseStatus::Shipped | PurchaseStatus::Cancelled | PurchaseStatus::Disputed
+                )
             }
             PurchaseStatus::Shipped => {
                 matches!(
@@ -202,17 +202,20 @@ impl PgA2ARepository {
                 )
             }
             PurchaseStatus::Delivered => {
-                matches!(next, PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
+                matches!(
+                    next,
+                    PurchaseStatus::Completed
+                        | PurchaseStatus::Cancelled
+                        | PurchaseStatus::Disputed
+                )
             }
-            PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed => false,
+            PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed => {
+                false
+            }
         }
     }
 
-    fn parse_x402_network(
-        value: &str,
-        entity: &str,
-        field: &str,
-    ) -> Result<X402Network> {
+    fn parse_x402_network(value: &str, entity: &str, field: &str) -> Result<X402Network> {
         X402Network::from_str(value).map_err(|e| {
             CommerceError::DatabaseError(format!(
                 "Invalid {}.{} for x402_network: '{}' - {}",
@@ -221,11 +224,7 @@ impl PgA2ARepository {
         })
     }
 
-    fn parse_x402_asset(
-        value: &str,
-        entity: &str,
-        field: &str,
-    ) -> Result<X402Asset> {
+    fn parse_x402_asset(value: &str, entity: &str, field: &str) -> Result<X402Asset> {
         X402Asset::from_str(value).map_err(|e| {
             CommerceError::DatabaseError(format!(
                 "Invalid {}.{} for x402_asset: '{}' - {}",
@@ -234,16 +233,9 @@ impl PgA2ARepository {
         })
     }
 
-    fn parse_json<T: DeserializeOwned>(
-        value: Value,
-        entity: &str,
-        field: &str,
-    ) -> Result<T> {
+    fn parse_json<T: DeserializeOwned>(value: Value, entity: &str, field: &str) -> Result<T> {
         serde_json::from_value::<T>(value).map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid {}.{} JSON: {}",
-                entity, field, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid {}.{} JSON: {}", entity, field, e))
         })
     }
 
@@ -254,14 +246,12 @@ impl PgA2ARepository {
     ) -> Result<Option<CartAddress>> {
         match value {
             Some(value) => match value {
-                Value::String(value) => {
-                    serde_json::from_str::<CartAddress>(&value).map_err(|e| {
-                        CommerceError::DatabaseError(format!(
-                            "Invalid {}.{} JSON string: {}",
-                            entity, field, e
-                        ))
-                    })
-                }
+                Value::String(value) => serde_json::from_str::<CartAddress>(&value).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid {}.{} JSON string: {}",
+                        entity, field, e
+                    ))
+                }),
                 _ => {
                     let value = Self::parse_json::<CartAddress>(value, entity, field)?;
                     Ok(Some(value))
@@ -280,11 +270,7 @@ impl PgA2ARepository {
         match value {
             Some(value) => match value {
                 Value::String(value) => Ok(Some(value)),
-                _ => Ok(Some(Self::parse_json::<String>(
-                    value,
-                    entity,
-                    field,
-                )?)),
+                _ => Ok(Some(Self::parse_json::<String>(value, entity, field)?)),
             },
             None => Ok(None),
         }
@@ -329,11 +315,9 @@ impl PgA2ARepository {
             total: row.total,
             currency: row.currency,
             payment_network: match row.payment_network {
-                Some(network) => Some(Self::parse_x402_network(
-                    &network,
-                    "a2a_quote",
-                    "payment_network",
-                )?),
+                Some(network) => {
+                    Some(Self::parse_x402_network(&network, "a2a_quote", "payment_network")?)
+                }
                 None => None,
             },
             payment_asset: match row.payment_asset {
@@ -378,9 +362,17 @@ impl PgA2ARepository {
             delivered_at: row.delivered_at,
             delivery_confirmed_at: row.delivery_confirmed_at,
             delivery_confirmation_signature: row.delivery_confirmation_signature,
-            buyer_rating: Self::parse_optional_u8(row.buyer_rating, "a2a_purchase", "buyer_rating")?,
+            buyer_rating: Self::parse_optional_u8(
+                row.buyer_rating,
+                "a2a_purchase",
+                "buyer_rating",
+            )?,
             buyer_feedback: row.buyer_feedback,
-            seller_rating: Self::parse_optional_u8(row.seller_rating, "a2a_purchase", "seller_rating")?,
+            seller_rating: Self::parse_optional_u8(
+                row.seller_rating,
+                "a2a_purchase",
+                "seller_rating",
+            )?,
             seller_feedback: row.seller_feedback,
             notes: row.notes,
             metadata: row.metadata,
@@ -509,7 +501,8 @@ impl PgA2ARepository {
         let quote_number = Self::generate_quote_number();
         let status = QuoteStatus::Pending;
         let currency = Self::normalize_currency(input.currency);
-        let items_json = serde_json::to_value(&input.items).map_err(|e| CommerceError::Internal(e.to_string()))?;
+        let items_json = serde_json::to_value(&input.items)
+            .map_err(|e| CommerceError::Internal(e.to_string()))?;
         let shipping_json = input
             .shipping_address
             .as_ref()
@@ -572,7 +565,10 @@ impl PgA2ARepository {
         row.map(Self::row_to_quote).transpose()
     }
 
-    pub async fn get_quote_by_number_async(&self, quote_number: &str) -> Result<Option<SkillQuote>> {
+    pub async fn get_quote_by_number_async(
+        &self,
+        quote_number: &str,
+    ) -> Result<Option<SkillQuote>> {
         let row = sqlx::query_as::<_, QuoteRow>("SELECT * FROM a2a_quotes WHERE quote_number = $1")
             .bind(quote_number)
             .fetch_optional(&self.pool)
@@ -590,9 +586,10 @@ impl PgA2ARepository {
         let existing = self.get_quote_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if !Self::is_valid_quote_status_transition(existing.status, status) {
-            return Err(CommerceError::ValidationError(
-                format!("invalid quote status transition: {:?} -> {:?}", existing.status, status),
-            ));
+            return Err(CommerceError::ValidationError(format!(
+                "invalid quote status transition: {:?} -> {:?}",
+                existing.status, status
+            )));
         }
 
         if existing.status == status {
@@ -641,7 +638,8 @@ impl PgA2ARepository {
         qb.push(" OFFSET ");
         qb.push_bind(offset);
 
-        let rows = qb.build_query_as::<QuoteRow>().fetch_all(&self.pool).await.map_err(map_db_error)?;
+        let rows =
+            qb.build_query_as::<QuoteRow>().fetch_all(&self.pool).await.map_err(map_db_error)?;
         rows.into_iter().map(Self::row_to_quote).collect()
     }
 
@@ -713,7 +711,8 @@ impl PgA2ARepository {
             }
         }
 
-        let items_json = serde_json::to_value(&input.items).map_err(|e| CommerceError::Internal(e.to_string()))?;
+        let items_json = serde_json::to_value(&input.items)
+            .map_err(|e| CommerceError::Internal(e.to_string()))?;
         let currency = Self::normalize_currency(input.currency);
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
@@ -802,12 +801,10 @@ impl PgA2ARepository {
         let existing = self.get_purchase_async(id).await?.ok_or(CommerceError::NotFound)?;
 
         if !Self::is_valid_purchase_status_transition(existing.status, status) {
-            return Err(CommerceError::ValidationError(
-                format!(
-                    "invalid purchase status transition: {:?} -> {:?}",
-                    existing.status, status
-                ),
-            ));
+            return Err(CommerceError::ValidationError(format!(
+                "invalid purchase status transition: {:?} -> {:?}",
+                existing.status, status
+            )));
         }
 
         if existing.status == status {
@@ -855,11 +852,9 @@ impl PgA2ARepository {
             });
         }
 
-        let existing = self.get_purchase_async(purchase_id).await?.ok_or(CommerceError::NotFound)?;
-        if matches!(
-            existing.status,
-            PurchaseStatus::Cancelled | PurchaseStatus::Disputed
-        ) {
+        let existing =
+            self.get_purchase_async(purchase_id).await?.ok_or(CommerceError::NotFound)?;
+        if matches!(existing.status, PurchaseStatus::Cancelled | PurchaseStatus::Disputed) {
             return Err(CommerceError::ValidationError(
                 "cannot confirm delivery for cancelled purchase".to_string(),
             ));
@@ -898,7 +893,10 @@ impl PgA2ARepository {
         self.get_purchase_async(purchase_id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn list_purchases_async(&self, filter: A2APurchaseFilter) -> Result<Vec<A2APurchase>> {
+    pub async fn list_purchases_async(
+        &self,
+        filter: A2APurchaseFilter,
+    ) -> Result<Vec<A2APurchase>> {
         let mut qb = QueryBuilder::<Postgres>::new("SELECT * FROM a2a_purchases WHERE 1=1");
 
         if let Some(buyer) = filter.buyer_agent_id {
@@ -933,11 +931,8 @@ impl PgA2ARepository {
         qb.push(" OFFSET ");
         qb.push_bind(offset);
 
-        let rows = qb
-            .build_query_as::<PurchaseRow>()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows =
+            qb.build_query_as::<PurchaseRow>().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         rows.into_iter().map(Self::row_to_purchase).collect()
     }

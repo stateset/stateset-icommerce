@@ -583,8 +583,8 @@ impl X402PaymentIntent {
         self.status == X402IntentStatus::Settled && self.tx_hash.is_some()
     }
 
-    /// Get the canonical JSON for signing (JCS - RFC 8785)
-    pub fn canonical_signing_data(&self) -> String {
+    /// Try to get canonical JSON for signing (JCS - RFC 8785).
+    pub fn try_canonical_signing_data(&self) -> Result<String, X402CryptoError> {
         // Per x402 spec, only signed fields are included
         let payload = serde_json::json!({
             "version": self.version,
@@ -599,7 +599,13 @@ impl X402PaymentIntent {
             "resourceUri": self.resource_uri,
             "resourceMethod": self.resource_method,
         });
-        serde_jcs::to_string(&payload).unwrap_or_default()
+        serde_jcs::to_string(&payload).map_err(|e| X402CryptoError::Serialization(e.to_string()))
+    }
+
+    /// Get canonical JSON for signing (JCS - RFC 8785).
+    pub fn canonical_signing_data(&self) -> String {
+        self.try_canonical_signing_data()
+            .expect("x402 canonical signing payload serialization failed")
     }
 
     /// Compute sequencer-compatible signing hash (`X402_PAYMENT_V1`)
@@ -779,11 +785,16 @@ impl X402PaymentRequired {
         self
     }
 
-    /// Encode as base64 for HTTP header
-    pub fn to_header_value(&self) -> String {
+    /// Try encoding as base64 for HTTP header.
+    pub fn try_to_header_value(&self) -> std::result::Result<String, serde_json::Error> {
         use base64::{Engine, engine::general_purpose::STANDARD};
-        let json = serde_json::to_string(self).unwrap_or_default();
-        STANDARD.encode(json.as_bytes())
+        let json = serde_json::to_string(self)?;
+        Ok(STANDARD.encode(json.as_bytes()))
+    }
+
+    /// Encode as base64 for HTTP header.
+    pub fn to_header_value(&self) -> String {
+        self.try_to_header_value().expect("x402 payment-required header serialization failed")
     }
 
     /// Decode from HTTP header value
@@ -1163,6 +1174,8 @@ pub fn from_smallest_unit(amount: u64, asset: X402Asset) -> Decimal {
 pub enum X402CryptoError {
     #[error("missing field: {0}")]
     MissingField(&'static str),
+    #[error("serialization error: {0}")]
+    Serialization(String),
     #[error("invalid hex: {0}")]
     InvalidHex(String),
     #[error("invalid length: expected {expected}, got {got}")]

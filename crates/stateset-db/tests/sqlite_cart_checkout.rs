@@ -3,8 +3,8 @@
 use rust_decimal_macros::dec;
 use stateset_core::{
     AddCartItem, CartAddress, CartRepository, CreateCart, CreateCustomer, CreateOrder,
-    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus,
-    ProductId, SetCartPayment,
+    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus, ProductId,
+    SetCartPayment,
 };
 use stateset_db::SqliteDatabase;
 

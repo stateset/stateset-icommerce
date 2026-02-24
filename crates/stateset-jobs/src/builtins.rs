@@ -41,22 +41,16 @@ impl BillingTickJob {
     /// Create a billing tick job with the default interval (1 hour).
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            check_interval: BILLING_INTERVAL,
-        }
+        Self { check_interval: BILLING_INTERVAL }
     }
 
     /// Create a [`JobDefinition`] for this built-in.
     #[must_use]
     pub fn to_definition(self) -> JobDefinition {
-        JobDefinition::new(
-            "billing_tick",
-            Schedule::Interval(self.check_interval),
-            Box::new(self),
-        )
-        .with_timeout(Duration::from_secs(120))
-        .with_max_retries(2)
-        .with_retry_backoff(BackoffStrategy::fixed(Duration::from_secs(30)))
+        JobDefinition::new("billing_tick", Schedule::Interval(self.check_interval), Box::new(self))
+            .with_timeout(Duration::from_secs(120))
+            .with_max_retries(2)
+            .with_retry_backoff(BackoffStrategy::fixed(Duration::from_secs(30)))
     }
 }
 
@@ -151,10 +145,7 @@ impl EventRetentionJob {
     /// Create an event retention job with default settings (30 days, batch 1000).
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            retention_period: Duration::from_secs(30 * 24 * 3600),
-            batch_size: 1000,
-        }
+        Self { retention_period: Duration::from_secs(30 * 24 * 3600), batch_size: 1000 }
     }
 
     /// Create a [`JobDefinition`] for this built-in.
@@ -214,10 +205,7 @@ impl LowStockAlertJob {
     /// Create a low stock alert job with default threshold (10 units).
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            threshold: 10,
-            check_skus: None,
-        }
+        Self { threshold: 10, check_skus: None }
     }
 
     /// Create a [`JobDefinition`] for this built-in.
@@ -275,9 +263,7 @@ impl SubscriptionRenewalJob {
     /// Create a subscription renewal job with default lookahead (24 hours).
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            lookahead: Duration::from_secs(24 * 3600),
-        }
+        Self { lookahead: Duration::from_secs(24 * 3600) }
     }
 
     /// Create a [`JobDefinition`] for this built-in.
@@ -437,11 +423,7 @@ mod tests {
     #[tokio::test]
     async fn billing_tick_executes() {
         let job = BillingTickJob::new();
-        let ctx = crate::context::JobContext::new(
-            uuid::Uuid::new_v4(),
-            0,
-            chrono::Utc::now(),
-        );
+        let ctx = crate::context::JobContext::new(uuid::Uuid::new_v4(), 0, chrono::Utc::now());
         let result = job.execute(&ctx).await;
         assert!(result.is_ok());
         assert!(result.unwrap().message.contains("billing"));
@@ -450,26 +432,15 @@ mod tests {
     #[tokio::test]
     async fn event_retention_executes() {
         let job = EventRetentionJob::new();
-        let ctx = crate::context::JobContext::new(
-            uuid::Uuid::new_v4(),
-            0,
-            chrono::Utc::now(),
-        );
+        let ctx = crate::context::JobContext::new(uuid::Uuid::new_v4(), 0, chrono::Utc::now());
         let result = job.execute(&ctx).await.unwrap();
         assert!(result.data.is_some());
     }
 
     #[tokio::test]
     async fn low_stock_executes() {
-        let job = LowStockAlertJob {
-            threshold: 5,
-            check_skus: Some(vec!["SKU-001".to_owned()]),
-        };
-        let ctx = crate::context::JobContext::new(
-            uuid::Uuid::new_v4(),
-            0,
-            chrono::Utc::now(),
-        );
+        let job = LowStockAlertJob { threshold: 5, check_skus: Some(vec!["SKU-001".to_owned()]) };
+        let ctx = crate::context::JobContext::new(uuid::Uuid::new_v4(), 0, chrono::Utc::now());
         let result = job.execute(&ctx).await.unwrap();
         let data = result.data.unwrap();
         assert_eq!(data["threshold"], 5);
@@ -479,11 +450,7 @@ mod tests {
     #[tokio::test]
     async fn subscription_renewal_executes() {
         let job = SubscriptionRenewalJob::new();
-        let ctx = crate::context::JobContext::new(
-            uuid::Uuid::new_v4(),
-            0,
-            chrono::Utc::now(),
-        );
+        let ctx = crate::context::JobContext::new(uuid::Uuid::new_v4(), 0, chrono::Utc::now());
         let result = job.execute(&ctx).await.unwrap();
         assert!(result.data.is_some());
         assert_eq!(result.data.unwrap()["lookahead_hours"], 24);
@@ -492,11 +459,7 @@ mod tests {
     #[tokio::test]
     async fn webhook_retry_executes() {
         let job = WebhookRetryJob::new();
-        let ctx = crate::context::JobContext::new(
-            uuid::Uuid::new_v4(),
-            0,
-            chrono::Utc::now(),
-        );
+        let ctx = crate::context::JobContext::new(uuid::Uuid::new_v4(), 0, chrono::Utc::now());
         let result = job.execute(&ctx).await;
         assert!(result.is_ok());
         assert!(result.unwrap().message.contains("webhook"));

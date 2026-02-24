@@ -218,32 +218,24 @@ mod tests {
 
     #[test]
     fn transition_new_valid() {
-        let t = SubscriptionTransition::new(
-            SubscriptionStatus::Active,
-            SubscriptionStatus::Paused,
-        )
-        .unwrap();
+        let t = SubscriptionTransition::new(SubscriptionStatus::Active, SubscriptionStatus::Paused)
+            .unwrap();
         assert_eq!(t.from, SubscriptionStatus::Active);
         assert_eq!(t.to, SubscriptionStatus::Paused);
     }
 
     #[test]
     fn transition_new_invalid() {
-        let err = SubscriptionTransition::new(
-            SubscriptionStatus::Trial,
-            SubscriptionStatus::Paused,
-        )
-        .unwrap_err();
+        let err =
+            SubscriptionTransition::new(SubscriptionStatus::Trial, SubscriptionStatus::Paused)
+                .unwrap_err();
         assert!(matches!(err, A2AError::InvalidTransition { .. }));
     }
 
     #[test]
     fn transition_trial_to_active() {
-        let t = SubscriptionTransition::new(
-            SubscriptionStatus::Trial,
-            SubscriptionStatus::Active,
-        )
-        .unwrap();
+        let t = SubscriptionTransition::new(SubscriptionStatus::Trial, SubscriptionStatus::Active)
+            .unwrap();
         assert_eq!(t.to, SubscriptionStatus::Active);
     }
 

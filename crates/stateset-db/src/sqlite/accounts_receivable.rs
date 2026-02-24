@@ -18,9 +18,8 @@ use stateset_core::{
     ArAgingSummary, ArPaymentApplication, CollectionActivity, CollectionActivityFilter,
     CollectionActivityType, CollectionStatus, CreateCollectionActivity, CreateCreditMemo,
     CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoStatus, CustomerArAging,
-    CustomerArSummary, CustomerStatement, CustomerId, DunningLetterType, GenerateStatementRequest,
-    OrderId,
-    Invoice, InvoiceId, Result, StatementLineItem, StatementTransactionType, WriteOff,
+    CustomerArSummary, CustomerId, CustomerStatement, DunningLetterType, GenerateStatementRequest,
+    Invoice, InvoiceId, OrderId, Result, StatementLineItem, StatementTransactionType, WriteOff,
     WriteOffFilter, generate_credit_memo_number, generate_write_off_number,
 };
 use std::collections::HashMap;
@@ -703,7 +702,11 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let rows = stmt
             .query_map([], |row| {
                 Ok(Invoice {
-                    id: InvoiceId::from(parse_uuid_row(&row.get::<_, String>(0)?, "invoice", "id")?),
+                    id: InvoiceId::from(parse_uuid_row(
+                        &row.get::<_, String>(0)?,
+                        "invoice",
+                        "id",
+                    )?),
                     invoice_number: row.get(1)?,
                     order_id: parse_uuid_opt_row(
                         row.get::<_, Option<String>>(2)?,
@@ -711,9 +714,11 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                         "order_id",
                     )?
                     .map(OrderId::from),
-                    customer_id: CustomerId::from(
-                        parse_uuid_row(&row.get::<_, String>(3)?, "invoice", "customer_id")?,
-                    ),
+                    customer_id: CustomerId::from(parse_uuid_row(
+                        &row.get::<_, String>(3)?,
+                        "invoice",
+                        "customer_id",
+                    )?),
                     status: parse_enum_row(&row.get::<_, String>(4)?, "invoice", "status")?,
                     invoice_type: stateset_core::InvoiceType::Standard,
                     invoice_date: parse_datetime_row(

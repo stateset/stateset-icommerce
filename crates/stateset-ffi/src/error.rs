@@ -233,7 +233,6 @@ pub(crate) fn last_error_as_str() -> Option<String> {
 // Tests
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -22,8 +22,33 @@ const DEFAULT_JOB_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_TICK_INTERVAL_MS = 60_000; // 1 minute
 
 /**
+ * @typedef {'pending' | 'running' | 'completed' | 'failed' | 'paused' | 'cancelled'} JobStatusValue
+ * @typedef {'cron' | 'interval' | 'once'} JobType
+ * @typedef {{ minute: string, hour: string, dayOfMonth: string, month: string, dayOfWeek: string }} ParsedCron
+ * @typedef {{ agent?: string, request?: string, [key: string]: unknown }} JobAction
+ * @typedef {{ id?: string, name: string, description?: string, type?: JobType, schedule?: string | number | null, action: JobAction, enabled?: boolean, maxRetries?: number, retryDelay?: number, timeout?: number, metadata?: Record<string, unknown>, createdAt?: string, lastRunAt?: string | null, nextRunAt?: string | null, runCount?: number, failCount?: number, lastError?: string | null, status?: JobStatusValue }} JobInput
+ * @typedef {{ jobId: string, runId?: string, status: JobStatusValue, startedAt: string, completedAt?: string | null, duration?: number | null, output?: unknown, error?: string | null, retryCount?: number }} JobResultInput
+ * @typedef {{ storePath?: string | null, tickInterval?: number, maxConcurrentJobs?: number, executor?: ((action: JobAction, context: { jobId: string, runId: string, signal: AbortSignal, metadata: Record<string, unknown> }) => Promise<unknown>) | null }} SchedulerOptions
+ */
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/**
  * Parse a cron expression into next execution time
  * Supports: minute hour day-of-month month day-of-week
+ * @param {string} token
+ * @param {number} min
+ * @param {number} max
+ * @param {string} fieldLabel
  */
 function parseCronFieldToken(token, min, max, fieldLabel) {
   if (token.startsWith('*/')) {
@@ -94,6 +119,13 @@ function parseCronFieldToken(token, min, max, fieldLabel) {
   }
 }
 
+/**
+ * @param {string | number} field
+ * @param {number} min
+ * @param {number} max
+ * @param {string} fieldLabel
+ * @returns {string}
+ */
 function parseCronField(field, min, max, fieldLabel) {
   const trimmed = `${field}`.trim();
   if (!trimmed) {
@@ -110,6 +142,10 @@ function parseCronField(field, min, max, fieldLabel) {
   return trimmed;
 }
 
+/**
+ * @param {string} expression
+ * @returns {ParsedCron}
+ */
 function parseCron(expression) {
   const trimmedExpression = `${expression}`.trim();
   const parts = trimmedExpression.split(/\s+/);
@@ -138,6 +174,12 @@ function parseCron(expression) {
 /**
  * Check if a cron field matches a value
  */
+/**
+ * @param {string} field
+ * @param {number} value
+ * @param {number} _max
+ * @returns {boolean}
+ */
 function cronFieldMatches(field, value, _max) {
   if (field === '*') return true;
 
@@ -165,6 +207,11 @@ function cronFieldMatches(field, value, _max) {
 /**
  * Check if current time matches a cron expression
  */
+/**
+ * @param {ParsedCron} cron
+ * @param {Date} [date]
+ * @returns {boolean}
+ */
 function cronMatches(cron, date = new Date()) {
   const { minute, hour, dayOfMonth, month, dayOfWeek } = cron;
 
@@ -179,6 +226,11 @@ function cronMatches(cron, date = new Date()) {
 
 /**
  * Calculate next execution time for a cron expression
+ */
+/**
+ * @param {string} expression
+ * @param {Date} [fromDate]
+ * @returns {Date}
  */
 function getNextCronTime(expression, fromDate = new Date()) {
   const cron = parseCron(expression);
@@ -202,6 +254,7 @@ function getNextCronTime(expression, fromDate = new Date()) {
 /**
  * Job status enumeration
  */
+/** @type {{ PENDING: JobStatusValue, RUNNING: JobStatusValue, COMPLETED: JobStatusValue, FAILED: JobStatusValue, PAUSED: JobStatusValue, CANCELLED: JobStatusValue }} */
 export const JobStatus = {
   PENDING: 'pending',
   RUNNING: 'running',
@@ -215,6 +268,9 @@ export const JobStatus = {
  * Job definition
  */
 export class Job {
+  /**
+   * @param {JobInput} param0
+   */
   constructor({
     id = randomUUID(),
     name,
@@ -257,19 +313,32 @@ export class Job {
 
   /**
    * Calculate next run time based on schedule type
+   * @param {Date} [fromDate]
+   * @returns {Date | null}
    */
   calculateNextRun(fromDate = new Date()) {
     if (!this.enabled) return null;
 
     switch (this.type) {
-      case 'cron':
+      case 'cron': {
+        if (typeof this.schedule !== 'string') {
+          throw new Error(`Invalid cron schedule for job ${this.id}`);
+        }
         return getNextCronTime(this.schedule, fromDate);
+      }
 
-      case 'interval':
+      case 'interval': {
+        if (typeof this.schedule !== 'number') {
+          throw new Error(`Invalid interval schedule for job ${this.id}`);
+        }
         return new Date(fromDate.getTime() + this.schedule);
+      }
 
       case 'once': {
         // One-time jobs: schedule is the target date
+        if (this.schedule === null || this.schedule === undefined) {
+          return null;
+        }
         const targetDate = new Date(this.schedule);
         return targetDate > fromDate ? targetDate : null;
       }
@@ -307,6 +376,9 @@ export class Job {
  * Job execution result
  */
 export class JobResult {
+  /**
+   * @param {JobResultInput} param0
+   */
   constructor({
     jobId,
     runId = randomUUID(),
@@ -336,29 +408,39 @@ export class JobResult {
  * Manages job scheduling, execution, and persistence
  */
 export class Scheduler extends EventEmitter {
-  constructor({
-    storePath = null,
-    tickInterval = DEFAULT_TICK_INTERVAL_MS,
-    maxConcurrentJobs = 5,
-    executor = null, // Function to execute job actions
-  }) {
+  /**
+   * @param {SchedulerOptions} [param0]
+   */
+  constructor(param0 = {}) {
     super();
+    const {
+      storePath = null,
+      tickInterval = DEFAULT_TICK_INTERVAL_MS,
+      maxConcurrentJobs = 5,
+      executor = null, // Function to execute job actions
+    } = param0;
 
     this.storePath = storePath;
     this.tickInterval = tickInterval;
     this.maxConcurrentJobs = maxConcurrentJobs;
     this.executor = executor;
 
+    /** @type {Map<string, Job>} */
     this.jobs = new Map();
+    /** @type {Map<string, { runId: string, abortController: AbortController, startedAt: Date, cancelled?: boolean }>} */
     this.runningJobs = new Map();
+    /** @type {JobResult[]} */
     this.jobHistory = [];
+    /** @type {Set<ReturnType<typeof setTimeout>>} */
     this.retryTimers = new Set();
+    /** @type {ReturnType<typeof setInterval> | null} */
     this.tickTimer = null;
     this.isRunning = false;
   }
 
   /**
    * Load jobs from persistent storage
+   * @returns {Promise<void>}
    */
   async load() {
     if (!this.storePath) return;
@@ -375,7 +457,8 @@ export class Scheduler extends EventEmitter {
         }
         this.emit('loaded', { jobCount: this.jobs.size });
       } catch (error) {
-        if (error.code !== 'ENOENT') {
+        const ioError = /** @type {{ code?: string }} */ (error);
+        if (ioError.code !== 'ENOENT') {
           throw error;
         }
       }
@@ -383,7 +466,8 @@ export class Scheduler extends EventEmitter {
       try {
         this.jobHistory = JSON.parse(await fs.promises.readFile(historyFile, 'utf-8'));
       } catch (error) {
-        if (error.code !== 'ENOENT') {
+        const ioError = /** @type {{ code?: string }} */ (error);
+        if (ioError.code !== 'ENOENT') {
           throw error;
         }
       }
@@ -394,6 +478,7 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Save jobs to persistent storage
+   * @returns {Promise<void>}
    */
   async save() {
     if (!this.storePath) return;
@@ -419,6 +504,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Add a new job
+   * @param {Job | JobInput} jobConfig
+   * @returns {Job}
    */
   addJob(jobConfig) {
     const job = jobConfig instanceof Job ? jobConfig : new Job(jobConfig);
@@ -435,6 +522,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Remove a job
+   * @param {string} jobId
+   * @returns {boolean}
    */
   removeJob(jobId) {
     const job = this.jobs.get(jobId);
@@ -454,6 +543,9 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Update a job
+   * @param {string} jobId
+   * @param {Partial<JobInput>} updates
+   * @returns {Job | null}
    */
   updateJob(jobId, updates) {
     const job = this.jobs.get(jobId);
@@ -474,6 +566,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Pause a job
+   * @param {string} jobId
+   * @returns {Job | null}
    */
   pauseJob(jobId) {
     return this.updateJob(jobId, { enabled: false, status: JobStatus.PAUSED });
@@ -481,6 +575,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Resume a job
+   * @param {string} jobId
+   * @returns {Job | null}
    */
   resumeJob(jobId) {
     return this.updateJob(jobId, { enabled: true, status: JobStatus.PENDING });
@@ -488,6 +584,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Cancel a running job
+   * @param {string} jobId
+   * @returns {boolean}
    */
   cancelJob(jobId) {
     const running = this.runningJobs.get(jobId);
@@ -511,6 +609,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Get a job by ID
+   * @param {string} jobId
+   * @returns {Job | undefined}
    */
   getJob(jobId) {
     return this.jobs.get(jobId);
@@ -518,6 +618,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * List all jobs
+   * @param {{ status?: JobStatusValue | null, enabled?: boolean | null }} [param0]
+   * @returns {Job[]}
    */
   listJobs({ status = null, enabled = null } = {}) {
     let jobs = Array.from(this.jobs.values());
@@ -539,6 +641,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Get jobs due for execution
+   * @param {Date} [now]
+   * @returns {Job[]}
    */
   getDueJobs(now = new Date()) {
     return Array.from(this.jobs.values()).filter((job) => {
@@ -552,6 +656,9 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Execute a job
+   * @param {Job} job
+   * @param {number} [retryCount]
+   * @returns {Promise<JobResult>}
    */
   async executeJob(job, retryCount = 0) {
     const runId = randomUUID();
@@ -564,7 +671,8 @@ export class Scheduler extends EventEmitter {
 
     this.emit('job:started', { job, runId });
 
-    let result;
+    /** @type {JobResult | null} */
+    let result = null;
     let timeoutId = null;
     let timedOut = false;
 
@@ -633,7 +741,9 @@ export class Scheduler extends EventEmitter {
       const cancelReason = abortController.signal.reason;
       const wasCancelled = running?.cancelled === true || cancelReason === 'cancelled';
       const wasTimeout =
-        timedOut || cancelReason === 'timeout' || (error.name === 'AbortError' && !wasCancelled);
+        timedOut ||
+        cancelReason === 'timeout' ||
+        (error instanceof Error && error.name === 'AbortError' && !wasCancelled);
 
       if (wasCancelled) {
         result = new JobResult({
@@ -651,7 +761,7 @@ export class Scheduler extends EventEmitter {
         job.lastRunAt = completedAt.toISOString();
         job.lastError = null;
       } else {
-        const errorMessage = wasTimeout ? 'Job timed out' : error.message;
+        const errorMessage = wasTimeout ? 'Job timed out' : getErrorMessage(error);
 
         result = new JobResult({
           jobId: job.id,
@@ -703,15 +813,22 @@ export class Scheduler extends EventEmitter {
         clearTimeout(timeoutId);
       }
       this.runningJobs.delete(job.id);
-      this.jobHistory.push(result);
+      if (result) {
+        this.jobHistory.push(result);
+      }
       this.save();
     }
 
+    if (!result) {
+      throw new Error(`No result produced for job ${job.id}`);
+    }
     return result;
   }
 
   /**
    * Run a job immediately (manual trigger)
+   * @param {string} jobId
+   * @returns {Promise<JobResult>}
    */
   async runNow(jobId) {
     const job = this.jobs.get(jobId);
@@ -728,6 +845,7 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Scheduler tick - check for due jobs
+   * @returns {Promise<void>}
    */
   async tick() {
     if (!this.isRunning) return;
@@ -755,6 +873,7 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Start the scheduler
+   * @returns {void}
    */
   start() {
     if (this.isRunning) return;
@@ -773,6 +892,7 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Stop the scheduler
+   * @returns {void}
    */
   stop() {
     if (!this.isRunning) return;
@@ -794,6 +914,7 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Get scheduler status
+   * @returns {{ isRunning: boolean, totalJobs: number, enabledJobs: number, runningJobs: number, pendingJobs: number, recentHistory: JobResult[] }}
    */
   getStatus() {
     return {
@@ -808,6 +929,8 @@ export class Scheduler extends EventEmitter {
 
   /**
    * Get job execution history
+   * @param {{ jobId?: string | null, limit?: number, status?: JobStatusValue | null }} [param0]
+   * @returns {JobResult[]}
    */
   getHistory({ jobId = null, limit = 100, status = null } = {}) {
     let history = this.jobHistory;

@@ -23,11 +23,7 @@ impl JobQueue {
     /// Create a new queue with the given maximum capacity.
     #[must_use]
     pub const fn new(max_size: usize) -> Self {
-        Self {
-            jobs: BTreeMap::new(),
-            max_size,
-            count: 0,
-        }
+        Self { jobs: BTreeMap::new(), max_size, count: 0 }
     }
 
     /// Add a job to the queue at its scheduled time.
@@ -39,10 +35,7 @@ impl JobQueue {
     /// Returns [`JobError::QueueFull`] if the queue is at capacity.
     pub fn enqueue(&mut self, job: JobInstance) -> Result<(), JobError> {
         if self.count >= self.max_size {
-            return Err(JobError::QueueFull {
-                capacity: self.max_size,
-                current: self.count,
-            });
+            return Err(JobError::QueueFull { capacity: self.max_size, current: self.count });
         }
 
         let run_at = job.next_run_at.unwrap_or_else(Utc::now);
@@ -56,11 +49,7 @@ impl JobQueue {
         let mut ready = Vec::new();
 
         // Collect all keys <= now
-        let due_keys: Vec<DateTime<Utc>> = self
-            .jobs
-            .range(..=now)
-            .map(|(k, _)| *k)
-            .collect();
+        let due_keys: Vec<DateTime<Utc>> = self.jobs.range(..=now).map(|(k, _)| *k).collect();
 
         for key in due_keys {
             if let Some(jobs) = self.jobs.remove(&key) {

@@ -26,19 +26,13 @@ impl RedactionConfig {
     /// Creates a config with no fields and no patterns.
     #[must_use]
     pub fn empty() -> Self {
-        Self {
-            fields: HashSet::new(),
-            patterns: Vec::new(),
-        }
+        Self { fields: HashSet::new(), patterns: Vec::new() }
     }
 
     /// Creates a config with the given field names.
     #[must_use]
     pub fn with_fields(fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self {
-            fields: fields.into_iter().map(Into::into).collect(),
-            patterns: Vec::new(),
-        }
+        Self { fields: fields.into_iter().map(Into::into).collect(), patterns: Vec::new() }
     }
 
     /// Adds a field name to the redaction set.
@@ -127,11 +121,8 @@ impl Default for RedactionConfig {
 pub fn redact_value(value: &mut serde_json::Value, config: &RedactionConfig) {
     match value {
         serde_json::Value::Object(map) => {
-            let keys_to_redact: Vec<String> = map
-                .keys()
-                .filter(|k| config.should_redact(k))
-                .cloned()
-                .collect();
+            let keys_to_redact: Vec<String> =
+                map.keys().filter(|k| config.should_redact(k)).cloned().collect();
 
             for key in keys_to_redact {
                 if let Some(v) = map.get_mut(&key) {
@@ -170,11 +161,7 @@ pub fn redact_value(value: &mut serde_json::Value, config: &RedactionConfig) {
 /// ```
 #[must_use]
 pub fn redact_string(s: &str) -> String {
-    if s.len() <= 6 {
-        "***".to_owned()
-    } else {
-        format!("{}***{}", &s[..3], &s[s.len() - 3..])
-    }
+    if s.len() <= 6 { "***".to_owned() } else { format!("{}***{}", &s[..3], &s[s.len() - 3..]) }
 }
 
 #[cfg(test)]

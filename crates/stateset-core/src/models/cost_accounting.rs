@@ -306,9 +306,7 @@ impl FromStr for CostAdjustmentType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "standard_cost_update" | "standardcostupdate" => {
-                Ok(Self::StandardCostUpdate)
-            }
+            "standard_cost_update" | "standardcostupdate" => Ok(Self::StandardCostUpdate),
             "revaluation" => Ok(Self::Revaluation),
             "write_off" | "writeoff" => Ok(Self::WriteOff),
             "correction" => Ok(Self::Correction),

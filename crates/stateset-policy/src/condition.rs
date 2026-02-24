@@ -33,22 +33,12 @@ pub struct Condition {
 impl Condition {
     /// Create a new condition.
     pub fn new(field: impl Into<String>, operator: Operator, value: Value) -> Self {
-        Self {
-            field: field.into(),
-            operator,
-            value,
-            negate: false,
-        }
+        Self { field: field.into(), operator, value, negate: false }
     }
 
     /// Create a new negated condition.
     pub fn new_negated(field: impl Into<String>, operator: Operator, value: Value) -> Self {
-        Self {
-            field: field.into(),
-            operator,
-            value,
-            negate: true,
-        }
+        Self { field: field.into(), operator, value, negate: true }
     }
 
     /// Evaluate this condition against the given context.
@@ -57,9 +47,7 @@ impl Condition {
     /// in `self.value` are resolved against `context`. If a dynamic reference
     /// cannot be resolved, the condition returns `false` (safe default).
     pub fn evaluate(&self, context: &Value) -> bool {
-        let field_value = get_nested_value(context, &self.field)
-            .cloned()
-            .unwrap_or(Value::Null);
+        let field_value = get_nested_value(context, &self.field).cloned().unwrap_or(Value::Null);
 
         let is_unary = self.operator.is_unary();
 
@@ -73,8 +61,7 @@ impl Condition {
                 // Check if the original path truly resolved to null vs missing
                 // In JS: `isDynamicRef && compareValue === undefined`
                 // We treat null as the "missing" sentinel for dynamic refs
-                if get_nested_value(context, extract_ref_path(&self.value).unwrap_or(""))
-                    .is_none()
+                if get_nested_value(context, extract_ref_path(&self.value).unwrap_or("")).is_none()
                 {
                     return false;
                 }
@@ -90,9 +77,7 @@ impl Condition {
 
     /// Evaluate this condition and return detailed results for explainable decisions.
     pub fn evaluate_with_detail(&self, context: &Value) -> ConditionDetail {
-        let field_value = get_nested_value(context, &self.field)
-            .cloned()
-            .unwrap_or(Value::Null);
+        let field_value = get_nested_value(context, &self.field).cloned().unwrap_or(Value::Null);
 
         let is_unary = self.operator.is_unary();
 
@@ -103,8 +88,7 @@ impl Condition {
 
             if is_dynamic
                 && resolved.is_null()
-                && get_nested_value(context, extract_ref_path(&self.value).unwrap_or(""))
-                    .is_none()
+                && get_nested_value(context, extract_ref_path(&self.value).unwrap_or("")).is_none()
             {
                 return ConditionDetail {
                     matched: false,
@@ -127,11 +111,7 @@ impl Condition {
             matched: result,
             field: self.field.clone(),
             operator: self.operator,
-            expected_value: if is_unary {
-                Value::Null
-            } else {
-                compare_value
-            },
+            expected_value: if is_unary { Value::Null } else { compare_value },
             actual_value: field_value,
         }
     }
@@ -265,10 +245,7 @@ impl ConditionGroup {
             return Vec::new();
         }
 
-        self.conditions
-            .iter()
-            .flat_map(|c| c.evaluate_with_detail(context))
-            .collect()
+        self.conditions.iter().flat_map(|c| c.evaluate_with_detail(context)).collect()
     }
 
     /// Evaluate and return both the match result and the details.
@@ -327,11 +304,8 @@ mod tests {
 
     #[test]
     fn condition_dynamic_ref() {
-        let cond = Condition::new(
-            "inventory.quantity",
-            Operator::Lte,
-            json!("${inventory.reorderPoint}"),
-        );
+        let cond =
+            Condition::new("inventory.quantity", Operator::Lte, json!("${inventory.reorderPoint}"));
         let ctx = json!({"inventory": {"quantity": 5, "reorderPoint": 10}});
         assert!(cond.evaluate(&ctx));
 
@@ -341,11 +315,7 @@ mod tests {
 
     #[test]
     fn condition_dynamic_ref_missing_returns_false() {
-        let cond = Condition::new(
-            "order.total",
-            Operator::Neq,
-            json!("${order.missingField}"),
-        );
+        let cond = Condition::new("order.total", Operator::Neq, json!("${order.missingField}"));
         // Dynamic ref missing => false (safe default)
         assert!(!cond.evaluate(&json!({"order": {"total": 100}})));
     }
@@ -468,11 +438,7 @@ mod tests {
     fn serde_condition_group_roundtrip() {
         let group = ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "x",
-                Operator::Eq,
-                json!(1),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("x", Operator::Eq, json!(1)))],
         );
         let json_str = serde_json::to_string(&group).unwrap();
         let deser: ConditionGroup = serde_json::from_str(&json_str).unwrap();

@@ -6,9 +6,7 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::dto::{
-    CreateCustomerRequest, CustomerListResponse, CustomerResponse, PaginationParams,
-};
+use crate::dto::{CreateCustomerRequest, CustomerListResponse, CustomerResponse, PaginationParams};
 use crate::error::HttpError;
 use crate::state::AppState;
 use stateset_core::{CreateCustomer, CustomerFilter, CustomerId};
@@ -80,9 +78,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn app() -> Router {
-        router().with_state(AppState::new(
-            Commerce::new(":memory:").expect("in-memory Commerce"),
-        ))
+        router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
     }
 
     #[tokio::test]
@@ -112,11 +108,7 @@ mod tests {
     async fn get_customer_not_found() {
         let id = CustomerId::new();
         let resp = app()
-            .oneshot(
-                Request::get(format!("/customers/{id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get(format!("/customers/{id}")).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -124,10 +116,8 @@ mod tests {
 
     #[tokio::test]
     async fn list_customers_empty() {
-        let resp = app()
-            .oneshot(Request::get("/customers").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app().oneshot(Request::get("/customers").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -164,11 +154,7 @@ mod tests {
         // Get
         let app2 = router().with_state(state);
         let resp = app2
-            .oneshot(
-                Request::get(format!("/customers/{id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get(format!("/customers/{id}")).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

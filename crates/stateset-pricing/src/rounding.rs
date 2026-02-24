@@ -117,8 +117,8 @@ impl Default for RoundingPolicy {
 pub fn minor_units_for_currency(code: &str) -> u32 {
     match code.to_ascii_uppercase().as_str() {
         // Zero-decimal currencies
-        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG" | "RWF"
-        | "UGX" | "UYI" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
+        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG" | "RWF" | "UGX"
+        | "UYI" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
         // Three-decimal currencies
         "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
         // Everything else is 2
@@ -372,12 +372,9 @@ mod tests {
 
     #[test]
     fn round_zero() {
-        for mode in [
-            RoundingMode::HalfUp,
-            RoundingMode::HalfEven,
-            RoundingMode::Down,
-            RoundingMode::Up,
-        ] {
+        for mode in
+            [RoundingMode::HalfUp, RoundingMode::HalfEven, RoundingMode::Down, RoundingMode::Up]
+        {
             let p = RoundingPolicy::new(mode, 2);
             assert_eq!(round(Decimal::ZERO, &p), Decimal::ZERO);
         }

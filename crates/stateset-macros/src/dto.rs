@@ -40,9 +40,9 @@ fn parse_dto_config(attrs: &[Attribute]) -> DtoConfig {
         if !attr.path().is_ident("dto") {
             continue;
         }
-        if let Ok(nested) = attr.parse_args_with(
-            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-        ) {
+        if let Ok(nested) = attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
             for meta in &nested {
                 if let Meta::Path(path) = meta {
                     if path.is_ident("create") {
@@ -67,9 +67,9 @@ fn parse_field_config(field: &Field) -> FieldConfig {
         if !attr.path().is_ident("dto") {
             continue;
         }
-        if let Ok(nested) = attr.parse_args_with(
-            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-        ) {
+        if let Ok(nested) = attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated)
+        {
             for meta in &nested {
                 if let Meta::Path(path) = meta {
                     if path.is_ident("skip_create") {
@@ -90,11 +90,7 @@ fn parse_field_config(field: &Field) -> FieldConfig {
 /// Filter out `#[dto(...)]` attributes so they do not propagate to generated
 /// structs.
 fn non_dto_attrs(field: &Field) -> Vec<&Attribute> {
-    field
-        .attrs
-        .iter()
-        .filter(|a| !a.path().is_ident("dto"))
-        .collect()
+    field.attrs.iter().filter(|a| !a.path().is_ident("dto")).collect()
 }
 
 fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
@@ -113,10 +109,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         },
         _ => {
-            return Err(syn::Error::new_spanned(
-                name,
-                "GenerateDto only supports structs",
-            ));
+            return Err(syn::Error::new_spanned(name, "GenerateDto only supports structs"));
         }
     };
 
@@ -246,18 +239,9 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("struct CreateOrder"),
-            "should generate CreateOrder struct"
-        );
-        assert!(
-            output_str.contains("pub id : OrderId"),
-            "should include id field"
-        );
-        assert!(
-            output_str.contains("pub name : String"),
-            "should include name field"
-        );
+        assert!(output_str.contains("struct CreateOrder"), "should generate CreateOrder struct");
+        assert!(output_str.contains("pub id : OrderId"), "should include id field");
+        assert!(output_str.contains("pub name : String"), "should include name field");
     }
 
     #[test]
@@ -277,14 +261,8 @@ mod tests {
             output_str.contains("struct UpdateProduct"),
             "should generate UpdateProduct struct"
         );
-        assert!(
-            output_str.contains("Option < String >"),
-            "name should be Option<String>"
-        );
-        assert!(
-            output_str.contains("Option < f64 >"),
-            "price should be Option<f64>"
-        );
+        assert!(output_str.contains("Option < String >"), "name should be Option<String>");
+        assert!(output_str.contains("Option < f64 >"), "price should be Option<f64>");
     }
 
     #[test]
@@ -327,18 +305,9 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("struct CreateInvoice"),
-            "should generate CreateInvoice"
-        );
-        assert!(
-            !output_str.contains("id : InvoiceId"),
-            "id should be skipped in Create DTO"
-        );
-        assert!(
-            output_str.contains("pub amount : f64"),
-            "amount should be present"
-        );
+        assert!(output_str.contains("struct CreateInvoice"), "should generate CreateInvoice");
+        assert!(!output_str.contains("id : InvoiceId"), "id should be skipped in Create DTO");
+        assert!(output_str.contains("pub amount : f64"), "amount should be present");
     }
 
     #[test]
@@ -355,18 +324,9 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("struct UpdateShipment"),
-            "should generate UpdateShipment"
-        );
-        assert!(
-            output_str.contains("pub tracking"),
-            "tracking should be present"
-        );
-        assert!(
-            !output_str.contains("created_at"),
-            "created_at should be skipped"
-        );
+        assert!(output_str.contains("struct UpdateShipment"), "should generate UpdateShipment");
+        assert!(output_str.contains("pub tracking"), "tracking should be present");
+        assert!(!output_str.contains("created_at"), "created_at should be skipped");
     }
 
     #[test]
@@ -383,18 +343,9 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("struct ReturnFilter"),
-            "should generate ReturnFilter"
-        );
-        assert!(
-            output_str.contains("pub id"),
-            "id should be present"
-        );
-        assert!(
-            !output_str.contains("internal_notes"),
-            "internal_notes should be skipped"
-        );
+        assert!(output_str.contains("struct ReturnFilter"), "should generate ReturnFilter");
+        assert!(output_str.contains("pub id"), "id should be present");
+        assert!(!output_str.contains("internal_notes"), "internal_notes should be skipped");
     }
 
     #[test]
@@ -413,18 +364,9 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("struct CreateWarranty"),
-            "should generate CreateWarranty"
-        );
-        assert!(
-            output_str.contains("struct UpdateWarranty"),
-            "should generate UpdateWarranty"
-        );
-        assert!(
-            output_str.contains("struct WarrantyFilter"),
-            "should generate WarrantyFilter"
-        );
+        assert!(output_str.contains("struct CreateWarranty"), "should generate CreateWarranty");
+        assert!(output_str.contains("struct UpdateWarranty"), "should generate UpdateWarranty");
+        assert!(output_str.contains("struct WarrantyFilter"), "should generate WarrantyFilter");
     }
 
     #[test]
@@ -458,10 +400,7 @@ mod tests {
             !output_str.contains("pub struct CreateInternal"),
             "should not generate pub struct for non-pub input"
         );
-        assert!(
-            output_str.contains("struct CreateInternal"),
-            "should still generate the struct"
-        );
+        assert!(output_str.contains("struct CreateInternal"), "should still generate the struct");
     }
 
     #[test]
@@ -477,10 +416,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("compile_error"),
-            "should produce compile error for enums"
-        );
+        assert!(output_str.contains("compile_error"), "should produce compile error for enums");
     }
 
     #[test]

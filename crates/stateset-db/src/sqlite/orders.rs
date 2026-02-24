@@ -12,9 +12,9 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
-    CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
-    OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, UpdateOrder,
+    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, CustomerId,
+    FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId, OrderRepository,
+    OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, UpdateOrder,
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku,
 };
@@ -205,7 +205,11 @@ impl SqliteOrderRepository {
         let items = stmt
             .query_map([order_id.to_string()], |row| {
                 Ok(OrderItem {
-                    id: OrderItemId::from(parse_uuid_row(&row.get::<_, String>("id")?, "order_item", "id")?),
+                    id: OrderItemId::from(parse_uuid_row(
+                        &row.get::<_, String>("id")?,
+                        "order_item",
+                        "id",
+                    )?),
                     order_id: OrderId::from(parse_uuid_row(
                         &row.get::<_, String>("order_id")?,
                         "order_item",
@@ -1270,7 +1274,9 @@ impl OrderRepository for SqliteOrderRepository {
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(id.into_uuid()),
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        CommerceError::OrderNotFound(id.into_uuid())
+                    }
                     e => map_db_error(e),
                 })?;
             let current_status: OrderStatus = parse_enum(&current_status_raw, "order", "status")?;
@@ -1474,7 +1480,9 @@ impl SqliteOrderRepository {
                 row.get(0)
             })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(order_id.into_uuid()),
+                rusqlite::Error::QueryReturnedNoRows => {
+                    CommerceError::OrderNotFound(order_id.into_uuid())
+                }
                 e => map_db_error(e),
             })?;
 

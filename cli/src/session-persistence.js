@@ -6,6 +6,36 @@
 import fs from 'fs/promises';
 import path from 'path';
 
+const DIRECTORY_MODE = 0o700;
+const FILE_MODE = 0o600;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function validateSessionId(sessionId) {
+  if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) {
+    throw new Error(`Invalid session id: ${sessionId}`);
+  }
+  return sessionId;
+}
+
+async function chmodIfSupported(targetPath, mode) {
+  try {
+    await fs.chmod(targetPath, mode);
+  } catch {
+    // ignore platforms/filesystems that do not support chmod
+  }
+}
+
+async function ensureSecureDirectory(directoryPath) {
+  await fs.mkdir(directoryPath, { recursive: true, mode: DIRECTORY_MODE });
+  await chmodIfSupported(directoryPath, DIRECTORY_MODE);
+}
+
+async function writeSecureFile(filePath, content) {
+  await ensureSecureDirectory(path.dirname(filePath));
+  await fs.writeFile(filePath, content, { mode: FILE_MODE });
+  await chmodIfSupported(filePath, FILE_MODE);
+}
+
 export class SessionPersistence {
   constructor(options = {}) {
     this.sessionDir = options.sessionDir || '.stateset/sessions';
@@ -19,7 +49,7 @@ export class SessionPersistence {
     if (this.initialized) return;
 
     try {
-      await fs.mkdir(this.sessionDir, { recursive: true });
+      await ensureSecureDirectory(this.sessionDir);
 
       const files = await fs.readdir(this.sessionDir);
       const now = Date.now();
@@ -33,8 +63,10 @@ export class SessionPersistence {
 
             if (now - session.lastAccessedAt > this.sessionTtl) {
               await fs.unlink(filePath);
-            } else {
+            } else if (session?.id && SESSION_ID_PATTERN.test(session.id)) {
               this.sessions.set(session.id, session);
+            } else {
+              await fs.unlink(filePath);
             }
           } catch (error) {
             console.warn(`Failed to load session from ${file}:`, error.message);
@@ -51,17 +83,19 @@ export class SessionPersistence {
 
   async saveSession(session) {
     await this.initialize();
+    const sessionId = validateSessionId(session?.id);
 
     const sessionData = {
       ...session,
+      id: sessionId,
       lastAccessedAt: Date.now(),
       persistedAt: Date.now(),
     };
 
-    this.sessions.set(sessionData.id, sessionData);
+    this.sessions.set(sessionId, sessionData);
 
-    const filePath = path.join(this.sessionDir, `${sessionData.id}.json`);
-    await fs.writeFile(filePath, JSON.stringify(sessionData, null, 2));
+    const filePath = path.join(this.sessionDir, `${sessionId}.json`);
+    await writeSecureFile(filePath, JSON.stringify(sessionData, null, 2));
 
     await this.cleanupOldSessions();
 
@@ -70,30 +104,42 @@ export class SessionPersistence {
 
   async getSession(sessionId) {
     await this.initialize();
+    let safeSessionId;
+    try {
+      safeSessionId = validateSessionId(sessionId);
+    } catch {
+      return null;
+    }
 
-    const session = this.sessions.get(sessionId);
+    const session = this.sessions.get(safeSessionId);
     if (!session) {
       return null;
     }
 
     const now = Date.now();
     if (now - session.lastAccessedAt > this.sessionTtl) {
-      await this.deleteSession(sessionId);
+      await this.deleteSession(safeSessionId);
       return null;
     }
 
     session.lastAccessedAt = now;
-    this.sessions.set(sessionId, session);
+    this.sessions.set(safeSessionId, session);
 
     return session;
   }
 
   async deleteSession(sessionId) {
     await this.initialize();
+    let safeSessionId;
+    try {
+      safeSessionId = validateSessionId(sessionId);
+    } catch {
+      return;
+    }
 
-    this.sessions.delete(sessionId);
+    this.sessions.delete(safeSessionId);
 
-    const filePath = path.join(this.sessionDir, `${sessionId}.json`);
+    const filePath = path.join(this.sessionDir, `${safeSessionId}.json`);
     try {
       await fs.unlink(filePath);
     } catch (error) {
@@ -235,9 +281,10 @@ export class SessionPersistence {
   }
 
   async importSession(sessionData) {
-    if (!sessionData.id || !sessionData.operations) {
+    if (!sessionData?.id || !sessionData.operations) {
       throw new Error('Invalid session data: missing id or operations');
     }
+    validateSessionId(sessionData.id);
 
     const session = {
       id: sessionData.id,

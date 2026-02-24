@@ -101,10 +101,7 @@ mod tests {
 
     #[test]
     fn wildcard_in_list_matches_all() {
-        assert!(matches_event_filter_str(
-            "foo",
-            &["specific.event", "*", "other.event"]
-        ));
+        assert!(matches_event_filter_str("foo", &["specific.event", "*", "other.event"]));
     }
 
     // ===== Exact match =====
@@ -128,35 +125,20 @@ mod tests {
 
     #[test]
     fn prefix_wildcard_matches() {
-        assert!(matches_event_filter_str(
-            "a2a_payment.created",
-            &["a2a_payment.*"]
-        ));
-        assert!(matches_event_filter_str(
-            "a2a_payment.completed",
-            &["a2a_payment.*"]
-        ));
-        assert!(matches_event_filter_str(
-            "a2a_payment.failed",
-            &["a2a_payment.*"]
-        ));
+        assert!(matches_event_filter_str("a2a_payment.created", &["a2a_payment.*"]));
+        assert!(matches_event_filter_str("a2a_payment.completed", &["a2a_payment.*"]));
+        assert!(matches_event_filter_str("a2a_payment.failed", &["a2a_payment.*"]));
     }
 
     #[test]
     fn prefix_wildcard_does_not_match_different_prefix() {
-        assert!(!matches_event_filter_str(
-            "escrow.released",
-            &["a2a_payment.*"]
-        ));
+        assert!(!matches_event_filter_str("escrow.released", &["a2a_payment.*"]));
     }
 
     #[test]
     fn prefix_wildcard_requires_dot_separator() {
         // "a2a_payment." prefix means "a2a_paymentX" should NOT match
-        assert!(!matches_event_filter_str(
-            "a2a_paymentExtra",
-            &["a2a_payment.*"]
-        ));
+        assert!(!matches_event_filter_str("a2a_paymentExtra", &["a2a_payment.*"]));
     }
 
     #[test]
@@ -217,10 +199,7 @@ mod tests {
 
     #[test]
     fn event_type_with_many_dots() {
-        assert!(matches_event_filter_str(
-            "a2a.payment.v2.created",
-            &["a2a.payment.*"]
-        ));
+        assert!(matches_event_filter_str("a2a.payment.v2.created", &["a2a.payment.*"]));
     }
 
     #[test]

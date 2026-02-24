@@ -90,6 +90,23 @@ describe('SessionManager CRUD', () => {
     sm = new SessionManager({ sessionDir: dir });
     assert.strictEqual(sm.delete('nope'), false);
   });
+
+  it('rejects unsafe session ids', () => {
+    dir = tmpDir();
+    sm = new SessionManager({ sessionDir: dir });
+    assert.strictEqual(sm.load('../escape'), null);
+    assert.strictEqual(sm.exists('../escape'), false);
+    assert.strictEqual(sm.delete('../escape'), false);
+  });
+
+  it('writes session data with restricted file permissions', () => {
+    if (process.platform === 'win32') return;
+    dir = tmpDir();
+    sm = new SessionManager({ sessionDir: dir });
+    const session = sm.create();
+    const mode = fs.statSync(path.join(dir, `${session.id}.json`)).mode & 0o777;
+    assert.strictEqual(mode, 0o600);
+  });
 });
 
 // ===========================================================================
@@ -153,6 +170,25 @@ describe('SessionManager addOperation', () => {
     const loaded = sm.load(session.id);
     assert.strictEqual(loaded.operations.length, 50);
     assert.strictEqual(loaded.operations[0].request, 'op-5'); // first 5 trimmed
+    rmDir(dir);
+  });
+
+  it('redacts sensitive data before persisting operations', () => {
+    const dir = tmpDir();
+    const sm = new SessionManager({ sessionDir: dir });
+    const session = sm.create();
+
+    sm.addOperation(session.id, {
+      request: 'Authorization: Bearer sk-test-secret',
+      response: 'api_key=shhh',
+      toolCalls: [{ name: 'sync', apiKey: 'super-secret' }],
+      duration: 10,
+    });
+
+    const loaded = sm.load(session.id);
+    assert.ok(loaded.operations[0].request.includes('[REDACTED]'));
+    assert.ok(loaded.operations[0].response.includes('[REDACTED]'));
+    assert.strictEqual(loaded.operations[0].toolCalls[0].apiKey, '[REDACTED]');
     rmDir(dir);
   });
 });
@@ -455,6 +491,29 @@ describe('CommandHistory', () => {
     const recent = ch.getRecent(10);
     assert.strictEqual(recent.length, 3);
     assert.strictEqual(recent[0].command, 'cmd-4'); // most recent
+    rmDir(dir);
+  });
+
+  it('redacts sensitive flags from stored command history', () => {
+    const dir = tmpDir();
+    const histFile = path.join(dir, 'history');
+    const ch = new CommandHistory({ historyFile: histFile });
+
+    ch.add('stateset --token super-secret --apply "list orders"');
+    const recent = ch.getRecent(1);
+    assert.ok(recent[0].command.includes('--token [REDACTED]'));
+    rmDir(dir);
+  });
+
+  it('writes history with restricted file permissions', () => {
+    if (process.platform === 'win32') return;
+    const dir = tmpDir();
+    const histFile = path.join(dir, 'history');
+    const ch = new CommandHistory({ historyFile: histFile });
+
+    ch.add('list orders');
+    const mode = fs.statSync(histFile).mode & 0o777;
+    assert.strictEqual(mode, 0o600);
     rmDir(dir);
   });
 });

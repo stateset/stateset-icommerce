@@ -28,9 +28,7 @@ impl PaginationParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit
-            .unwrap_or(Self::DEFAULT_LIMIT)
-            .min(Self::MAX_LIMIT)
+        self.limit.unwrap_or(Self::DEFAULT_LIMIT).min(Self::MAX_LIMIT)
     }
 
     /// Resolved offset.
@@ -638,36 +636,21 @@ mod tests {
 
     #[test]
     fn order_list_response_serialization() {
-        let resp = OrderListResponse {
-            orders: vec![],
-            total: 0,
-            limit: 50,
-            offset: 0,
-        };
+        let resp = OrderListResponse { orders: vec![], total: 0, limit: 50, offset: 0 };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["total"], 0);
     }
 
     #[test]
     fn customer_list_response_serialization() {
-        let resp = CustomerListResponse {
-            customers: vec![],
-            total: 0,
-            limit: 50,
-            offset: 0,
-        };
+        let resp = CustomerListResponse { customers: vec![], total: 0, limit: 50, offset: 0 };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["total"], 0);
     }
 
     #[test]
     fn product_list_response_serialization() {
-        let resp = ProductListResponse {
-            products: vec![],
-            total: 0,
-            limit: 50,
-            offset: 0,
-        };
+        let resp = ProductListResponse { products: vec![], total: 0, limit: 50, offset: 0 };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["total"], 0);
     }

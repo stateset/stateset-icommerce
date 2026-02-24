@@ -124,10 +124,7 @@ impl PolicySet {
             let (matched, condition_details) = rule.matches_with_detail(context);
 
             if matched {
-                matched_rules.push(MatchedRule {
-                    id: rule.id,
-                    name: rule.name.clone(),
-                });
+                matched_rules.push(MatchedRule { id: rule.id, name: rule.name.clone() });
 
                 // Build the reason from action.reason, action.metadata.reason, or rule description
                 let reason = rule
@@ -176,12 +173,8 @@ impl PolicySet {
         let matched = !matched_rules.is_empty();
 
         // Deny-overrides within this set
-        let has_deny = actions
-            .iter()
-            .any(|a| a.action_type == ActionType::Deny);
-        let has_allow = actions
-            .iter()
-            .any(|a| a.action_type == ActionType::Allow);
+        let has_deny = actions.iter().any(|a| a.action_type == ActionType::Deny);
+        let has_allow = actions.iter().any(|a| a.action_type == ActionType::Allow);
 
         PolicySetEvaluation {
             policy_set_id: self.id,
@@ -227,7 +220,13 @@ mod tests {
     use crate::{Condition, ConditionGroup, ConditionNode, Logic, Operator};
     use serde_json::json;
 
-    fn make_deny_rule(name: &str, field: &str, op: Operator, value: Value, priority: i32) -> PolicyRule {
+    fn make_deny_rule(
+        name: &str,
+        field: &str,
+        op: Operator,
+        value: Value,
+        priority: i32,
+    ) -> PolicyRule {
         PolicyRule::new(name, format!("{name} description"))
             .with_priority(priority)
             .with_conditions(ConditionGroup::new(
@@ -237,7 +236,13 @@ mod tests {
             .with_action(PolicyAction::deny("denied", "fix it"))
     }
 
-    fn make_allow_rule(name: &str, field: &str, op: Operator, value: Value, priority: i32) -> PolicyRule {
+    fn make_allow_rule(
+        name: &str,
+        field: &str,
+        op: Operator,
+        value: Value,
+        priority: i32,
+    ) -> PolicyRule {
         PolicyRule::new(name, format!("{name} description"))
             .with_priority(priority)
             .with_conditions(ConditionGroup::new(
@@ -322,19 +327,13 @@ mod tests {
             .with_stop_on_match()
             .with_conditions(ConditionGroup::new(
                 Logic::And,
-                vec![ConditionNode::Leaf(Condition::new(
-                    "x",
-                    Operator::Eq,
-                    json!(1),
-                ))],
+                vec![ConditionNode::Leaf(Condition::new("x", Operator::Eq, json!(1)))],
             ))
             .with_action(PolicyAction::agent("returns", "auto-approve"));
 
         let second_rule = make_deny_rule("second", "x", Operator::Eq, json!(1), 50);
 
-        let ps = PolicySet::new("stop-test", "returns")
-            .with_rule(stop_rule)
-            .with_rule(second_rule);
+        let ps = PolicySet::new("stop-test", "returns").with_rule(stop_rule).with_rule(second_rule);
 
         let eval = ps.evaluate(&json!({"x": 1}));
         // Only the first rule should match because stop_on_match is true
@@ -348,15 +347,9 @@ mod tests {
             PolicyRule::new("check", "Check total")
                 .with_conditions(ConditionGroup::new(
                     Logic::And,
-                    vec![ConditionNode::Leaf(Condition::new(
-                        "total",
-                        Operator::Gt,
-                        json!(100),
-                    ))],
+                    vec![ConditionNode::Leaf(Condition::new("total", Operator::Gt, json!(100)))],
                 ))
-                .with_action(
-                    PolicyAction::deny("too high", "reduce")
-                ),
+                .with_action(PolicyAction::deny("too high", "reduce")),
         );
 
         let eval = ps.evaluate(&json!({"total": 200}));

@@ -15,7 +15,7 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AnalyticsQuery, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
-    CustomerId, CustomerFilter, OrderFilter, ProductId, TimePeriod,
+    CustomerFilter, CustomerId, OrderFilter, ProductId, TimePeriod,
 };
 use tempfile::NamedTempFile;
 use uuid::Uuid;

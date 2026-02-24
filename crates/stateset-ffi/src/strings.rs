@@ -86,7 +86,6 @@ pub extern "C" fn stateset_string_free(ptr: *mut c_char) {
 // Tests
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

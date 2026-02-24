@@ -10,7 +10,9 @@ use stateset_primitives::{ShippingMethodId, ShippingZoneId};
 use strum::{Display, EnumString};
 
 /// Shipping method pricing type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -260,7 +262,11 @@ mod tests {
     use rust_decimal_macros::dec;
     use stateset_primitives::{ShippingMethodId, ShippingZoneId};
 
-    fn make_method(method_type: ShippingMethodType, base_rate: Decimal, conditions: Vec<ShippingCondition>) -> ZoneShippingMethod {
+    fn make_method(
+        method_type: ShippingMethodType,
+        base_rate: Decimal,
+        conditions: Vec<ShippingCondition>,
+    ) -> ZoneShippingMethod {
         ZoneShippingMethod {
             id: ShippingMethodId::new(),
             zone_id: ShippingZoneId::new(),

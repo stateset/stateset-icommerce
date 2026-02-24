@@ -70,10 +70,7 @@ mod tests {
 
     #[test]
     fn error_display_outbox_full() {
-        let err = SyncError::OutboxFull {
-            capacity: 1000,
-            current: 1000,
-        };
+        let err = SyncError::OutboxFull { capacity: 1000, current: 1000 };
         assert_eq!(err.to_string(), "outbox full: capacity 1000, current 1000");
     }
 
@@ -102,10 +99,7 @@ mod tests {
 
     #[test]
     fn error_display_sequence_out_of_range() {
-        let err = SyncError::SequenceOutOfRange {
-            requested: 500,
-            head: 100,
-        };
+        let err = SyncError::SequenceOutOfRange { requested: 500, head: 100 };
         assert!(err.to_string().contains("500"));
         assert!(err.to_string().contains("100"));
     }

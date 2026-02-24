@@ -9,7 +9,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::encoding::{u64_be, uuid_to_bytes};
-use crate::{domain, CryptoError};
+use crate::{CryptoError, domain};
 
 /// Parameters for leaf hash computation
 #[derive(Debug)]
@@ -200,14 +200,8 @@ mod tests {
             event_signing_hash: &event_hash,
             agent_signature: &sig,
         };
-        let p2 = LeafParams {
-            sequence_number: 2,
-            ..p1
-        };
-        assert_ne!(
-            compute_leaf_hash(&p1).unwrap(),
-            compute_leaf_hash(&p2).unwrap()
-        );
+        let p2 = LeafParams { sequence_number: 2, ..p1 };
+        assert_ne!(compute_leaf_hash(&p1).unwrap(), compute_leaf_hash(&p2).unwrap());
     }
 
     #[test]
@@ -253,10 +247,7 @@ mod tests {
         let c = [3u8; 32];
         let pad = compute_pad_leaf();
         let root = compute_merkle_root(&[a, b, c]);
-        let expected = compute_node_hash(
-            &compute_node_hash(&a, &b),
-            &compute_node_hash(&c, &pad),
-        );
+        let expected = compute_node_hash(&compute_node_hash(&a, &b), &compute_node_hash(&c, &pad));
         assert_eq!(root, expected);
     }
 
@@ -267,10 +258,7 @@ mod tests {
         let c = [3u8; 32];
         let d = [4u8; 32];
         let root = compute_merkle_root(&[a, b, c, d]);
-        let expected = compute_node_hash(
-            &compute_node_hash(&a, &b),
-            &compute_node_hash(&c, &d),
-        );
+        let expected = compute_node_hash(&compute_node_hash(&a, &b), &compute_node_hash(&c, &d));
         assert_eq!(root, expected);
     }
 

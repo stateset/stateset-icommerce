@@ -22,16 +22,9 @@ fn deny_high_value_orders() {
         .with_priority(10)
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "order.total",
-                Operator::Gt,
-                json!(10000),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("order.total", Operator::Gt, json!(10000)))],
         ))
-        .with_action(PolicyAction::deny(
-            "Order exceeds $10,000 limit",
-            "Request manager approval",
-        ));
+        .with_action(PolicyAction::deny("Order exceeds $10,000 limit", "Request manager approval"));
 
     let policy_set = PolicySet::new("order-limits", "orders").with_rule(rule);
     engine.register_policy_set(policy_set);
@@ -57,16 +50,9 @@ fn allow_normal_value_orders() {
         .with_priority(10)
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "order.total",
-                Operator::Gt,
-                json!(10000),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("order.total", Operator::Gt, json!(10000)))],
         ))
-        .with_action(PolicyAction::deny(
-            "Order exceeds $10,000 limit",
-            "Request manager approval",
-        ));
+        .with_action(PolicyAction::deny("Order exceeds $10,000 limit", "Request manager approval"));
 
     let policy_set = PolicySet::new("order-limits", "orders")
         .with_rule(rule)
@@ -98,11 +84,7 @@ fn deny_overrides_allow_across_policy_sets() {
         PolicyRule::new("allow", "Allow everything")
             .with_conditions(ConditionGroup::new(
                 Logic::And,
-                vec![ConditionNode::Leaf(Condition::new(
-                    "order.total",
-                    Operator::Gt,
-                    json!(0),
-                ))],
+                vec![ConditionNode::Leaf(Condition::new("order.total", Operator::Gt, json!(0)))],
             ))
             .with_action(PolicyAction::allow()),
     );
@@ -119,20 +101,14 @@ fn deny_overrides_allow_across_policy_sets() {
                     json!(10000),
                 ))],
             ))
-            .with_action(PolicyAction::deny(
-                "Too expensive",
-                "Get approval",
-            )),
+            .with_action(PolicyAction::deny("Too expensive", "Get approval")),
     );
 
     engine.register_policy_set(allow_set);
     engine.register_policy_set(deny_set);
 
     // Even though allow-all matches, deny should override
-    let result = engine.evaluate(
-        "orders",
-        &json!({ "order": { "total": 25000 } }),
-    );
+    let result = engine.evaluate("orders", &json!({ "order": { "total": 25000 } }));
 
     assert!(result.should_deny, "Deny should override allow");
     assert!(!result.should_allow);
@@ -149,11 +125,7 @@ fn dry_run_does_not_record_history() {
     let rule = PolicyRule::new("test", "Test rule")
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "x",
-                Operator::Gt,
-                json!(0),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("x", Operator::Gt, json!(0)))],
         ))
         .with_action(PolicyAction::deny("denied", "fix"));
 
@@ -173,11 +145,7 @@ fn evaluate_records_history() {
     let rule = PolicyRule::new("test", "Test rule")
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "x",
-                Operator::Gt,
-                json!(0),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("x", Operator::Gt, json!(0)))],
         ))
         .with_action(PolicyAction::allow());
 
@@ -205,16 +173,9 @@ fn load_policy_set_from_json_value() {
         .with_priority(5)
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "order.item_count",
-                Operator::Gt,
-                json!(50),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("order.item_count", Operator::Gt, json!(50)))],
         ))
-        .with_action(PolicyAction::deny(
-            "Too many items in order",
-            "Split into multiple orders",
-        ));
+        .with_action(PolicyAction::deny("Too many items in order", "Split into multiple orders"));
 
     engine.register_policy_set(PolicySet::new("item-limits", "orders").with_rule(rule));
 
@@ -240,16 +201,8 @@ fn complex_or_conditions() {
         .with_conditions(ConditionGroup::new(
             Logic::Or,
             vec![
-                ConditionNode::Leaf(Condition::new(
-                    "order.total",
-                    Operator::Gt,
-                    json!(5000),
-                )),
-                ConditionNode::Leaf(Condition::new(
-                    "customer.flagged",
-                    Operator::Eq,
-                    json!(true),
-                )),
+                ConditionNode::Leaf(Condition::new("order.total", Operator::Gt, json!(5000))),
+                ConditionNode::Leaf(Condition::new("customer.flagged", Operator::Eq, json!(true))),
             ],
         ))
         .with_action(PolicyAction::deny("Risk detected", "Manual review"));
@@ -264,10 +217,8 @@ fn complex_or_conditions() {
     assert!(result.should_deny);
 
     // Flagged customer => deny
-    let result = engine.evaluate(
-        "orders",
-        &json!({ "order": { "total": 100 }, "customer": { "flagged": true } }),
-    );
+    let result = engine
+        .evaluate("orders", &json!({ "order": { "total": 100 }, "customer": { "flagged": true } }));
     assert!(result.should_deny);
 
     // Neither condition => allow (no default means vacuous allow)
@@ -288,11 +239,7 @@ fn multiple_domains_independent() {
             PolicyRule::new("high-value", "High value check")
                 .with_conditions(ConditionGroup::new(
                     Logic::And,
-                    vec![ConditionNode::Leaf(Condition::new(
-                        "total",
-                        Operator::Gt,
-                        json!(1000),
-                    ))],
+                    vec![ConditionNode::Leaf(Condition::new("total", Operator::Gt, json!(1000)))],
                 ))
                 .with_action(PolicyAction::deny("Too high", "Lower amount")),
         ),

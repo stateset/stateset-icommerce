@@ -244,10 +244,7 @@ impl AuditLog {
     /// When the log exceeds `max_size`, the oldest records are discarded.
     #[must_use]
     pub const fn new(max_size: usize) -> Self {
-        Self {
-            records: Vec::new(),
-            max_size,
-        }
+        Self { records: Vec::new(), max_size }
     }
 
     /// Appends a record. If the log is full, the oldest record is removed.
@@ -339,8 +336,8 @@ mod tests {
 
     #[test]
     fn record_serde_roundtrip() {
-        let r = make_record("alice", "orders", AccessDecision::Allowed)
-            .with_metadata("key", "value");
+        let r =
+            make_record("alice", "orders", AccessDecision::Allowed).with_metadata("key", "value");
 
         let json = serde_json::to_string(&r).unwrap();
         let parsed: AuditRecord = serde_json::from_str(&json).unwrap();
@@ -447,11 +444,7 @@ mod tests {
         log.record(make_record("alice", "customers", AccessDecision::Allowed));
         log.record(make_record("bob", "orders", AccessDecision::Allowed));
 
-        let results = log.query(
-            &AuditFilter::new()
-                .actor("alice")
-                .resource_type("orders"),
-        );
+        let results = log.query(&AuditFilter::new().actor("alice").resource_type("orders"));
         assert_eq!(results.len(), 1);
     }
 

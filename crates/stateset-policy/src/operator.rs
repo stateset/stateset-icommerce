@@ -163,13 +163,9 @@ impl Operator {
 
             // -- Numeric --
             Self::Between => {
-                if let (Some(val), Value::Array(range)) =
-                    (as_f64(field_value), compare_value)
-                {
+                if let (Some(val), Value::Array(range)) = (as_f64(field_value), compare_value) {
                     if range.len() == 2 {
-                        if let (Some(min), Some(max)) =
-                            (as_f64(&range[0]), as_f64(&range[1]))
-                        {
+                        if let (Some(min), Some(max)) = (as_f64(&range[0]), as_f64(&range[1])) {
                             return val >= min && val <= max;
                         }
                     }

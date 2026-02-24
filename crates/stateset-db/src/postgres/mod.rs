@@ -2,6 +2,7 @@
 //!
 //! This module provides async PostgreSQL support for production deployments.
 
+mod a2a;
 mod accounts_payable;
 mod accounts_receivable;
 mod agent_cards;
@@ -39,8 +40,8 @@ mod warranties;
 mod work_orders;
 mod x402_credits;
 mod x402_payment_intents;
-mod a2a;
 
+pub use a2a::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
 pub use agent_cards::*;
@@ -78,7 +79,6 @@ pub use warranties::*;
 pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
-pub use a2a::*;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use stateset_core::CommerceError;
@@ -462,9 +462,7 @@ fn duplicate_key_value(message: &str) -> String {
     if let Some(start) = message.find(")=(") {
         let value_and_rest = &message[start + 3..];
         if let Some(end) = value_and_rest.find(')') {
-            return value_and_rest[..end]
-                .trim_matches(|c| c == '\'' || c == '"')
-                .to_string();
+            return value_and_rest[..end].trim_matches(|c| c == '\'' || c == '"').to_string();
         }
     }
 
@@ -490,30 +488,41 @@ mod tests {
 
     #[test]
     fn test_map_unique_constraint_error_recognizes_email() {
-        let error = map_unique_constraint_error("users_email_key", "duplicate key value violates unique constraint \"users_email_key\"")
-            .expect("expected email error");
+        let error = map_unique_constraint_error(
+            "users_email_key",
+            "duplicate key value violates unique constraint \"users_email_key\"",
+        )
+        .expect("expected email error");
         assert!(matches!(error, CommerceError::EmailAlreadyExists(_)));
     }
 
     #[test]
     fn test_map_unique_constraint_error_recognizes_slug() {
-        let error = map_unique_constraint_error("products_slug_key", "duplicate key value violates unique constraint \"products_slug_key\"")
-            .expect("expected slug error");
+        let error = map_unique_constraint_error(
+            "products_slug_key",
+            "duplicate key value violates unique constraint \"products_slug_key\"",
+        )
+        .expect("expected slug error");
         assert!(matches!(error, CommerceError::DuplicateSlug(_)));
     }
 
     #[test]
     fn test_map_unique_constraint_error_is_case_insensitive() {
-        let error =
-            map_unique_constraint_error("Products_Sku_Key", "duplicate key value violates unique constraint \"Products_Sku_Key\"")
-                .expect("expected sku error");
+        let error = map_unique_constraint_error(
+            "Products_Sku_Key",
+            "duplicate key value violates unique constraint \"Products_Sku_Key\"",
+        )
+        .expect("expected sku error");
         assert!(matches!(error, CommerceError::DuplicateSku(_)));
     }
 
     #[test]
     fn test_map_unique_constraint_error_recognizes_sku() {
-        let error = map_unique_constraint_error("products_variants_sku_key", "duplicate key value violates unique constraint \"products_variants_sku_key\"")
-            .expect("expected sku error");
+        let error = map_unique_constraint_error(
+            "products_variants_sku_key",
+            "duplicate key value violates unique constraint \"products_variants_sku_key\"",
+        )
+        .expect("expected sku error");
         assert!(matches!(error, CommerceError::DuplicateSku(_)));
     }
 }
@@ -545,9 +554,7 @@ fn is_retryable_postgres_error(error: &sqlx::Error) -> bool {
 
 #[cfg(feature = "postgres")]
 fn normalize_statement_timeout_ms(timeout_ms: Option<u64>) -> i32 {
-    timeout_ms
-        .unwrap_or(crate::DEFAULT_TRANSACTION_TIMEOUT_MS)
-        .min(i32::MAX as u64) as i32
+    timeout_ms.unwrap_or(crate::DEFAULT_TRANSACTION_TIMEOUT_MS).min(i32::MAX as u64) as i32
 }
 
 #[cfg(feature = "postgres")]
@@ -729,7 +736,10 @@ mod tests {
 
     #[test]
     fn is_retryable_postgres_error_matches_transient_codes() {
-        assert!(is_retryable_postgres_error(&mock_db_error(Some("40001"), "serialization_failure")));
+        assert!(is_retryable_postgres_error(&mock_db_error(
+            Some("40001"),
+            "serialization_failure"
+        )));
         assert!(is_retryable_postgres_error(&mock_db_error(Some("40P01"), "deadlock_detected")));
         assert!(is_retryable_postgres_error(&mock_db_error(Some("55P03"), "lock_not_available")));
         assert!(!is_retryable_postgres_error(&mock_db_error(Some("23505"), "unique_violation")));
@@ -739,12 +749,12 @@ mod tests {
 
     #[test]
     fn normalize_statement_timeout_ms_uses_default_and_caps_max_i32() {
-        assert_eq!(normalize_statement_timeout_ms(None), crate::DEFAULT_TRANSACTION_TIMEOUT_MS as i32);
-        assert_eq!(normalize_statement_timeout_ms(Some(1500)), 1500);
         assert_eq!(
-            normalize_statement_timeout_ms(Some(i32::MAX as u64 + 1)),
-            i32::MAX,
+            normalize_statement_timeout_ms(None),
+            crate::DEFAULT_TRANSACTION_TIMEOUT_MS as i32
         );
+        assert_eq!(normalize_statement_timeout_ms(Some(1500)), 1500);
+        assert_eq!(normalize_statement_timeout_ms(Some(i32::MAX as u64 + 1)), i32::MAX,);
     }
 
     #[tokio::test]

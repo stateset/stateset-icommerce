@@ -262,10 +262,7 @@ mod tests {
         );
         assert_eq!(action.action_type, ActionType::Workflow);
         assert_eq!(action.workflow.as_deref(), Some("orderFulfillment"));
-        assert_eq!(
-            action.metadata,
-            Some(json!({"requiresReview": true}))
-        );
+        assert_eq!(action.metadata, Some(json!({"requiresReview": true})));
     }
 
     #[test]
@@ -299,10 +296,7 @@ mod tests {
 
     #[test]
     fn action_type_serde() {
-        assert_eq!(
-            serde_json::to_string(&ActionType::Allow).unwrap(),
-            "\"allow\""
-        );
+        assert_eq!(serde_json::to_string(&ActionType::Allow).unwrap(), "\"allow\"");
         let deser: ActionType = serde_json::from_str("\"deny\"").unwrap();
         assert_eq!(deser, ActionType::Deny);
     }

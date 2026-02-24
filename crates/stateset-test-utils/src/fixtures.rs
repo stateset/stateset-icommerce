@@ -12,6 +12,7 @@ use rust_decimal_macros::dec;
 use stateset_core::CustomerId;
 use uuid::Uuid;
 
+use stateset_core::ProductId;
 use stateset_core::models::customer::{CreateCustomer, CreateCustomerAddress};
 use stateset_core::models::fraud::{CreateFraudRule, FraudDecision, FraudSignalType};
 use stateset_core::models::gift_card::CreateGiftCard;
@@ -24,7 +25,6 @@ use stateset_core::models::segment::{CreateSegment, SegmentType};
 use stateset_core::models::shipping_zone::CreateShippingZone;
 use stateset_core::models::store_credit::{CreateStoreCredit, StoreCreditReason};
 use stateset_core::models::wishlist::CreateWishlist;
-use stateset_core::ProductId;
 
 // ============================================================================
 // Customer Fixtures
@@ -50,10 +50,7 @@ pub fn create_customer_input() -> CreateCustomer {
 
 /// Create a [`CreateCustomer`] with a specific email.
 pub fn create_customer_with_email(email: impl Into<String>) -> CreateCustomer {
-    CreateCustomer {
-        email: email.into(),
-        ..create_customer_input()
-    }
+    CreateCustomer { email: email.into(), ..create_customer_input() }
 }
 
 /// Create a [`CreateCustomerAddress`] for a given customer.
@@ -145,7 +142,10 @@ pub fn create_order_input(customer_id: CustomerId) -> CreateOrder {
 }
 
 /// Create a [`CreateOrder`] with specific items.
-pub fn create_order_with_items(customer_id: CustomerId, items: Vec<CreateOrderItem>) -> CreateOrder {
+pub fn create_order_with_items(
+    customer_id: CustomerId,
+    items: Vec<CreateOrderItem>,
+) -> CreateOrder {
     CreateOrder {
         customer_id,
         items,
@@ -356,11 +356,7 @@ pub fn create_shipping_zone_input() -> CreateShippingZone {
 /// assert!(!input.is_public);
 /// ```
 pub fn create_wishlist_input(customer_id: CustomerId) -> CreateWishlist {
-    CreateWishlist {
-        customer_id,
-        name: "My Wishlist".to_string(),
-        is_public: false,
-    }
+    CreateWishlist { customer_id, name: "My Wishlist".to_string(), is_public: false }
 }
 
 // ============================================================================

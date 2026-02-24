@@ -479,7 +479,11 @@ impl PgPaymentRepository {
 
     /// Get payments for order (async)
     pub async fn for_order_async(&self, order_id: Uuid) -> Result<Vec<Payment>> {
-        self.list_async(PaymentFilter { order_id: Some(OrderId::from(order_id)), ..Default::default() }).await
+        self.list_async(PaymentFilter {
+            order_id: Some(OrderId::from(order_id)),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Get payments for invoice (async)
@@ -1228,11 +1232,17 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(PaymentId, UpdatePayment)>,
+    ) -> Result<BatchResult<Payment>> {
         super::block_on(self.update_batch_async(updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<Vec<Payment>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(PaymentId, UpdatePayment)>,
+    ) -> Result<Vec<Payment>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 

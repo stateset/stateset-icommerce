@@ -9,6 +9,83 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 
+const DIRECTORY_MODE = 0o700;
+const FILE_MODE = 0o600;
+const MAX_REDACTION_DEPTH = 6;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SENSITIVE_KEY_PATTERN = /(token|secret|password|api[-_]?key|authorization|cookie)/i;
+const SENSITIVE_VALUE_PATTERNS = [
+  {
+    pattern: /(\bBearer)\s+[A-Za-z0-9._~+/=-]+/gi,
+    replacement: '$1 [REDACTED]',
+  },
+  {
+    pattern: /(\b(?:token|api[_-]?key|secret|password)\b\s*=\s*)([^\s,&]+)/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    pattern: /([?&](?:token|api[_-]?key|secret|password)=)[^&\s]+/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    pattern: /(--(?:token|api[-_]?key|secret|password)(?:=|\s+))([^\s]+)/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    pattern: /("(?:token|secret|password|api[_-]?key|authorization|cookie)"\s*:\s*")[^"]*(")/gi,
+    replacement: '$1[REDACTED]$2',
+  },
+];
+
+function setPermissionIfSupported(targetPath, mode) {
+  try {
+    fs.chmodSync(targetPath, mode);
+  } catch {
+    // ignore platforms/filesystems that do not support chmod
+  }
+}
+
+function ensureSecureDirectory(directoryPath) {
+  fs.mkdirSync(directoryPath, { recursive: true, mode: DIRECTORY_MODE });
+  setPermissionIfSupported(directoryPath, DIRECTORY_MODE);
+}
+
+function writeSecureFile(filePath, content) {
+  ensureSecureDirectory(path.dirname(filePath));
+  fs.writeFileSync(filePath, content, { mode: FILE_MODE });
+  setPermissionIfSupported(filePath, FILE_MODE);
+}
+
+function normalizeSessionId(sessionId) {
+  if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) {
+    throw new Error(`Invalid session ID: ${sessionId}`);
+  }
+  return sessionId;
+}
+
+function redactString(value) {
+  let redacted = value;
+  for (const { pattern, replacement } of SENSITIVE_VALUE_PATTERNS) {
+    redacted = redacted.replace(pattern, replacement);
+  }
+  return redacted;
+}
+
+function redactSensitive(value, depth = 0) {
+  if (depth > MAX_REDACTION_DEPTH || value === null || value === undefined) return value;
+  if (typeof value === 'string') return redactString(value);
+  if (Array.isArray(value)) return value.map((item) => redactSensitive(item, depth + 1));
+  if (typeof value !== 'object') return value;
+
+  const redacted = {};
+  for (const [key, entryValue] of Object.entries(value)) {
+    redacted[key] = SENSITIVE_KEY_PATTERN.test(key)
+      ? '[REDACTED]'
+      : redactSensitive(entryValue, depth + 1);
+  }
+  return redacted;
+}
+
 /**
  * Default session directory
  */
@@ -37,9 +114,7 @@ export class SessionManager {
    * Ensure session directory exists
    */
   ensureDirectory() {
-    if (!fs.existsSync(this.sessionDir)) {
-      fs.mkdirSync(this.sessionDir, { recursive: true });
-    }
+    ensureSecureDirectory(this.sessionDir);
   }
 
   /**
@@ -89,16 +164,27 @@ export class SessionManager {
    * Get session file path
    */
   getPath(sessionId) {
-    return path.join(this.sessionDir, `${sessionId}.json`);
+    const safeSessionId = normalizeSessionId(sessionId);
+    const basePath = path.resolve(this.sessionDir);
+    const sessionPath = path.resolve(basePath, `${safeSessionId}.json`);
+    const basePrefix = basePath.endsWith(path.sep) ? basePath : `${basePath}${path.sep}`;
+    if (!sessionPath.startsWith(basePrefix)) {
+      throw new Error(`Invalid session path: ${sessionId}`);
+    }
+    return sessionPath;
   }
 
   /**
    * Save session to disk
    */
   save(session) {
+    if (!session?.id) {
+      throw new Error('Session must include an id');
+    }
+    normalizeSessionId(session.id);
     session.updatedAt = this._nextIsoTimestamp();
     const filePath = this.getPath(session.id);
-    fs.writeFileSync(filePath, JSON.stringify(session, null, 2));
+    writeSecureFile(filePath, JSON.stringify(session, null, 2));
     return session;
   }
 
@@ -106,7 +192,12 @@ export class SessionManager {
    * Load session from disk
    */
   load(sessionId) {
-    const filePath = this.getPath(sessionId);
+    let filePath;
+    try {
+      filePath = this.getPath(sessionId);
+    } catch {
+      return null;
+    }
 
     if (!fs.existsSync(filePath)) {
       return null;
@@ -125,14 +216,23 @@ export class SessionManager {
    * Check if session exists
    */
   exists(sessionId) {
-    return fs.existsSync(this.getPath(sessionId));
+    try {
+      return fs.existsSync(this.getPath(sessionId));
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Delete a session
    */
   delete(sessionId) {
-    const filePath = this.getPath(sessionId);
+    let filePath;
+    try {
+      filePath = this.getPath(sessionId);
+    } catch {
+      return false;
+    }
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
       return true;
@@ -146,12 +246,17 @@ export class SessionManager {
   addOperation(sessionId, operation) {
     const session = this.load(sessionId);
     if (!session) return null;
+    session.metadata = session.metadata || {
+      operationCount: 0,
+      lastOperation: null,
+      totalDuration: 0,
+    };
 
     const entry = {
       timestamp: new Date().toISOString(),
-      request: operation.request,
-      response: operation.response,
-      toolCalls: operation.toolCalls || [],
+      request: redactSensitive(operation.request),
+      response: redactSensitive(operation.response),
+      toolCalls: redactSensitive(operation.toolCalls || []),
       duration: operation.duration || 0,
       success: operation.success !== false,
     };
@@ -280,16 +385,21 @@ export class SessionManager {
    * Archive session to different location
    */
   archive(sessionId, archiveDir) {
+    let safeSessionId;
+    try {
+      safeSessionId = normalizeSessionId(sessionId);
+    } catch {
+      return false;
+    }
+
     const session = this.load(sessionId);
     if (!session) return false;
 
     const archivePath = path.join(archiveDir || path.join(this.sessionDir, 'archive'));
-    if (!fs.existsSync(archivePath)) {
-      fs.mkdirSync(archivePath, { recursive: true });
-    }
+    ensureSecureDirectory(archivePath);
 
-    const archiveFile = path.join(archivePath, `${sessionId}.json`);
-    fs.writeFileSync(archiveFile, JSON.stringify(session, null, 2));
+    const archiveFile = path.join(archivePath, `${safeSessionId}.json`);
+    writeSecureFile(archiveFile, JSON.stringify(session, null, 2));
     this.delete(sessionId);
 
     return true;
@@ -312,8 +422,13 @@ export class SessionManager {
     md += `## Operations\n\n`;
 
     for (const op of session.operations) {
+      const requestText =
+        typeof op.request === 'string' ? op.request : JSON.stringify(op.request || '');
+      const responseText =
+        typeof op.response === 'string' ? op.response : JSON.stringify(op.response || '');
+
       md += `### ${op.timestamp}\n\n`;
-      md += `**Request:** ${op.request}\n\n`;
+      md += `**Request:** ${requestText}\n\n`;
 
       if (op.toolCalls?.length > 0) {
         md += `**Tools:**\n`;
@@ -323,7 +438,7 @@ export class SessionManager {
         md += '\n';
       }
 
-      md += `**Response:** ${op.response?.slice(0, 200)}${op.response?.length > 200 ? '...' : ''}\n\n`;
+      md += `**Response:** ${responseText.slice(0, 200)}${responseText.length > 200 ? '...' : ''}\n\n`;
       md += `---\n\n`;
     }
 
@@ -379,11 +494,11 @@ export class CommandHistory {
 
   ensureFile() {
     const dir = path.dirname(this.historyFile);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    ensureSecureDirectory(dir);
     if (!fs.existsSync(this.historyFile)) {
-      fs.writeFileSync(this.historyFile, '');
+      writeSecureFile(this.historyFile, '');
+    } else {
+      setPermissionIfSupported(this.historyFile, FILE_MODE);
     }
   }
 
@@ -391,8 +506,10 @@ export class CommandHistory {
    * Add command to history
    */
   add(command) {
-    const entry = `${new Date().toISOString()}\t${command}\n`;
+    const safeCommand = redactString(String(command ?? ''));
+    const entry = `${new Date().toISOString()}\t${safeCommand}\n`;
     fs.appendFileSync(this.historyFile, entry);
+    setPermissionIfSupported(this.historyFile, FILE_MODE);
     this.trim();
   }
 
@@ -446,7 +563,7 @@ export class CommandHistory {
 
     if (lines.length > this.maxEntries) {
       const trimmed = lines.slice(-this.maxEntries).join('\n') + '\n';
-      fs.writeFileSync(this.historyFile, trimmed);
+      writeSecureFile(this.historyFile, trimmed);
     }
   }
 
@@ -454,7 +571,7 @@ export class CommandHistory {
    * Clear history
    */
   clear() {
-    fs.writeFileSync(this.historyFile, '');
+    writeSecureFile(this.historyFile, '');
   }
 }
 

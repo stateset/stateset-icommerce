@@ -70,10 +70,7 @@ impl Fraud {
     }
 
     /// List fraud assessments with optional filtering.
-    pub fn list_assessments(
-        &self,
-        filter: FraudAssessmentFilter,
-    ) -> Result<Vec<FraudAssessment>> {
+    pub fn list_assessments(&self, filter: FraudAssessmentFilter) -> Result<Vec<FraudAssessment>> {
         self.db.fraud().list_assessments(filter)
     }
 
@@ -85,9 +82,7 @@ impl Fraud {
         reviewer: String,
         notes: Option<String>,
     ) -> Result<FraudAssessment> {
-        self.db
-            .fraud()
-            .review_assessment(order_id, decision, reviewer, notes)
+        self.db.fraud().review_assessment(order_id, decision, reviewer, notes)
     }
 
     // ========================================================================

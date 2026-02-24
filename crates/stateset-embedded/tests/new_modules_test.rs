@@ -875,7 +875,8 @@ fn test_warranty_status_transition_guards() {
         })
         .expect("Failed to create warranty");
 
-    let expired = commerce.warranties().expire(warranty.id.into()).expect("Failed to expire warranty");
+    let expired =
+        commerce.warranties().expire(warranty.id.into()).expect("Failed to expire warranty");
     assert_eq!(expired.status, WarrantyStatus::Expired);
 
     let result = commerce.warranties().void(warranty.id.into());

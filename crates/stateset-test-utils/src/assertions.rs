@@ -19,16 +19,12 @@ macro_rules! assert_commerce_err {
     ($result:expr, $pattern:pat) => {
         match &$result {
             Err($pattern) => {}
-            Err(other) => panic!(
-                "expected error matching `{}`, got: {:?}",
-                stringify!($pattern),
-                other
-            ),
-            Ok(val) => panic!(
-                "expected error matching `{}`, got Ok({:?})",
-                stringify!($pattern),
-                val
-            ),
+            Err(other) => {
+                panic!("expected error matching `{}`, got: {:?}", stringify!($pattern), other)
+            }
+            Ok(val) => {
+                panic!("expected error matching `{}`, got Ok({:?})", stringify!($pattern), val)
+            }
         }
     };
 }
@@ -51,10 +47,12 @@ macro_rules! assert_json_roundtrip {
         let original = $value;
         let json = serde_json::to_string(&original)
             .unwrap_or_else(|e| panic!("failed to serialize {:?}: {}", original, e));
-        let deserialized: $ty = serde_json::from_str(&json)
-            .unwrap_or_else(|e| panic!("failed to deserialize `{}` as {}: {}", json, stringify!($ty), e));
+        let deserialized: $ty = serde_json::from_str(&json).unwrap_or_else(|e| {
+            panic!("failed to deserialize `{}` as {}: {}", json, stringify!($ty), e)
+        });
         assert_eq!(
-            original, deserialized,
+            original,
+            deserialized,
             "round-trip failed for {}: serialized as `{}`",
             stringify!($ty),
             json
@@ -99,11 +97,11 @@ macro_rules! assert_display_roundtrip {
     ($ty:ty, $value:expr) => {{
         let original = $value;
         let s = original.to_string();
-        let parsed: $ty = s
-            .parse()
-            .unwrap_or_else(|_| panic!("failed to parse `{}` as {}", s, stringify!($ty)));
+        let parsed: $ty =
+            s.parse().unwrap_or_else(|_| panic!("failed to parse `{}` as {}", s, stringify!($ty)));
         assert_eq!(
-            original, parsed,
+            original,
+            parsed,
             "Display/FromStr round-trip failed for {}: displayed as `{}`",
             stringify!($ty),
             s
@@ -113,8 +111,8 @@ macro_rules! assert_display_roundtrip {
 
 #[cfg(test)]
 mod tests {
-    use stateset_core::models::order::OrderStatus;
     use stateset_core::CommerceError;
+    use stateset_core::models::order::OrderStatus;
 
     #[test]
     fn commerce_err_macro() {

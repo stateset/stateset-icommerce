@@ -102,19 +102,13 @@ impl CurrencyConverter {
     /// Create a new empty converter with USD as the base currency.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            rates: HashMap::new(),
-            base_currency: "USD".into(),
-        }
+        Self { rates: HashMap::new(), base_currency: "USD".into() }
     }
 
     /// Create a new converter with a custom base currency for triangulation.
     #[must_use]
     pub fn with_base_currency(base: impl Into<String>) -> Self {
-        Self {
-            rates: HashMap::new(),
-            base_currency: base.into(),
-        }
+        Self { rates: HashMap::new(), base_currency: base.into() }
     }
 
     /// Add an exchange rate to the converter.
@@ -133,7 +127,12 @@ impl CurrencyConverter {
     /// # Errors
     ///
     /// Returns [`PricingError::NoExchangeRate`] if no path can be found.
-    pub fn convert(&self, amount: Decimal, from: &str, to: &str) -> PricingResult<ConversionResult> {
+    pub fn convert(
+        &self,
+        amount: Decimal,
+        from: &str,
+        to: &str,
+    ) -> PricingResult<ConversionResult> {
         // Same currency — no conversion needed
         if from.eq_ignore_ascii_case(to) {
             return Ok(ConversionResult {
@@ -235,12 +234,7 @@ mod tests {
     use rust_decimal_macros::dec;
 
     fn make_rate(from: &str, to: &str, rate: Decimal) -> ExchangeRate {
-        ExchangeRate {
-            from: from.into(),
-            to: to.into(),
-            rate,
-            as_of: Utc::now(),
-        }
+        ExchangeRate { from: from.into(), to: to.into(), rate, as_of: Utc::now() }
     }
 
     fn usd_eur_converter() -> CurrencyConverter {

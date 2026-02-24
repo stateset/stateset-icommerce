@@ -742,7 +742,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [fmt, clippy]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
 
     steps:
       - uses: actions/checkout@v6
@@ -765,11 +764,13 @@ jobs:
             --out Xml \
             --output-dir ./coverage \
             --workspace \
+            --fail-under 80 \
             --exclude-files '*/tests/*' \
             --exclude-files '*/benches/*' \
             --features postgres
 
       - name: Upload coverage to Codecov
+        if: github.event_name == 'push'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage/cobertura.xml

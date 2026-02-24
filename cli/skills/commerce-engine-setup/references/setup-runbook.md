@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 18+ for the CLI
+- Node.js 20.20.0+ and npm 10.0.0+ for the CLI (`nvm use` from repo root)
 - Optional: Docker + Docker Compose for sequencer
 - Repo paths:
   - CLI: /home/dom/stateset-icommerce/cli

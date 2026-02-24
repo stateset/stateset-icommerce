@@ -7,9 +7,7 @@ use crate::state::AppState;
 
 /// Build the health-check router.
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/health", get(health))
-        .route("/health/ready", get(readiness))
+    Router::new().route("/health", get(health)).route("/health/ready", get(readiness))
 }
 
 /// `GET /health` — simple liveness probe.
@@ -24,10 +22,7 @@ async fn readiness(State(state): State<AppState>) -> Json<ReadyResponse> {
         Ok(_) => "connected",
         Err(_) => "disconnected",
     };
-    Json(ReadyResponse {
-        status: "ok",
-        database: db_status,
-    })
+    Json(ReadyResponse { status: "ok", database: db_status })
 }
 
 #[cfg(test)]
@@ -39,17 +34,13 @@ mod tests {
     use tower::ServiceExt;
 
     fn app() -> Router {
-        router().with_state(AppState::new(
-            Commerce::new(":memory:").expect("in-memory Commerce"),
-        ))
+        router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
     }
 
     #[tokio::test]
     async fn health_returns_ok() {
-        let resp = app()
-            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app().oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -60,11 +51,7 @@ mod tests {
     #[tokio::test]
     async fn readiness_returns_connected() {
         let resp = app()
-            .oneshot(
-                Request::get("/health/ready")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/health/ready").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

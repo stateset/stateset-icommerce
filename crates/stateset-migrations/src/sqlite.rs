@@ -99,9 +99,7 @@ impl SqliteMigrator {
         match error {
             rusqlite::Error::SqliteFailure(code, msg) => {
                 code.code == rusqlite::ErrorCode::ConstraintViolation
-                    && msg
-                        .as_deref()
-                        .is_some_and(|text| text.contains("_migrations.version"))
+                    && msg.as_deref().is_some_and(|text| text.contains("_migrations.version"))
             }
             _ => false,
         }
@@ -130,9 +128,7 @@ impl SqliteMigrator {
             let tx = conn.unchecked_transaction()?;
             let already_applied = tx
                 .query_row(
-                    &format!(
-                        "SELECT 1 FROM {MIGRATIONS_TABLE} WHERE version = ?1 LIMIT 1",
-                    ),
+                    &format!("SELECT 1 FROM {MIGRATIONS_TABLE} WHERE version = ?1 LIMIT 1",),
                     rusqlite::params![migration.version],
                     |_| Ok(()),
                 )
@@ -147,9 +143,7 @@ impl SqliteMigrator {
                 // Another migrator may have committed this version while we were running.
                 let now_applied = tx
                     .query_row(
-                        &format!(
-                            "SELECT 1 FROM {MIGRATIONS_TABLE} WHERE version = ?1 LIMIT 1",
-                        ),
+                        &format!("SELECT 1 FROM {MIGRATIONS_TABLE} WHERE version = ?1 LIMIT 1",),
                         rusqlite::params![migration.version],
                         |_| Ok(()),
                     )
@@ -203,11 +197,7 @@ impl SqliteMigrator {
     ///
     /// Runs the `down_sql` of each migration in reverse order. Returns the
     /// list of rolled-back migration records.
-    pub fn rollback(
-        &self,
-        conn: &Connection,
-        target_version: u32,
-    ) -> Result<Vec<MigrationRecord>> {
+    pub fn rollback(&self, conn: &Connection, target_version: u32) -> Result<Vec<MigrationRecord>> {
         Self::ensure_migrations_table(conn)?;
         let applied = Self::load_applied(conn)?;
 
@@ -220,12 +210,11 @@ impl SqliteMigrator {
         let mut rolled_back = Vec::new();
 
         for migration in to_rollback {
-            let down_sql = migration.down_sql.as_ref().ok_or_else(|| {
-                MigrationError::NoDownMigration {
+            let down_sql =
+                migration.down_sql.as_ref().ok_or_else(|| MigrationError::NoDownMigration {
                     version: migration.version,
                     name: migration.name.clone(),
-                }
-            })?;
+                })?;
 
             let tx = conn.unchecked_transaction()?;
             tx.execute_batch(down_sql).map_err(|e| MigrationError::RollbackFailed {
@@ -312,7 +301,6 @@ mod tests {
                 3,
                 "create_comments",
                 "CREATE TABLE comments (id INTEGER PRIMARY KEY, post_id INTEGER, body TEXT);",
-                
                 "DROP TABLE IF EXISTS comments;",
             ))
             .build()
@@ -412,11 +400,7 @@ mod tests {
     #[test]
     fn rollback_no_down_sql_fails() {
         let reg = MigrationRegistry::builder()
-            .add(Migration::new(
-                1,
-                "create_stuff",
-                "CREATE TABLE stuff (id INTEGER PRIMARY KEY);",
-            ))
+            .add(Migration::new(1, "create_stuff", "CREATE TABLE stuff (id INTEGER PRIMARY KEY);"))
             .build()
             .unwrap();
         let conn = memory_conn();
@@ -540,9 +524,7 @@ mod tests {
         SqliteMigrator::ensure_migrations_table(&conn).unwrap();
 
         // Verify the table exists and has the expected columns
-        let mut stmt = conn
-            .prepare(&format!("PRAGMA table_info({MIGRATIONS_TABLE})"))
-            .unwrap();
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({MIGRATIONS_TABLE})")).unwrap();
         let columns: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(1))
             .unwrap()
@@ -578,11 +560,7 @@ mod tests {
                 "create_users",
                 "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT);",
             ))
-            .add(Migration::new(
-                2,
-                "create_posts",
-                "CREATE TABLE posts (id INTEGER PRIMARY KEY);",
-            ))
+            .add(Migration::new(2, "create_posts", "CREATE TABLE posts (id INTEGER PRIMARY KEY);"))
             .build()
             .unwrap();
 

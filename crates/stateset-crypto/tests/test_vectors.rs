@@ -10,13 +10,13 @@
 use serde_json::json;
 use stateset_crypto::canonicalize::canonicalize_json;
 use stateset_crypto::hash::{
-    compute_event_signing_hash, compute_legacy_payload_hash, compute_payload_aad,
-    compute_payload_cipher_hash, compute_payload_plain_hash, compute_recipients_hash,
-    EventSigningParams, PayloadAadParams, PayloadCipherParams,
+    EventSigningParams, PayloadAadParams, PayloadCipherParams, compute_event_signing_hash,
+    compute_legacy_payload_hash, compute_payload_aad, compute_payload_cipher_hash,
+    compute_payload_plain_hash, compute_recipients_hash,
 };
 use stateset_crypto::merkle::{
-    compute_leaf_hash, compute_node_hash, compute_pad_leaf, compute_receipt_hash,
-    compute_stream_id, LeafParams, ReceiptParams,
+    LeafParams, ReceiptParams, compute_leaf_hash, compute_node_hash, compute_pad_leaf,
+    compute_receipt_hash, compute_stream_id,
 };
 use stateset_crypto::{bytes_to_hex, encode_string, u32_be, u64_be, uuid_to_bytes};
 
@@ -65,18 +65,12 @@ fn jcs_array_preserves_order() {
 #[test]
 fn jcs_nested_object() {
     let val = json!({"z": {"b": 2, "a": 1}, "a": []});
-    assert_eq!(
-        canonicalize_json(&val).unwrap(),
-        "{\"a\":[],\"z\":{\"a\":1,\"b\":2}}"
-    );
+    assert_eq!(canonicalize_json(&val).unwrap(), "{\"a\":[],\"z\":{\"a\":1,\"b\":2}}");
 }
 
 #[test]
 fn jcs_key_value() {
-    assert_eq!(
-        canonicalize_json(&json!({"key": "value"})).unwrap(),
-        "{\"key\":\"value\"}"
-    );
+    assert_eq!(canonicalize_json(&json!({"key": "value"})).unwrap(), "{\"key\":\"value\"}");
 }
 
 // =============================================================================

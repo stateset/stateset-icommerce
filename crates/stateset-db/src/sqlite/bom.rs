@@ -54,7 +54,8 @@ impl SqliteBomRepository {
                         row.get::<_, Option<String>>(2)?,
                         "bom_component",
                         "component_product_id",
-                    )?.map(ProductId::from),
+                    )?
+                    .map(ProductId::from),
                     component_sku: row.get(3)?,
                     name: row.get(4)?,
                     quantity: parse_decimal_row(

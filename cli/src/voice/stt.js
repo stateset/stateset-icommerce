@@ -129,7 +129,7 @@ export class STTProvider {
 
     try {
       // Build multipart/form-data manually using the Blob/FormData API
-      // available in Node.js 18+ (native fetch)
+      // available in our Node.js 20.20.0+ baseline (native fetch)
       const formData = new FormData();
 
       const blob = new Blob([audioBuffer], { type: SUPPORTED_FORMATS[format] });

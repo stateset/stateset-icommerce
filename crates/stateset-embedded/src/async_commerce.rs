@@ -447,37 +447,16 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use stateset_core::{
-    CreateCustomObject, CreateCustomObjectType, CustomObject, CustomObjectFilter, CustomObjectType,
-    CustomObjectTypeFilter, UpdateCustomObject, UpdateCustomObjectType,
+    A2APurchase, A2APurchaseFilter, A2AQuote as SkillQuote, A2ASkill, AgentCard, AgentCardFilter,
+    CreateA2APurchase, CreateA2AQuote, CreateAgentCard, CreateX402PaymentIntent, PurchaseStatus,
+    QuoteStatus, SignX402PaymentIntent, SkillQuoteFilter, TrustLevel, UpdateAgentCard, X402Asset,
+    X402CreditAccount, X402CreditAdjustment, X402CreditDirection, X402CreditTransaction,
+    X402CreditTransactionFilter, X402IntentStatus, X402Network, X402PaymentIntent,
+    X402PaymentIntentFilter, to_smallest_unit,
 };
 use stateset_core::{
-    A2APurchase,
-    A2APurchaseFilter,
-    A2ASkill,
-    AgentCard,
-    AgentCardFilter,
-    A2AQuote as SkillQuote,
-    CreateA2APurchase,
-    CreateA2AQuote,
-    CreateAgentCard,
-    CreateX402PaymentIntent,
-    TrustLevel,
-    PurchaseStatus,
-    QuoteStatus,
-    SignX402PaymentIntent,
-    SkillQuoteFilter,
-    UpdateAgentCard,
-    X402Asset,
-    X402CreditAccount,
-    X402CreditAdjustment,
-    X402CreditDirection,
-    X402CreditTransaction,
-    X402CreditTransactionFilter,
-    X402IntentStatus,
-    X402Network,
-    X402PaymentIntent,
-    X402PaymentIntentFilter,
-    to_smallest_unit,
+    CreateCustomObject, CreateCustomObjectType, CustomObject, CustomObjectFilter, CustomObjectType,
+    CustomObjectTypeFilter, UpdateCustomObject, UpdateCustomObjectType,
 };
 /// Async commerce interface for PostgreSQL.
 ///
@@ -4821,10 +4800,7 @@ impl AsyncX402 {
         sequence_number: u64,
         batch_id: Uuid,
     ) -> Result<X402PaymentIntent> {
-        self.db
-            .x402_payment_intents()
-            .mark_sequenced_async(id, sequence_number, batch_id)
-            .await
+        self.db.x402_payment_intents().mark_sequenced_async(id, sequence_number, batch_id).await
     }
 
     /// Mark an intent as settled on-chain.
@@ -4868,7 +4844,10 @@ impl AsyncX402 {
     }
 
     /// List payment intents with optional filtering.
-    pub async fn list_intents(&self, filter: X402PaymentIntentFilter) -> Result<Vec<X402PaymentIntent>> {
+    pub async fn list_intents(
+        &self,
+        filter: X402PaymentIntentFilter,
+    ) -> Result<Vec<X402PaymentIntent>> {
         self.db.x402_payment_intents().list_async(filter).await
     }
 
@@ -4887,7 +4866,8 @@ impl AsyncX402 {
         &self,
         status: X402IntentStatus,
     ) -> Result<Vec<X402PaymentIntent>> {
-        self.list_intents(X402PaymentIntentFilter { status: Some(status), ..Default::default() }).await
+        self.list_intents(X402PaymentIntentFilter { status: Some(status), ..Default::default() })
+            .await
     }
 
     /// Get pending intents.
@@ -4926,10 +4906,7 @@ impl AsyncX402 {
         asset: X402Asset,
         network: X402Network,
     ) -> Result<X402CreditAccount> {
-        self.db
-            .x402_credits()
-            .get_or_create_account_async(payer_address, asset, network)
-            .await
+        self.db.x402_credits().get_or_create_account_async(payer_address, asset, network).await
     }
 
     /// Get current credit balance for a payer/asset/network.
@@ -5028,11 +5005,7 @@ impl AsyncX402 {
     }
 
     /// Update an agent card.
-    pub async fn update_agent(
-        &self,
-        id: Uuid,
-        input: UpdateAgentCard,
-    ) -> Result<AgentCard> {
+    pub async fn update_agent(&self, id: Uuid, input: UpdateAgentCard) -> Result<AgentCard> {
         self.db.agent_cards().update_async(id, input).await
     }
 
@@ -5211,7 +5184,10 @@ impl AsyncX402 {
     }
 
     /// Get an A2A purchase by purchase number.
-    pub async fn get_purchase_by_number(&self, purchase_number: &str) -> Result<Option<A2APurchase>> {
+    pub async fn get_purchase_by_number(
+        &self,
+        purchase_number: &str,
+    ) -> Result<Option<A2APurchase>> {
         self.db.a2a_purchases().get_purchase_by_number_async(purchase_number).await
     }
 
@@ -5225,11 +5201,12 @@ impl AsyncX402 {
     }
 
     /// Link an A2A purchase to an order.
-    pub async fn link_purchase_to_order(&self, purchase_id: Uuid, order_id: Uuid) -> Result<A2APurchase> {
-        self.db
-            .a2a_purchases()
-            .link_purchase_to_order_async(purchase_id, order_id)
-            .await
+    pub async fn link_purchase_to_order(
+        &self,
+        purchase_id: Uuid,
+        order_id: Uuid,
+    ) -> Result<A2APurchase> {
+        self.db.a2a_purchases().link_purchase_to_order_async(purchase_id, order_id).await
     }
 
     /// Confirm delivery for an A2A purchase.

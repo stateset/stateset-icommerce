@@ -67,11 +67,7 @@ fn extract_vec_inner(ty: &Type) -> Option<&Type> {
 /// `"String"`).
 fn type_ident_str(ty: &Type) -> Option<String> {
     if let Type::Path(type_path) = ty {
-        type_path
-            .path
-            .segments
-            .last()
-            .map(|s| s.ident.to_string())
+        type_path.path.segments.last().map(|s| s.ident.to_string())
     } else {
         None
     }
@@ -145,10 +141,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         },
         _ => {
-            return Err(syn::Error::new_spanned(
-                name,
-                "JsonSchema only supports structs",
-            ));
+            return Err(syn::Error::new_spanned(name, "JsonSchema only supports structs"));
         }
     };
 
@@ -159,10 +152,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let mut required_names = Vec::new();
 
     for field in fields {
-        let field_name = field
-            .ident
-            .as_ref()
-            .expect("named fields have identifiers");
+        let field_name = field.ident.as_ref().expect("named fields have identifiers");
         let field_name_str = field_name.to_string();
 
         let is_optional = extract_option_inner(&field.ty).is_some();
@@ -216,10 +206,7 @@ mod tests {
             output_str.contains("fn create_order_json_schema"),
             "should generate create_order_json_schema function"
         );
-        assert!(
-            output_str.contains("serde_json"),
-            "should reference serde_json"
-        );
+        assert!(output_str.contains("serde_json"), "should reference serde_json");
     }
 
     #[test]
@@ -233,10 +220,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("\"string\""),
-            "String field should map to \"string\" type"
-        );
+        assert!(output_str.contains("\"string\""), "String field should map to \"string\" type");
     }
 
     #[test]
@@ -268,10 +252,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("\"number\""),
-            "f64 should map to \"number\" type"
-        );
+        assert!(output_str.contains("\"number\""), "f64 should map to \"number\" type");
     }
 
     #[test]
@@ -285,10 +266,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("\"boolean\""),
-            "bool should map to \"boolean\" type"
-        );
+        assert!(output_str.contains("\"boolean\""), "bool should map to \"boolean\" type");
     }
 
     #[test]
@@ -302,10 +280,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("\"uuid\""),
-            "Uuid should produce format: uuid"
-        );
+        assert!(output_str.contains("\"uuid\""), "Uuid should produce format: uuid");
     }
 
     #[test]
@@ -319,10 +294,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("\"array\""),
-            "Vec<T> should map to \"array\" type"
-        );
+        assert!(output_str.contains("\"array\""), "Vec<T> should map to \"array\" type");
     }
 
     #[test]
@@ -358,10 +330,7 @@ mod tests {
         // The required array literal is at the end of the json! macro.
         // We split at "required" and check the second part.
         let parts: Vec<&str> = output_str.splitn(2, "\"required\"").collect();
-        assert!(
-            parts.len() == 2,
-            "should have a 'required' key in output"
-        );
+        assert!(parts.len() == 2, "should have a 'required' key in output");
         let after_required = parts[1];
         assert!(
             after_required.contains("\"required_name\""),
@@ -394,10 +363,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("compile_error"),
-            "enums should produce compile error"
-        );
+        assert!(output_str.contains("compile_error"), "enums should produce compile error");
     }
 
     #[test]
@@ -432,9 +398,6 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("\"number\""),
-            "Decimal should map to \"number\" type"
-        );
+        assert!(output_str.contains("\"number\""), "Decimal should map to \"number\" type");
     }
 }

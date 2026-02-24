@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use crate::canonicalize::canonicalize_json;
 use crate::encoding::{encode_string, u32_be, uuid_to_bytes};
-use crate::{domain, CryptoError, ZERO_HASH};
+use crate::{CryptoError, ZERO_HASH, domain};
 
 /// Compute `payload_plain_hash` per VES v1.0 Section 5.2
 ///
@@ -37,9 +37,7 @@ pub fn compute_payload_plain_hash(
 /// # Errors
 ///
 /// Returns [`CryptoError::SerializationError`] if the payload cannot be canonicalized.
-pub fn compute_legacy_payload_hash(
-    payload: &serde_json::Value,
-) -> Result<[u8; 32], CryptoError> {
+pub fn compute_legacy_payload_hash(payload: &serde_json::Value) -> Result<[u8; 32], CryptoError> {
     let canonical = canonicalize_json(payload)?;
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
@@ -170,9 +168,7 @@ pub struct PayloadAadParams<'a> {
 /// # Errors
 ///
 /// Returns [`CryptoError::InvalidUuid`] if any UUID field is invalid.
-pub fn compute_payload_aad(
-    params: &PayloadAadParams<'_>,
-) -> Result<[u8; 32], CryptoError> {
+pub fn compute_payload_aad(params: &PayloadAadParams<'_>) -> Result<[u8; 32], CryptoError> {
     let mut hasher = Sha256::new();
     hasher.update(domain::PAYLOAD_AAD);
     hasher.update(u32_be(params.ves_version));
@@ -196,9 +192,7 @@ pub fn compute_payload_aad(
 /// # Errors
 ///
 /// Returns [`CryptoError::SerializationError`] if the recipients cannot be canonicalized.
-pub fn compute_recipients_hash(
-    recipients: &[serde_json::Value],
-) -> Result<[u8; 32], CryptoError> {
+pub fn compute_recipients_hash(recipients: &[serde_json::Value]) -> Result<[u8; 32], CryptoError> {
     // Sort by recipient_kid
     let mut sorted: Vec<serde_json::Value> = recipients.to_vec();
     sorted.sort_by(|a, b| {
@@ -345,10 +339,7 @@ mod tests {
             payload_cipher_hash: &cipher_hash,
         };
         let hash1 = compute_event_signing_hash(&base).unwrap();
-        let modified = EventSigningParams {
-            event_type: "order.cancelled",
-            ..base
-        };
+        let modified = EventSigningParams { event_type: "order.cancelled", ..base };
         let hash2 = compute_event_signing_hash(&modified).unwrap();
         assert_ne!(hash1, hash2);
     }

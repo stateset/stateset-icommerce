@@ -152,7 +152,11 @@ impl Scheduler {
     ///
     /// Returns [`JobError::NotFound`] if the definition name is not registered,
     /// or [`JobError::QueueFull`] if the queue is at capacity.
-    pub fn schedule(&mut self, definition_name: &str, now: DateTime<Utc>) -> Result<Uuid, JobError> {
+    pub fn schedule(
+        &mut self,
+        definition_name: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Uuid, JobError> {
         if !self.definitions.contains_key(definition_name) {
             return Err(JobError::NotFound(Uuid::nil()));
         }
@@ -241,11 +245,7 @@ impl Scheduler {
 
             self.running.insert(
                 instance.id,
-                RunningJob {
-                    definition_name: def_name.clone(),
-                    started_at: now,
-                    timeout,
-                },
+                RunningJob { definition_name: def_name.clone(), started_at: now, timeout },
             );
 
             actions.push(TickAction::Execute {
@@ -266,10 +266,7 @@ impl Scheduler {
     pub fn complete(&mut self, job_id: Uuid, output: JobOutput) -> Result<(), JobError> {
         self.running.remove(&job_id);
 
-        let mut instance = self
-            .store
-            .get(&job_id)?
-            .ok_or(JobError::NotFound(job_id))?;
+        let mut instance = self.store.get(&job_id)?.ok_or(JobError::NotFound(job_id))?;
 
         instance.mark_completed(output)?;
         self.store.save(&instance)?;
@@ -290,10 +287,7 @@ impl Scheduler {
     pub fn fail(&mut self, job_id: Uuid, error: &str) -> Result<Option<TickAction>, JobError> {
         self.running.remove(&job_id);
 
-        let mut instance = self
-            .store
-            .get(&job_id)?
-            .ok_or(JobError::NotFound(job_id))?;
+        let mut instance = self.store.get(&job_id)?.ok_or(JobError::NotFound(job_id))?;
 
         instance.mark_failed(error)?;
         self.store.save(&instance)?;
@@ -306,10 +300,7 @@ impl Scheduler {
                 self.store.save(&instance)?;
                 self.queue.enqueue(instance)?;
 
-                return Ok(Some(TickAction::Retry {
-                    job_id,
-                    retry_at,
-                }));
+                return Ok(Some(TickAction::Retry { job_id, retry_at }));
             }
         }
 
@@ -356,7 +347,11 @@ impl Scheduler {
     }
 
     /// Re-schedule a recurring (interval/cron) job for its next run.
-    fn reschedule_recurring(&mut self, instance: &JobInstance, now: DateTime<Utc>) -> Result<(), JobError> {
+    fn reschedule_recurring(
+        &mut self,
+        instance: &JobInstance,
+        now: DateTime<Utc>,
+    ) -> Result<(), JobError> {
         let def = match self.definitions.get(&instance.definition_name) {
             Some(d) => d,
             None => return Ok(()),
@@ -364,8 +359,8 @@ impl Scheduler {
 
         let next_run = match &def.schedule {
             Schedule::Interval(dur) => {
-                let dur_chrono = chrono::Duration::from_std(*dur)
-                    .unwrap_or(chrono::Duration::seconds(60));
+                let dur_chrono =
+                    chrono::Duration::from_std(*dur).unwrap_or(chrono::Duration::seconds(60));
                 Some(now + dur_chrono)
             }
             Schedule::Cron(_) => {
@@ -399,8 +394,8 @@ mod tests {
     use crate::job::{BackoffStrategy, BoxFuture, JobHandler};
     use crate::store::InMemoryJobStore;
     use chrono::Duration;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     struct CountingHandler {
         handler_name: String,
@@ -410,18 +405,15 @@ mod tests {
     impl CountingHandler {
         fn new(name: &str) -> (Self, Arc<AtomicU32>) {
             let count = Arc::new(AtomicU32::new(0));
-            (
-                Self {
-                    handler_name: name.to_owned(),
-                    call_count: Arc::clone(&count),
-                },
-                count,
-            )
+            (Self { handler_name: name.to_owned(), call_count: Arc::clone(&count) }, count)
         }
     }
 
     impl JobHandler for CountingHandler {
-        fn execute<'a>(&'a self, _ctx: &'a JobContext) -> BoxFuture<'a, Result<JobOutput, JobError>> {
+        fn execute<'a>(
+            &'a self,
+            _ctx: &'a JobContext,
+        ) -> BoxFuture<'a, Result<JobOutput, JobError>> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(JobOutput::new("counted")) })
         }
@@ -502,7 +494,9 @@ mod tests {
 
         let actions = s.tick(now);
         assert_eq!(actions.len(), 1);
-        assert!(matches!(&actions[0], TickAction::Execute { definition_name, .. } if definition_name == "test"));
+        assert!(
+            matches!(&actions[0], TickAction::Execute { definition_name, .. } if definition_name == "test")
+        );
     }
 
     #[test]
@@ -684,8 +678,8 @@ mod tests {
     fn fail_no_retry_when_exhausted() {
         let mut s = make_scheduler();
         let (handler, _) = CountingHandler::new("no_retry");
-        let def = JobDefinition::new("no_retry", Schedule::Once, Box::new(handler))
-            .with_max_retries(0);
+        let def =
+            JobDefinition::new("no_retry", Schedule::Once, Box::new(handler)).with_max_retries(0);
         s.register(def).unwrap();
 
         let now = Utc::now();

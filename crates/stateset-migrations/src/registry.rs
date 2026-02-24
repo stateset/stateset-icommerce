@@ -91,10 +91,7 @@ impl MigrationRegistry {
     pub fn pending<'a>(&'a self, applied: &[MigrationRecord]) -> Vec<&'a Migration> {
         let applied_versions: std::collections::HashSet<u32> =
             applied.iter().map(|r| r.version).collect();
-        self.migrations
-            .values()
-            .filter(|m| !applied_versions.contains(&m.version))
-            .collect()
+        self.migrations.values().filter(|m| !applied_versions.contains(&m.version)).collect()
     }
 
     /// Validate that all applied migration checksums match the registered
@@ -120,10 +117,7 @@ impl MigrationRegistry {
     #[must_use]
     pub fn range_reverse(&self, to_version: u32, from_version: u32) -> Vec<&Migration> {
         self.migrations
-            .range((
-                std::ops::Bound::Excluded(to_version),
-                std::ops::Bound::Included(from_version),
-            ))
+            .range((std::ops::Bound::Excluded(to_version), std::ops::Bound::Included(from_version)))
             .rev()
             .map(|(_, m)| m)
             .collect()
@@ -247,10 +241,8 @@ mod tests {
         reg.register(m1.clone()).unwrap();
         reg.register(m2.clone()).unwrap();
 
-        let applied = vec![
-            make_record(1, "first", &m1.checksum),
-            make_record(2, "second", &m2.checksum),
-        ];
+        let applied =
+            vec![make_record(1, "first", &m1.checksum), make_record(2, "second", &m2.checksum)];
         assert!(reg.pending(&applied).is_empty());
     }
 

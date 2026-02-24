@@ -614,7 +614,11 @@ impl PgWarrantyRepository {
     }
 
     /// Transfer warranty to new customer (async)
-    pub async fn transfer_async(&self, id: WarrantyId, new_customer_id: CustomerId) -> Result<Warranty> {
+    pub async fn transfer_async(
+        &self,
+        id: WarrantyId,
+        new_customer_id: CustomerId,
+    ) -> Result<Warranty> {
         let warranty = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
         Self::ensure_can_transfer(&warranty, new_customer_id)?;
         let now = Utc::now();

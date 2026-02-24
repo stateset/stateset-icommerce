@@ -198,8 +198,9 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeCustome
         }
     };
 
-    let result =
-        use_handle(ptr, |commerce| commerce.customers().get(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| {
+        commerce.customers().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(customer)) => to_json_string(&env, &customer),
@@ -246,8 +247,9 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeCustome
         }
     };
 
-    let result =
-        use_handle(ptr, |commerce| commerce.customers().delete(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| {
+        commerce.customers().delete(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(_) => 1,
@@ -421,7 +423,8 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeOrderGe
         }
     };
 
-    let result = use_handle(ptr, |commerce| commerce.orders().get(uuid.into()).map_err(|e| e.to_string()));
+    let result =
+        use_handle(ptr, |commerce| commerce.orders().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(order)) => to_json_string(&env, &order),
@@ -702,8 +705,9 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeCartGet
         }
     };
 
-    let result =
-        use_handle(ptr, |commerce| commerce.carts().get(cart_uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| {
+        commerce.carts().get(cart_uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(cart)) => to_json_string(&env, &cart),
@@ -1035,8 +1039,9 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmen
         }
     };
 
-    let result =
-        use_handle(ptr, |commerce| commerce.shipments().get(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(shipment)) => to_json_string(&env, &shipment),
@@ -1148,8 +1153,9 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmen
         }
     };
 
-    let result =
-        use_handle(ptr, |commerce| commerce.shipments().cancel(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().cancel(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(shipment) => to_json_string(&env, &shipment),

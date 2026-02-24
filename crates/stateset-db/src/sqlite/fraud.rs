@@ -21,9 +21,7 @@ impl SqliteFraudRepository {
 
     #[allow(dead_code)]
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 }
 
@@ -36,10 +34,7 @@ impl FraudRepository for SqliteFraudRepository {
         todo!("SQLite fraud get_assessment")
     }
 
-    fn list_assessments(
-        &self,
-        _filter: FraudAssessmentFilter,
-    ) -> Result<Vec<FraudAssessment>> {
+    fn list_assessments(&self, _filter: FraudAssessmentFilter) -> Result<Vec<FraudAssessment>> {
         todo!("SQLite fraud list_assessments")
     }
 

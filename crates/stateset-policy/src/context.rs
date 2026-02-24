@@ -96,9 +96,7 @@ pub fn resolve_dynamic_ref(value: &Value, context: &Value) -> (Value, bool) {
     if let Value::String(s) = value {
         // Match pattern: ${path.to.field}
         if let Some(ref_path) = extract_dynamic_ref(s) {
-            let resolved = get_nested_value(context, ref_path)
-                .cloned()
-                .unwrap_or(Value::Null);
+            let resolved = get_nested_value(context, ref_path).cloned().unwrap_or(Value::Null);
             return (resolved, true);
         }
     }
@@ -113,11 +111,7 @@ fn extract_dynamic_ref(s: &str) -> Option<&str> {
     if s.starts_with("${") && s.ends_with('}') {
         let inner = &s[2..s.len() - 1];
         let trimmed = inner.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
+        if trimmed.is_empty() { None } else { Some(trimmed) }
     } else {
         None
     }
@@ -137,10 +131,7 @@ mod tests {
     #[test]
     fn nested_path() {
         let data = json!({"order": {"customer": {"email": "a@b.com"}}});
-        assert_eq!(
-            get_nested_value(&data, "order.customer.email"),
-            Some(&json!("a@b.com"))
-        );
+        assert_eq!(get_nested_value(&data, "order.customer.email"), Some(&json!("a@b.com")));
     }
 
     #[test]

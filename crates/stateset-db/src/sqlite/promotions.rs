@@ -1104,7 +1104,11 @@ impl SqlitePromotionRepository {
     fn row_to_coupon(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<CouponCode> {
         Ok(CouponCode {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "coupon_code", "id")?,
-            promotion_id: PromotionId::from(parse_uuid_row(&row.get::<_, String>(1)?, "coupon_code", "promotion_id")?),
+            promotion_id: PromotionId::from(parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "coupon_code",
+                "promotion_id",
+            )?),
             code: row.get(2)?,
             status: parse_enum_row(&row.get::<_, String>(3)?, "coupon_code", "status")?,
             usage_limit: row.get(4)?,

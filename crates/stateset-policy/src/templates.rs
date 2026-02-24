@@ -35,11 +35,7 @@ pub fn auto_approve_returns_template() -> PolicySet {
             .with_conditions(ConditionGroup::new(
                 Logic::And,
                 vec![
-                    ConditionNode::Leaf(Condition::new(
-                        "return.value",
-                        Operator::Lt,
-                        json!(100),
-                    )),
+                    ConditionNode::Leaf(Condition::new("return.value", Operator::Lt, json!(100))),
                     ConditionNode::Leaf(Condition::new(
                         "customer.lifetimeValue",
                         Operator::Gt,
@@ -58,30 +54,27 @@ pub fn auto_approve_returns_template() -> PolicySet {
             )),
         )
         .with_rule(
-            PolicyRule::new(
-                "flag_high_value_returns",
-                "Flag high-value returns for manual review",
-            )
-            .with_priority(50)
-            .with_conditions(ConditionGroup::new(
-                Logic::Or,
-                vec![
-                    ConditionNode::Leaf(Condition::new(
-                        "return.value",
-                        Operator::Gte,
-                        json!(500),
-                    )),
-                    ConditionNode::Leaf(Condition::new(
-                        "customer.returnRate",
-                        Operator::Gte,
-                        json!(0.2),
-                    )),
-                ],
-            ))
-            .with_action(
-                PolicyAction::workflow("returnProcessing")
-                    .with_metadata(json!({"requiresApproval": true})),
-            ),
+            PolicyRule::new("flag_high_value_returns", "Flag high-value returns for manual review")
+                .with_priority(50)
+                .with_conditions(ConditionGroup::new(
+                    Logic::Or,
+                    vec![
+                        ConditionNode::Leaf(Condition::new(
+                            "return.value",
+                            Operator::Gte,
+                            json!(500),
+                        )),
+                        ConditionNode::Leaf(Condition::new(
+                            "customer.returnRate",
+                            Operator::Gte,
+                            json!(0.2),
+                        )),
+                    ],
+                ))
+                .with_action(
+                    PolicyAction::workflow("returnProcessing")
+                        .with_metadata(json!({"requiresApproval": true})),
+                ),
         )
 }
 
@@ -256,75 +249,66 @@ pub fn promotion_eligibility_template() -> PolicySet {
     PolicySet::new("Promotion Eligibility Rules", "promotions")
         .with_description("Determine promotion eligibility and stacking")
         .with_rule(
-            PolicyRule::new(
-                "vip_exclusive",
-                "Allow VIP-only promotions",
-            )
-            .with_priority(100)
-            .with_conditions(ConditionGroup::new(
-                Logic::And,
-                vec![
-                    ConditionNode::Leaf(Condition::new(
-                        "promotion.vipOnly",
-                        Operator::IsTrue,
-                        json!(null),
-                    )),
-                    ConditionNode::Leaf(Condition::new(
-                        "customer.tier",
-                        Operator::In,
-                        json!(["gold", "platinum"]),
-                    )),
-                ],
-            ))
-            .with_action(PolicyAction::allow()),
+            PolicyRule::new("vip_exclusive", "Allow VIP-only promotions")
+                .with_priority(100)
+                .with_conditions(ConditionGroup::new(
+                    Logic::And,
+                    vec![
+                        ConditionNode::Leaf(Condition::new(
+                            "promotion.vipOnly",
+                            Operator::IsTrue,
+                            json!(null),
+                        )),
+                        ConditionNode::Leaf(Condition::new(
+                            "customer.tier",
+                            Operator::In,
+                            json!(["gold", "platinum"]),
+                        )),
+                    ],
+                ))
+                .with_action(PolicyAction::allow()),
         )
         .with_rule(
-            PolicyRule::new(
-                "block_vip_for_regular",
-                "Block VIP promotions for regular customers",
-            )
-            .with_priority(99)
-            .with_stop_on_match()
-            .with_conditions(ConditionGroup::new(
-                Logic::And,
-                vec![
-                    ConditionNode::Leaf(Condition::new(
-                        "promotion.vipOnly",
-                        Operator::IsTrue,
-                        json!(null),
-                    )),
-                    ConditionNode::Leaf(Condition::new(
-                        "customer.tier",
-                        Operator::NotIn,
-                        json!(["gold", "platinum"]),
-                    )),
-                ],
-            ))
-            .with_action(PolicyAction::deny_simple("VIP-only promotion")),
+            PolicyRule::new("block_vip_for_regular", "Block VIP promotions for regular customers")
+                .with_priority(99)
+                .with_stop_on_match()
+                .with_conditions(ConditionGroup::new(
+                    Logic::And,
+                    vec![
+                        ConditionNode::Leaf(Condition::new(
+                            "promotion.vipOnly",
+                            Operator::IsTrue,
+                            json!(null),
+                        )),
+                        ConditionNode::Leaf(Condition::new(
+                            "customer.tier",
+                            Operator::NotIn,
+                            json!(["gold", "platinum"]),
+                        )),
+                    ],
+                ))
+                .with_action(PolicyAction::deny_simple("VIP-only promotion")),
         )
         .with_rule(
-            PolicyRule::new(
-                "no_double_discount",
-                "Prevent stacking percentage discounts",
-            )
-            .with_priority(50)
-            .with_stop_on_match()
-            .with_conditions(ConditionGroup::new(
-                Logic::And,
-                vec![
-                    ConditionNode::Leaf(Condition::new(
-                        "cart.hasPercentageDiscount",
-                        Operator::IsTrue,
-                        json!(null),
-                    )),
-                    ConditionNode::Leaf(Condition::new(
-                        "promotion.type",
-                        Operator::Eq,
-                        json!("percentage"),
-                    )),
-                ],
-            ))
-            .with_action(PolicyAction::deny_simple("Cannot stack percentage discounts")),
+            PolicyRule::new("no_double_discount", "Prevent stacking percentage discounts")
+                .with_priority(50)
+                .with_stop_on_match()
+                .with_conditions(ConditionGroup::new(
+                    Logic::And,
+                    vec![
+                        ConditionNode::Leaf(Condition::new(
+                            "cart.hasPercentageDiscount",
+                            Operator::IsTrue,
+                            json!(null),
+                        )),
+                        ConditionNode::Leaf(Condition::new(
+                            "promotion.type",
+                            Operator::Eq,
+                            json!("percentage"),
+                        )),
+                    ],
+                ))
+                .with_action(PolicyAction::deny_simple("Cannot stack percentage discounts")),
         )
 }
 
@@ -456,10 +440,7 @@ mod tests {
         let eval = ps.evaluate(&ctx);
         assert!(eval.matched);
         // quantity=8 <= reorderPoint=10, so low_stock_reorder should match
-        assert!(eval
-            .matched_rules
-            .iter()
-            .any(|r| r.name == "low_stock_reorder"));
+        assert!(eval.matched_rules.iter().any(|r| r.name == "low_stock_reorder"));
     }
 
     // ---- Order fraud detection ----
@@ -477,10 +458,7 @@ mod tests {
         });
         let eval = ps.evaluate(&ctx);
         assert!(eval.matched);
-        assert!(eval
-            .matched_rules
-            .iter()
-            .any(|r| r.name == "high_value_new_customer"));
+        assert!(eval.matched_rules.iter().any(|r| r.name == "high_value_new_customer"));
     }
 
     #[test]
@@ -496,10 +474,7 @@ mod tests {
         });
         let eval = ps.evaluate(&ctx);
         assert!(eval.matched);
-        assert!(eval
-            .matched_rules
-            .iter()
-            .any(|r| r.name == "velocity_check"));
+        assert!(eval.matched_rules.iter().any(|r| r.name == "velocity_check"));
     }
 
     #[test]
@@ -515,10 +490,7 @@ mod tests {
         });
         let eval = ps.evaluate(&ctx);
         assert!(eval.matched);
-        assert!(eval
-            .matched_rules
-            .iter()
-            .any(|r| r.name == "shipping_billing_mismatch"));
+        assert!(eval.matched_rules.iter().any(|r| r.name == "shipping_billing_mismatch"));
     }
 
     #[test]
@@ -589,10 +561,7 @@ mod tests {
         });
         let eval = ps.evaluate(&ctx);
         assert!(eval.matched);
-        assert!(eval
-            .matched_rules
-            .iter()
-            .any(|r| r.name == "auto_cancel_failed_payments"));
+        assert!(eval.matched_rules.iter().any(|r| r.name == "auto_cancel_failed_payments"));
     }
 
     #[test]
@@ -605,10 +574,7 @@ mod tests {
         });
         let eval = ps.evaluate(&ctx);
         assert!(eval.matched);
-        assert!(eval
-            .matched_rules
-            .iter()
-            .any(|r| r.name == "offer_discount_on_cancel"));
+        assert!(eval.matched_rules.iter().any(|r| r.name == "offer_discount_on_cancel"));
     }
 
     // ---- Template counts ----

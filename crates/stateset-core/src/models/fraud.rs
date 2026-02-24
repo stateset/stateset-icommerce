@@ -37,7 +37,9 @@ pub enum FraudSignalType {
 }
 
 /// Fraud assessment decision
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -197,10 +199,7 @@ impl FraudAssessment {
             return 0.0;
         }
         // Use max signal score as the primary risk indicator
-        signals
-            .iter()
-            .map(|s| s.score)
-            .fold(0.0_f64, f64::max)
+        signals.iter().map(|s| s.score).fold(0.0_f64, f64::max)
     }
 
     /// Determine the decision based on risk score and rules
@@ -291,9 +290,27 @@ mod tests {
     fn calculate_risk_score_returns_max_signal_score() {
         let order_id = OrderId::new();
         let signals = vec![
-            FraudSignal { order_id, signal_type: FraudSignalType::VelocitySpike, score: 0.3, details: String::new(), detected_at: Utc::now() },
-            FraudSignal { order_id, signal_type: FraudSignalType::AddressMismatch, score: 0.7, details: String::new(), detected_at: Utc::now() },
-            FraudSignal { order_id, signal_type: FraudSignalType::GeoIpAnomaly, score: 0.5, details: String::new(), detected_at: Utc::now() },
+            FraudSignal {
+                order_id,
+                signal_type: FraudSignalType::VelocitySpike,
+                score: 0.3,
+                details: String::new(),
+                detected_at: Utc::now(),
+            },
+            FraudSignal {
+                order_id,
+                signal_type: FraudSignalType::AddressMismatch,
+                score: 0.7,
+                details: String::new(),
+                detected_at: Utc::now(),
+            },
+            FraudSignal {
+                order_id,
+                signal_type: FraudSignalType::GeoIpAnomaly,
+                score: 0.5,
+                details: String::new(),
+                detected_at: Utc::now(),
+            },
         ];
         assert!((FraudAssessment::calculate_risk_score(&signals) - 0.7).abs() < f64::EPSILON);
     }

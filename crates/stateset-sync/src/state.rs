@@ -83,54 +83,34 @@ mod tests {
 
     #[test]
     fn lag_calculation() {
-        let state = SyncState {
-            local_head: 5,
-            remote_head: 15,
-            ..Default::default()
-        };
+        let state = SyncState { local_head: 5, remote_head: 15, ..Default::default() };
         assert_eq!(state.lag(), 10);
     }
 
     #[test]
     fn lag_when_local_ahead() {
-        let state = SyncState {
-            local_head: 20,
-            remote_head: 15,
-            ..Default::default()
-        };
+        let state = SyncState { local_head: 20, remote_head: 15, ..Default::default() };
         assert_eq!(state.lag(), 0);
     }
 
     #[test]
     fn is_synced_when_equal() {
-        let state = SyncState {
-            local_head: 10,
-            remote_head: 10,
-            pending_count: 0,
-            ..Default::default()
-        };
+        let state =
+            SyncState { local_head: 10, remote_head: 10, pending_count: 0, ..Default::default() };
         assert!(state.is_synced());
     }
 
     #[test]
     fn not_synced_with_pending() {
-        let state = SyncState {
-            local_head: 10,
-            remote_head: 10,
-            pending_count: 3,
-            ..Default::default()
-        };
+        let state =
+            SyncState { local_head: 10, remote_head: 10, pending_count: 3, ..Default::default() };
         assert!(!state.is_synced());
     }
 
     #[test]
     fn not_synced_when_behind() {
-        let state = SyncState {
-            local_head: 5,
-            remote_head: 10,
-            pending_count: 0,
-            ..Default::default()
-        };
+        let state =
+            SyncState { local_head: 5, remote_head: 10, pending_count: 0, ..Default::default() };
         assert!(!state.is_synced());
     }
 
@@ -152,12 +132,8 @@ mod tests {
 
     #[test]
     fn state_clone_eq() {
-        let state = SyncState {
-            local_head: 10,
-            remote_head: 20,
-            pending_count: 5,
-            ..Default::default()
-        };
+        let state =
+            SyncState { local_head: 10, remote_head: 20, pending_count: 5, ..Default::default() };
         let cloned = state.clone();
         assert_eq!(state, cloned);
     }

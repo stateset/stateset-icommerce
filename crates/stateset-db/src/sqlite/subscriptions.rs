@@ -10,9 +10,9 @@ use stateset_core::{
     CreateBillingCycle, CreateSubscription, CreateSubscriptionItem, CreateSubscriptionPlan,
     CreateSubscriptionPlanItem, CustomerId, OrderId, PauseSubscription, PlanStatus, ProductId,
     Result, SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType,
-    SubscriptionFilter, SubscriptionId, SubscriptionItem, SubscriptionPlan,
-    SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus,
-    UpdateSubscription, UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
+    SubscriptionFilter, SubscriptionId, SubscriptionItem, SubscriptionPlan, SubscriptionPlanFilter,
+    SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus, UpdateSubscription,
+    UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
 };
 use uuid::Uuid;
 
@@ -672,7 +672,11 @@ impl SqliteSubscriptionRepository {
         Ok(subscriptions)
     }
 
-    pub fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription> {
+    pub fn update_subscription(
+        &self,
+        id: SubscriptionId,
+        input: UpdateSubscription,
+    ) -> Result<Subscription> {
         // Update subscription - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
@@ -728,7 +732,11 @@ impl SqliteSubscriptionRepository {
     // Subscription Lifecycle Operations
     // ========================================================================
 
-    pub fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription> {
+    pub fn pause_subscription(
+        &self,
+        id: SubscriptionId,
+        input: PauseSubscription,
+    ) -> Result<Subscription> {
         let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_pause() {
@@ -830,7 +838,11 @@ impl SqliteSubscriptionRepository {
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    pub fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription> {
+    pub fn cancel_subscription(
+        &self,
+        id: SubscriptionId,
+        input: CancelSubscription,
+    ) -> Result<Subscription> {
         let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_cancel() {
@@ -881,7 +893,11 @@ impl SqliteSubscriptionRepository {
         self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    pub fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
+    pub fn skip_billing_cycle(
+        &self,
+        id: SubscriptionId,
+        input: SkipBillingCycle,
+    ) -> Result<Subscription> {
         let sub = self.get_subscription(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if sub.status != SubscriptionStatus::Active {
@@ -890,8 +906,7 @@ impl SqliteSubscriptionRepository {
             ));
         }
 
-        let reason =
-            input.reason.unwrap_or_else(|| "Customer skipped billing cycle".to_string());
+        let reason = input.reason.unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
         let interval_days = if sub.billing_interval == BillingInterval::Custom {
             sub.custom_interval_days.unwrap_or(30) as i64
@@ -977,7 +992,10 @@ impl SqliteSubscriptionRepository {
         })
     }
 
-    fn get_subscription_items(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionItem>> {
+    fn get_subscription_items(
+        &self,
+        subscription_id: SubscriptionId,
+    ) -> Result<Vec<SubscriptionItem>> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
@@ -1369,9 +1387,17 @@ impl SqliteSubscriptionRepository {
 
     fn row_to_subscription(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<Subscription> {
         Ok(Subscription {
-            id: SubscriptionId::from(parse_uuid_row(&row.get::<_, String>(0)?, "subscription", "id")?),
+            id: SubscriptionId::from(parse_uuid_row(
+                &row.get::<_, String>(0)?,
+                "subscription",
+                "id",
+            )?),
             subscription_number: row.get(1)?,
-            customer_id: CustomerId::from(parse_uuid_row(&row.get::<_, String>(2)?, "subscription", "customer_id")?),
+            customer_id: CustomerId::from(parse_uuid_row(
+                &row.get::<_, String>(2)?,
+                "subscription",
+                "customer_id",
+            )?),
             plan_id: parse_uuid_row(&row.get::<_, String>(3)?, "subscription", "plan_id")?,
             plan_name: row.get(4)?,
             status: parse_enum_row(&row.get::<_, String>(5)?, "subscription", "status")?,
@@ -1506,7 +1532,8 @@ impl SqliteSubscriptionRepository {
                 row.get::<_, Option<String>>(13)?,
                 "billing_cycle",
                 "order_id",
-            )?.map(OrderId::from),
+            )?
+            .map(OrderId::from),
             invoice_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>(14)?,
                 "billing_cycle",
@@ -1582,15 +1609,27 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         Self::list_subscriptions(self, filter)
     }
 
-    fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription> {
+    fn update_subscription(
+        &self,
+        id: SubscriptionId,
+        input: UpdateSubscription,
+    ) -> Result<Subscription> {
         Self::update_subscription(self, id, input)
     }
 
-    fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription> {
+    fn cancel_subscription(
+        &self,
+        id: SubscriptionId,
+        input: CancelSubscription,
+    ) -> Result<Subscription> {
         Self::cancel_subscription(self, id, input)
     }
 
-    fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription> {
+    fn pause_subscription(
+        &self,
+        id: SubscriptionId,
+        input: PauseSubscription,
+    ) -> Result<Subscription> {
         Self::pause_subscription(self, id, input)
     }
 
@@ -1618,7 +1657,11 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         Self::update_billing_cycle_status(self, id, status, None, None)
     }
 
-    fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
+    fn skip_billing_cycle(
+        &self,
+        id: SubscriptionId,
+        input: SkipBillingCycle,
+    ) -> Result<Subscription> {
         Self::skip_billing_cycle(self, id, input)
     }
 
@@ -1629,17 +1672,13 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         notes: Option<String>,
     ) -> Result<SubscriptionEvent> {
         let description = notes.as_deref().unwrap_or("");
-        Self::record_event(
-            self,
-            subscription_id,
-            event_type,
-            description,
-            None,
-            None,
-        )
+        Self::record_event(self, subscription_id, event_type, description, None, None)
     }
 
-    fn get_subscription_events(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionEvent>> {
+    fn get_subscription_events(
+        &self,
+        subscription_id: SubscriptionId,
+    ) -> Result<Vec<SubscriptionEvent>> {
         Self::get_subscription_events(self, subscription_id, None)
     }
 }

@@ -98,9 +98,7 @@ impl ShippingZones {
         region: Option<&str>,
         postal_code: Option<&str>,
     ) -> Result<Vec<ShippingZone>> {
-        self.db
-            .shipping_zones()
-            .find_matching_zones(country, region, postal_code)
+        self.db.shipping_zones().find_matching_zones(country, region, postal_code)
     }
 
     // ========================================================================
@@ -118,7 +116,10 @@ impl ShippingZones {
     }
 
     /// List shipping methods with optional filtering.
-    pub fn list_methods(&self, filter: ZoneShippingMethodFilter) -> Result<Vec<ZoneShippingMethod>> {
+    pub fn list_methods(
+        &self,
+        filter: ZoneShippingMethodFilter,
+    ) -> Result<Vec<ZoneShippingMethod>> {
         self.db.zone_shipping_methods().list(filter)
     }
 

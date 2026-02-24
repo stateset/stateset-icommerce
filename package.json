@@ -10,9 +10,12 @@
     "prepare": "husky",
     "format": "prettier --write 'cli/{src,bin}/**/*.js'",
     "format:check": "prettier --check 'cli/{src,bin}/**/*.js'",
+    "check:env": "node scripts/check-node.mjs 20.20.0 10.0.0",
+    "test:env-check": "node --test scripts/check-node.test.mjs",
+    "check:shell": "bash -n examples/setup-sync.sh examples/verify-setup.sh scripts/arc_e2e_demo.sh",
     "check:rust": "cargo fmt --all -- --check && cargo test -p stateset-core -p stateset-db -p stateset-embedded --quiet",
-    "check:cli": "npm --prefix cli run lint && npm --prefix cli run typecheck",
-    "check": "npm run check:rust && npm run check:cli"
+    "check:cli": "npm run check:env && npm run test:env-check && npm --prefix cli run lint && npm --prefix cli run typecheck",
+    "check": "npm run check:rust && npm run check:shell && npm run check:cli"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.8.1",

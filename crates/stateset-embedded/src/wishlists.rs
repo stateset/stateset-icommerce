@@ -81,11 +81,7 @@ impl Wishlists {
     }
 
     /// Add an item to a wishlist.
-    pub fn add_item(
-        &self,
-        wishlist_id: WishlistId,
-        item: AddWishlistItem,
-    ) -> Result<WishlistItem> {
+    pub fn add_item(&self, wishlist_id: WishlistId, item: AddWishlistItem) -> Result<WishlistItem> {
         self.db.wishlists().add_item(wishlist_id, item)
     }
 

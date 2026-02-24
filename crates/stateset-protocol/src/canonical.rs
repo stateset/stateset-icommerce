@@ -188,10 +188,7 @@ mod tests {
     #[test]
     fn jcs_nested_sorts_keys() {
         let v = json!({"z": {"b": 2, "a": 1}, "a": 0});
-        assert_eq!(
-            canonical_json(&v).unwrap(),
-            r#"{"a":0,"z":{"a":1,"b":2}}"#
-        );
+        assert_eq!(canonical_json(&v).unwrap(), r#"{"a":0,"z":{"a":1,"b":2}}"#);
     }
 
     #[test]

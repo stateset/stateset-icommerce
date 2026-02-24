@@ -8,9 +8,9 @@ use stateset_core::{
     CommerceError, CreateCreditAccount, CreditAccount, CreditAccountFilter, CreditAccountStatus,
     CreditAgingBucket, CreditApplication, CreditApplicationFilter, CreditApplicationStatus,
     CreditCheckResult, CreditHold, CreditHoldFilter, CreditHoldStatus, CreditId, CreditRepository,
-    CreditTransaction, CreditTransactionFilter, CreditTransactionType, CustomerId,
-    CustomerCreditSummary, OrderId, PlaceCreditHold, RecordCreditTransaction, ReleaseCreditHold,
-    Result, ReviewCreditApplication, SubmitCreditApplication, UpdateCreditAccount,
+    CreditTransaction, CreditTransactionFilter, CreditTransactionType, CustomerCreditSummary,
+    CustomerId, OrderId, PlaceCreditHold, RecordCreditTransaction, ReleaseCreditHold, Result,
+    ReviewCreditApplication, SubmitCreditApplication, UpdateCreditAccount,
     generate_credit_application_number,
 };
 use uuid::Uuid;
@@ -32,11 +32,7 @@ impl SqliteCreditRepository {
 
     fn row_to_credit_account(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<CreditAccount> {
         Ok(CreditAccount {
-            id: CreditId::from(parse_uuid_row(
-                &row.get::<_, String>(0)?,
-                "credit_account",
-                "id",
-            )?),
+            id: CreditId::from(parse_uuid_row(&row.get::<_, String>(0)?, "credit_account", "id")?),
             customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>(1)?,
                 "credit_account",
@@ -296,7 +292,10 @@ impl CreditRepository for SqliteCreditRepository {
         }
     }
 
-    fn get_credit_account_by_customer(&self, customer_id: CustomerId) -> Result<Option<CreditAccount>> {
+    fn get_credit_account_by_customer(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Option<CreditAccount>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, customer_id, credit_limit, available_credit, current_balance, hold_amount,
@@ -314,7 +313,11 @@ impl CreditRepository for SqliteCreditRepository {
         }
     }
 
-    fn update_credit_account(&self, id: CreditId, input: UpdateCreditAccount) -> Result<CreditAccount> {
+    fn update_credit_account(
+        &self,
+        id: CreditId,
+        input: UpdateCreditAccount,
+    ) -> Result<CreditAccount> {
         let now = Utc::now();
 
         let account = self.get_credit_account(id)?.ok_or(CommerceError::NotFound)?;
@@ -421,7 +424,11 @@ impl CreditRepository for SqliteCreditRepository {
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn suspend_credit_account(&self, customer_id: CustomerId, reason: &str) -> Result<CreditAccount> {
+    fn suspend_credit_account(
+        &self,
+        customer_id: CustomerId,
+        reason: &str,
+    ) -> Result<CreditAccount> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
@@ -452,7 +459,11 @@ impl CreditRepository for SqliteCreditRepository {
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn check_credit(&self, customer_id: CustomerId, order_amount: Decimal) -> Result<CreditCheckResult> {
+    fn check_credit(
+        &self,
+        customer_id: CustomerId,
+        order_amount: Decimal,
+    ) -> Result<CreditCheckResult> {
         let now = Utc::now();
         let account = self.get_credit_account_by_customer(customer_id)?;
 
@@ -987,7 +998,10 @@ impl CreditRepository for SqliteCreditRepository {
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn get_customer_summary(&self, customer_id: CustomerId) -> Result<Option<CustomerCreditSummary>> {
+    fn get_customer_summary(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Option<CustomerCreditSummary>> {
         let account = self.get_credit_account_by_customer(customer_id)?;
 
         match account {

@@ -154,11 +154,7 @@ mod tests {
         let rule = PolicyRule::new("test", "Test rule")
             .with_conditions(ConditionGroup::new(
                 Logic::And,
-                vec![ConditionNode::Leaf(Condition::new(
-                    "total",
-                    Operator::Gt,
-                    json!(100),
-                ))],
+                vec![ConditionNode::Leaf(Condition::new("total", Operator::Gt, json!(100)))],
             ))
             .with_action(PolicyAction::deny("too high", "reduce"));
 
@@ -168,15 +164,10 @@ mod tests {
 
     #[test]
     fn disabled_rule_never_matches() {
-        let rule = PolicyRule::new("test", "Test rule")
-            .disabled()
-            .with_conditions(ConditionGroup::new(
+        let rule =
+            PolicyRule::new("test", "Test rule").disabled().with_conditions(ConditionGroup::new(
                 Logic::And,
-                vec![ConditionNode::Leaf(Condition::new(
-                    "total",
-                    Operator::Gt,
-                    json!(0),
-                ))],
+                vec![ConditionNode::Leaf(Condition::new("total", Operator::Gt, json!(0)))],
             ));
 
         assert!(!rule.matches(&json!({"total": 999})));
@@ -214,11 +205,7 @@ mod tests {
             .with_priority(50)
             .with_conditions(ConditionGroup::new(
                 Logic::And,
-                vec![ConditionNode::Leaf(Condition::new(
-                    "x",
-                    Operator::Eq,
-                    json!(1),
-                ))],
+                vec![ConditionNode::Leaf(Condition::new("x", Operator::Eq, json!(1)))],
             ))
             .with_action(PolicyAction::deny("reason", "fix"));
 

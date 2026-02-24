@@ -39,6 +39,9 @@ Thumbs.db
 # Database files (for testing)
 *.db
 *.sqlite
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Environment
 .env

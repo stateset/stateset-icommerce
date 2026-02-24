@@ -9,8 +9,8 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     routing::get,
 };
-use tokio_stream::wrappers::IntervalStream;
 use tokio_stream::StreamExt as _;
+use tokio_stream::wrappers::IntervalStream;
 
 use crate::dto::EventStreamParams;
 use crate::state::AppState;
@@ -39,9 +39,7 @@ async fn event_stream(
                 .event("heartbeat")
                 .data(format!(r#"{{"filter":"{f}","status":"listening"}}"#))
         } else {
-            Event::default()
-                .event("heartbeat")
-                .data(r#"{"status":"listening"}"#)
+            Event::default().event("heartbeat").data(r#"{"status":"listening"}"#)
         };
         Ok(event)
     });

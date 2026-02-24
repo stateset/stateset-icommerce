@@ -17,7 +17,7 @@ use std::os::raw::c_char;
 pub const ABI_VERSION: u32 = 1;
 
 /// Crate version string (null-terminated, static lifetime).
-const VERSION_CSTR: &CStr = c"0.7.4";
+const VERSION_CSTR: &CStr = c"0.7.5";
 
 /// Return the ABI version number.
 ///
@@ -45,7 +45,6 @@ pub const extern "C" fn stateset_version() -> *const c_char {
 // Tests
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,7 +67,7 @@ mod tests {
         let ptr = stateset_version();
         let cstr = unsafe { CStr::from_ptr(ptr) };
         let version = cstr.to_str().unwrap();
-        assert_eq!(version, "0.7.4");
+        assert_eq!(version, "0.7.5");
     }
 
     #[test]

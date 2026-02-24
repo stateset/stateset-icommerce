@@ -87,18 +87,11 @@ impl NullTransport {
 #[async_trait]
 impl Transport for NullTransport {
     async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
-        Ok(PushResult {
-            accepted: events.len(),
-            remote_head: 0,
-        })
+        Ok(PushResult { accepted: events.len(), remote_head: 0 })
     }
 
     async fn pull_events(&self, _since: u64, _limit: usize) -> Result<PullResult, SyncError> {
-        Ok(PullResult {
-            events: Vec::new(),
-            remote_head: 0,
-            has_more: false,
-        })
+        Ok(PullResult { events: Vec::new(), remote_head: 0, has_more: false })
     }
 }
 
@@ -109,10 +102,7 @@ mod tests {
 
     #[test]
     fn push_result_serde_roundtrip() {
-        let result = PushResult {
-            accepted: 5,
-            remote_head: 100,
-        };
+        let result = PushResult { accepted: 5, remote_head: 100 };
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: PushResult = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.accepted, 5);
@@ -159,21 +149,14 @@ mod tests {
 
     #[test]
     fn push_result_debug() {
-        let result = PushResult {
-            accepted: 0,
-            remote_head: 0,
-        };
+        let result = PushResult { accepted: 0, remote_head: 0 };
         let debug = format!("{result:?}");
         assert!(debug.contains("PushResult"));
     }
 
     #[test]
     fn pull_result_debug() {
-        let result = PullResult {
-            events: vec![],
-            remote_head: 0,
-            has_more: false,
-        };
+        let result = PullResult { events: vec![], remote_head: 0, has_more: false };
         let debug = format!("{result:?}");
         assert!(debug.contains("PullResult"));
     }

@@ -185,7 +185,11 @@ impl Shipments {
     }
 
     /// Add an item to a shipment
-    pub fn add_item(&self, shipment_id: ShipmentId, item: CreateShipmentItem) -> Result<ShipmentItem> {
+    pub fn add_item(
+        &self,
+        shipment_id: ShipmentId,
+        item: CreateShipmentItem,
+    ) -> Result<ShipmentItem> {
         self.db.shipments().add_item(shipment_id, item)
     }
 
@@ -216,7 +220,11 @@ impl Shipments {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn add_event(&self, shipment_id: ShipmentId, event: AddShipmentEvent) -> Result<ShipmentEvent> {
+    pub fn add_event(
+        &self,
+        shipment_id: ShipmentId,
+        event: AddShipmentEvent,
+    ) -> Result<ShipmentEvent> {
         self.db.shipments().add_event(shipment_id, event)
     }
 

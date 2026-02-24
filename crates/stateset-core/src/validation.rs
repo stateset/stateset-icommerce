@@ -392,10 +392,7 @@ mod tests {
 
     #[test]
     fn test_validation_builder_currency_code_trimming() {
-        assert!(ValidationBuilder::new()
-            .currency_code("currency", " usd ")
-            .build()
-            .is_err());
+        assert!(ValidationBuilder::new().currency_code("currency", " usd ").build().is_err());
         assert!(ValidationBuilder::new().currency_code("currency", "USD").build().is_ok());
         assert!(ValidationBuilder::new().currency_code("currency", " USD ").build().is_ok());
     }

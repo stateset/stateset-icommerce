@@ -63,7 +63,10 @@ impl ServerBuilder {
         self
     }
 
-    /// Enable CORS middleware (allows all origins, methods, and headers).
+    /// Enable CORS middleware with explicit defaults and optional env override.
+    ///
+    /// Set `STATESET_HTTP_ALLOWED_ORIGINS` to a comma-separated list of origins
+    /// to override the localhost-only defaults.
     #[must_use]
     pub const fn with_cors(mut self) -> Self {
         self.enable_cors = true;
@@ -211,15 +214,10 @@ mod tests {
 
     #[tokio::test]
     async fn built_router_serves_health() {
-        let router = ServerBuilder::new(test_commerce())
-            .with_cors()
-            .with_request_id()
-            .build();
+        let router = ServerBuilder::new(test_commerce()).with_cors().with_request_id().build();
 
-        let resp = router
-            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            router.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -228,11 +226,7 @@ mod tests {
         let router = ServerBuilder::new(test_commerce()).without_auth().build();
 
         let resp = router
-            .oneshot(
-                Request::get("/api/v1/orders")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -243,11 +237,7 @@ mod tests {
         let router = ServerBuilder::new(test_commerce()).without_auth().build();
 
         let resp = router
-            .oneshot(
-                Request::get("/api/v1/customers")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/v1/customers").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -258,11 +248,7 @@ mod tests {
         let router = ServerBuilder::new(test_commerce()).without_auth().build();
 
         let resp = router
-            .oneshot(
-                Request::get("/api/v1/products")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/v1/products").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -273,11 +259,7 @@ mod tests {
         let router = ServerBuilder::new(test_commerce()).without_auth().build();
 
         let resp = router
-            .oneshot(
-                Request::get("/api/v1/nonexistent")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/v1/nonexistent").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -295,11 +277,7 @@ mod tests {
         let router = ServerBuilder::new(test_commerce()).build();
 
         let resp = router
-            .oneshot(
-                Request::get("/api/v1/orders")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -308,10 +286,8 @@ mod tests {
     #[tokio::test]
     async fn built_router_allows_api_with_token() {
         let builder = ServerBuilder::new(test_commerce());
-        let token = builder
-            .bearer_auth_token()
-            .expect("default auth token should be present")
-            .to_string();
+        let token =
+            builder.bearer_auth_token().expect("default auth token should be present").to_string();
         let router = builder.build();
 
         let resp = router

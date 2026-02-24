@@ -1,7 +1,9 @@
 #![cfg(feature = "postgres")]
 
 use rust_decimal_macros::dec;
-use stateset_core::{CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, OrderStatus, ProductId, UpdateOrder};
+use stateset_core::{
+    CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, OrderStatus, ProductId, UpdateOrder,
+};
 use stateset_db::PostgresDatabase;
 use std::env;
 use uuid::Uuid;
@@ -21,11 +23,7 @@ async fn setup_db() -> Option<PostgresDatabase> {
         }
     };
 
-    Some(
-        PostgresDatabase::connect(&url)
-            .await
-            .expect("connect to postgres and run migrations"),
-    )
+    Some(PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations"))
 }
 
 #[cfg(feature = "postgres")]
@@ -86,12 +84,8 @@ async fn postgres_order_item_changes_increment_version_and_total() {
         )
         .await
         .expect("add order item");
-    let after_add = db
-        .orders()
-        .get_async(order.id)
-        .await
-        .expect("get order")
-        .expect("order exists");
+    let after_add =
+        db.orders().get_async(order.id).await.expect("get order").expect("order exists");
 
     assert_eq!(after_add.version, initial_version + 1);
     assert_eq!(after_add.total_amount, after_add.calculate_total());
@@ -119,7 +113,8 @@ async fn postgres_order_status_update_increments_version() {
         return;
     };
 
-    let customer = create_customer(&db, &format!("status-version-{}@example.com", Uuid::new_v4())).await;
+    let customer =
+        create_customer(&db, &format!("status-version-{}@example.com", Uuid::new_v4())).await;
     let order = create_order(&db, customer.id).await;
     let initial_version = order.version;
 

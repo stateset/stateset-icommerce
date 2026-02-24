@@ -138,9 +138,7 @@ pub const fn evaluate_buyer_confirmed(condition: &Condition) -> bool {
 /// Met if the current time is at or after `release_after`.
 #[must_use]
 pub fn evaluate_time_lock(condition: &Condition, now: DateTime<Utc>) -> bool {
-    condition
-        .release_after
-        .is_some_and(|release_after| now >= release_after)
+    condition.release_after.is_some_and(|release_after| now >= release_after)
 }
 
 /// Evaluate a `Milestone` condition.
@@ -207,10 +205,7 @@ where
 
         let met = evaluate_condition(condition, now, quote_status.as_deref());
 
-        evaluations.push(ConditionEvaluation {
-            condition: condition.clone(),
-            met,
-        });
+        evaluations.push(ConditionEvaluation { condition: condition.clone(), met });
     }
 
     let all_met = evaluations.iter().all(|e| e.met);
@@ -390,20 +385,12 @@ mod tests {
         let c = Condition::seller_fulfilled(Some(quote_id));
 
         let (all_met, _) = evaluate_all_conditions(std::slice::from_ref(&c), now(), |id| {
-            if id == Some(&quote_id) {
-                Some("fulfilled".into())
-            } else {
-                None
-            }
+            if id == Some(&quote_id) { Some("fulfilled".into()) } else { None }
         });
         assert!(all_met);
 
         let (all_met, _) = evaluate_all_conditions(&[c], now(), |id| {
-            if id == Some(&quote_id) {
-                Some("pending".into())
-            } else {
-                None
-            }
+            if id == Some(&quote_id) { Some("pending".into()) } else { None }
         });
         assert!(!all_met);
     }
@@ -456,10 +443,7 @@ mod tests {
         let original = Condition::milestone("Test milestone");
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: Condition = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            deserialized.condition_type,
-            ConditionType::Milestone
-        );
+        assert_eq!(deserialized.condition_type, ConditionType::Milestone);
         assert_eq!(deserialized.description, Some("Test milestone".into()));
     }
 }

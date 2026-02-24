@@ -142,7 +142,12 @@ impl EventEmitter {
     }
 
     /// Create and emit a `ProductCreated` event
-    pub fn product_created(&self, product_id: stateset_core::ProductId, name: String, slug: String) {
+    pub fn product_created(
+        &self,
+        product_id: stateset_core::ProductId,
+        name: String,
+        slug: String,
+    ) {
         self.emit(CommerceEvent::ProductCreated {
             product_id,
             name,
@@ -171,7 +176,11 @@ impl EventEmitter {
     }
 
     /// Create and emit a `ReturnApproved` event
-    pub fn return_approved(&self, return_id: stateset_core::ReturnId, order_id: stateset_core::OrderId) {
+    pub fn return_approved(
+        &self,
+        return_id: stateset_core::ReturnId,
+        order_id: stateset_core::OrderId,
+    ) {
         self.emit(CommerceEvent::ReturnApproved {
             return_id,
             order_id,

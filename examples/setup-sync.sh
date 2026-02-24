@@ -7,7 +7,7 @@
 #
 # Prerequisites:
 #   - Docker running with stateset-sequencer at localhost:8080
-#   - Node.js 18+ installed
+#   - Node.js 20.20.0+ installed (npm 10.0.0+)
 #   - stateset CLI installed (npm link in cli/ directory)
 #
 # Usage:
@@ -29,6 +29,8 @@ TENANT_ID="${STATESET_TENANT_ID:-}"
 STORE_ID="${STATESET_STORE_ID:-}"
 DB_PATH="${STATESET_DB:-./store.db}"
 STORE_NAME="${STATESET_STORE_NAME:-demo-store}"
+MIN_NODE_VERSION="20.20.0"
+MIN_NPM_VERSION="10.0.0"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -104,6 +106,35 @@ if [ -n "$MISSING" ]; then
   exit 1
 fi
 
+version_gte() {
+  local current="$1"
+  local required="$2"
+  local c_major=0 c_minor=0 c_patch=0
+  local r_major=0 r_minor=0 r_patch=0
+
+  IFS='.' read -r c_major c_minor c_patch _ <<< "$current"
+  IFS='.' read -r r_major r_minor r_patch _ <<< "$required"
+
+  c_minor="${c_minor:-0}"
+  c_patch="${c_patch:-0}"
+  r_minor="${r_minor:-0}"
+  r_patch="${r_patch:-0}"
+
+  if (( c_major > r_major )); then
+    return 0
+  fi
+  if (( c_major < r_major )); then
+    return 1
+  fi
+  if (( c_minor > r_minor )); then
+    return 0
+  fi
+  if (( c_minor < r_minor )); then
+    return 1
+  fi
+  (( c_patch >= r_patch ))
+}
+
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║        StateSet Commerce + Sequencer Setup                     ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
@@ -118,6 +149,28 @@ echo ""
 
 # Step 1: Check sequencer health
 echo -e "${YELLOW}[1/6] Checking sequencer...${NC}"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo -e "  ${RED}✗${NC} Node.js not found. Please install Node.js ${MIN_NODE_VERSION}+"
+  exit 1
+fi
+NODE_VERSION_RAW="$(node --version)"
+NODE_VERSION="${NODE_VERSION_RAW#v}"
+if ! version_gte "$NODE_VERSION" "$MIN_NODE_VERSION"; then
+  echo -e "  ${RED}✗${NC} Node.js ${NODE_VERSION_RAW} is too old. Need ${MIN_NODE_VERSION}+"
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo -e "  ${RED}✗${NC} npm not found. Please install npm ${MIN_NPM_VERSION}+"
+  exit 1
+fi
+NPM_VERSION="$(npm --version)"
+if ! version_gte "$NPM_VERSION" "$MIN_NPM_VERSION"; then
+  echo -e "  ${RED}✗${NC} npm ${NPM_VERSION} is too old. Need ${MIN_NPM_VERSION}+"
+  exit 1
+fi
+
 if curl -sf "$SEQUENCER_URL/health" > /dev/null 2>&1; then
   echo -e "  ${GREEN}✓${NC} Sequencer is healthy at $SEQUENCER_URL"
 else

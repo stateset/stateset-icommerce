@@ -151,7 +151,8 @@ mod tests {
 
     #[test]
     fn event_serde_roundtrip() {
-        let event = SyncEvent::new("product.updated", "product", "PROD-1", json!({"name": "Widget"}));
+        let event =
+            SyncEvent::new("product.updated", "product", "PROD-1", json!({"name": "Widget"}));
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: SyncEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, event.id);
@@ -168,8 +169,8 @@ mod tests {
 
     #[test]
     fn event_with_signature() {
-        let event = SyncEvent::new("order.created", "order", "ORD-1", json!({}))
-            .with_signature("deadbeef");
+        let event =
+            SyncEvent::new("order.created", "order", "ORD-1", json!({})).with_signature("deadbeef");
         assert_eq!(event.signature, Some("deadbeef".to_string()));
     }
 

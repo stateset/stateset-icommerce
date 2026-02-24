@@ -64,9 +64,7 @@ impl InMemoryJobStore {
     /// Create a new empty in-memory store.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { inner: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Returns the total number of stored jobs.
@@ -90,35 +88,27 @@ impl Default for InMemoryJobStore {
 
 impl JobStore for InMemoryJobStore {
     fn save(&self, job: &JobInstance) -> Result<(), JobError> {
-        let mut map = self.inner.lock().map_err(|e| {
-            JobError::StoreError(format!("lock poisoned: {e}"))
-        })?;
+        let mut map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
         map.insert(job.id, job.clone());
         Ok(())
     }
 
     fn get(&self, id: &Uuid) -> Result<Option<JobInstance>, JobError> {
-        let map = self.inner.lock().map_err(|e| {
-            JobError::StoreError(format!("lock poisoned: {e}"))
-        })?;
+        let map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
         Ok(map.get(id).cloned())
     }
 
     fn list_by_status(&self, status: JobStatus) -> Result<Vec<JobInstance>, JobError> {
-        let map = self.inner.lock().map_err(|e| {
-            JobError::StoreError(format!("lock poisoned: {e}"))
-        })?;
-        Ok(map
-            .values()
-            .filter(|j| j.status == status)
-            .cloned()
-            .collect())
+        let map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
+        Ok(map.values().filter(|j| j.status == status).cloned().collect())
     }
 
     fn update_status(&self, id: &Uuid, status: JobStatus) -> Result<(), JobError> {
-        let mut map = self.inner.lock().map_err(|e| {
-            JobError::StoreError(format!("lock poisoned: {e}"))
-        })?;
+        let mut map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
         match map.get_mut(id) {
             Some(job) => {
                 job.status = status;
@@ -129,13 +119,11 @@ impl JobStore for InMemoryJobStore {
     }
 
     fn delete_completed_before(&self, before: DateTime<Utc>) -> Result<u64, JobError> {
-        let mut map = self.inner.lock().map_err(|e| {
-            JobError::StoreError(format!("lock poisoned: {e}"))
-        })?;
+        let mut map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
         let initial_len = map.len();
         map.retain(|_, job| {
-            !(job.status == JobStatus::Completed
-                && job.completed_at.is_some_and(|t| t < before))
+            !(job.status == JobStatus::Completed && job.completed_at.is_some_and(|t| t < before))
         });
         Ok((initial_len - map.len()) as u64)
     }

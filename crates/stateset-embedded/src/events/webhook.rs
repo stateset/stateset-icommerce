@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use stateset_core::CommerceEvent;
-use std::fmt;
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
@@ -47,10 +47,9 @@ impl fmt::Display for WebhookRegistrationError {
             Self::UnsafeUrl => {
                 write!(f, "webhook registration rejected: URL validation failed")
             }
-            Self::WebhooksDisabled => write!(
-                f,
-                "webhook registration rejected: webhook subsystem is disabled"
-            ),
+            Self::WebhooksDisabled => {
+                write!(f, "webhook registration rejected: webhook subsystem is disabled")
+            }
         }
     }
 }
@@ -211,9 +210,7 @@ pub struct WebhookManager {
 
 impl std::fmt::Debug for WebhookManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WebhookManager")
-            .field("config", &self.config)
-            .finish_non_exhaustive()
+        f.debug_struct("WebhookManager").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
@@ -310,7 +307,9 @@ impl WebhookManager {
             let mut delivery_history = match self.delivery_history.write() {
                 Ok(guard) => guard,
                 Err(poison) => {
-                    tracing::error!("WebhookManager delivery history lock poisoned (write); recovering");
+                    tracing::error!(
+                        "WebhookManager delivery history lock poisoned (write); recovering"
+                    );
                     poison.into_inner()
                 }
             };
@@ -486,7 +485,12 @@ async fn deliver_to_webhook(
             tracing::error!(error = %e, "Failed to serialize webhook payload");
             delivery.status = DeliveryStatus::Failed;
             delivery.error = Some(format!("failed to serialize payload: {e}"));
-            append_delivery_record(delivery_history, webhook.id, delivery, config.max_delivery_history);
+            append_delivery_record(
+                delivery_history,
+                webhook.id,
+                delivery,
+                config.max_delivery_history,
+            );
             return;
         }
     };
@@ -538,7 +542,12 @@ async fn deliver_to_webhook(
                         attempt = attempt + 1,
                         "Webhook delivered successfully"
                     );
-                    append_delivery_record(delivery_history, webhook.id, delivery, config.max_delivery_history);
+                    append_delivery_record(
+                        delivery_history,
+                        webhook.id,
+                        delivery,
+                        config.max_delivery_history,
+                    );
                     return;
                 } else {
                     let response_body = response.text().await.unwrap_or_default();
@@ -611,11 +620,15 @@ fn append_delivery_record(
 }
 
 fn is_safe_webhook_url(url: &str) -> bool {
-    is_safe_webhook_url_with_dns_check(url, true)
+    // Registration should not depend on live DNS resolution because that creates
+    // environment-dependent false negatives (offline CI/dev shells). We still
+    // enforce strict scheme/host/IP checks here and apply DNS resolution in the
+    // delivery path.
+    is_safe_webhook_url_with_dns_check(url, false)
 }
 
 fn is_safe_webhook_url_for_delivery(url: &str) -> bool {
-    is_safe_webhook_url_with_dns_check(url, false)
+    is_safe_webhook_url_with_dns_check(url, true)
 }
 
 fn is_safe_webhook_url_with_dns_check(url: &str, resolve_dns: bool) -> bool {
@@ -665,7 +678,7 @@ fn is_safe_webhook_url_with_dns_check(url: &str, resolve_dns: bool) -> bool {
             } else {
                 true
             }
-        },
+        }
     }
 }
 

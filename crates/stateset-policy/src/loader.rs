@@ -64,10 +64,7 @@ pub fn load_policies_from_dir(dir: &std::path::Path) -> crate::Result<Vec<Policy
             continue;
         }
 
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         if !matches!(ext, "yaml" | "yml" | "json") {
             continue;
@@ -225,11 +222,7 @@ defaultAction:
         // Write a JSON policy
         let json_path = dir.path().join("orders.json");
         let mut f = fs::File::create(&json_path).unwrap();
-        writeln!(
-            f,
-            r#"{{"name": "json-policy", "domain": "orders", "rules": []}}"#
-        )
-        .unwrap();
+        writeln!(f, r#"{{"name": "json-policy", "domain": "orders", "rules": []}}"#).unwrap();
 
         // Write a YAML policy
         let yaml_path = dir.path().join("returns.yaml");
@@ -267,11 +260,7 @@ defaultAction:
         // Write a valid JSON policy
         let json_path = dir.path().join("good.json");
         let mut f = fs::File::create(&json_path).unwrap();
-        writeln!(
-            f,
-            r#"{{"name": "good", "domain": "orders", "rules": []}}"#
-        )
-        .unwrap();
+        writeln!(f, r#"{{"name": "good", "domain": "orders", "rules": []}}"#).unwrap();
 
         // Write an invalid JSON file
         let bad_path = dir.path().join("bad.json");

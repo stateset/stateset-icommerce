@@ -499,7 +499,11 @@ impl PgShipmentRepository {
 
     /// Get shipments for order (async)
     pub async fn for_order_async(&self, order_id: Uuid) -> Result<Vec<Shipment>> {
-        self.list_async(ShipmentFilter { order_id: Some(OrderId::from(order_id)), ..Default::default() }).await
+        self.list_async(ShipmentFilter {
+            order_id: Some(OrderId::from(order_id)),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Delete shipment (async) - marks as cancelled
@@ -1233,11 +1237,17 @@ impl ShipmentRepository for PgShipmentRepository {
         self.create_batch_atomic_sync(inputs)
     }
 
-    fn update_batch(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
+    ) -> Result<BatchResult<Shipment>> {
         self.update_batch_sync(updates)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<Vec<Shipment>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
+    ) -> Result<Vec<Shipment>> {
         self.update_batch_atomic_sync(updates)
     }
 

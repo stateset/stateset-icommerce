@@ -20,9 +20,7 @@ impl SqliteReviewRepository {
 
     #[allow(dead_code)]
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 }
 

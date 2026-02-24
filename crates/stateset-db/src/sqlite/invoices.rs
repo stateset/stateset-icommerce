@@ -227,7 +227,10 @@ impl SqliteInvoiceRepository {
         Ok(items)
     }
 
-    fn get_invoice_with_conn(conn: &rusqlite::Connection, id: InvoiceId) -> Result<Option<Invoice>> {
+    fn get_invoice_with_conn(
+        conn: &rusqlite::Connection,
+        id: InvoiceId,
+    ) -> Result<Option<Invoice>> {
         let result = conn.query_row(
             "SELECT * FROM invoices WHERE id = ?",
             [id.to_string()],
@@ -972,7 +975,10 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(InvoiceId, UpdateInvoice)>) -> Result<BatchResult<Invoice>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(InvoiceId, UpdateInvoice)>,
+    ) -> Result<BatchResult<Invoice>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -986,7 +992,10 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(InvoiceId, UpdateInvoice)>) -> Result<Vec<Invoice>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(InvoiceId, UpdateInvoice)>,
+    ) -> Result<Vec<Invoice>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);

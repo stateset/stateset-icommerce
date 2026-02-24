@@ -147,7 +147,7 @@ function parseJsonFileSafely(filePath, fallbackFactory) {
 
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch (error) {
+  } catch {
     try {
       const backupPath = backupCorruptFile(filePath);
       addRecoveryWarning(

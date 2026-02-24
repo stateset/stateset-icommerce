@@ -106,10 +106,7 @@ pub(crate) fn create_product_safe(
 ) -> Result<FfiProduct, FfiErrorCode> {
     use stateset_core::models::product::CreateProduct;
 
-    let input = CreateProduct {
-        name: name.to_string(),
-        ..Default::default()
-    };
+    let input = CreateProduct { name: name.to_string(), ..Default::default() };
 
     engine
         .products()
@@ -119,10 +116,7 @@ pub(crate) fn create_product_safe(
 }
 
 /// Get a product by ID (safe implementation).
-pub(crate) fn get_product_safe(
-    engine: &Commerce,
-    id: FfiUuid,
-) -> Result<FfiProduct, FfiErrorCode> {
+pub(crate) fn get_product_safe(engine: &Commerce, id: FfiUuid) -> Result<FfiProduct, FfiErrorCode> {
     use stateset_primitives::ProductId;
 
     let product_id: ProductId = id.into();
@@ -160,10 +154,7 @@ pub(crate) fn adjust_inventory_safe(
     use rust_decimal::Decimal;
 
     let qty = Decimal::from(delta);
-    engine
-        .inventory()
-        .adjust(sku, qty, "FFI adjustment")
-        .map_err(|e| set_commerce_error(&e))?;
+    engine.inventory().adjust(sku, qty, "FFI adjustment").map_err(|e| set_commerce_error(&e))?;
 
     // Re-fetch stock level after adjustment.
     get_inventory_safe(engine, sku)
@@ -214,10 +205,7 @@ pub unsafe extern "C" fn stateset_init(db_path: *const c_char) -> FfiResult<Comm
     };
 
     match init_engine(path) {
-        Ok(boxed) => FfiResult {
-            code: FfiErrorCode::Ok,
-            value: Box::into_raw(boxed),
-        },
+        Ok(boxed) => FfiResult { code: FfiErrorCode::Ok, value: Box::into_raw(boxed) },
         Err(code) => FfiResult { code, value: std::ptr::null_mut() },
     }
 }
@@ -473,7 +461,6 @@ pub unsafe extern "C" fn stateset_inventory_adjust(
 // Tests — safe helpers only (no unsafe needed)
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,8 +647,7 @@ mod tests {
     #[test]
     fn inventory_adjust_null_engine() {
         let sku = CString::new("SKU").unwrap();
-        let result =
-            unsafe { stateset_inventory_adjust(std::ptr::null_mut(), sku.as_ptr(), 10) };
+        let result = unsafe { stateset_inventory_adjust(std::ptr::null_mut(), sku.as_ptr(), 10) };
         assert_eq!(result.code, FfiErrorCode::NullPointer);
     }
 
@@ -683,8 +669,7 @@ mod tests {
         assert_eq!(create_result.code, FfiErrorCode::Ok);
         assert!(!create_result.value.id.is_nil());
 
-        let get_result =
-            unsafe { stateset_customer_get(init.value, create_result.value.id) };
+        let get_result = unsafe { stateset_customer_get(init.value, create_result.value.id) };
         assert_eq!(get_result.code, FfiErrorCode::Ok);
         assert_eq!(get_result.value.id, create_result.value.id);
 
@@ -704,8 +689,7 @@ mod tests {
         assert_eq!(create_result.code, FfiErrorCode::Ok);
         assert!(!create_result.value.id.is_nil());
 
-        let get_result =
-            unsafe { stateset_product_get(init.value, create_result.value.id) };
+        let get_result = unsafe { stateset_product_get(init.value, create_result.value.id) };
         assert_eq!(get_result.code, FfiErrorCode::Ok);
         assert_eq!(get_result.value.id, create_result.value.id);
 

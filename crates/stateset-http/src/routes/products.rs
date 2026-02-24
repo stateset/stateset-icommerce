@@ -6,9 +6,7 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::dto::{
-    CreateProductRequest, PaginationParams, ProductListResponse, ProductResponse,
-};
+use crate::dto::{CreateProductRequest, PaginationParams, ProductListResponse, ProductResponse};
 use crate::error::HttpError;
 use crate::state::AppState;
 use stateset_core::{CreateProduct, ProductFilter, ProductId, ProductType};
@@ -86,9 +84,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn app() -> Router {
-        router().with_state(AppState::new(
-            Commerce::new(":memory:").expect("in-memory Commerce"),
-        ))
+        router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
     }
 
     #[tokio::test]
@@ -157,11 +153,7 @@ mod tests {
     async fn get_product_not_found() {
         let id = ProductId::new();
         let resp = app()
-            .oneshot(
-                Request::get(format!("/products/{id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get(format!("/products/{id}")).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -169,10 +161,8 @@ mod tests {
 
     #[tokio::test]
     async fn list_products_empty() {
-        let resp = app()
-            .oneshot(Request::get("/products").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app().oneshot(Request::get("/products").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();

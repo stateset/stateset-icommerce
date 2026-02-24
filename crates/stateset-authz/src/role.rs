@@ -41,11 +41,7 @@ impl Role {
         permissions: HashMap<String, PermissionLevel>,
         default_level: PermissionLevel,
     ) -> Self {
-        Self {
-            name: name.into(),
-            permissions,
-            default_level,
-        }
+        Self { name: name.into(), permissions, default_level }
     }
 
     /// Returns the role name.
@@ -69,10 +65,7 @@ impl Role {
     /// Looks up the effective permission level for a given resource type.
     #[must_use]
     pub fn effective_level(&self, resource_type: &str) -> PermissionLevel {
-        self.permissions
-            .get(resource_type)
-            .copied()
-            .unwrap_or(self.default_level)
+        self.permissions.get(resource_type).copied().unwrap_or(self.default_level)
     }
 
     /// Checks whether this role allows the given action on the given resource type.
@@ -228,11 +221,7 @@ impl RoleBuilder {
     /// Builds the [`Role`].
     #[must_use]
     pub fn build(self) -> Role {
-        Role {
-            name: self.name,
-            permissions: self.permissions,
-            default_level: self.default_level,
-        }
+        Role { name: self.name, permissions: self.permissions, default_level: self.default_level }
     }
 }
 

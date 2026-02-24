@@ -11,7 +11,9 @@ pub enum A2AError {
     Validation(String),
 
     /// An invalid state transition was attempted.
-    #[error("invalid state transition from `{from}` to `{to}`: allowed transitions are [{allowed}]")]
+    #[error(
+        "invalid state transition from `{from}` to `{to}`: allowed transitions are [{allowed}]"
+    )]
     InvalidTransition {
         /// Current state.
         from: String,
@@ -29,7 +31,9 @@ pub enum A2AError {
     },
 
     /// A split payment rounding error occurred.
-    #[error("rounding drift: total distributed {distributed} does not equal input total {expected}")]
+    #[error(
+        "rounding drift: total distributed {distributed} does not equal input total {expected}"
+    )]
     RoundingDrift {
         /// What was actually distributed.
         distributed: rust_decimal::Decimal,
@@ -46,7 +50,9 @@ pub enum A2AError {
     HmacVerificationFailed,
 
     /// A billing interval string was invalid.
-    #[error("invalid billing interval: `{0}`. Must be one of: weekly, biweekly, monthly, quarterly, annual")]
+    #[error(
+        "invalid billing interval: `{0}`. Must be one of: weekly, biweekly, monthly, quarterly, annual"
+    )]
     InvalidBillingInterval(String),
 
     /// The escrow release conditions are not all met.

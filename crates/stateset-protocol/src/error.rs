@@ -12,7 +12,6 @@
 //! assert!(err.to_string().contains("missing entity_type"));
 //! ```
 
-
 /// Errors that can occur in protocol operations.
 #[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
@@ -116,10 +115,7 @@ mod tests {
     #[test]
     fn display_merkle_verification_failed() {
         let err = ProtocolError::MerkleVerificationFailed("root mismatch".into());
-        assert_eq!(
-            err.to_string(),
-            "merkle verification failed: root mismatch"
-        );
+        assert_eq!(err.to_string(), "merkle verification failed: root mismatch");
     }
 
     #[test]
@@ -149,22 +145,13 @@ mod tests {
 
     #[test]
     fn category_labels() {
-        assert_eq!(
-            ProtocolError::InvalidEnvelope(String::new()).category(),
-            "invalid_envelope"
-        );
-        assert_eq!(
-            ProtocolError::InvalidBatch(String::new()).category(),
-            "invalid_batch"
-        );
+        assert_eq!(ProtocolError::InvalidEnvelope(String::new()).category(), "invalid_envelope");
+        assert_eq!(ProtocolError::InvalidBatch(String::new()).category(), "invalid_batch");
         assert_eq!(
             ProtocolError::MerkleVerificationFailed(String::new()).category(),
             "merkle_verification_failed"
         );
-        assert_eq!(
-            ProtocolError::InvalidSignature(String::new()).category(),
-            "invalid_signature"
-        );
+        assert_eq!(ProtocolError::InvalidSignature(String::new()).category(), "invalid_signature");
         assert_eq!(
             ProtocolError::UnsupportedVersion(String::new()).category(),
             "unsupported_version"

@@ -250,7 +250,9 @@ impl ProductRepository for SqliteProductRepository {
                 row.get(0)
             })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductNotFound(id.into_uuid()),
+                rusqlite::Error::QueryReturnedNoRows => {
+                    CommerceError::ProductNotFound(id.into_uuid())
+                }
                 e => map_db_error(e),
             })?;
 
@@ -317,7 +319,9 @@ impl ProductRepository for SqliteProductRepository {
 
         match result {
             Ok(product) => Ok(product),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Err(CommerceError::ProductNotFound(id.into_uuid())),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                Err(CommerceError::ProductNotFound(id.into_uuid()))
+            }
             Err(e) => Err(map_db_error(e)),
         }
     }
@@ -883,7 +887,10 @@ impl ProductRepository for SqliteProductRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<BatchResult<Product>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(ProductId, UpdateProduct)>,
+    ) -> Result<BatchResult<Product>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -897,7 +904,10 @@ impl ProductRepository for SqliteProductRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<Vec<Product>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(ProductId, UpdateProduct)>,
+    ) -> Result<Vec<Product>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -914,7 +924,9 @@ impl ProductRepository for SqliteProductRepository {
                     row.get(0)
                 })
                 .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductNotFound(id.into_uuid()),
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        CommerceError::ProductNotFound(id.into_uuid())
+                    }
                     e => map_db_error(e),
                 })?;
 

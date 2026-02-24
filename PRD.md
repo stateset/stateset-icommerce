@@ -1561,8 +1561,7 @@ const logs = await commerce.audit.query({
 
 | Platform | Package | Status |
 |----------|---------|--------|
-| Node.js 18+ | `@stateset/embedded` | P0 |
-| Node.js 20+ | `@stateset/embedded` | P0 |
+| Node.js 20.20.0+ | `@stateset/embedded` | P0 |
 | Python 3.9+ | `stateset-embedded` | P0 |
 | Browser (WASM) | `@stateset/embedded-wasm` | P0 |
 | Deno | `@stateset/embedded` | P1 |

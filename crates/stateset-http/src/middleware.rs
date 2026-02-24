@@ -6,12 +6,15 @@ use axum::{
     Router,
     body::Body,
     extract::State,
-    http::{HeaderName, Request, header::AUTHORIZATION},
+    http::{
+        HeaderName, HeaderValue, Method, Request,
+        header::{AUTHORIZATION, CONTENT_TYPE},
+    },
     middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Response},
 };
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::{AllowOrigin, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
@@ -20,6 +23,8 @@ use crate::error::HttpError;
 
 /// Header name for request IDs.
 pub(crate) static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+const CORS_ORIGINS_ENV: &str = "STATESET_HTTP_ALLOWED_ORIGINS";
+const DEFAULT_CORS_ORIGINS: [&str; 2] = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
 #[derive(Clone, Debug)]
 struct BearerAuthToken(Arc<str>);
@@ -34,11 +39,7 @@ fn bearer_token_from_header(value: &str) -> Option<&str> {
     let mut parts = value.splitn(2, ' ');
     let scheme = parts.next()?;
     let token = parts.next()?.trim();
-    if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() {
-        Some(token)
-    } else {
-        None
-    }
+    if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() { Some(token) } else { None }
 }
 
 async fn require_bearer_auth(
@@ -64,22 +65,43 @@ async fn require_bearer_auth(
 
 /// Build the standard CORS middleware for development.
 ///
-/// Allows any origin, method, and header.
+/// Allows a configurable set of origins with explicit methods and headers.
 pub(crate) fn cors_layer() -> CorsLayer {
+    let configured = std::env::var(CORS_ORIGINS_ENV).ok();
+    let allowed_origins = configured
+        .as_deref()
+        .map(|value| value.split(',').map(str::trim).filter(|origin| !origin.is_empty()))
+        .into_iter()
+        .flatten()
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
+        .collect::<Vec<_>>();
+    let origins = if allowed_origins.is_empty() {
+        DEFAULT_CORS_ORIGINS
+            .iter()
+            .filter_map(|origin| HeaderValue::from_str(origin).ok())
+            .collect::<Vec<_>>()
+    } else {
+        allowed_origins
+    };
+
     CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([AUTHORIZATION, CONTENT_TYPE])
 }
 
 /// Build the request-ID middleware layers.
 ///
 /// - Assigns a `x-request-id` UUID if the incoming request lacks one.
 /// - Propagates the `x-request-id` into the response.
-pub(crate) fn request_id_layers() -> (
-    SetRequestIdLayer<MakeRequestUuid>,
-    PropagateRequestIdLayer,
-) {
+pub(crate) fn request_id_layers() -> (SetRequestIdLayer<MakeRequestUuid>, PropagateRequestIdLayer) {
     (
         SetRequestIdLayer::new(X_REQUEST_ID.clone(), MakeRequestUuid),
         PropagateRequestIdLayer::new(X_REQUEST_ID.clone()),
@@ -96,10 +118,7 @@ pub(crate) fn apply_middleware(
     let mut router = router.layer(TraceLayer::new_for_http());
 
     if let Some(token) = auth_token {
-        router = router.layer(from_fn_with_state(
-            BearerAuthToken::new(token),
-            require_bearer_auth,
-        ));
+        router = router.layer(from_fn_with_state(BearerAuthToken::new(token), require_bearer_auth));
     }
 
     if with_cors {
@@ -118,7 +137,7 @@ pub(crate) fn apply_middleware(
 mod tests {
     use super::*;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::{Method, Request, StatusCode};
     use axum::routing::get;
     use tower::ServiceExt;
 
@@ -166,14 +185,8 @@ mod tests {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
         let app = apply_middleware(router, false, false, Some("secret".to_string()));
 
-        let response = app
-            .oneshot(
-                Request::get("/api/v1/orders")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response =
+            app.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -199,10 +212,58 @@ mod tests {
         let router = Router::new().route("/health", get(|| async { "ok" }));
         let app = apply_middleware(router, false, false, Some("secret".to_string()));
 
+        let response =
+            app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn cors_allows_localhost_origin_by_default() {
+        let router = Router::new().route("/health", get(|| async { "ok" }));
+        let app = apply_middleware(router, true, false, None);
+
         let response = app
-            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/health")
+                    .header("origin", "http://localhost:3000")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
+
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .and_then(|value| value.to_str().ok()),
+            Some("http://localhost:3000")
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_rejects_unconfigured_origin_by_default() {
+        let router = Router::new().route("/health", get(|| async { "ok" }));
+        let app = apply_middleware(router, true, false, None);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/health")
+                    .header("origin", "https://evil.example")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("access-control-allow-origin").is_none());
     }
 }

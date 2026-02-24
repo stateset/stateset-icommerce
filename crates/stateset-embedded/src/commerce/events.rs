@@ -1,7 +1,9 @@
 use super::Commerce;
 
 #[cfg(feature = "events")]
-use crate::events::{EventSubscription, EventSystem, Webhook, WebhookDelivery, WebhookRegistrationError};
+use crate::events::{
+    EventSubscription, EventSystem, Webhook, WebhookDelivery, WebhookRegistrationError,
+};
 
 impl Commerce {
     /// Access the event system for pub/sub and webhook management.

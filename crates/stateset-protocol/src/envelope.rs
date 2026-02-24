@@ -121,24 +121,16 @@ impl EventEnvelope {
     /// ```
     pub fn validate(&self) -> Result<()> {
         if self.event_type.is_empty() {
-            return Err(ProtocolError::InvalidEnvelope(
-                "event_type must not be empty".into(),
-            ));
+            return Err(ProtocolError::InvalidEnvelope("event_type must not be empty".into()));
         }
         if self.entity_type.is_empty() {
-            return Err(ProtocolError::InvalidEnvelope(
-                "entity_type must not be empty".into(),
-            ));
+            return Err(ProtocolError::InvalidEnvelope("entity_type must not be empty".into()));
         }
         if self.entity_id.is_empty() {
-            return Err(ProtocolError::InvalidEnvelope(
-                "entity_id must not be empty".into(),
-            ));
+            return Err(ProtocolError::InvalidEnvelope("entity_id must not be empty".into()));
         }
         if self.payload.is_empty() {
-            return Err(ProtocolError::InvalidEnvelope(
-                "payload must not be empty".into(),
-            ));
+            return Err(ProtocolError::InvalidEnvelope("payload must not be empty".into()));
         }
 
         // Verify payload hash
@@ -176,9 +168,7 @@ impl PartialOrd for EventEnvelope {
 
 impl Ord for EventEnvelope {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.sequence
-            .cmp(&other.sequence)
-            .then_with(|| self.timestamp.cmp(&other.timestamp))
+        self.sequence.cmp(&other.sequence).then_with(|| self.timestamp.cmp(&other.timestamp))
     }
 }
 
@@ -455,10 +445,7 @@ mod tests {
             .payload(b"{}".to_vec())
             .build();
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ProtocolError::InvalidEnvelope(_)
-        ));
+        assert!(matches!(result.unwrap_err(), ProtocolError::InvalidEnvelope(_)));
     }
 
     #[test]
@@ -483,11 +470,8 @@ mod tests {
 
     #[test]
     fn builder_missing_payload() {
-        let result = EventEnvelope::builder()
-            .event_type("x.y")
-            .entity_type("x")
-            .entity_id("x_1")
-            .build();
+        let result =
+            EventEnvelope::builder().event_type("x.y").entity_type("x").entity_id("x_1").build();
         assert!(result.is_err());
     }
 
@@ -631,12 +615,8 @@ mod tests {
 
     #[test]
     fn ordering_same_sequence_by_timestamp() {
-        let ts1 = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let ts2 = DateTime::parse_from_rfc3339("2025-01-02T00:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        let ts1 = DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
+        let ts2 = DateTime::parse_from_rfc3339("2025-01-02T00:00:00Z").unwrap().with_timezone(&Utc);
 
         let mut e1 = sample_envelope();
         let mut e2 = sample_envelope();

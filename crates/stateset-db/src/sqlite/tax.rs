@@ -1247,14 +1247,6 @@ impl TaxRepository for SqliteTaxRepository {
         address: &TaxAddress,
         currency: &str,
     ) -> Result<()> {
-        Self::save_calculation(
-            self,
-            result,
-            order_id,
-            cart_id,
-            customer_id,
-            address,
-            currency,
-        )
+        Self::save_calculation(self, result, order_id, cart_id, customer_id, address, currency)
     }
 }

@@ -1,5 +1,6 @@
 //! SQLite database implementation
 
+mod a2a;
 mod accounts_payable;
 mod accounts_receivable;
 mod agent_cards;
@@ -15,11 +16,14 @@ mod credit;
 mod currency;
 mod custom_objects;
 mod customers;
+mod fraud;
 mod fulfillment;
 mod general_ledger;
+mod gift_cards;
 mod inventory;
 mod invoices;
 mod lots;
+mod loyalty;
 mod orders;
 pub(crate) mod parse_helpers;
 mod payments;
@@ -29,31 +33,28 @@ mod purchase_orders;
 mod quality;
 mod receiving;
 mod returns;
-mod serials;
-mod shipments;
-mod subscriptions;
-mod tax;
-mod warehouse;
-mod warranties;
-mod work_orders;
-mod x402_credits;
-mod x402_payment_intents;
-mod a2a;
-mod fraud;
-mod gift_cards;
-mod loyalty;
 mod reviews;
 mod rewards;
 mod search_configs;
 mod segments;
+mod serials;
+mod shipments;
 mod shipping_zones;
 mod store_credits;
+mod subscriptions;
+mod tax;
+mod warehouse;
+mod warranties;
 mod wishlists;
+mod work_orders;
+mod x402_credits;
+mod x402_payment_intents;
 mod zone_shipping_methods;
 
 #[cfg(feature = "vector")]
 mod vector;
 
+pub use a2a::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
 pub use agent_cards::*;
@@ -69,11 +70,14 @@ pub use credit::*;
 pub use currency::*;
 pub use custom_objects::*;
 pub use customers::*;
+pub use fraud::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
+pub use gift_cards::*;
 pub use inventory::*;
 pub use invoices::*;
 pub use lots::*;
+pub use loyalty::*;
 pub use orders::*;
 pub use payments::*;
 pub use products::*;
@@ -82,28 +86,24 @@ pub use purchase_orders::*;
 pub use quality::*;
 pub use receiving::*;
 pub use returns::*;
+pub use reviews::*;
+pub use rewards::*;
+pub use search_configs::*;
+pub use segments::*;
 pub use serials::*;
 pub use shipments::*;
+pub use shipping_zones::*;
+pub use store_credits::*;
 pub use subscriptions::*;
 pub use tax::*;
 #[cfg(feature = "vector")]
 pub use vector::*;
 pub use warehouse::*;
 pub use warranties::*;
+pub use wishlists::*;
 pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
-pub use a2a::*;
-pub use fraud::*;
-pub use gift_cards::*;
-pub use loyalty::*;
-pub use reviews::*;
-pub use rewards::*;
-pub use search_configs::*;
-pub use segments::*;
-pub use shipping_zones::*;
-pub use store_credits::*;
-pub use wishlists::*;
 pub use zone_shipping_methods::*;
 
 use crate::DatabaseConfig;
@@ -113,8 +113,8 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OpenFlags;
 use rust_decimal::Decimal;
 use stateset_core::CommerceError;
-use std::thread;
 use std::panic::{self, AssertUnwindSafe};
+use std::thread;
 use std::time::Duration;
 
 /// SQLite database connection pool
@@ -680,18 +680,19 @@ impl DatabaseExt for SqliteDatabase {
         F: FnMut(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
     {
         let retries = if opts.retry_on_conflict { opts.max_retries } else { 0 };
-        let timeout_ms = opts
-            .timeout_ms
-            .unwrap_or(crate::DEFAULT_TRANSACTION_TIMEOUT_MS);
-        let set_read_uncommitted = matches!(opts.isolation, crate::TransactionIsolation::ReadUncommitted);
+        let timeout_ms = opts.timeout_ms.unwrap_or(crate::DEFAULT_TRANSACTION_TIMEOUT_MS);
+        let set_read_uncommitted =
+            matches!(opts.isolation, crate::TransactionIsolation::ReadUncommitted);
         let fallback_timeout_ms = timeout_ms;
 
         crate::sqlite::with_retry(
             || {
-                let mut conn = self
-                    .pool
-                    .get()
-                    .map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY), Some(e.to_string())))?;
+                let mut conn = self.pool.get().map_err(|e| {
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                        Some(e.to_string()),
+                    )
+                })?;
                 let previous_timeout: u64 = conn
                     .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, u64>(0))
                     .unwrap_or(fallback_timeout_ms);
@@ -710,7 +711,8 @@ impl DatabaseExt for SqliteDatabase {
                 };
 
                 let result = {
-                    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+                    let tx =
+                        conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
                     let result = panic::catch_unwind(AssertUnwindSafe(|| f(&tx)));
 
                     match result {
@@ -736,7 +738,8 @@ impl DatabaseExt for SqliteDatabase {
                 result
             },
             retries,
-        ).map_err(map_db_error)
+        )
+        .map_err(map_db_error)
     }
 }
 
@@ -781,7 +784,8 @@ mod tests {
         }
 
         db.with_transaction_opts(
-            crate::TransactionOptions::new().isolation(crate::TransactionIsolation::ReadUncommitted),
+            crate::TransactionOptions::new()
+                .isolation(crate::TransactionIsolation::ReadUncommitted),
             |conn| {
                 conn.execute_batch("PRAGMA read_uncommitted = true")?;
                 Ok(())
@@ -818,11 +822,7 @@ mod tests {
             || {
                 let attempt = attempts.get() + 1;
                 attempts.set(attempt);
-                if attempt < 3 {
-                    Err(retryable_error())
-                } else {
-                    Ok(attempt)
-                }
+                if attempt < 3 { Err(retryable_error()) } else { Ok(attempt) }
             },
             5,
         )
@@ -831,5 +831,4 @@ mod tests {
         assert_eq!(result, 3);
         assert_eq!(attempts.get(), 3);
     }
-
 }

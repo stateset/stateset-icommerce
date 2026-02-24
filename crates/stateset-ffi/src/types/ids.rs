@@ -163,7 +163,6 @@ pub const extern "C" fn stateset_uuid_nil() -> FfiUuid {
 // Tests
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

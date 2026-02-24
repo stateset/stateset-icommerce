@@ -149,10 +149,7 @@ mod tests {
     #[test]
     fn display_promotion_exhausted() {
         let err = PricingError::PromotionExhausted { code: "SAVE10".into(), max: 100 };
-        assert_eq!(
-            err.to_string(),
-            "promotion SAVE10 has exceeded its maximum uses (100)"
-        );
+        assert_eq!(err.to_string(), "promotion SAVE10 has exceeded its maximum uses (100)");
     }
 
     #[test]

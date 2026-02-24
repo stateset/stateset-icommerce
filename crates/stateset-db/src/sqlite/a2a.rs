@@ -1,8 +1,9 @@
 //! SQLite Agent-to-Agent commerce repository implementation
 
 use super::{
-    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_json_row,
-    parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row, params_refs, with_immediate_transaction,
+    map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
+    parse_json_opt_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
+    with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -12,9 +13,9 @@ use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use stateset_core::{
-    A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CommerceError,
-    CreateA2APurchase, CreateA2AQuote, QuoteStatus, Result, SkillQuote, SkillQuoteFilter,
-    PurchaseStatus, X402Asset, X402Network,
+    A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CommerceError, CreateA2APurchase,
+    CreateA2AQuote, PurchaseStatus, QuoteStatus, Result, SkillQuote, SkillQuoteFilter, X402Asset,
+    X402Network,
 };
 use uuid::Uuid;
 
@@ -45,28 +46,16 @@ impl SqliteA2ARepository {
     fn generate_quote_number() -> String {
         let now = Utc::now();
         let random = Uuid::new_v4();
-        format!(
-            "QTE-{}-{:08X}",
-            now.timestamp_millis(),
-            (random.as_u128() & 0xFFFFFFFF) as u32,
-        )
+        format!("QTE-{}-{:08X}", now.timestamp_millis(), (random.as_u128() & 0xFFFFFFFF) as u32,)
     }
 
     fn generate_purchase_number() -> String {
         let now = Utc::now();
         let random = Uuid::new_v4();
-        format!(
-            "PUR-{}-{:08X}",
-            now.timestamp_millis(),
-            (random.as_u128() & 0xFFFFFFFF) as u32,
-        )
+        format!("PUR-{}-{:08X}", now.timestamp_millis(), (random.as_u128() & 0xFFFFFFFF) as u32,)
     }
 
-    fn parse_quote_status(
-        value: &str,
-        entity: &str,
-        field: &str,
-    ) -> rusqlite::Result<QuoteStatus> {
+    fn parse_quote_status(value: &str, entity: &str, field: &str) -> rusqlite::Result<QuoteStatus> {
         match value {
             "pending" => Ok(QuoteStatus::Pending),
             "quoted" => Ok(QuoteStatus::Quoted),
@@ -111,11 +100,7 @@ impl SqliteA2ARepository {
         }
     }
 
-    fn parse_x402_network(
-        value: &str,
-        entity: &str,
-        field: &str,
-    ) -> rusqlite::Result<X402Network> {
+    fn parse_x402_network(value: &str, entity: &str, field: &str) -> rusqlite::Result<X402Network> {
         value.parse::<X402Network>().map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 0,
@@ -128,11 +113,7 @@ impl SqliteA2ARepository {
         })
     }
 
-    fn parse_x402_asset(
-        value: &str,
-        entity: &str,
-        field: &str,
-    ) -> rusqlite::Result<X402Asset> {
+    fn parse_x402_asset(value: &str, entity: &str, field: &str) -> rusqlite::Result<X402Asset> {
         value.parse::<X402Asset>().map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 0,
@@ -193,7 +174,12 @@ impl SqliteA2ARepository {
 
         match current {
             PurchaseStatus::Initiated => {
-                matches!(next, PurchaseStatus::PaymentPending | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
+                matches!(
+                    next,
+                    PurchaseStatus::PaymentPending
+                        | PurchaseStatus::Cancelled
+                        | PurchaseStatus::Disputed
+                )
             }
             PurchaseStatus::PaymentPending => {
                 matches!(
@@ -215,7 +201,10 @@ impl SqliteA2ARepository {
                 )
             }
             PurchaseStatus::Fulfilling => {
-                matches!(next, PurchaseStatus::Shipped | PurchaseStatus::Cancelled | PurchaseStatus::Disputed)
+                matches!(
+                    next,
+                    PurchaseStatus::Shipped | PurchaseStatus::Cancelled | PurchaseStatus::Disputed
+                )
             }
             PurchaseStatus::Shipped => {
                 matches!(
@@ -229,10 +218,14 @@ impl SqliteA2ARepository {
             PurchaseStatus::Delivered => {
                 matches!(
                     next,
-                    PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed
+                    PurchaseStatus::Completed
+                        | PurchaseStatus::Cancelled
+                        | PurchaseStatus::Disputed
                 )
             }
-            PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed => false,
+            PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed => {
+                false
+            }
             _ => false,
         }
     }
@@ -285,11 +278,7 @@ impl SqliteA2ARepository {
                 "a2a_quote",
                 "seller_agent_id",
             )?,
-            items: parse_json_row(
-                &row.get::<_, String>("items")?,
-                "a2a_quote",
-                "items",
-            )?,
+            items: parse_json_row(&row.get::<_, String>("items")?, "a2a_quote", "items")?,
             subtotal: parse_decimal_row(
                 &row.get::<_, String>("subtotal")?,
                 "a2a_quote",
@@ -313,11 +302,9 @@ impl SqliteA2ARepository {
             total: parse_decimal_row(&row.get::<_, String>("total")?, "a2a_quote", "total")?,
             currency: row.get("currency")?,
             payment_network: match row.get::<_, Option<String>>("payment_network")? {
-                Some(value) => Some(Self::parse_x402_network(
-                    &value,
-                    "a2a_quote",
-                    "payment_network",
-                )?),
+                Some(value) => {
+                    Some(Self::parse_x402_network(&value, "a2a_quote", "payment_network")?)
+                }
                 None => None,
             },
             payment_asset: match row.get::<_, Option<String>>("payment_asset")? {
@@ -383,18 +370,22 @@ impl SqliteA2ARepository {
                 "a2a_purchase",
                 "quote_id",
             )?,
-            cart_id: parse_uuid_opt_row(row.get::<_, Option<String>>("cart_id")?, "a2a_purchase", "cart_id")?,
-            order_id: parse_uuid_opt_row(row.get::<_, Option<String>>("order_id")?, "a2a_purchase", "order_id")?,
+            cart_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("cart_id")?,
+                "a2a_purchase",
+                "cart_id",
+            )?,
+            order_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("order_id")?,
+                "a2a_purchase",
+                "order_id",
+            )?,
             payment_intent_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("payment_intent_id")?,
                 "a2a_purchase",
                 "payment_intent_id",
             )?,
-            items: parse_json_row(
-                &row.get::<_, String>("items")?,
-                "a2a_purchase",
-                "items",
-            )?,
+            items: parse_json_row(&row.get::<_, String>("items")?, "a2a_purchase", "items")?,
             total: parse_decimal_row(&row.get::<_, String>("total")?, "a2a_purchase", "total")?,
             currency: row.get("currency")?,
             fulfillment_type: row.get("fulfillment_type")?,
@@ -441,9 +432,7 @@ impl SqliteA2ARepository {
         })
     }
 
-    fn parse_quote_filters(
-        filter: &SkillQuoteFilter,
-    ) -> (Vec<String>, Vec<Box<dyn ToSql>>) {
+    fn parse_quote_filters(filter: &SkillQuoteFilter) -> (Vec<String>, Vec<Box<dyn ToSql>>) {
         let mut conditions = vec!["1=1".to_string()];
         let mut params: Vec<Box<dyn ToSql>> = vec![];
 
@@ -471,9 +460,7 @@ impl SqliteA2ARepository {
         (conditions, params)
     }
 
-    fn parse_purchase_filters(
-        filter: &A2APurchaseFilter,
-    ) -> (Vec<String>, Vec<Box<dyn ToSql>>) {
+    fn parse_purchase_filters(filter: &A2APurchaseFilter) -> (Vec<String>, Vec<Box<dyn ToSql>>) {
         let mut conditions = vec!["1=1".to_string()];
         let mut params: Vec<Box<dyn ToSql>> = vec![];
 
@@ -636,7 +623,9 @@ impl SqliteA2ARepository {
 
         match quote {
             Some(quote) => {
-                if quote.buyer_agent_id != buyer_agent_id || quote.seller_agent_id != seller_agent_id {
+                if quote.buyer_agent_id != buyer_agent_id
+                    || quote.seller_agent_id != seller_agent_id
+                {
                     return Err(CommerceError::ValidationError(
                         "quote participants do not match purchase participants".to_string(),
                     ));
@@ -663,7 +652,9 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let shipping_json = input
             .shipping_address
             .as_ref()
-            .map(|address| serde_json::to_string(address).map_err(|e| CommerceError::Internal(e.to_string())))
+            .map(|address| {
+                serde_json::to_string(address).map_err(|e| CommerceError::Internal(e.to_string()))
+            })
             .transpose()?;
         let subtotal = input.subtotal;
         let tax_amount = input.tax_amount.unwrap_or(Decimal::ZERO);
@@ -716,7 +707,8 @@ impl A2ACommerceRepository for SqliteA2ARepository {
 
     fn get_quote(&self, id: Uuid) -> Result<Option<SkillQuote>> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT * FROM a2a_quotes WHERE id = ?").map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM a2a_quotes WHERE id = ?").map_err(map_db_error)?;
         stmt.query_row([id.to_string()], Self::row_to_quote).optional().map_err(map_db_error)
     }
 
@@ -733,9 +725,10 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let existing = self.get_quote(id)?.ok_or(CommerceError::NotFound)?;
 
         if !Self::is_valid_quote_status_transition(existing.status, status) {
-            return Err(CommerceError::ValidationError(
-                format!("invalid quote status transition: {:?} -> {:?}", existing.status, status),
-            ));
+            return Err(CommerceError::ValidationError(format!(
+                "invalid quote status transition: {:?} -> {:?}",
+                existing.status, status
+            )));
         }
 
         if existing.status == status {
@@ -743,14 +736,10 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         }
 
         let affected = self
-            .conn()? 
+            .conn()?
             .execute(
                 "UPDATE a2a_quotes SET status = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    status.to_string(),
-                    Utc::now().to_rfc3339(),
-                    id.to_string(),
-                ],
+                rusqlite::params![status.to_string(), Utc::now().to_rfc3339(), id.to_string(),],
             )
             .map_err(map_db_error)?;
 
@@ -767,7 +756,10 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let limit = filter.limit.unwrap_or(100).min(1000);
         let offset = filter.offset.unwrap_or(0);
 
-        let mut sql = format!("SELECT * FROM a2a_quotes WHERE {} ORDER BY created_at DESC", conditions.join(" AND "));
+        let mut sql = format!(
+            "SELECT * FROM a2a_quotes WHERE {} ORDER BY created_at DESC",
+            conditions.join(" AND ")
+        );
         sql.push_str(" LIMIT ? OFFSET ?");
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
@@ -898,7 +890,8 @@ impl A2ACommerceRepository for SqliteA2ARepository {
 
     fn get_purchase(&self, id: Uuid) -> Result<Option<A2APurchase>> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT * FROM a2a_purchases WHERE id = ?").map_err(map_db_error)?;
+        let mut stmt =
+            conn.prepare("SELECT * FROM a2a_purchases WHERE id = ?").map_err(map_db_error)?;
         stmt.query_row([id.to_string()], Self::row_to_purchase).optional().map_err(map_db_error)
     }
 
@@ -910,17 +903,14 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         stmt.query_row([purchase_number], Self::row_to_purchase).optional().map_err(map_db_error)
     }
 
-    fn update_purchase_status(
-        &self,
-        id: Uuid,
-        status: PurchaseStatus,
-    ) -> Result<A2APurchase> {
+    fn update_purchase_status(&self, id: Uuid, status: PurchaseStatus) -> Result<A2APurchase> {
         let existing = self.get_purchase(id)?.ok_or(CommerceError::NotFound)?;
 
         if !Self::is_valid_purchase_status_transition(existing.status, status) {
-            return Err(CommerceError::ValidationError(
-                format!("invalid purchase status transition: {:?} -> {:?}", existing.status, status),
-            ));
+            return Err(CommerceError::ValidationError(format!(
+                "invalid purchase status transition: {:?} -> {:?}",
+                existing.status, status
+            )));
         }
 
         if existing.status == status {
@@ -931,11 +921,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             .conn()?
             .execute(
                 "UPDATE a2a_purchases SET status = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    status.to_string(),
-                    Utc::now().to_rfc3339(),
-                    id.to_string(),
-                ],
+                rusqlite::params![status.to_string(), Utc::now().to_rfc3339(), id.to_string(),],
             )
             .map_err(map_db_error)?;
 
@@ -951,7 +937,11 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             .conn()?
             .execute(
                 "UPDATE a2a_purchases SET order_id = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![order_id.to_string(), Utc::now().to_rfc3339(), purchase_id.to_string()],
+                rusqlite::params![
+                    order_id.to_string(),
+                    Utc::now().to_rfc3339(),
+                    purchase_id.to_string()
+                ],
             )
             .map_err(map_db_error)?;
 
@@ -1028,8 +1018,10 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let limit = filter.limit.unwrap_or(100).min(1000);
         let offset = filter.offset.unwrap_or(0);
 
-        let mut sql =
-            format!("SELECT * FROM a2a_purchases WHERE {} ORDER BY created_at DESC", conditions.join(" AND "));
+        let mut sql = format!(
+            "SELECT * FROM a2a_purchases WHERE {} ORDER BY created_at DESC",
+            conditions.join(" AND ")
+        );
         sql.push_str(" LIMIT ? OFFSET ?");
         params.push(Box::new(limit as i64));
         params.push(Box::new(offset as i64));
@@ -1052,11 +1044,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let sql = format!("SELECT COUNT(*) FROM a2a_purchases WHERE {}", conditions.join(" AND "));
 
         let count: i64 = conn
-            .query_row(
-                &sql,
-                rusqlite::params_from_iter(params_refs(&params)),
-                |row| row.get(0),
-            )
+            .query_row(&sql, rusqlite::params_from_iter(params_refs(&params)), |row| row.get(0))
             .map_err(map_db_error)?;
 
         Ok(count as u64)

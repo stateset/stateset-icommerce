@@ -27,6 +27,7 @@ import { theme } from '../src/theme.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 const HELP = `
 StateSet iCommerce CLI - Health Check & Diagnostics
@@ -46,7 +47,7 @@ OPTIONS:
 CHECKS:
   api             Validates ANTHROPIC_API_KEY (use --verbose to test connectivity)
   db              Tests database connectivity and schema
-  node            Checks Node.js version compatibility
+  node            Checks Node.js/npm runtime compatibility
   permissions     Verifies file system permissions
   dependencies    Checks required packages
   sync            Checks sync configuration (if configured)
@@ -235,26 +236,84 @@ async function checkDatabase(dbPath) {
 }
 
 async function checkNodeVersion() {
-  const version = process.versions.node;
-  const major = parseInt(version.split('.')[0], 10);
+  const parseVersion = (raw) => {
+    const [majorRaw = '0', minorRaw = '0', patchRaw = '0'] = String(raw).trim().split('.');
+    return {
+      major: parseInt(majorRaw, 10),
+      minor: parseInt(minorRaw, 10),
+      patch: parseInt(patchRaw, 10),
+    };
+  };
+  const compare = (a, b) => {
+    if (a.major !== b.major) return a.major - b.major;
+    if (a.minor !== b.minor) return a.minor - b.minor;
+    return a.patch - b.patch;
+  };
+  const requiredNodeRaw = '20.20.0';
+  const requiredNpmRaw = '10.0.0';
+  const requiredNode = parseVersion(requiredNodeRaw);
+  const requiredNpm = parseVersion(requiredNpmRaw);
 
-  if (major < 18) {
+  const version = process.versions.node;
+  const currentNode = parseVersion(version);
+
+  if (compare(currentNode, requiredNode) < 0) {
     return {
       status: 'error',
       message: `Node.js ${version} is too old`,
-      hint: 'Upgrade to Node.js 18 or later',
+      hint: `Upgrade to Node.js ${requiredNodeRaw}+ (run nvm use in this repo)`,
     };
   }
-  if (major < 20) {
+
+  let npmVersionRaw = null;
+  let npmCheckRestricted = false;
+  const userAgent = process.env.npm_config_user_agent || '';
+  const npmMatch = userAgent.match(/npm\/([0-9]+(?:\.[0-9]+){0,2})/i);
+  if (npmMatch?.[1]) {
+    npmVersionRaw = npmMatch[1];
+  } else {
+    const npmResult = spawnSync('npm', ['--version'], {
+      encoding: 'utf8',
+      timeout: 3000,
+    });
+    if (npmResult.status === 0) {
+      const npmStdout = String(npmResult.stdout || '').trim();
+      if (npmStdout) {
+        npmVersionRaw = npmStdout;
+      } else if (npmResult.error?.code === 'EPERM') {
+        npmCheckRestricted = true;
+      }
+    } else if (npmResult.error?.code === 'EPERM') {
+      npmCheckRestricted = true;
+    }
+  }
+
+  if (!npmVersionRaw) {
+    if (npmCheckRestricted) {
+      return {
+        status: 'ok',
+        message: `Node.js ${version} (npm check skipped in restricted environment)`,
+      };
+    }
     return {
       status: 'warning',
-      message: `Node.js ${version} works but 20+ recommended`,
-      hint: 'Consider upgrading to Node.js 20 LTS',
+      message: `Node.js ${version} OK; npm version not detected`,
+      hint: `Install npm ${requiredNpmRaw}+ for tooling checks`,
     };
   }
+
+  const currentNpm = parseVersion(npmVersionRaw);
+  if (compare(currentNpm, requiredNpm) < 0) {
+    return {
+      status: 'warning',
+      message: `Node.js ${version} OK; npm ${npmVersionRaw} is below ${requiredNpmRaw}`,
+      hint: `Upgrade to npm ${requiredNpmRaw}+ (run nvm use in this repo)`,
+    };
+  }
+
   return {
     status: 'ok',
-    message: `Node.js ${version}`,
+    message: `Node.js ${version}, npm ${npmVersionRaw}`,
   };
 }
 

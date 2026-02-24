@@ -291,7 +291,11 @@ impl Subscriptions {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn skip_next_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription> {
+    pub fn skip_next_cycle(
+        &self,
+        id: SubscriptionId,
+        input: SkipBillingCycle,
+    ) -> Result<Subscription> {
         self.db.subscriptions().skip_billing_cycle(id, input)
     }
 

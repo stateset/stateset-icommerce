@@ -8,7 +8,9 @@ use stateset_primitives::{CustomerId, ProductId, ReviewId};
 use strum::{Display, EnumString};
 
 /// Review moderation status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -130,12 +132,7 @@ impl Review {
 impl ReviewSummary {
     /// Create an empty summary for a product with no reviews
     pub const fn empty(product_id: ProductId) -> Self {
-        Self {
-            product_id,
-            average_rating: 0.0,
-            total_reviews: 0,
-            rating_distribution: [0; 5],
-        }
+        Self { product_id, average_rating: 0.0, total_reviews: 0, rating_distribution: [0; 5] }
     }
 }
 

@@ -9,7 +9,9 @@ use stateset_primitives::{CustomerId, SegmentId};
 use strum::{Display, EnumString};
 
 /// Segment type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -163,11 +165,7 @@ mod tests {
     }
 
     fn make_rule(operator: SegmentOperator) -> SegmentRule {
-        SegmentRule {
-            field: "total_orders".to_string(),
-            operator,
-            value: "5".to_string(),
-        }
+        SegmentRule { field: "total_orders".to_string(), operator, value: "5".to_string() }
     }
 
     // ---- is_dynamic ----

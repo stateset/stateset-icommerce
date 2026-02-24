@@ -177,7 +177,10 @@ pub struct PromotionResult {
 /// assert_eq!(result.total_discount, dec!(10.00));
 /// ```
 #[must_use]
-pub fn evaluate_promotions(promotions: &[Promotion], context: &PromotionContext) -> PromotionResult {
+pub fn evaluate_promotions(
+    promotions: &[Promotion],
+    context: &PromotionContext,
+) -> PromotionResult {
     let mut eligible_stackable: Vec<(usize, Decimal)> = Vec::new();
     let mut eligible_non_stackable: Vec<(usize, Decimal)> = Vec::new();
     let mut rejected: Vec<RejectedPromotion> = Vec::new();
@@ -264,18 +267,14 @@ fn check_rules(rules: &[PromotionRule], ctx: &PromotionContext) -> Vec<String> {
         match rule {
             PromotionRule::MinimumOrderTotal(min) => {
                 if ctx.order_total < *min {
-                    failures.push(format!(
-                        "order total {} is below minimum {}",
-                        ctx.order_total, min
-                    ));
+                    failures
+                        .push(format!("order total {} is below minimum {}", ctx.order_total, min));
                 }
             }
             PromotionRule::MinimumQuantity(min) => {
                 if ctx.item_count < *min {
-                    failures.push(format!(
-                        "item count {} is below minimum {}",
-                        ctx.item_count, min
-                    ));
+                    failures
+                        .push(format!("item count {} is below minimum {}", ctx.item_count, min));
                 }
             }
             PromotionRule::SpecificSkus(skus) => {
@@ -293,10 +292,7 @@ fn check_rules(rules: &[PromotionRule], ctx: &PromotionContext) -> Vec<String> {
                 }
             }
             PromotionRule::CustomerGroup(group) => {
-                let matches = ctx
-                    .customer_group
-                    .as_ref()
-                    .is_some_and(|cg| cg == group);
+                let matches = ctx.customer_group.as_ref().is_some_and(|cg| cg == group);
                 if !matches {
                     failures.push(format!(
                         "customer group {:?} does not match required {group}",
@@ -361,11 +357,7 @@ mod tests {
 
     #[test]
     fn single_promo_no_rules() {
-        let promos = vec![simple_promo(
-            "10OFF",
-            LineDiscount::Percentage(dec!(0.10)),
-            false,
-        )];
+        let promos = vec![simple_promo("10OFF", LineDiscount::Percentage(dec!(0.10)), false)];
         let result = evaluate_promotions(&promos, &base_context());
         assert_eq!(result.applied.len(), 1);
         assert_eq!(result.rejected.len(), 0);
@@ -401,10 +393,7 @@ mod tests {
         let result = evaluate_promotions(&promos, &base_context());
         assert_eq!(result.applied.len(), 0);
         assert_eq!(result.rejected.len(), 1);
-        matches!(
-            &result.rejected[0].reason,
-            RejectionReason::RulesNotMet(_)
-        );
+        matches!(&result.rejected[0].reason, RejectionReason::RulesNotMet(_));
     }
 
     // ---- MinimumQuantity ----
@@ -627,10 +616,7 @@ mod tests {
         }];
         let result = evaluate_promotions(&promos, &base_context());
         assert_eq!(result.applied.len(), 0);
-        assert!(matches!(
-            result.rejected[0].reason,
-            RejectionReason::MaxUsesExceeded
-        ));
+        assert!(matches!(result.rejected[0].reason, RejectionReason::MaxUsesExceeded));
     }
 
     #[test]
@@ -753,11 +739,7 @@ mod tests {
 
     #[test]
     fn promotion_fixed_price() {
-        let promos = vec![simple_promo(
-            "SET",
-            LineDiscount::FixedPrice(dec!(75.00)),
-            false,
-        )];
+        let promos = vec![simple_promo("SET", LineDiscount::FixedPrice(dec!(75.00)), false)];
         let result = evaluate_promotions(&promos, &base_context());
         assert_eq!(result.applied.len(), 1);
         assert_eq!(result.total_discount, dec!(25.00)); // 100 - 75
@@ -787,11 +769,7 @@ mod tests {
     fn discount_on_zero_base() {
         let mut ctx = base_context();
         ctx.order_total = Decimal::ZERO;
-        let promos = vec![simple_promo(
-            "FREE",
-            LineDiscount::FixedAmount(dec!(10.00)),
-            false,
-        )];
+        let promos = vec![simple_promo("FREE", LineDiscount::FixedAmount(dec!(10.00)), false)];
         let result = evaluate_promotions(&promos, &ctx);
         assert_eq!(result.applied.len(), 1);
         assert_eq!(result.total_discount, Decimal::ZERO); // clamped to base

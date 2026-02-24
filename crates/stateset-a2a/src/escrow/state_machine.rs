@@ -57,13 +57,9 @@ impl EscrowStatus {
     pub const fn allowed_transitions(self) -> &'static [Self] {
         match self {
             Self::Created => &[Self::Funded, Self::Refunded],
-            Self::Funded => &[
-                Self::Active,
-                Self::Released,
-                Self::Refunded,
-                Self::Disputed,
-                Self::Expired,
-            ],
+            Self::Funded => {
+                &[Self::Active, Self::Released, Self::Refunded, Self::Disputed, Self::Expired]
+            }
             Self::Active => &[Self::Released, Self::Refunded, Self::Disputed, Self::Expired],
             Self::Released | Self::Refunded | Self::Disputed | Self::Expired => &[],
         }
@@ -78,10 +74,7 @@ impl EscrowStatus {
     /// Whether this status is terminal (no further transitions possible).
     #[must_use]
     pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Released | Self::Refunded | Self::Disputed | Self::Expired
-        )
+        matches!(self, Self::Released | Self::Refunded | Self::Disputed | Self::Expired)
     }
 }
 
@@ -274,8 +267,7 @@ mod tests {
 
     #[test]
     fn transition_from_terminal_fails() {
-        let err =
-            EscrowTransition::new(EscrowStatus::Released, EscrowStatus::Active).unwrap_err();
+        let err = EscrowTransition::new(EscrowStatus::Released, EscrowStatus::Active).unwrap_err();
         assert!(matches!(err, A2AError::InvalidTransition { .. }));
     }
 

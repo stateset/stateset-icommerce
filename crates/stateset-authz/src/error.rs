@@ -1,6 +1,5 @@
 //! Error types for the authorization system.
 
-
 use serde::{Deserialize, Serialize};
 
 /// Errors that can occur during authorization operations.
@@ -54,41 +53,31 @@ impl AuthzError {
     /// Creates an [`Unauthorized`](Self::Unauthorized) error.
     #[must_use]
     pub fn unauthorized(reason: impl Into<String>) -> Self {
-        Self::Unauthorized {
-            reason: reason.into(),
-        }
+        Self::Unauthorized { reason: reason.into() }
     }
 
     /// Creates a [`Forbidden`](Self::Forbidden) error.
     #[must_use]
     pub fn forbidden(reason: impl Into<String>) -> Self {
-        Self::Forbidden {
-            reason: reason.into(),
-        }
+        Self::Forbidden { reason: reason.into() }
     }
 
     /// Creates a [`RateLimited`](Self::RateLimited) error.
     #[must_use]
     pub fn rate_limited(reason: impl Into<String>) -> Self {
-        Self::RateLimited {
-            reason: reason.into(),
-        }
+        Self::RateLimited { reason: reason.into() }
     }
 
     /// Creates an [`InvalidRole`](Self::InvalidRole) error.
     #[must_use]
     pub fn invalid_role(name: impl Into<String>) -> Self {
-        Self::InvalidRole {
-            name: name.into(),
-        }
+        Self::InvalidRole { name: name.into() }
     }
 
     /// Creates an [`InvalidResource`](Self::InvalidResource) error.
     #[must_use]
     pub fn invalid_resource(name: impl Into<String>) -> Self {
-        Self::InvalidResource {
-            name: name.into(),
-        }
+        Self::InvalidResource { name: name.into() }
     }
 
     /// Returns `true` if this is an unauthorized error.
@@ -182,17 +171,8 @@ mod tests {
 
     #[test]
     fn equality() {
-        assert_eq!(
-            AuthzError::unauthorized("x"),
-            AuthzError::unauthorized("x")
-        );
-        assert_ne!(
-            AuthzError::unauthorized("x"),
-            AuthzError::unauthorized("y")
-        );
-        assert_ne!(
-            AuthzError::unauthorized("x"),
-            AuthzError::forbidden("x")
-        );
+        assert_eq!(AuthzError::unauthorized("x"), AuthzError::unauthorized("x"));
+        assert_ne!(AuthzError::unauthorized("x"), AuthzError::unauthorized("y"));
+        assert_ne!(AuthzError::unauthorized("x"), AuthzError::forbidden("x"));
     }
 }

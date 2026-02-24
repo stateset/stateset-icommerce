@@ -151,11 +151,8 @@ pub fn calculate_tax(
         }
 
         // For compound taxes, add previously computed taxes to the base
-        let effective_base = if rule.compound {
-            taxable_base + cumulative_tax
-        } else {
-            taxable_base
-        };
+        let effective_base =
+            if rule.compound { taxable_base + cumulative_tax } else { taxable_base };
 
         let tax_amount = round(effective_base * rule.rate, rounding);
 
@@ -179,27 +176,14 @@ pub fn calculate_tax(
 fn compute_taxable_base(rule: &TaxRule, context: &TaxContext) -> Decimal {
     match &rule.applies_to {
         TaxAppliesTo::AllItems => {
-            context
-                .items
-                .iter()
-                .filter(|item| !item.exempt)
-                .map(|item| item.amount)
-                .sum()
+            context.items.iter().filter(|item| !item.exempt).map(|item| item.amount).sum()
         }
-        TaxAppliesTo::SpecificCategories(cats) => {
-            context
-                .items
-                .iter()
-                .filter(|item| {
-                    !item.exempt
-                        && item
-                            .category
-                            .as_ref()
-                            .is_some_and(|c| cats.contains(c))
-                })
-                .map(|item| item.amount)
-                .sum()
-        }
+        TaxAppliesTo::SpecificCategories(cats) => context
+            .items
+            .iter()
+            .filter(|item| !item.exempt && item.category.as_ref().is_some_and(|c| cats.contains(c)))
+            .map(|item| item.amount)
+            .sum(),
         TaxAppliesTo::ShippingOnly => context.shipping,
     }
 }
@@ -211,11 +195,7 @@ mod tests {
 
     fn simple_context(amount: Decimal) -> TaxContext {
         TaxContext {
-            items: vec![TaxableItem {
-                amount,
-                category: None,
-                exempt: false,
-            }],
+            items: vec![TaxableItem { amount, category: None, exempt: false }],
             shipping: dec!(0),
         }
     }
@@ -363,9 +343,7 @@ mod tests {
     #[test]
     fn all_items_exempt() {
         let ctx = TaxContext {
-            items: vec![
-                TaxableItem { amount: dec!(50.00), category: None, exempt: true },
-            ],
+            items: vec![TaxableItem { amount: dec!(50.00), category: None, exempt: true }],
             shipping: dec!(0),
         };
         let rules = vec![TaxRule {
@@ -395,11 +373,7 @@ mod tests {
                     category: Some("clothing".into()),
                     exempt: false,
                 },
-                TaxableItem {
-                    amount: dec!(25.00),
-                    category: Some("food".into()),
-                    exempt: false,
-                },
+                TaxableItem { amount: dec!(25.00), category: Some("food".into()), exempt: false },
             ],
             shipping: dec!(0),
         };
@@ -441,11 +415,7 @@ mod tests {
     #[test]
     fn category_none_does_not_match() {
         let ctx = TaxContext {
-            items: vec![TaxableItem {
-                amount: dec!(100.00),
-                category: None,
-                exempt: false,
-            }],
+            items: vec![TaxableItem { amount: dec!(100.00), category: None, exempt: false }],
             shipping: dec!(0),
         };
         let rules = vec![TaxRule {
@@ -463,11 +433,7 @@ mod tests {
     #[test]
     fn shipping_only_tax() {
         let ctx = TaxContext {
-            items: vec![TaxableItem {
-                amount: dec!(100.00),
-                category: None,
-                exempt: false,
-            }],
+            items: vec![TaxableItem { amount: dec!(100.00), category: None, exempt: false }],
             shipping: dec!(10.00),
         };
         let rules = vec![TaxRule {
@@ -483,10 +449,7 @@ mod tests {
 
     #[test]
     fn shipping_zero() {
-        let ctx = TaxContext {
-            items: vec![],
-            shipping: dec!(0),
-        };
+        let ctx = TaxContext { items: vec![], shipping: dec!(0) };
         let rules = vec![TaxRule {
             jurisdiction: "FL".into(),
             rate: dec!(0.06),
@@ -502,11 +465,7 @@ mod tests {
     #[test]
     fn items_and_shipping_tax() {
         let ctx = TaxContext {
-            items: vec![TaxableItem {
-                amount: dec!(200.00),
-                category: None,
-                exempt: false,
-            }],
+            items: vec![TaxableItem { amount: dec!(200.00), category: None, exempt: false }],
             shipping: dec!(15.00),
         };
         let rules = vec![
@@ -646,11 +605,7 @@ mod tests {
         // Compound tax should compound on previously computed tax amounts,
         // not cross between items and shipping
         let ctx = TaxContext {
-            items: vec![TaxableItem {
-                amount: dec!(100.00),
-                category: None,
-                exempt: false,
-            }],
+            items: vec![TaxableItem { amount: dec!(100.00), category: None, exempt: false }],
             shipping: dec!(10.00),
         };
         let rules = vec![

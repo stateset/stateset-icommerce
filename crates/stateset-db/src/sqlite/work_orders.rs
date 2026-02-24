@@ -373,7 +373,11 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 Ok(Some(WorkOrder {
                     id: wo_id,
                     work_order_number,
-                    product_id: ProductId::from(parse_uuid(&product_id, "work_order", "product_id")?),
+                    product_id: ProductId::from(parse_uuid(
+                        &product_id,
+                        "work_order",
+                        "product_id",
+                    )?),
                     bom_id: parse_uuid_opt(bom_id, "work_order", "bom_id")?,
                     work_center_id,
                     assigned_to: parse_uuid_opt(assigned_to, "work_order", "assigned_to")?,

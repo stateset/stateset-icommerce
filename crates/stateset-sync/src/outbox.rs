@@ -37,11 +37,7 @@ impl Outbox {
     /// Create a new `Outbox` with the given maximum capacity.
     #[must_use]
     pub const fn new(max_capacity: usize) -> Self {
-        Self {
-            events: VecDeque::new(),
-            max_capacity,
-            next_sequence: 1,
-        }
+        Self { events: VecDeque::new(), max_capacity, next_sequence: 1 }
     }
 
     /// Create a new `Outbox` with the default maximum capacity (10,000).
@@ -165,10 +161,7 @@ mod tests {
         outbox.append(make_event("b")).unwrap();
         let result = outbox.append(make_event("c"));
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            SyncError::OutboxFull { capacity: 2, current: 2 }
-        ));
+        assert!(matches!(result.unwrap_err(), SyncError::OutboxFull { capacity: 2, current: 2 }));
     }
 
     #[test]

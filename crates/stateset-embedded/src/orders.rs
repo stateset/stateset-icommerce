@@ -2,8 +2,8 @@
 
 use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
-    CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId, OrderItem,
-    OrderItemId, OrderStatus, PaymentStatus, Result, UpdateOrder,
+    CreateOrder, CreateOrderItem, CustomerId, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
+    OrderStatus, PaymentStatus, Result, UpdateOrder,
 };
 use stateset_db::Database;
 use stateset_observability::Metrics;

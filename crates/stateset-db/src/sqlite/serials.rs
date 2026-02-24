@@ -9,8 +9,7 @@ use stateset_core::{
     BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, LotRepository,
     MoveSerial, ReserveSerialNumber, SerialEventType, SerialFilter, SerialHistory,
     SerialHistoryFilter, SerialLookupResult, SerialNumber, SerialRepository, SerialReservation,
-    SerialStatus, SerialValidation, TransferSerialOwnership, UpdateSerialNumber,
-    WarrantyId,
+    SerialStatus, SerialValidation, TransferSerialOwnership, UpdateSerialNumber, WarrantyId,
     WarrantyLookupStatus, WarrantyRepository,
 };
 use uuid::Uuid;

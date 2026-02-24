@@ -75,15 +75,13 @@ fn allow_rule(
 #[test]
 fn single_allow_rule_permits() {
     let mut engine = PolicyEngine::new();
-    engine.register_policy_set(
-        PolicySet::new("allow-set", "orders").with_rule(allow_rule(
-            "allow-all",
-            "order.total",
-            Operator::Gt,
-            json!(0),
-            10,
-        )),
-    );
+    engine.register_policy_set(PolicySet::new("allow-set", "orders").with_rule(allow_rule(
+        "allow-all",
+        "order.total",
+        Operator::Gt,
+        json!(0),
+        10,
+    )));
 
     let result = engine.evaluate("orders", &json!({"order": {"total": 100}}));
     assert!(result.should_allow);
@@ -93,15 +91,13 @@ fn single_allow_rule_permits() {
 #[test]
 fn single_deny_rule_denies() {
     let mut engine = PolicyEngine::new();
-    engine.register_policy_set(
-        PolicySet::new("deny-set", "orders").with_rule(deny_rule(
-            "deny-high",
-            "order.total",
-            Operator::Gt,
-            json!(1000),
-            10,
-        )),
-    );
+    engine.register_policy_set(PolicySet::new("deny-set", "orders").with_rule(deny_rule(
+        "deny-high",
+        "order.total",
+        Operator::Gt,
+        json!(1000),
+        10,
+    )));
 
     let result = engine.evaluate("orders", &json!({"order": {"total": 5000}}));
     assert!(result.should_deny);
@@ -141,13 +137,7 @@ fn unmatched_rule_falls_through_to_default_action() {
     let mut engine = PolicyEngine::new();
 
     let ps = PolicySet::new("guarded", "orders")
-        .with_rule(deny_rule(
-            "high-value",
-            "order.total",
-            Operator::Gt,
-            json!(10000),
-            100,
-        ))
+        .with_rule(deny_rule("high-value", "order.total", Operator::Gt, json!(10000), 100))
         .with_default_action(PolicyAction::allow());
 
     engine.register_policy_set(ps);
@@ -195,26 +185,18 @@ fn deny_overrides_multiple_allows() {
 
     // Three Allow sets, one Deny set
     for i in 0..3 {
-        engine.register_policy_set(
-            PolicySet::new(format!("allow-{i}"), "orders").with_rule(allow_rule(
-                &format!("allow-rule-{i}"),
-                "x",
-                Operator::Eq,
-                json!(1),
-                10 + i,
-            )),
-        );
+        engine.register_policy_set(PolicySet::new(format!("allow-{i}"), "orders").with_rule(
+            allow_rule(&format!("allow-rule-{i}"), "x", Operator::Eq, json!(1), 10 + i),
+        ));
     }
 
-    engine.register_policy_set(
-        PolicySet::new("deny-set", "orders").with_rule(deny_rule(
-            "deny-rule",
-            "x",
-            Operator::Eq,
-            json!(1),
-            200,
-        )),
-    );
+    engine.register_policy_set(PolicySet::new("deny-set", "orders").with_rule(deny_rule(
+        "deny-rule",
+        "x",
+        Operator::Eq,
+        json!(1),
+        200,
+    )));
 
     let result = engine.evaluate("orders", &json!({"x": 1}));
     assert!(result.should_deny, "A single deny must override three allows");
@@ -225,24 +207,20 @@ fn deny_overrides_multiple_allows() {
 fn only_allow_rules_results_in_allow() {
     let mut engine = PolicyEngine::new();
 
-    engine.register_policy_set(
-        PolicySet::new("allow-1", "orders").with_rule(allow_rule(
-            "a1",
-            "x",
-            Operator::Eq,
-            json!(1),
-            10,
-        )),
-    );
-    engine.register_policy_set(
-        PolicySet::new("allow-2", "orders").with_rule(allow_rule(
-            "a2",
-            "x",
-            Operator::Eq,
-            json!(1),
-            20,
-        )),
-    );
+    engine.register_policy_set(PolicySet::new("allow-1", "orders").with_rule(allow_rule(
+        "a1",
+        "x",
+        Operator::Eq,
+        json!(1),
+        10,
+    )));
+    engine.register_policy_set(PolicySet::new("allow-2", "orders").with_rule(allow_rule(
+        "a2",
+        "x",
+        Operator::Eq,
+        json!(1),
+        20,
+    )));
 
     let result = engine.evaluate("orders", &json!({"x": 1}));
     assert!(result.should_allow);
@@ -270,7 +248,12 @@ fn deny_in_same_policy_set_overrides_allow() {
 // ===========================================================================
 
 /// Convenience: evaluate a single condition against a context and return whether it matched.
-fn eval_condition(field: &str, op: Operator, value: serde_json::Value, ctx: &serde_json::Value) -> bool {
+fn eval_condition(
+    field: &str,
+    op: Operator,
+    value: serde_json::Value,
+    ctx: &serde_json::Value,
+) -> bool {
     Condition::new(field, op, value).evaluate(ctx)
 }
 
@@ -370,18 +353,8 @@ fn operator_between_and_divisible_by() {
 #[test]
 fn operator_matches_regex() {
     let ctx = json!({"order_id": "ORD-2024-00123"});
-    assert!(eval_condition(
-        "order_id",
-        Operator::Matches,
-        json!(r"^ORD-\d{4}-\d+$"),
-        &ctx
-    ));
-    assert!(!eval_condition(
-        "order_id",
-        Operator::Matches,
-        json!(r"^RET-\d+$"),
-        &ctx
-    ));
+    assert!(eval_condition("order_id", Operator::Matches, json!(r"^ORD-\d{4}-\d+$"), &ctx));
+    assert!(!eval_condition("order_id", Operator::Matches, json!(r"^RET-\d+$"), &ctx));
 }
 
 #[test]
@@ -422,37 +395,12 @@ fn nested_dot_notation_field_paths() {
         json!("@example.com"),
         &ctx
     ));
-    assert!(eval_condition(
-        "order.customer.address.country",
-        Operator::Eq,
-        json!("US"),
-        &ctx
-    ));
-    assert!(eval_condition(
-        "order.customer.address.zip",
-        Operator::StartsWith,
-        json!("90"),
-        &ctx
-    ));
-    assert!(eval_condition(
-        "order.total",
-        Operator::Gte,
-        json!(250),
-        &ctx
-    ));
+    assert!(eval_condition("order.customer.address.country", Operator::Eq, json!("US"), &ctx));
+    assert!(eval_condition("order.customer.address.zip", Operator::StartsWith, json!("90"), &ctx));
+    assert!(eval_condition("order.total", Operator::Gte, json!(250), &ctx));
     // Array indexing
-    assert!(eval_condition(
-        "order.items[0].sku",
-        Operator::Eq,
-        json!("SKU-001"),
-        &ctx
-    ));
-    assert!(eval_condition(
-        "order.items[0].qty",
-        Operator::Lt,
-        json!(10),
-        &ctx
-    ));
+    assert!(eval_condition("order.items[0].sku", Operator::Eq, json!("SKU-001"), &ctx));
+    assert!(eval_condition("order.items[0].qty", Operator::Lt, json!(10), &ctx));
 }
 
 // ===========================================================================
@@ -519,10 +467,7 @@ fn nested_and_inside_or() {
     );
     let outer = ConditionGroup::new(
         Logic::Or,
-        vec![
-            ConditionNode::Group(us_group),
-            ConditionNode::Group(ca_group),
-        ],
+        vec![ConditionNode::Group(us_group), ConditionNode::Group(ca_group)],
     );
 
     // US resident, age 22 => matches first group
@@ -541,16 +486,8 @@ fn nested_or_inside_and() {
     let tier_or_value = ConditionGroup::new(
         Logic::Or,
         vec![
-            ConditionNode::Leaf(Condition::new(
-                "tier",
-                Operator::In,
-                json!(["gold", "platinum"]),
-            )),
-            ConditionNode::Leaf(Condition::new(
-                "lifetime_value",
-                Operator::Gt,
-                json!(5000),
-            )),
+            ConditionNode::Leaf(Condition::new("tier", Operator::In, json!(["gold", "platinum"]))),
+            ConditionNode::Leaf(Condition::new("lifetime_value", Operator::Gt, json!(5000))),
         ],
     );
     let outer = ConditionGroup::new(
@@ -595,11 +532,7 @@ fn denial_includes_explanation_with_condition_breakdown() {
         .with_priority(100)
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "order.total",
-                Operator::Gt,
-                json!(10000),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("order.total", Operator::Gt, json!(10000)))],
         ))
         .with_action(PolicyAction::deny(
             "Order exceeds $10,000 spending limit",
@@ -608,10 +541,7 @@ fn denial_includes_explanation_with_condition_breakdown() {
 
     engine.register_policy_set(PolicySet::new("spending-limits", "orders").with_rule(rule));
 
-    let result = engine.evaluate(
-        "orders",
-        &json!({"order": {"total": 15000}}),
-    );
+    let result = engine.evaluate("orders", &json!({"order": {"total": 15000}}));
 
     assert!(result.should_deny);
     assert_eq!(result.explanations.len(), 1);
@@ -635,20 +565,13 @@ fn explanation_has_field_operator_expected_actual() {
         .with_priority(10)
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "payment.amount",
-                Operator::Gt,
-                json!(500),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("payment.amount", Operator::Gt, json!(500)))],
         ))
         .with_action(PolicyAction::deny("Amount too high", "Lower the amount"));
 
     engine.register_policy_set(PolicySet::new("payment-limits", "payments").with_rule(rule));
 
-    let result = engine.evaluate(
-        "payments",
-        &json!({"payment": {"amount": 750}}),
-    );
+    let result = engine.evaluate("payments", &json!({"payment": {"amount": 750}}));
 
     assert_eq!(result.explanations.len(), 1);
     let conditions = &result.explanations[0].conditions;
@@ -671,11 +594,7 @@ fn multiple_conditions_each_produce_explanation_detail() {
         .with_conditions(ConditionGroup::new(
             Logic::And,
             vec![
-                ConditionNode::Leaf(Condition::new(
-                    "order.total",
-                    Operator::Gt,
-                    json!(1000),
-                )),
+                ConditionNode::Leaf(Condition::new("order.total", Operator::Gt, json!(1000))),
                 ConditionNode::Leaf(Condition::new(
                     "customer.tier",
                     Operator::NotIn,
@@ -749,15 +668,13 @@ fn explanation_display_format_is_human_readable() {
 #[test]
 fn dry_run_returns_same_result_as_evaluate() {
     let mut engine = PolicyEngine::new();
-    engine.register_policy_set(
-        PolicySet::new("limits", "orders").with_rule(deny_rule(
-            "high-value",
-            "order.total",
-            Operator::Gt,
-            json!(1000),
-            100,
-        )),
-    );
+    engine.register_policy_set(PolicySet::new("limits", "orders").with_rule(deny_rule(
+        "high-value",
+        "order.total",
+        Operator::Gt,
+        json!(1000),
+        100,
+    )));
 
     let ctx = json!({"order": {"total": 5000}});
 
@@ -774,10 +691,7 @@ fn dry_run_does_not_record_history() {
     let engine = PolicyEngine::new();
 
     let _result = engine.evaluate_dry_run("orders", &json!({}));
-    assert!(
-        engine.get_history().is_empty(),
-        "Dry run must not record history"
-    );
+    assert!(engine.get_history().is_empty(), "Dry run must not record history");
 }
 
 #[test]
@@ -828,19 +742,13 @@ fn stop_on_match_prevents_lower_priority_rules() {
         .with_stop_on_match()
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "x",
-                Operator::Eq,
-                json!(1),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("x", Operator::Eq, json!(1)))],
         ))
         .with_action(PolicyAction::allow());
 
     let would_deny = deny_rule("would-deny", "x", Operator::Eq, json!(1), 50);
 
-    let ps = PolicySet::new("stop-test", "orders")
-        .with_rule(stop_rule)
-        .with_rule(would_deny);
+    let ps = PolicySet::new("stop-test", "orders").with_rule(stop_rule).with_rule(would_deny);
 
     engine.register_policy_set(ps);
 
@@ -862,19 +770,13 @@ fn stop_on_match_does_not_stop_if_not_matched() {
         .with_stop_on_match()
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "x",
-                Operator::Eq,
-                json!(999),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("x", Operator::Eq, json!(999)))],
         ))
         .with_action(PolicyAction::allow());
 
     let will_deny = deny_rule("will-deny", "x", Operator::Eq, json!(1), 50);
 
-    let ps = PolicySet::new("stop-test-2", "orders")
-        .with_rule(stop_rule)
-        .with_rule(will_deny);
+    let ps = PolicySet::new("stop-test-2", "orders").with_rule(stop_rule).with_rule(will_deny);
 
     engine.register_policy_set(ps);
 
@@ -912,19 +814,14 @@ fn transform_action_appears_in_evaluation_result() {
         .with_priority(50)
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "order.total",
-                Operator::Gt,
-                json!(100),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("order.total", Operator::Gt, json!(100)))],
         ))
         .with_action(PolicyAction::transform(json!({
             "order.discount": 0.10,
             "order.discount_reason": "Loyalty discount"
         })));
 
-    engine
-        .register_policy_set(PolicySet::new("discounts", "orders").with_rule(transform_rule));
+    engine.register_policy_set(PolicySet::new("discounts", "orders").with_rule(transform_rule));
 
     let result = engine.evaluate("orders", &json!({"order": {"total": 200}}));
 
@@ -1013,8 +910,8 @@ fn transform_audit_entry_with_rule_context() {
 
 #[test]
 fn transform_audit_entry_serializes() {
-    let entry = TransformAuditEntry::new("qty", json!(10), json!(8))
-        .with_rule(Uuid::nil(), "reduce-qty");
+    let entry =
+        TransformAuditEntry::new("qty", json!(10), json!(8)).with_rule(Uuid::nil(), "reduce-qty");
 
     let json_str = serde_json::to_string(&entry).unwrap();
     assert!(json_str.contains("\"field\":\"qty\""));
@@ -1036,19 +933,13 @@ fn disabled_rule_is_skipped() {
         .with_priority(200)
         .with_conditions(ConditionGroup::new(
             Logic::And,
-            vec![ConditionNode::Leaf(Condition::new(
-                "x",
-                Operator::IsNotNull,
-                json!(null),
-            ))],
+            vec![ConditionNode::Leaf(Condition::new("x", Operator::IsNotNull, json!(null)))],
         ))
         .with_action(PolicyAction::deny("disabled", "n/a"));
 
     let enabled = allow_rule("enabled-allow", "x", Operator::IsNotNull, json!(null), 100);
 
-    let ps = PolicySet::new("mixed-enabled", "orders")
-        .with_rule(disabled)
-        .with_rule(enabled);
+    let ps = PolicySet::new("mixed-enabled", "orders").with_rule(disabled).with_rule(enabled);
 
     engine.register_policy_set(ps);
 
@@ -1072,24 +963,20 @@ fn negated_condition_inverts_result() {
 fn evaluation_across_different_domains_is_isolated() {
     let mut engine = PolicyEngine::new();
 
-    engine.register_policy_set(
-        PolicySet::new("order-deny", "orders").with_rule(deny_rule(
-            "deny-all-orders",
-            "x",
-            Operator::IsNotNull,
-            json!(null),
-            100,
-        )),
-    );
-    engine.register_policy_set(
-        PolicySet::new("return-allow", "returns").with_rule(allow_rule(
-            "allow-all-returns",
-            "x",
-            Operator::IsNotNull,
-            json!(null),
-            100,
-        )),
-    );
+    engine.register_policy_set(PolicySet::new("order-deny", "orders").with_rule(deny_rule(
+        "deny-all-orders",
+        "x",
+        Operator::IsNotNull,
+        json!(null),
+        100,
+    )));
+    engine.register_policy_set(PolicySet::new("return-allow", "returns").with_rule(allow_rule(
+        "allow-all-returns",
+        "x",
+        Operator::IsNotNull,
+        json!(null),
+        100,
+    )));
 
     let order_result = engine.evaluate("orders", &json!({"x": 1}));
     assert!(order_result.should_deny, "Orders domain should deny");
@@ -1101,15 +988,13 @@ fn evaluation_across_different_domains_is_isolated() {
 #[test]
 fn history_records_evaluations_correctly() {
     let mut engine = PolicyEngine::new();
-    engine.register_policy_set(
-        PolicySet::new("test", "orders").with_rule(deny_rule(
-            "deny-high",
-            "total",
-            Operator::Gt,
-            json!(1000),
-            10,
-        )),
-    );
+    engine.register_policy_set(PolicySet::new("test", "orders").with_rule(deny_rule(
+        "deny-high",
+        "total",
+        Operator::Gt,
+        json!(1000),
+        10,
+    )));
 
     engine.evaluate("orders", &json!({"total": 5000})); // deny
     engine.evaluate("orders", &json!({"total": 100})); // allow (no match => default)
@@ -1129,15 +1014,13 @@ fn history_records_evaluations_correctly() {
 #[test]
 fn policy_set_evaluation_serializable_as_json() {
     let mut engine = PolicyEngine::new();
-    engine.register_policy_set(
-        PolicySet::new("test", "orders").with_rule(deny_rule(
-            "r1",
-            "x",
-            Operator::Eq,
-            json!(1),
-            10,
-        )),
-    );
+    engine.register_policy_set(PolicySet::new("test", "orders").with_rule(deny_rule(
+        "r1",
+        "x",
+        Operator::Eq,
+        json!(1),
+        10,
+    )));
 
     let result = engine.evaluate("orders", &json!({"x": 1}));
     let json_str = serde_json::to_string_pretty(&result).unwrap();

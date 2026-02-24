@@ -10,8 +10,8 @@ use rusqlite::{Row, params};
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
     InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentRepository,
-    PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
-    generate_payment_number, generate_refund_number, validate_batch_size,
+    PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment, generate_payment_number,
+    generate_refund_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -37,7 +37,8 @@ impl SqlitePaymentRepository {
                 row.get::<_, Option<String>>("order_id")?,
                 "payment",
                 "order_id",
-            )?.map(OrderId::from),
+            )?
+            .map(OrderId::from),
             invoice_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("invoice_id")?,
                 "payment",
@@ -47,7 +48,8 @@ impl SqlitePaymentRepository {
                 row.get::<_, Option<String>>("customer_id")?,
                 "payment",
                 "customer_id",
-            )?.map(CustomerId::from),
+            )?
+            .map(CustomerId::from),
             status: parse_enum_row(&row.get::<_, String>("status")?, "payment", "status")?,
             payment_method: parse_enum_row(
                 &row.get::<_, String>("payment_method")?,
@@ -786,7 +788,10 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(PaymentId, UpdatePayment)>,
+    ) -> Result<BatchResult<Payment>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -800,7 +805,10 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<Vec<Payment>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(PaymentId, UpdatePayment)>,
+    ) -> Result<Vec<Payment>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);

@@ -11,12 +11,12 @@ use rand::RngCore;
 use sha2::Sha256;
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 
+use crate::CryptoError;
 use crate::canonicalize::canonicalize_json;
 use crate::hash::{
-    compute_payload_aad, compute_payload_cipher_hash, compute_payload_plain_hash,
-    compute_recipients_hash, PayloadAadParams, PayloadCipherParams,
+    PayloadAadParams, PayloadCipherParams, compute_payload_aad, compute_payload_cipher_hash,
+    compute_payload_plain_hash, compute_recipients_hash,
 };
-use crate::CryptoError;
 
 const NONCE_SIZE: usize = 12;
 const SALT_SIZE: usize = 16;
@@ -77,10 +77,8 @@ pub fn encrypt_payload(
     let payload_plain_hash = compute_payload_plain_hash(payload, Some(&salt))?;
 
     // Compute AAD with updated plain hash
-    let updated_aad_params = PayloadAadParams {
-        payload_plain_hash: &payload_plain_hash,
-        ..*aad_params
-    };
+    let updated_aad_params =
+        PayloadAadParams { payload_plain_hash: &payload_plain_hash, ..*aad_params };
     let payload_aad = compute_payload_aad(&updated_aad_params)?;
 
     // Prepare plaintext: salt || JCS(payload)
@@ -95,10 +93,7 @@ pub fn encrypt_payload(
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Use aes_gcm with AAD
-    let aead_payload = aes_gcm::aead::Payload {
-        msg: &plaintext,
-        aad: &payload_aad,
-    };
+    let aead_payload = aes_gcm::aead::Payload { msg: &plaintext, aad: &payload_aad };
     let ciphertext_with_tag = cipher
         .encrypt(nonce, aead_payload)
         .map_err(|e| CryptoError::EncryptionError(e.to_string()))?;
@@ -121,14 +116,8 @@ pub fn encrypt_payload(
 
     // Sort by kid
     recipients.sort_by(|a, b| {
-        let a_kid = a
-            .get("recipient_kid")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let b_kid = b
-            .get("recipient_kid")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let a_kid = a.get("recipient_kid").and_then(|v| v.as_u64()).unwrap_or(0);
+        let b_kid = b.get("recipient_kid").and_then(|v| v.as_u64()).unwrap_or(0);
         a_kid.cmp(&b_kid)
     });
 
@@ -160,12 +149,7 @@ pub fn encrypt_payload(
         "recipients": recipients,
     });
 
-    Ok(EncryptionResult {
-        payload_encrypted,
-        salt,
-        payload_plain_hash,
-        payload_cipher_hash,
-    })
+    Ok(EncryptionResult { payload_encrypted, salt, payload_plain_hash, payload_cipher_hash })
 }
 
 /// Decrypt payload per VES-ENC-1
@@ -194,10 +178,7 @@ pub fn decrypt_payload(
 
     let recipient = recipients
         .iter()
-        .find(|r| {
-            r.get("recipient_kid").and_then(|v| v.as_u64())
-                == Some(u64::from(recipient_kid))
-        })
+        .find(|r| r.get("recipient_kid").and_then(|v| v.as_u64()) == Some(u64::from(recipient_kid)))
         .ok_or(CryptoError::RecipientNotFound(recipient_kid))?;
 
     // Unwrap DEK
@@ -235,12 +216,9 @@ pub fn decrypt_payload(
 
     let ciphertext = b64
         .decode(
-            payload_encrypted
-                .get("ciphertext_b64u")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    CryptoError::DecryptionError("Missing ciphertext_b64u".to_string())
-                })?,
+            payload_encrypted.get("ciphertext_b64u").and_then(|v| v.as_str()).ok_or_else(|| {
+                CryptoError::DecryptionError("Missing ciphertext_b64u".to_string())
+            })?,
         )
         .map_err(|e| CryptoError::DecryptionError(e.to_string()))?;
 
@@ -263,23 +241,16 @@ pub fn decrypt_payload(
     ct_with_tag.extend_from_slice(&ciphertext);
     ct_with_tag.extend_from_slice(&tag);
 
-    let aead_payload = aes_gcm::aead::Payload {
-        msg: &ct_with_tag,
-        aad: payload_aad,
-    };
+    let aead_payload = aes_gcm::aead::Payload { msg: &ct_with_tag, aad: payload_aad };
     let plaintext = cipher_obj
         .decrypt(nonce, aead_payload)
         .map_err(|e| CryptoError::DecryptionError(e.to_string()))?;
 
     // Extract salt and JSON
     if plaintext.len() < SALT_SIZE {
-        return Err(CryptoError::DecryptionError(
-            "Plaintext too short".to_string(),
-        ));
+        return Err(CryptoError::DecryptionError("Plaintext too short".to_string()));
     }
-    let salt: [u8; 16] = plaintext[..SALT_SIZE]
-        .try_into()
-        .expect("salt slice is exactly 16 bytes");
+    let salt: [u8; 16] = plaintext[..SALT_SIZE].try_into().expect("salt slice is exactly 16 bytes");
     let json_bytes = &plaintext[SALT_SIZE..];
     let payload: serde_json::Value = serde_json::from_slice(json_bytes)
         .map_err(|e| CryptoError::DecryptionError(e.to_string()))?;
@@ -312,8 +283,7 @@ fn wrap_dek(
     // Derive wrapping key using HKDF
     let hk = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
     let mut wrapping_key = [0u8; 32];
-    hk.expand(info, &mut wrapping_key)
-        .map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
+    hk.expand(info, &mut wrapping_key).map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
 
     // Wrap DEK with AES-256-GCM
     let mut wrap_nonce_bytes = [0u8; NONCE_SIZE];
@@ -350,14 +320,11 @@ fn unwrap_dek(
     // Derive wrapping key
     let hk = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
     let mut wrapping_key = [0u8; 32];
-    hk.expand(info, &mut wrapping_key)
-        .map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
+    hk.expand(info, &mut wrapping_key).map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
 
     // Unwrap DEK
     if wrapped_key.len() < NONCE_SIZE {
-        return Err(CryptoError::KeyWrapError(
-            "Wrapped key too short".to_string(),
-        ));
+        return Err(CryptoError::KeyWrapError("Wrapped key too short".to_string()));
     }
     let wrap_nonce = Nonce::from_slice(&wrapped_key[..NONCE_SIZE]);
     let ciphertext_tag = &wrapped_key[NONCE_SIZE..];
@@ -442,18 +409,13 @@ mod tests {
         let aad_params = test_aad_params(&plain_hash);
 
         let (private_key, public_key) = generate_x25519_keypair();
-        let recipients = vec![RecipientKey {
-            kid: 1,
-            public_key,
-        }];
+        let recipients = vec![RecipientKey { kid: 1, public_key }];
 
         let enc_result = encrypt_payload(&payload, &aad_params, &recipients).unwrap();
 
         // Compute AAD for decryption
-        let dec_aad_params = PayloadAadParams {
-            payload_plain_hash: &enc_result.payload_plain_hash,
-            ..aad_params
-        };
+        let dec_aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
         let dec_payload_aad = crate::hash::compute_payload_aad(&dec_aad_params).unwrap();
 
         let decrypted = decrypt_payload(
@@ -485,22 +447,14 @@ mod tests {
         let (priv1, pub1) = generate_x25519_keypair();
         let (priv2, pub2) = generate_x25519_keypair();
         let recipients = vec![
-            RecipientKey {
-                kid: 1,
-                public_key: pub1,
-            },
-            RecipientKey {
-                kid: 2,
-                public_key: pub2,
-            },
+            RecipientKey { kid: 1, public_key: pub1 },
+            RecipientKey { kid: 2, public_key: pub2 },
         ];
 
         let enc_result = encrypt_payload(&payload, &aad_params, &recipients).unwrap();
 
-        let dec_aad_params = PayloadAadParams {
-            payload_plain_hash: &enc_result.payload_plain_hash,
-            ..aad_params
-        };
+        let dec_aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
         let dec_payload_aad = crate::hash::compute_payload_aad(&dec_aad_params).unwrap();
 
         // Both recipients can decrypt
@@ -531,16 +485,11 @@ mod tests {
         let aad_params = test_aad_params(&plain_hash);
 
         let (_, pub_key) = generate_x25519_keypair();
-        let recipients = vec![RecipientKey {
-            kid: 1,
-            public_key: pub_key,
-        }];
+        let recipients = vec![RecipientKey { kid: 1, public_key: pub_key }];
 
         let enc_result = encrypt_payload(&payload, &aad_params, &recipients).unwrap();
-        let dec_aad_params = PayloadAadParams {
-            payload_plain_hash: &enc_result.payload_plain_hash,
-            ..aad_params
-        };
+        let dec_aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
         let dec_payload_aad = crate::hash::compute_payload_aad(&dec_aad_params).unwrap();
 
         // Try with wrong kid

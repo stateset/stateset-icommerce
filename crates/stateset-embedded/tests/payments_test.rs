@@ -207,8 +207,7 @@ fn test_get_payment_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     let fake_id: PaymentId = Uuid::new_v4().into();
-    let result =
-        commerce.payments().get(fake_id).expect("Should not error for missing payment");
+    let result = commerce.payments().get(fake_id).expect("Should not error for missing payment");
 
     assert!(result.is_none());
 }

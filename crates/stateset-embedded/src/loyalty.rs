@@ -21,9 +21,9 @@
 //! ```
 
 use stateset_core::{
-    AdjustPoints, CreateLoyaltyProgram, CreateReward, CustomerId, EnrollCustomer,
-    LoyaltyAccount, LoyaltyAccountFilter, LoyaltyAccountId, LoyaltyProgram, LoyaltyProgramId,
-    LoyaltyTransaction, Result, Reward, RewardFilter, RewardId,
+    AdjustPoints, CreateLoyaltyProgram, CreateReward, CustomerId, EnrollCustomer, LoyaltyAccount,
+    LoyaltyAccountFilter, LoyaltyAccountId, LoyaltyProgram, LoyaltyProgramId, LoyaltyTransaction,
+    Result, Reward, RewardFilter, RewardId,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -98,9 +98,7 @@ impl Loyalty {
         customer_id: CustomerId,
         program_id: LoyaltyProgramId,
     ) -> Result<Option<LoyaltyAccount>> {
-        self.db
-            .loyalty_programs()
-            .get_account_by_customer(customer_id, program_id)
+        self.db.loyalty_programs().get_account_by_customer(customer_id, program_id)
     }
 
     /// List loyalty accounts with optional filtering.

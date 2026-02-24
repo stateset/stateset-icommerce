@@ -37,10 +37,7 @@ async fn adjust_stock(
     Json(req): Json<InventoryAdjustRequest>,
 ) -> Result<Json<InventoryResponse>, HttpError> {
     // Perform the adjustment
-    state
-        .commerce()
-        .inventory()
-        .adjust(&sku, req.quantity, &req.reason)?;
+    state.commerce().inventory().adjust(&sku, req.quantity, &req.reason)?;
 
     // Fetch updated stock levels
     let stock = state
@@ -75,11 +72,7 @@ mod tests {
     #[tokio::test]
     async fn get_stock_not_found() {
         let resp = app()
-            .oneshot(
-                Request::get("/inventory/NONEXISTENT")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/inventory/NONEXISTENT").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -101,11 +94,7 @@ mod tests {
             .unwrap();
 
         let resp = app
-            .oneshot(
-                Request::get("/inventory/WIDGET-001")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/inventory/WIDGET-001").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

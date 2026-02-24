@@ -97,9 +97,7 @@ pub fn calculate_percentage_split(
         return Err(A2AError::validation("total must be greater than 0"));
     }
     if recipients.len() < 2 {
-        return Err(A2AError::validation(
-            "recipients must have at least 2 entries",
-        ));
+        return Err(A2AError::validation("recipients must have at least 2 entries"));
     }
 
     // Validate all recipients have a percent
@@ -112,15 +110,10 @@ pub fn calculate_percentage_split(
     }
 
     // Validate percentages sum to 100
-    let percent_sum: Decimal = recipients
-        .iter()
-        .map(|r| r.percent.unwrap_or_default())
-        .sum();
+    let percent_sum: Decimal = recipients.iter().map(|r| r.percent.unwrap_or_default()).sum();
     let tolerance = dec!(0.001);
     if (percent_sum - dec!(100)).abs() > tolerance {
-        return Err(A2AError::PercentageSumMismatch {
-            actual: percent_sum,
-        });
+        return Err(A2AError::PercentageSumMismatch { actual: percent_sum });
     }
 
     // --- Platform fee ---
@@ -140,17 +133,10 @@ pub fn calculate_percentage_split(
             (remaining * pct / dec!(100)).round_dp(DECIMALS_DP)
         };
         allocated += share;
-        shares.push(SplitShare {
-            address: r.address.clone(),
-            amount: share,
-        });
+        shares.push(SplitShare { address: r.address.clone(), amount: share });
     }
 
-    Ok(SplitResult {
-        shares,
-        platform_fee: fee,
-        total_distributed: allocated + fee,
-    })
+    Ok(SplitResult { shares, platform_fee: fee, total_distributed: allocated + fee })
 }
 
 /// Calculate a fixed-amount split.
@@ -188,9 +174,7 @@ pub fn calculate_fixed_split(
         return Err(A2AError::validation("total must be greater than 0"));
     }
     if recipients.len() < 2 {
-        return Err(A2AError::validation(
-            "recipients must have at least 2 entries",
-        ));
+        return Err(A2AError::validation("recipients must have at least 2 entries"));
     }
 
     for (i, r) in recipients.iter().enumerate() {
@@ -206,18 +190,13 @@ pub fn calculate_fixed_split(
     let remaining = total - fee;
 
     // --- Validate fixed amounts sum to remaining ---
-    let fixed_sum: Decimal = recipients
-        .iter()
-        .map(|r| r.amount.unwrap_or_default().round_dp(DECIMALS_DP))
-        .sum();
+    let fixed_sum: Decimal =
+        recipients.iter().map(|r| r.amount.unwrap_or_default().round_dp(DECIMALS_DP)).sum();
 
     // Allow 1 smallest-unit tolerance for rounding
     let one_unit = Decimal::new(1, DECIMALS_DP);
     if (fixed_sum - remaining).abs() > one_unit {
-        return Err(A2AError::FixedSumMismatch {
-            expected: remaining,
-            actual: fixed_sum,
-        });
+        return Err(A2AError::FixedSumMismatch { expected: remaining, actual: fixed_sum });
     }
 
     // --- Build shares ---
@@ -227,17 +206,10 @@ pub fn calculate_fixed_split(
     for r in recipients {
         let amount = r.amount.unwrap_or_default().round_dp(DECIMALS_DP);
         distributed += amount;
-        shares.push(SplitShare {
-            address: r.address.clone(),
-            amount,
-        });
+        shares.push(SplitShare { address: r.address.clone(), amount });
     }
 
-    Ok(SplitResult {
-        shares,
-        platform_fee: fee,
-        total_distributed: distributed + fee,
-    })
+    Ok(SplitResult { shares, platform_fee: fee, total_distributed: distributed + fee })
 }
 
 #[cfg(test)]
@@ -245,7 +217,7 @@ mod tests {
     use super::*;
     use rust_decimal_macros::dec;
 
-    fn make_pct_recipients(pcts: &[(& str, Decimal)]) -> Vec<Recipient> {
+    fn make_pct_recipients(pcts: &[(&str, Decimal)]) -> Vec<Recipient> {
         pcts.iter()
             .map(|(addr, pct)| Recipient {
                 address: (*addr).to_string(),
@@ -318,8 +290,7 @@ mod tests {
     #[test]
     fn percentage_split_large_amount() {
         let r = make_pct_recipients(&[("0xA", dec!(70)), ("0xB", dec!(30))]);
-        let result =
-            calculate_percentage_split(dec!(1000000), dec!(1), &r).unwrap();
+        let result = calculate_percentage_split(dec!(1000000), dec!(1), &r).unwrap();
 
         assert_eq!(result.platform_fee, dec!(10000.000000));
         assert_eq!(result.total_distributed, dec!(1000000));
@@ -457,10 +428,7 @@ mod tests {
     #[test]
     fn fixed_split_allows_one_unit_tolerance() {
         // amounts sum to 99.999999, total is 100 — within 1 unit tolerance
-        let r = make_fixed_recipients(&[
-            ("0xA", dec!(59.999999)),
-            ("0xB", dec!(40.000000)),
-        ]);
+        let r = make_fixed_recipients(&[("0xA", dec!(59.999999)), ("0xB", dec!(40.000000))]);
         // This should fail since diff is 0.000001 which equals one_unit
         // The check is > one_unit, so exactly one_unit should pass
         let result = calculate_fixed_split(dec!(100), dec!(0), &r);

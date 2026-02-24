@@ -56,6 +56,6 @@ node 2-policy-agents.js
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20.20.0+ and npm 10.0.0+
 - iCommerce CLI installed
 - PostgreSQL database configured

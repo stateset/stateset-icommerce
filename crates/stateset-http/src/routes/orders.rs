@@ -116,9 +116,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn app() -> Router {
-        router().with_state(AppState::new(
-            Commerce::new(":memory:").expect("in-memory Commerce"),
-        ))
+        router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
     }
 
     fn app_with_state() -> (Router, AppState) {
@@ -185,11 +183,7 @@ mod tests {
     async fn get_order_not_found() {
         let id = OrderId::new();
         let resp = app()
-            .oneshot(
-                Request::get(format!("/orders/{id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get(format!("/orders/{id}")).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -197,10 +191,8 @@ mod tests {
 
     #[tokio::test]
     async fn list_orders_empty() {
-        let resp = app()
-            .oneshot(Request::get("/orders").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app().oneshot(Request::get("/orders").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -212,11 +204,7 @@ mod tests {
     #[tokio::test]
     async fn list_orders_with_pagination() {
         let resp = app()
-            .oneshot(
-                Request::get("/orders?limit=10&offset=5")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/orders?limit=10&offset=5").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

@@ -9,7 +9,9 @@ use stateset_primitives::SearchConfigId;
 use strum::{Display, EnumString};
 
 /// Tokenizer strategy for a searchable field
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -26,7 +28,9 @@ pub enum Tokenizer {
 }
 
 /// Facet type for search refinement
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -182,7 +186,9 @@ mod tests {
 
     #[test]
     fn tokenizer_display_fromstr_roundtrip() {
-        for tokenizer in [Tokenizer::Standard, Tokenizer::Ngram, Tokenizer::Edge, Tokenizer::Keyword] {
+        for tokenizer in
+            [Tokenizer::Standard, Tokenizer::Ngram, Tokenizer::Edge, Tokenizer::Keyword]
+        {
             let s = tokenizer.to_string();
             let parsed: Tokenizer = s.parse().unwrap();
             assert_eq!(parsed, tokenizer, "round-trip failed for {s}");

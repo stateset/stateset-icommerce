@@ -9,28 +9,53 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 
 use stateset_pricing::{
-    // Line items
-    LineDiscount, LineItem,
-    // Order totals
-    Fee, OrderTotal, OrderTotalInput, compute_order_total,
     // Promotions
-    AppliedPromotion, Promotion, PromotionContext, PromotionResult, PromotionRule,
-    RejectedPromotion, RejectionReason, evaluate_promotions,
-    // Tax
-    TaxAppliesTo, TaxContext, TaxLine, TaxResult, TaxRule, TaxableItem, calculate_tax,
-    // Rounding
-    RoundingMode, RoundingPolicy, round,
+    AppliedPromotion,
     // Currency
-    CurrencyConverter, ExchangeRate,
+    CurrencyConverter,
+    ExchangeRate,
+    // Order totals
+    Fee,
+    // Line items
+    LineDiscount,
+    LineItem,
+    OrderTotal,
+    OrderTotalInput,
     // Errors
     PricingError,
+    Promotion,
+    PromotionContext,
+    PromotionResult,
+    PromotionRule,
+    RejectedPromotion,
+    RejectionReason,
+    // Rounding
+    RoundingMode,
+    RoundingPolicy,
+    // Tax
+    TaxAppliesTo,
+    TaxContext,
+    TaxLine,
+    TaxResult,
+    TaxRule,
+    TaxableItem,
+    calculate_tax,
+    compute_order_total,
+    evaluate_promotions,
+    round,
 };
 
 // =========================================================================
 // Helpers
 // =========================================================================
 
-fn item(sku: &str, price: Decimal, qty: u32, discount: Option<LineDiscount>, tax: Option<Decimal>) -> LineItem {
+fn item(
+    sku: &str,
+    price: Decimal,
+    qty: u32,
+    discount: Option<LineDiscount>,
+    tax: Option<Decimal>,
+) -> LineItem {
     LineItem {
         sku: sku.into(),
         name: format!("Item {sku}"),
@@ -64,12 +89,7 @@ fn base_promo_context() -> PromotionContext {
 }
 
 fn make_rate(from: &str, to: &str, rate: Decimal) -> ExchangeRate {
-    ExchangeRate {
-        from: from.into(),
-        to: to.into(),
-        rate,
-        as_of: Utc::now(),
-    }
+    ExchangeRate { from: from.into(), to: to.into(), rate, as_of: Utc::now() }
 }
 
 // =========================================================================
@@ -116,9 +136,13 @@ fn order_no_discounts_baseline() {
 
 #[test]
 fn order_100_percent_discount_only_shipping_and_fees() {
-    let items = vec![
-        item("FREE", dec!(75.00), 2, Some(LineDiscount::Percentage(Decimal::ONE)), Some(dec!(0.10))),
-    ];
+    let items = vec![item(
+        "FREE",
+        dec!(75.00),
+        2,
+        Some(LineDiscount::Percentage(Decimal::ONE)),
+        Some(dec!(0.10)),
+    )];
     let mut input = order_input(items);
     input.shipping_cost = dec!(9.99);
     input.shipping_tax_rate = Some(dec!(0.08));
@@ -173,9 +197,24 @@ fn order_multi_item_with_order_level_discount() {
 #[test]
 fn tax_multi_jurisdiction_non_compound() {
     let rules = vec![
-        TaxRule { jurisdiction: "State".into(), rate: dec!(0.06), applies_to: TaxAppliesTo::AllItems, compound: false },
-        TaxRule { jurisdiction: "County".into(), rate: dec!(0.01), applies_to: TaxAppliesTo::AllItems, compound: false },
-        TaxRule { jurisdiction: "City".into(), rate: dec!(0.005), applies_to: TaxAppliesTo::AllItems, compound: false },
+        TaxRule {
+            jurisdiction: "State".into(),
+            rate: dec!(0.06),
+            applies_to: TaxAppliesTo::AllItems,
+            compound: false,
+        },
+        TaxRule {
+            jurisdiction: "County".into(),
+            rate: dec!(0.01),
+            applies_to: TaxAppliesTo::AllItems,
+            compound: false,
+        },
+        TaxRule {
+            jurisdiction: "City".into(),
+            rate: dec!(0.005),
+            applies_to: TaxAppliesTo::AllItems,
+            compound: false,
+        },
     ];
     let ctx = TaxContext {
         items: vec![TaxableItem { amount: dec!(200.00), category: None, exempt: false }],
@@ -185,8 +224,8 @@ fn tax_multi_jurisdiction_non_compound() {
 
     assert_eq!(result.tax_lines.len(), 3);
     assert_eq!(result.tax_lines[0].tax_amount, dec!(12.00)); // 200 * 0.06
-    assert_eq!(result.tax_lines[1].tax_amount, dec!(2.00));  // 200 * 0.01
-    assert_eq!(result.tax_lines[2].tax_amount, dec!(1.00));  // 200 * 0.005
+    assert_eq!(result.tax_lines[1].tax_amount, dec!(2.00)); // 200 * 0.01
+    assert_eq!(result.tax_lines[2].tax_amount, dec!(1.00)); // 200 * 0.005
     assert_eq!(result.total_tax, dec!(15.00));
 }
 
@@ -194,8 +233,18 @@ fn tax_multi_jurisdiction_non_compound() {
 fn tax_compound_state_then_county() {
     // State (non-compound) then county (compound on state+base)
     let rules = vec![
-        TaxRule { jurisdiction: "State".into(), rate: dec!(0.05), applies_to: TaxAppliesTo::AllItems, compound: false },
-        TaxRule { jurisdiction: "County".into(), rate: dec!(0.02), applies_to: TaxAppliesTo::AllItems, compound: true },
+        TaxRule {
+            jurisdiction: "State".into(),
+            rate: dec!(0.05),
+            applies_to: TaxAppliesTo::AllItems,
+            compound: false,
+        },
+        TaxRule {
+            jurisdiction: "County".into(),
+            rate: dec!(0.02),
+            applies_to: TaxAppliesTo::AllItems,
+            compound: true,
+        },
     ];
     let ctx = TaxContext {
         items: vec![TaxableItem { amount: dec!(100.00), category: None, exempt: false }],
@@ -214,7 +263,11 @@ fn tax_compound_state_then_county() {
 fn tax_specific_categories_some_exempt() {
     let ctx = TaxContext {
         items: vec![
-            TaxableItem { amount: dec!(100.00), category: Some("electronics".into()), exempt: false },
+            TaxableItem {
+                amount: dec!(100.00),
+                category: Some("electronics".into()),
+                exempt: false,
+            },
             TaxableItem { amount: dec!(50.00), category: Some("food".into()), exempt: false },
             TaxableItem { amount: dec!(25.00), category: Some("clothing".into()), exempt: false },
         ],
@@ -237,9 +290,7 @@ fn tax_specific_categories_some_exempt() {
 #[test]
 fn tax_on_shipping_only() {
     let ctx = TaxContext {
-        items: vec![
-            TaxableItem { amount: dec!(500.00), category: None, exempt: false },
-        ],
+        items: vec![TaxableItem { amount: dec!(500.00), category: None, exempt: false }],
         shipping: dec!(25.00),
     };
     let rules = vec![TaxRule {
@@ -300,15 +351,34 @@ fn tax_mixed_items_shipping_compound() {
     // A realistic scenario: state item tax, county item tax (compound), shipping tax
     let ctx = TaxContext {
         items: vec![
-            TaxableItem { amount: dec!(150.00), category: Some("electronics".into()), exempt: false },
+            TaxableItem {
+                amount: dec!(150.00),
+                category: Some("electronics".into()),
+                exempt: false,
+            },
             TaxableItem { amount: dec!(50.00), category: Some("food".into()), exempt: true },
         ],
         shipping: dec!(10.00),
     };
     let rules = vec![
-        TaxRule { jurisdiction: "State".into(), rate: dec!(0.06), applies_to: TaxAppliesTo::AllItems, compound: false },
-        TaxRule { jurisdiction: "County".into(), rate: dec!(0.015), applies_to: TaxAppliesTo::AllItems, compound: true },
-        TaxRule { jurisdiction: "Ship-Tax".into(), rate: dec!(0.06), applies_to: TaxAppliesTo::ShippingOnly, compound: false },
+        TaxRule {
+            jurisdiction: "State".into(),
+            rate: dec!(0.06),
+            applies_to: TaxAppliesTo::AllItems,
+            compound: false,
+        },
+        TaxRule {
+            jurisdiction: "County".into(),
+            rate: dec!(0.015),
+            applies_to: TaxAppliesTo::AllItems,
+            compound: true,
+        },
+        TaxRule {
+            jurisdiction: "Ship-Tax".into(),
+            rate: dec!(0.06),
+            applies_to: TaxAppliesTo::ShippingOnly,
+            compound: false,
+        },
     ];
     let result = calculate_tax(&rules, &ctx, &RoundingPolicy::usd());
 
@@ -397,7 +467,9 @@ fn promo_non_stackable_best_deal_wins() {
     assert_eq!(result.applied[0].discount_amount, dec!(30.00));
     assert_eq!(result.rejected.len(), 2);
     for r in &result.rejected {
-        assert!(matches!(&r.reason, RejectionReason::SupersededByBetterDeal { winner_code } if winner_code == "NS-BIG"));
+        assert!(
+            matches!(&r.reason, RejectionReason::SupersededByBetterDeal { winner_code } if winner_code == "NS-BIG")
+        );
     }
 }
 
@@ -454,7 +526,9 @@ fn promo_rejected_minimum_order_total_not_met() {
 
     assert!(result.applied.is_empty());
     assert_eq!(result.rejected.len(), 1);
-    assert!(matches!(&result.rejected[0].reason, RejectionReason::RulesNotMet(reasons) if !reasons.is_empty()));
+    assert!(
+        matches!(&result.rejected[0].reason, RejectionReason::RulesNotMet(reasons) if !reasons.is_empty())
+    );
 }
 
 #[test]

@@ -304,10 +304,14 @@ pub trait ProductRepository: Send + Sync {
     fn create_batch_atomic(&self, inputs: Vec<CreateProduct>) -> Result<Vec<Product>>;
 
     /// Update multiple products - partial success allowed
-    fn update_batch(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<BatchResult<Product>>;
+    fn update_batch(
+        &self,
+        updates: Vec<(ProductId, UpdateProduct)>,
+    ) -> Result<BatchResult<Product>>;
 
     /// Update multiple products - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<Vec<Product>>;
+    fn update_batch_atomic(&self, updates: Vec<(ProductId, UpdateProduct)>)
+    -> Result<Vec<Product>>;
 
     /// Delete multiple products - partial success allowed
     fn delete_batch(&self, ids: Vec<ProductId>) -> Result<BatchResult<ProductId>>;
@@ -637,10 +641,16 @@ pub trait ShipmentRepository: Send + Sync {
     fn create_batch_atomic(&self, inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>>;
 
     /// Update multiple shipments - partial success allowed
-    fn update_batch(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<BatchResult<Shipment>>;
+    fn update_batch(
+        &self,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
+    ) -> Result<BatchResult<Shipment>>;
 
     /// Update multiple shipments - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(ShipmentId, UpdateShipment)>) -> Result<Vec<Shipment>>;
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(ShipmentId, UpdateShipment)>,
+    ) -> Result<Vec<Shipment>>;
 
     /// Delete multiple shipments - partial success allowed
     fn delete_batch(&self, ids: Vec<ShipmentId>) -> Result<BatchResult<Uuid>>;
@@ -733,10 +743,14 @@ pub trait PaymentRepository: Send + Sync {
     fn create_batch_atomic(&self, inputs: Vec<CreatePayment>) -> Result<Vec<Payment>>;
 
     /// Update multiple payments - partial success allowed
-    fn update_batch(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<BatchResult<Payment>>;
+    fn update_batch(
+        &self,
+        updates: Vec<(PaymentId, UpdatePayment)>,
+    ) -> Result<BatchResult<Payment>>;
 
     /// Update multiple payments - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(PaymentId, UpdatePayment)>) -> Result<Vec<Payment>>;
+    fn update_batch_atomic(&self, updates: Vec<(PaymentId, UpdatePayment)>)
+    -> Result<Vec<Payment>>;
 
     /// Delete multiple payments - partial success allowed
     fn delete_batch(&self, ids: Vec<PaymentId>) -> Result<BatchResult<Uuid>>;
@@ -832,10 +846,16 @@ pub trait WarrantyRepository: Send + Sync {
     fn create_batch_atomic(&self, inputs: Vec<CreateWarranty>) -> Result<Vec<Warranty>>;
 
     /// Update multiple warranties - partial success allowed
-    fn update_batch(&self, updates: Vec<(WarrantyId, UpdateWarranty)>) -> Result<BatchResult<Warranty>>;
+    fn update_batch(
+        &self,
+        updates: Vec<(WarrantyId, UpdateWarranty)>,
+    ) -> Result<BatchResult<Warranty>>;
 
     /// Update multiple warranties - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(WarrantyId, UpdateWarranty)>) -> Result<Vec<Warranty>>;
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(WarrantyId, UpdateWarranty)>,
+    ) -> Result<Vec<Warranty>>;
 
     /// Delete multiple warranties - partial success allowed
     fn delete_batch(&self, ids: Vec<WarrantyId>) -> Result<BatchResult<Uuid>>;
@@ -1064,10 +1084,8 @@ pub trait InvoiceRepository: Send + Sync {
     ) -> Result<BatchResult<Invoice>>;
 
     /// Update multiple invoices - atomic (all-or-nothing)
-    fn update_batch_atomic(
-        &self,
-        updates: Vec<(InvoiceId, UpdateInvoice)>,
-    ) -> Result<Vec<Invoice>>;
+    fn update_batch_atomic(&self, updates: Vec<(InvoiceId, UpdateInvoice)>)
+    -> Result<Vec<Invoice>>;
 
     /// Delete multiple invoices - partial success allowed
     fn delete_batch(&self, ids: Vec<InvoiceId>) -> Result<BatchResult<Uuid>>;
@@ -1457,11 +1475,23 @@ pub trait SubscriptionRepository: Send + Sync {
     /// List subscriptions matching a filter
     fn list_subscriptions(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>>;
     /// Update a subscription
-    fn update_subscription(&self, id: SubscriptionId, input: UpdateSubscription) -> Result<Subscription>;
+    fn update_subscription(
+        &self,
+        id: SubscriptionId,
+        input: UpdateSubscription,
+    ) -> Result<Subscription>;
     /// Cancel a subscription
-    fn cancel_subscription(&self, id: SubscriptionId, input: CancelSubscription) -> Result<Subscription>;
+    fn cancel_subscription(
+        &self,
+        id: SubscriptionId,
+        input: CancelSubscription,
+    ) -> Result<Subscription>;
     /// Pause a subscription
-    fn pause_subscription(&self, id: SubscriptionId, input: PauseSubscription) -> Result<Subscription>;
+    fn pause_subscription(
+        &self,
+        id: SubscriptionId,
+        input: PauseSubscription,
+    ) -> Result<Subscription>;
     /// Resume a paused subscription
     fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription>;
 
@@ -1478,7 +1508,11 @@ pub trait SubscriptionRepository: Send + Sync {
         status: BillingCycleStatus,
     ) -> Result<BillingCycle>;
     /// Skip a billing cycle
-    fn skip_billing_cycle(&self, id: SubscriptionId, input: SkipBillingCycle) -> Result<Subscription>;
+    fn skip_billing_cycle(
+        &self,
+        id: SubscriptionId,
+        input: SkipBillingCycle,
+    ) -> Result<Subscription>;
 
     /// Record a subscription event
     fn record_event(
@@ -1488,7 +1522,10 @@ pub trait SubscriptionRepository: Send + Sync {
         notes: Option<String>,
     ) -> Result<SubscriptionEvent>;
     /// Get all events for a subscription
-    fn get_subscription_events(&self, subscription_id: SubscriptionId) -> Result<Vec<SubscriptionEvent>>;
+    fn get_subscription_events(
+        &self,
+        subscription_id: SubscriptionId,
+    ) -> Result<Vec<SubscriptionEvent>>;
 }
 
 // The `Transactional` trait is defined in `repository.rs` and re-exported
@@ -2144,7 +2181,8 @@ pub trait FulfillmentRepository: Send + Sync {
 
     // Workflow helpers
     /// Create picks for an order
-    fn create_picks_for_order(&self, order_id: OrderId, warehouse_id: i32) -> Result<Vec<PickTask>>;
+    fn create_picks_for_order(&self, order_id: OrderId, warehouse_id: i32)
+    -> Result<Vec<PickTask>>;
 
     /// Check if order is ready to pack
     fn is_order_ready_to_pack(&self, order_id: OrderId) -> Result<bool>;
@@ -2636,7 +2674,11 @@ pub trait AccountsReceivableRepository: Send + Sync {
     ) -> Result<Vec<CollectionActivity>>;
 
     /// Update invoice collection status
-    fn update_collection_status(&self, invoice_id: InvoiceId, status: CollectionStatus) -> Result<()>;
+    fn update_collection_status(
+        &self,
+        invoice_id: InvoiceId,
+        status: CollectionStatus,
+    ) -> Result<()>;
 
     /// Get invoices due for dunning (based on aging)
     fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>>;
@@ -3407,10 +3449,20 @@ pub trait GiftCardRepository: Send + Sync {
     fn list(&self, filter: GiftCardFilter) -> Result<Vec<GiftCard>>;
 
     /// Charge (debit) a gift card
-    fn charge(&self, id: GiftCardId, amount: rust_decimal::Decimal, reference_id: Option<String>) -> Result<GiftCardTransaction>;
+    fn charge(
+        &self,
+        id: GiftCardId,
+        amount: rust_decimal::Decimal,
+        reference_id: Option<String>,
+    ) -> Result<GiftCardTransaction>;
 
     /// Refund (credit) to a gift card
-    fn refund(&self, id: GiftCardId, amount: rust_decimal::Decimal, reference_id: Option<String>) -> Result<GiftCardTransaction>;
+    fn refund(
+        &self,
+        id: GiftCardId,
+        amount: rust_decimal::Decimal,
+        reference_id: Option<String>,
+    ) -> Result<GiftCardTransaction>;
 
     /// Disable a gift card
     fn disable(&self, id: GiftCardId) -> Result<GiftCard>;
@@ -3435,10 +3487,18 @@ pub trait StoreCreditRepository: Send + Sync {
     fn adjust(&self, id: StoreCreditId, input: AdjustStoreCredit) -> Result<StoreCredit>;
 
     /// Apply store credit to an order (debit)
-    fn apply(&self, id: StoreCreditId, amount: rust_decimal::Decimal, reference_id: Option<String>) -> Result<StoreCreditTransaction>;
+    fn apply(
+        &self,
+        id: StoreCreditId,
+        amount: rust_decimal::Decimal,
+        reference_id: Option<String>,
+    ) -> Result<StoreCreditTransaction>;
 
     /// Get transaction history for a store credit
-    fn get_transactions(&self, store_credit_id: StoreCreditId) -> Result<Vec<StoreCreditTransaction>>;
+    fn get_transactions(
+        &self,
+        store_credit_id: StoreCreditId,
+    ) -> Result<Vec<StoreCreditTransaction>>;
 }
 
 /// Customer segment repository trait.
@@ -3460,13 +3520,22 @@ pub trait SegmentRepository: Send + Sync {
     fn delete(&self, id: SegmentId) -> Result<()>;
 
     /// Add a customer to a static segment
-    fn add_member(&self, segment_id: SegmentId, customer_id: CustomerId) -> Result<SegmentMembership>;
+    fn add_member(
+        &self,
+        segment_id: SegmentId,
+        customer_id: CustomerId,
+    ) -> Result<SegmentMembership>;
 
     /// Remove a customer from a static segment
     fn remove_member(&self, segment_id: SegmentId, customer_id: CustomerId) -> Result<()>;
 
     /// List members of a segment
-    fn list_members(&self, segment_id: SegmentId, limit: Option<u32>, offset: Option<u32>) -> Result<Vec<SegmentMembership>>;
+    fn list_members(
+        &self,
+        segment_id: SegmentId,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<SegmentMembership>>;
 
     /// Check if a customer is a member of a segment
     fn is_member(&self, segment_id: SegmentId, customer_id: CustomerId) -> Result<bool>;
@@ -3494,7 +3563,12 @@ pub trait ShippingZoneRepository: Send + Sync {
     fn delete(&self, id: ShippingZoneId) -> Result<()>;
 
     /// Find zones matching a destination
-    fn find_matching_zones(&self, country: &str, region: Option<&str>, postal_code: Option<&str>) -> Result<Vec<ShippingZone>>;
+    fn find_matching_zones(
+        &self,
+        country: &str,
+        region: Option<&str>,
+        postal_code: Option<&str>,
+    ) -> Result<Vec<ShippingZone>>;
 }
 
 /// Zone shipping method repository trait.
@@ -3588,7 +3662,11 @@ pub trait LoyaltyProgramRepository: Send + Sync {
     fn get_account(&self, id: LoyaltyAccountId) -> Result<Option<LoyaltyAccount>>;
 
     /// Get loyalty account by customer and program
-    fn get_account_by_customer(&self, customer_id: CustomerId, program_id: LoyaltyProgramId) -> Result<Option<LoyaltyAccount>>;
+    fn get_account_by_customer(
+        &self,
+        customer_id: CustomerId,
+        program_id: LoyaltyProgramId,
+    ) -> Result<Option<LoyaltyAccount>>;
 
     /// List loyalty accounts with filter
     fn list_accounts(&self, filter: LoyaltyAccountFilter) -> Result<Vec<LoyaltyAccount>>;
@@ -3597,7 +3675,11 @@ pub trait LoyaltyProgramRepository: Send + Sync {
     fn adjust_points(&self, input: AdjustPoints) -> Result<LoyaltyTransaction>;
 
     /// Get transaction history for an account
-    fn get_transactions(&self, account_id: LoyaltyAccountId, limit: Option<u32>) -> Result<Vec<LoyaltyTransaction>>;
+    fn get_transactions(
+        &self,
+        account_id: LoyaltyAccountId,
+        limit: Option<u32>,
+    ) -> Result<Vec<LoyaltyTransaction>>;
 }
 
 /// Reward catalog repository trait.
@@ -3629,7 +3711,13 @@ pub trait FraudRepository: Send + Sync {
     fn list_assessments(&self, filter: FraudAssessmentFilter) -> Result<Vec<FraudAssessment>>;
 
     /// Update assessment after manual review
-    fn review_assessment(&self, order_id: OrderId, decision: FraudDecision, reviewer: String, notes: Option<String>) -> Result<FraudAssessment>;
+    fn review_assessment(
+        &self,
+        order_id: OrderId,
+        decision: FraudDecision,
+        reviewer: String,
+        notes: Option<String>,
+    ) -> Result<FraudAssessment>;
 
     /// Create a fraud rule
     fn create_rule(&self, input: CreateFraudRule) -> Result<FraudRule>;

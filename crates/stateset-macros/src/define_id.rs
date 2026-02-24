@@ -23,10 +23,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let attrs = &input.attrs;
 
     // Collect doc attributes from the original struct.
-    let doc_attrs: Vec<_> = attrs
-        .iter()
-        .filter(|a| a.path().is_ident("doc"))
-        .collect();
+    let doc_attrs: Vec<_> = attrs.iter().filter(|a| a.path().is_ident("doc")).collect();
 
     let name_str = name.to_string();
 
@@ -174,30 +171,15 @@ mod tests {
         let output_str = output.to_string();
 
         // Struct definition
-        assert!(
-            output_str.contains("struct TestId"),
-            "should contain struct definition"
-        );
+        assert!(output_str.contains("struct TestId"), "should contain struct definition");
 
         // Constructor methods
         assert!(output_str.contains("fn new"), "should contain new()");
         assert!(output_str.contains("fn nil"), "should contain nil()");
-        assert!(
-            output_str.contains("fn from_uuid"),
-            "should contain from_uuid()"
-        );
-        assert!(
-            output_str.contains("fn as_uuid"),
-            "should contain as_uuid()"
-        );
-        assert!(
-            output_str.contains("fn into_uuid"),
-            "should contain into_uuid()"
-        );
-        assert!(
-            output_str.contains("fn is_nil"),
-            "should contain is_nil()"
-        );
+        assert!(output_str.contains("fn from_uuid"), "should contain from_uuid()");
+        assert!(output_str.contains("fn as_uuid"), "should contain as_uuid()");
+        assert!(output_str.contains("fn into_uuid"), "should contain into_uuid()");
+        assert!(output_str.contains("fn is_nil"), "should contain is_nil()");
 
         // Trait impls
         assert!(
@@ -256,10 +238,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("must_use"),
-            "should contain #[must_use]"
-        );
+        assert!(output_str.contains("must_use"), "should contain #[must_use]");
     }
 
     /// Verify `#[serde(transparent)]` is present.
@@ -272,10 +251,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("transparent"),
-            "should contain serde(transparent)"
-        );
+        assert!(output_str.contains("transparent"), "should contain serde(transparent)");
     }
 
     /// Verify proptest Arbitrary impl is behind cfg.
@@ -288,14 +264,8 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("proptest"),
-            "should contain proptest Arbitrary impl"
-        );
-        assert!(
-            output_str.contains("arbitrary"),
-            "should reference the 'arbitrary' feature"
-        );
+        assert!(output_str.contains("proptest"), "should contain proptest Arbitrary impl");
+        assert!(output_str.contains("arbitrary"), "should reference the 'arbitrary' feature");
     }
 
     /// Verify doc comments are preserved.
@@ -309,10 +279,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("A unique widget identifier"),
-            "should preserve doc comments"
-        );
+        assert!(output_str.contains("A unique widget identifier"), "should preserve doc comments");
     }
 
     /// Verify private structs produce private output.

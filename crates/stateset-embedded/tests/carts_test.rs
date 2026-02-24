@@ -222,10 +222,8 @@ fn test_get_cart_by_id() {
 fn test_get_cart_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce
-        .carts()
-        .get(Uuid::new_v4().into())
-        .expect("Should not error for missing cart");
+    let result =
+        commerce.carts().get(Uuid::new_v4().into()).expect("Should not error for missing cart");
 
     assert!(result.is_none());
 }

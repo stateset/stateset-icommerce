@@ -10,9 +10,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
-    CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId,
-    OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, UpdateOrder,
+    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, CustomerId,
+    FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId, OrderRepository,
+    OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, UpdateOrder,
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku,
 };
@@ -1461,12 +1461,14 @@ impl OrderRepository for PgOrderRepository {
     }
 
     fn update_batch(&self, updates: Vec<(OrderId, UpdateOrder)>) -> Result<BatchResult<Order>> {
-        let raw_updates: Vec<(Uuid, UpdateOrder)> = updates.into_iter().map(|(id, u)| (id.into_uuid(), u)).collect();
+        let raw_updates: Vec<(Uuid, UpdateOrder)> =
+            updates.into_iter().map(|(id, u)| (id.into_uuid(), u)).collect();
         super::block_on(self.update_batch_async(raw_updates))
     }
 
     fn update_batch_atomic(&self, updates: Vec<(OrderId, UpdateOrder)>) -> Result<Vec<Order>> {
-        let raw_updates: Vec<(Uuid, UpdateOrder)> = updates.into_iter().map(|(id, u)| (id.into_uuid(), u)).collect();
+        let raw_updates: Vec<(Uuid, UpdateOrder)> =
+            updates.into_iter().map(|(id, u)| (id.into_uuid(), u)).collect();
         super::block_on(self.update_batch_atomic_async(raw_updates))
     }
 

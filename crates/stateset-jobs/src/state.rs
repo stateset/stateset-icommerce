@@ -45,7 +45,9 @@ impl JobStatus {
         match self {
             Self::Pending => &[Self::Scheduled, Self::Running, Self::Cancelled],
             Self::Scheduled => &[Self::Running, Self::Cancelled],
-            Self::Running => &[Self::Completed, Self::Failed, Self::TimedOut, Self::Retrying, Self::Cancelled],
+            Self::Running => {
+                &[Self::Completed, Self::Failed, Self::TimedOut, Self::Retrying, Self::Cancelled]
+            }
             Self::Retrying => &[Self::Running, Self::Cancelled, Self::Failed],
             Self::Failed => &[Self::Retrying],
             Self::TimedOut => &[Self::Retrying],
@@ -102,19 +104,13 @@ impl JobOutput {
     /// Create a new output with only a message.
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            data: None,
-        }
+        Self { message: message.into(), data: None }
     }
 
     /// Create a new output with a message and structured data.
     #[must_use]
     pub fn with_data(message: impl Into<String>, data: serde_json::Value) -> Self {
-        Self {
-            message: message.into(),
-            data: Some(data),
-        }
+        Self { message: message.into(), data: Some(data) }
     }
 }
 
@@ -188,8 +184,7 @@ impl JobInstance {
     /// Returns `true` if this job should be retried given `max_retries`.
     #[must_use]
     pub const fn should_retry(&self, max_retries: u32) -> bool {
-        matches!(self.status, JobStatus::Failed | JobStatus::TimedOut)
-            && self.attempt < max_retries
+        matches!(self.status, JobStatus::Failed | JobStatus::TimedOut) && self.attempt < max_retries
     }
 
     /// Compute the next retry time using the given backoff strategy.

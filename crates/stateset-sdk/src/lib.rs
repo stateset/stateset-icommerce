@@ -16,7 +16,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "0.7.4"
+//! stateset-sdk = "0.7.5"
 //! ```
 //!
 //! ```rust,ignore
@@ -88,30 +88,51 @@ pub mod prelude {
 
     // Typed IDs
     pub use stateset_core::{
-        CustomerId, FulfillmentId, OrderId, OrderItemId, PaymentId, ProductId, ReturnId,
-        ShipmentId,
+        CustomerId, FulfillmentId, OrderId, OrderItemId, PaymentId, ProductId, ReturnId, ShipmentId,
     };
 
     // Common models
     pub use stateset_core::{
-        // Customer
-        CreateCustomer, Customer, CustomerFilter, CustomerStatus,
-        // Order
-        CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus,
-        // Product
-        CreateProduct, Product, ProductFilter, ProductStatus,
-        // Inventory
-        AdjustInventory, CreateInventoryItem, InventoryItem,
-        // Return
-        CreateReturn, Return, ReturnFilter, ReturnStatus,
-        // Payment
-        CreatePayment, Payment, PaymentFilter, PaymentStatus,
         // Cart
-        AddCartItem, Cart, CreateCart,
-        // Shipment
-        CreateShipment, Shipment,
+        AddCartItem,
         // Address
         Address,
+        // Inventory
+        AdjustInventory,
+        Cart,
+        CreateCart,
+        // Customer
+        CreateCustomer,
+        CreateInventoryItem,
+        // Order
+        CreateOrder,
+        CreateOrderItem,
+        // Payment
+        CreatePayment,
+        // Product
+        CreateProduct,
+        // Return
+        CreateReturn,
+        // Shipment
+        CreateShipment,
+        Customer,
+        CustomerFilter,
+        CustomerStatus,
+        InventoryItem,
+        Order,
+        OrderFilter,
+        OrderItem,
+        OrderStatus,
+        Payment,
+        PaymentFilter,
+        PaymentStatus,
+        Product,
+        ProductFilter,
+        ProductStatus,
+        Return,
+        ReturnFilter,
+        ReturnStatus,
+        Shipment,
     };
 
     // Events

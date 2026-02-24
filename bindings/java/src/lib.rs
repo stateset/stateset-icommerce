@@ -501,8 +501,9 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeGet<'local>(
         }
     };
 
-    let result =
-        use_handle(ptr, |commerce| commerce.customers().get(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| {
+        commerce.customers().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(customer)) => create_customer_object(&mut env, &customer),
@@ -867,7 +868,8 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeGet<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| commerce.orders().get(uuid.into()).map_err(|e| e.to_string()));
+    let result =
+        use_handle(ptr, |commerce| commerce.orders().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(order)) => create_order_object(&mut env, &order),
@@ -1018,7 +1020,8 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeGet<'local>(
         }
     };
 
-    let result = use_handle(ptr, |commerce| commerce.carts().get(uuid.into()).map_err(|e| e.to_string()));
+    let result =
+        use_handle(ptr, |commerce| commerce.carts().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(cart)) => create_cart_object(&mut env, &cart),
@@ -1264,8 +1267,9 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeProcess<'local>(
         }
     };
 
-    let result =
-        use_handle(ptr, |commerce| commerce.returns().approve(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| {
+        commerce.returns().approve(uuid.into()).map_err(|e| e.to_string())
+    });
 
     if let Err(e) = result {
         throw_exception(&mut env, &e);
@@ -1291,8 +1295,9 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeRefund<'local>(
         }
     };
 
-    let result =
-        use_handle(ptr, |commerce| commerce.returns().complete(uuid.into()).map_err(|e| e.to_string()));
+    let result = use_handle(ptr, |commerce| {
+        commerce.returns().complete(uuid.into()).map_err(|e| e.to_string())
+    });
 
     if let Err(e) = result {
         throw_exception(&mut env, &e);
@@ -1925,7 +1930,10 @@ pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreatePickTa
 
     // Create all pick tasks for the order at once
     let result = use_handle(ptr, |commerce| {
-        commerce.fulfillment().create_picks_for_order(uuid.into(), warehouse_id).map_err(|e| e.to_string())
+        commerce
+            .fulfillment()
+            .create_picks_for_order(uuid.into(), warehouse_id)
+            .map_err(|e| e.to_string())
     });
 
     match result {

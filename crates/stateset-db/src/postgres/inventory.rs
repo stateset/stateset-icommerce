@@ -1214,10 +1214,7 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(InventoryTransaction {
-            id: row.0,
-            ..transaction
-        })
+        Ok(InventoryTransaction { id: row.0, ..transaction })
     }
 
     // ========================================================================

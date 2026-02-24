@@ -38,7 +38,7 @@ stateset-sync push
 ## Prerequisites
 
 - Docker and Docker Compose (for running the sequencer)
-- Node.js 18+ (for the CLI)
+- Node.js 20.20.0+ and npm 10.0.0+ (for the CLI; run `nvm use` in this repo)
 - The StateSet CLI (`@stateset/cli`) installed
 
 ## Architecture Overview

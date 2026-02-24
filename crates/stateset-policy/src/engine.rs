@@ -58,11 +58,7 @@ pub struct PolicyEngine {
 impl PolicyEngine {
     /// Create a new, empty policy engine.
     pub fn new() -> Self {
-        Self {
-            policy_sets: HashMap::new(),
-            domain_index: HashMap::new(),
-            history: VecDeque::new(),
-        }
+        Self { policy_sets: HashMap::new(), domain_index: HashMap::new(), history: VecDeque::new() }
     }
 
     /// Register a policy set. If a set with the same ID already exists, it is replaced.
@@ -102,11 +98,7 @@ impl PolicyEngine {
     pub fn get_policies_for_domain(&self, domain: &str) -> Vec<&PolicySet> {
         self.domain_index
             .get(domain)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.policy_sets.get(id))
-                    .collect()
-            })
+            .map(|ids| ids.iter().filter_map(|id| self.policy_sets.get(id)).collect())
             .unwrap_or_default()
     }
 
@@ -144,11 +136,7 @@ impl PolicyEngine {
             timestamp: chrono::Utc::now(),
             should_allow: eval.should_allow,
             should_deny: eval.should_deny,
-            matched_rule_count: eval
-                .results
-                .iter()
-                .map(|r| r.matched_rules.len())
-                .sum(),
+            matched_rule_count: eval.results.iter().map(|r| r.matched_rules.len()).sum(),
         });
 
         // Keep only the last MAX_HISTORY_SIZE entries
@@ -186,12 +174,8 @@ impl PolicyEngine {
         }
 
         // Deny-overrides precedence (matches JS behavior)
-        let has_deny = all_actions
-            .iter()
-            .any(|a| a.action_type == ActionType::Deny);
-        let has_allow = all_actions
-            .iter()
-            .any(|a| a.action_type == ActionType::Allow);
+        let has_deny = all_actions.iter().any(|a| a.action_type == ActionType::Deny);
+        let has_allow = all_actions.iter().any(|a| a.action_type == ActionType::Allow);
 
         PolicyEvaluation {
             domain: domain.to_owned(),
@@ -230,10 +214,7 @@ impl PolicyEngine {
 
     /// Get history entries filtered by domain.
     pub fn get_history_for_domain(&self, domain: &str) -> Vec<&EvaluationRecord> {
-        self.history
-            .iter()
-            .filter(|r| r.domain == domain)
-            .collect()
+        self.history.iter().filter(|r| r.domain == domain).collect()
     }
 
     /// Clear all history.
@@ -252,13 +233,7 @@ impl PolicyEngine {
             total_policy_sets: self.policy_sets.len(),
             total_rules: self.total_rule_count(),
             by_domain,
-            recent_evaluations: self
-                .history
-                .iter()
-                .rev()
-                .take(10)
-                .cloned()
-                .collect(),
+            recent_evaluations: self.history.iter().rev().take(10).cloned().collect(),
         }
     }
 }
@@ -527,11 +502,7 @@ mod tests {
             PolicyRule::new("r1", "Rule 1")
                 .with_conditions(ConditionGroup::new(
                     Logic::And,
-                    vec![ConditionNode::Leaf(Condition::new(
-                        "x",
-                        Operator::Eq,
-                        json!(1),
-                    ))],
+                    vec![ConditionNode::Leaf(Condition::new("x", Operator::Eq, json!(1)))],
                 ))
                 .with_action(PolicyAction::allow()),
         );
@@ -540,11 +511,7 @@ mod tests {
             PolicyRule::new("r2", "Rule 2")
                 .with_conditions(ConditionGroup::new(
                     Logic::And,
-                    vec![ConditionNode::Leaf(Condition::new(
-                        "x",
-                        Operator::Eq,
-                        json!(1),
-                    ))],
+                    vec![ConditionNode::Leaf(Condition::new("x", Operator::Eq, json!(1)))],
                 ))
                 .with_action(PolicyAction::allow()),
         );

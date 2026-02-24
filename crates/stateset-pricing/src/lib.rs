@@ -73,6 +73,4 @@ pub use promotions::{
     RejectedPromotion, RejectionReason, evaluate_promotions,
 };
 pub use rounding::{RoundingMode, RoundingPolicy, minor_units_for_currency, round};
-pub use tax::{
-    TaxAppliesTo, TaxContext, TaxLine, TaxResult, TaxRule, TaxableItem, calculate_tax,
-};
+pub use tax::{TaxAppliesTo, TaxContext, TaxLine, TaxResult, TaxRule, TaxableItem, calculate_tax};

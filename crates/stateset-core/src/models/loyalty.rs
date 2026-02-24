@@ -12,7 +12,9 @@ use stateset_primitives::{
 use strum::{Display, EnumString};
 
 /// Loyalty program status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -27,7 +29,9 @@ pub enum LoyaltyProgramStatus {
 }
 
 /// Loyalty transaction type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -48,7 +52,9 @@ pub enum LoyaltyTransactionType {
 }
 
 /// Reward type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -252,10 +258,7 @@ pub struct RewardFilter {
 impl LoyaltyProgram {
     /// Get the tier for a given lifetime points value
     pub fn tier_for_points(&self, lifetime_points: u64) -> Option<&LoyaltyTier> {
-        self.tiers
-            .iter()
-            .rev()
-            .find(|tier| lifetime_points >= tier.min_points)
+        self.tiers.iter().rev().find(|tier| lifetime_points >= tier.min_points)
     }
 
     /// Whether the program is accepting new enrollments
@@ -347,10 +350,7 @@ mod tests {
 
     #[test]
     fn tier_for_points_returns_none_for_empty_tiers() {
-        let program = LoyaltyProgram {
-            tiers: vec![],
-            ..make_program_with_tiers()
-        };
+        let program = LoyaltyProgram { tiers: vec![], ..make_program_with_tiers() };
         assert!(program.tier_for_points(0).is_none());
     }
 
@@ -359,8 +359,18 @@ mod tests {
         // All tiers have min_points > 0
         let program = LoyaltyProgram {
             tiers: vec![
-                LoyaltyTier { name: "Silver".to_string(), min_points: 500, multiplier: 1.5, perks: vec![] },
-                LoyaltyTier { name: "Gold".to_string(), min_points: 2000, multiplier: 2.0, perks: vec![] },
+                LoyaltyTier {
+                    name: "Silver".to_string(),
+                    min_points: 500,
+                    multiplier: 1.5,
+                    perks: vec![],
+                },
+                LoyaltyTier {
+                    name: "Gold".to_string(),
+                    min_points: 2000,
+                    multiplier: 2.0,
+                    perks: vec![],
+                },
             ],
             ..make_program_with_tiers()
         };
@@ -377,13 +387,15 @@ mod tests {
 
     #[test]
     fn program_is_not_active_when_paused() {
-        let program = LoyaltyProgram { status: LoyaltyProgramStatus::Paused, ..make_program_with_tiers() };
+        let program =
+            LoyaltyProgram { status: LoyaltyProgramStatus::Paused, ..make_program_with_tiers() };
         assert!(!program.is_active());
     }
 
     #[test]
     fn program_is_not_active_when_archived() {
-        let program = LoyaltyProgram { status: LoyaltyProgramStatus::Archived, ..make_program_with_tiers() };
+        let program =
+            LoyaltyProgram { status: LoyaltyProgramStatus::Archived, ..make_program_with_tiers() };
         assert!(!program.is_active());
     }
 

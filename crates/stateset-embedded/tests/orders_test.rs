@@ -346,7 +346,10 @@ fn test_get_order_by_id() {
 fn test_get_order_not_found() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let result = commerce.orders().get(OrderId::from(Uuid::new_v4())).expect("Should not error for missing order");
+    let result = commerce
+        .orders()
+        .get(OrderId::from(Uuid::new_v4()))
+        .expect("Should not error for missing order");
 
     assert!(result.is_none());
 }
@@ -795,10 +798,7 @@ fn test_update_order_shipping_address() {
 
     let updated = commerce
         .orders()
-        .update(
-            order.id,
-            UpdateOrder { shipping_address: Some(new_address), ..Default::default() },
-        )
+        .update(order.id, UpdateOrder { shipping_address: Some(new_address), ..Default::default() })
         .expect("Failed to update order");
 
     let addr = updated.shipping_address.expect("Should have shipping address");
@@ -1479,8 +1479,10 @@ fn test_order_creates_backorder_when_insufficient_stock() {
         })
         .expect("Failed to create order");
 
-    let backorders =
-        commerce.backorder().get_backorders_for_order(order.id.into()).expect("Failed to load backorders");
+    let backorders = commerce
+        .backorder()
+        .get_backorders_for_order(order.id.into())
+        .expect("Failed to load backorders");
     assert_eq!(backorders.len(), 1);
     assert_eq!(backorders[0].status, BackorderStatus::Pending);
     assert_eq!(backorders[0].quantity_remaining, dec!(3));
@@ -1534,8 +1536,10 @@ fn test_cancel_releases_reservations_and_cancels_backorders() {
         .expect("Failed to load reservations");
     assert!(reservations.iter().all(|r| r.status == ReservationStatus::Released));
 
-    let backorders =
-        commerce.backorder().get_backorders_for_order(order.id.into()).expect("Failed to load backorders");
+    let backorders = commerce
+        .backorder()
+        .get_backorders_for_order(order.id.into())
+        .expect("Failed to load backorders");
     assert!(backorders.iter().all(|bo| bo.status == BackorderStatus::Cancelled));
 }
 

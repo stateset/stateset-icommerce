@@ -8,6 +8,7 @@ use stateset_embedded::{
 };
 use std::sync::{Arc, Barrier};
 use std::thread;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 // ============================================================================
@@ -147,14 +148,19 @@ fn test_reservation_expiration_race() {
 
     assert!(result.is_err(), "Reservation should fail while others are reserved");
 
-    // Wait for expiry
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    // Poll until reservation expiry is observed to avoid brittle fixed sleeps in CI.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut recovered = false;
+    while Instant::now() < deadline {
+        let reference_id = Uuid::new_v4().to_string();
+        if commerce.inventory().reserve(&sku, dec!(1), "order", &reference_id, None).is_ok() {
+            recovered = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 
-    // Now it should succeed
-    let reference_id = Uuid::new_v4().to_string();
-    let result = commerce.inventory().reserve(&sku, dec!(1), "order", &reference_id, None);
-
-    assert!(result.is_ok(), "Reservation should succeed after expiry");
+    assert!(recovered, "Reservation should succeed after expiry");
 }
 
 #[test]

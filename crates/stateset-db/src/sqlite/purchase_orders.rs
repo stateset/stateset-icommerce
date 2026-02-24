@@ -192,7 +192,8 @@ impl SqlitePurchaseOrderRepository {
                 row.get::<_, Option<String>>("product_id")?,
                 "purchase_order_item",
                 "product_id",
-            )?.map(ProductId::from),
+            )?
+            .map(ProductId::from),
             sku: row.get("sku")?,
             name: row.get("name")?,
             supplier_sku: row.get("supplier_sku")?,
@@ -276,7 +277,10 @@ impl SqlitePurchaseOrderRepository {
         Ok(items)
     }
 
-    fn get_po_with_conn(conn: &rusqlite::Connection, id: PurchaseOrderId) -> Result<Option<PurchaseOrder>> {
+    fn get_po_with_conn(
+        conn: &rusqlite::Connection,
+        id: PurchaseOrderId,
+    ) -> Result<Option<PurchaseOrder>> {
         let result = conn.query_row(
             "SELECT * FROM purchase_orders WHERE id = ?",
             [id.to_string()],
@@ -297,7 +301,10 @@ impl SqlitePurchaseOrderRepository {
         Self::get_po_items_with_conn(&conn, po_id)
     }
 
-    fn recalculate_totals_with_conn(conn: &rusqlite::Connection, po_id: PurchaseOrderId) -> Result<()> {
+    fn recalculate_totals_with_conn(
+        conn: &rusqlite::Connection,
+        po_id: PurchaseOrderId,
+    ) -> Result<()> {
         // Calculate subtotal from items
         let po_id_param = po_id.to_string();
         let po_params: [&dyn rusqlite::ToSql; 1] = [&po_id_param];
@@ -763,7 +770,11 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn acknowledge(&self, id: PurchaseOrderId, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
+    fn acknowledge(
+        &self,
+        id: PurchaseOrderId,
+        supplier_reference: Option<&str>,
+    ) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
         conn.execute(
@@ -795,7 +806,11 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn receive(&self, id: PurchaseOrderId, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
+    fn receive(
+        &self,
+        id: PurchaseOrderId,
+        items: ReceivePurchaseOrderItems,
+    ) -> Result<PurchaseOrder> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
@@ -887,7 +902,11 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn add_item(&self, po_id: PurchaseOrderId, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
+    fn add_item(
+        &self,
+        po_id: PurchaseOrderId,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
@@ -978,10 +997,10 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         )
         .map_err(map_db_error)?;
 
-            Self::recalculate_totals_with_conn(
-                &tx,
-                parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?.into(),
-            )?;
+        Self::recalculate_totals_with_conn(
+            &tx,
+            parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?.into(),
+        )?;
 
         let item = tx
             .query_row(
@@ -1011,10 +1030,10 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         tx.execute("DELETE FROM purchase_order_items WHERE id = ?", [item_id.to_string()])
             .map_err(map_db_error)?;
 
-            Self::recalculate_totals_with_conn(
-                &tx,
-                parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?.into(),
-            )?;
+        Self::recalculate_totals_with_conn(
+            &tx,
+            parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?.into(),
+        )?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }

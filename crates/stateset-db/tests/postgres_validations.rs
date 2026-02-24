@@ -2,8 +2,8 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    AddressType, CommerceError, CreateCustomer, CreateCustomerAddress, CreateOrder, CreateOrderItem,
-    CreateProduct, CreateProductVariant, ProductId, UpdateCustomer, UpdateProduct,
+    AddressType, CommerceError, CreateCustomer, CreateCustomerAddress, CreateOrder,
+    CreateOrderItem, CreateProduct, CreateProductVariant, ProductId, UpdateCustomer, UpdateProduct,
 };
 use stateset_db::PostgresDatabase;
 use std::env;
@@ -24,11 +24,7 @@ async fn setup_db() -> Option<PostgresDatabase> {
         }
     };
 
-    Some(
-        PostgresDatabase::connect(&url)
-            .await
-            .expect("connect to postgres and run migrations"),
-    )
+    Some(PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations"))
 }
 
 #[cfg(feature = "postgres")]
@@ -147,10 +143,7 @@ async fn postgres_customer_update_rejects_duplicate_email() {
 
     let result = db
         .customers()
-        .update_async(
-            second.id,
-            UpdateCustomer { email: Some(first.email), ..Default::default() },
-        )
+        .update_async(second.id, UpdateCustomer { email: Some(first.email), ..Default::default() })
         .await;
 
     assert!(matches!(result, Err(CommerceError::EmailAlreadyExists(_))));
@@ -186,10 +179,8 @@ async fn postgres_customer_set_default_address_rejects_wrong_owner() {
         .await
         .expect("create owner address");
 
-    let result = db
-        .customers()
-        .set_default_address_async(other.id, address.id, AddressType::Shipping)
-        .await;
+    let result =
+        db.customers().set_default_address_async(other.id, address.id, AddressType::Shipping).await;
 
     assert!(matches!(result, Err(CommerceError::ValidationError(_))));
 }
@@ -243,7 +234,12 @@ async fn postgres_add_address_sets_default_ids() {
         .await
         .expect("create shipping address");
 
-    let updated = db.customers().get_async(customer.id).await.expect("get customer").expect("customer exists");
+    let updated = db
+        .customers()
+        .get_async(customer.id)
+        .await
+        .expect("get customer")
+        .expect("customer exists");
 
     assert_eq!(updated.default_billing_address_id, Some(billing.id));
     assert_eq!(updated.default_shipping_address_id, Some(shipping.id));
@@ -256,7 +252,8 @@ async fn postgres_delete_default_address_clears_customer_default() {
         return;
     };
 
-    let customer = create_customer(&db, &format!("delete-default-{}@example.com", Uuid::new_v4())).await;
+    let customer =
+        create_customer(&db, &format!("delete-default-{}@example.com", Uuid::new_v4())).await;
 
     let shipping = db
         .customers()
@@ -278,12 +275,14 @@ async fn postgres_delete_default_address_clears_customer_default() {
         .await
         .expect("create shipping address");
 
-    db.customers()
-        .delete_address_async(shipping.id)
-        .await
-        .expect("delete shipping address");
+    db.customers().delete_address_async(shipping.id).await.expect("delete shipping address");
 
-    let updated = db.customers().get_async(customer.id).await.expect("get customer").expect("customer exists");
+    let updated = db
+        .customers()
+        .get_async(customer.id)
+        .await
+        .expect("get customer")
+        .expect("customer exists");
     assert_eq!(updated.default_shipping_address_id, None);
 }
 
@@ -316,7 +315,10 @@ async fn postgres_product_update_rejects_duplicate_slug() {
 
     let result = db
         .products()
-        .update_async(second.id, UpdateProduct { slug: Some(first.slug.clone()), ..Default::default() })
+        .update_async(
+            second.id,
+            UpdateProduct { slug: Some(first.slug.clone()), ..Default::default() },
+        )
         .await;
 
     assert!(matches!(result, Err(CommerceError::DuplicateSlug(_))));
@@ -371,8 +373,7 @@ async fn postgres_product_variant_rejects_duplicate_sku() {
         return;
     };
 
-    db
-        .products()
+    db.products()
         .create_async(CreateProduct {
             name: "First product".into(),
             slug: Some("first-product".into()),

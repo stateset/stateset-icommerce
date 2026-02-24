@@ -26,9 +26,7 @@ fn bench_merkle_tree(c: &mut Criterion) {
         let leaves = generate_leaves(size);
 
         group.bench_function(format!("merkle_{size}"), |bencher| {
-            bencher.iter(|| {
-                compute_merkle_root(black_box(&leaves))
-            });
+            bencher.iter(|| compute_merkle_root(black_box(&leaves)));
         });
     }
 

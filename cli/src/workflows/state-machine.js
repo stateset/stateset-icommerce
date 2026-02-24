@@ -25,9 +25,33 @@ const FOURTEEN_DAYS_MS = 14 * ONE_DAY_MS;
 const THIRTY_DAYS_MS = 30 * ONE_DAY_MS;
 
 /**
+ * @typedef {'running' | 'completed' | 'failed' | 'paused' | 'cancelled'} WorkflowStatus
+ * @typedef {{ timestamp: string, event: string, [key: string]: unknown }} WorkflowHistoryEntry
+ * @typedef {{ name: string, description?: string, onEnter?: unknown, onExit?: unknown, timeout?: number | null, timeoutTransition?: string | null, metadata?: Record<string, unknown> }} StateInput
+ * @typedef {{ name: string, from: string | string[], to: string, condition?: unknown, action?: unknown, priority?: number, metadata?: Record<string, unknown> }} TransitionInput
+ * @typedef {{ id?: string, workflowId: string, workflowName: string, currentState: string, context?: Record<string, unknown>, history?: WorkflowHistoryEntry[], status?: WorkflowStatus, createdAt?: string, updatedAt?: string, completedAt?: string | null, error?: string | null, metadata?: Record<string, unknown> }} WorkflowInstanceInput
+ * @typedef {{ id?: string, name: string, description?: string, initialState: string, states?: Array<State | StateInput>, transitions?: Array<Transition | TransitionInput>, finalStates?: string[], metadata?: Record<string, unknown> }} StateMachineInput
+ * @typedef {{ storePath?: string | null, executor?: ((action: unknown, context: Record<string, unknown>) => Promise<unknown>) | null, conditionEvaluator?: ((condition: unknown, context: Record<string, unknown>) => boolean | Promise<boolean>) | null }} WorkflowEngineOptions
+ */
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/**
  * State definition
  */
 export class State {
+  /**
+   * @param {StateInput} param0
+   */
   constructor({
     name,
     description = '',
@@ -51,6 +75,9 @@ export class State {
  * Transition definition
  */
 export class Transition {
+  /**
+   * @param {TransitionInput} param0
+   */
   constructor({
     name,
     from, // State name or array of state names
@@ -74,6 +101,9 @@ export class Transition {
  * Workflow instance - a running state machine
  */
 export class WorkflowInstance {
+  /**
+   * @param {WorkflowInstanceInput} param0
+   */
   constructor({
     id = randomUUID(),
     workflowId,
@@ -100,6 +130,7 @@ export class WorkflowInstance {
     this.completedAt = completedAt;
     this.error = error;
     this.metadata = metadata;
+    /** @type {ReturnType<typeof setTimeout> | null} */
     this.timeoutTimer = null;
   }
 
@@ -125,17 +156,21 @@ export class WorkflowInstance {
  * State Machine Definition
  */
 export class StateMachine extends EventEmitter {
-  constructor({
-    id = randomUUID(),
-    name,
-    description = '',
-    initialState,
-    states = [],
-    transitions = [],
-    finalStates = [], // States that complete the workflow
-    metadata = {},
-  }) {
+  /**
+   * @param {StateMachineInput} param0
+   */
+  constructor(param0) {
     super();
+    const {
+      id = randomUUID(),
+      name,
+      description = '',
+      initialState,
+      states = [],
+      transitions = [],
+      finalStates = [], // States that complete the workflow
+      metadata = {},
+    } = param0;
 
     this.id = id;
     this.name = name;
@@ -145,12 +180,14 @@ export class StateMachine extends EventEmitter {
     this.metadata = metadata;
 
     // Index states and transitions for fast lookup
+    /** @type {Map<string, State>} */
     this.states = new Map();
     for (const state of states) {
       const s = state instanceof State ? state : new State(state);
       this.states.set(s.name, s);
     }
 
+    /** @type {Map<string, Transition[]>} */
     this.transitions = new Map();
     for (const transition of transitions) {
       const t = transition instanceof Transition ? transition : new Transition(transition);
@@ -158,7 +195,10 @@ export class StateMachine extends EventEmitter {
         if (!this.transitions.has(fromState)) {
           this.transitions.set(fromState, []);
         }
-        this.transitions.get(fromState).push(t);
+        const fromTransitions = this.transitions.get(fromState);
+        if (fromTransitions) {
+          fromTransitions.push(t);
+        }
       }
     }
 
@@ -172,6 +212,7 @@ export class StateMachine extends EventEmitter {
 
   /**
    * Validate the state machine definition
+   * @returns {void}
    */
   validate() {
     // Check initial state exists
@@ -215,6 +256,8 @@ export class StateMachine extends EventEmitter {
 
   /**
    * Get available transitions from a state
+   * @param {string} stateName
+   * @returns {Transition[]}
    */
   getTransitions(stateName) {
     return this.transitions.get(stateName) || [];
@@ -222,6 +265,8 @@ export class StateMachine extends EventEmitter {
 
   /**
    * Get state definition
+   * @param {string} stateName
+   * @returns {State | undefined}
    */
   getState(stateName) {
     return this.states.get(stateName);
@@ -229,6 +274,8 @@ export class StateMachine extends EventEmitter {
 
   /**
    * Check if state is final
+   * @param {string} stateName
+   * @returns {boolean}
    */
   isFinalState(stateName) {
     return this.finalStates.includes(stateName);
@@ -267,23 +314,30 @@ export class StateMachine extends EventEmitter {
  * Workflow Engine - manages workflow instances
  */
 export class WorkflowEngine extends EventEmitter {
-  constructor({
-    storePath = null,
-    executor = null, // Function to execute actions
-    conditionEvaluator = null, // Function to evaluate conditions
-  }) {
+  /**
+   * @param {WorkflowEngineOptions} [param0]
+   */
+  constructor(param0 = {}) {
     super();
+    const {
+      storePath = null,
+      executor = null, // Function to execute actions
+      conditionEvaluator = null, // Function to evaluate conditions
+    } = param0;
 
     this.storePath = storePath;
     this.executor = executor;
     this.conditionEvaluator = conditionEvaluator;
 
+    /** @type {Map<string, StateMachine>} */
     this.workflows = new Map(); // Workflow definitions
+    /** @type {Map<string, WorkflowInstance>} */
     this.instances = new Map(); // Running instances
   }
 
   /**
    * Load persisted data
+   * @returns {Promise<void>}
    */
   async load() {
     if (!this.storePath) return;
@@ -303,7 +357,8 @@ export class WorkflowEngine extends EventEmitter {
         }
         this.emit('loaded', { instanceCount: this.instances.size });
       } catch (error) {
-        if (error.code !== 'ENOENT') {
+        const ioError = /** @type {{ code?: string }} */ (error);
+        if (ioError.code !== 'ENOENT') {
           throw error;
         }
       }
@@ -314,6 +369,7 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Save instances to persistent storage
+   * @returns {Promise<void>}
    */
   async save() {
     if (!this.storePath) return;
@@ -333,6 +389,8 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Register a workflow definition
+   * @param {StateMachine | StateMachineInput} definition
+   * @returns {StateMachine}
    */
   registerWorkflow(definition) {
     const workflow = definition instanceof StateMachine ? definition : new StateMachine(definition);
@@ -345,6 +403,8 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Get a workflow definition
+   * @param {string} workflowId
+   * @returns {StateMachine | undefined}
    */
   getWorkflow(workflowId) {
     return this.workflows.get(workflowId);
@@ -352,6 +412,7 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * List all workflow definitions
+   * @returns {ReturnType<StateMachine['toJSON']>[]}
    */
   listWorkflows() {
     return Array.from(this.workflows.values()).map((w) => w.toJSON());
@@ -359,6 +420,9 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Start a new workflow instance
+   * @param {string} workflowId
+   * @param {{ context?: Record<string, unknown>, metadata?: Record<string, unknown> }} [param1]
+   * @returns {Promise<WorkflowInstance>}
    */
   async startWorkflow(workflowId, { context = {}, metadata = {} } = {}) {
     const workflow = this.workflows.get(workflowId);
@@ -401,6 +465,8 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Set up timeout timer for current state
+   * @param {WorkflowInstance} instance
+   * @returns {void}
    */
   setupStateTimeout(instance) {
     // Clear existing timer
@@ -414,21 +480,27 @@ export class WorkflowEngine extends EventEmitter {
 
     const state = workflow.getState(instance.currentState);
     if (!state?.timeout || !state?.timeoutTransition) return;
+    const timeoutMs = state.timeout;
+    const timeoutTransition = state.timeoutTransition;
 
     instance.timeoutTimer = setTimeout(async () => {
       try {
-        await this.transition(instance.id, state.timeoutTransition, {
+        await this.transition(instance.id, timeoutTransition, {
           reason: 'timeout',
-          timeoutMs: state.timeout,
+          timeoutMs,
         });
       } catch (error) {
         this.emit('error', { type: 'timeout-transition', instanceId: instance.id, error });
       }
-    }, state.timeout);
+    }, timeoutMs);
   }
 
   /**
    * Transition a workflow instance to a new state
+   * @param {string} instanceId
+   * @param {string} targetState
+   * @param {Record<string, unknown>} [transitionContext]
+   * @returns {Promise<WorkflowInstance>}
    */
   async transition(instanceId, targetState, transitionContext = {}) {
     const instance = this.instances.get(instanceId);
@@ -532,6 +604,10 @@ export class WorkflowEngine extends EventEmitter {
   /**
    * Trigger an event on a workflow instance
    * Finds matching transition and executes it
+   * @param {string} instanceId
+   * @param {string} eventName
+   * @param {Record<string, unknown>} [eventContext]
+   * @returns {Promise<WorkflowInstance>}
    */
   async trigger(instanceId, eventName, eventContext = {}) {
     const instance = this.instances.get(instanceId);
@@ -556,6 +632,10 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Execute an action (agent request or function)
+   * @param {unknown} action
+   * @param {WorkflowInstance} instance
+   * @param {Record<string, unknown>} [context]
+   * @returns {Promise<unknown>}
    */
   async executeAction(action, instance, context = {}) {
     if (!this.executor) {
@@ -574,6 +654,10 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Evaluate a condition
+   * @param {unknown} condition
+   * @param {WorkflowInstance} instance
+   * @param {Record<string, unknown>} [context]
+   * @returns {Promise<boolean>}
    */
   async evaluateCondition(condition, instance, context = {}) {
     if (!this.conditionEvaluator) {
@@ -594,6 +678,8 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Pause a workflow instance
+   * @param {string} instanceId
+   * @returns {Promise<WorkflowInstance>}
    */
   async pauseInstance(instanceId) {
     const instance = this.instances.get(instanceId);
@@ -622,6 +708,8 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Resume a paused workflow instance
+   * @param {string} instanceId
+   * @returns {Promise<WorkflowInstance>}
    */
   async resumeInstance(instanceId) {
     const instance = this.instances.get(instanceId);
@@ -652,6 +740,9 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Cancel a workflow instance
+   * @param {string} instanceId
+   * @param {string | null} [reason]
+   * @returns {Promise<WorkflowInstance>}
    */
   async cancelInstance(instanceId, reason = null) {
     const instance = this.instances.get(instanceId);
@@ -682,6 +773,9 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Fail a workflow instance
+   * @param {string} instanceId
+   * @param {unknown} error
+   * @returns {Promise<WorkflowInstance>}
    */
   async failInstance(instanceId, error) {
     const instance = this.instances.get(instanceId);
@@ -695,7 +789,7 @@ export class WorkflowEngine extends EventEmitter {
     }
 
     instance.status = 'failed';
-    instance.error = error.message || String(error);
+    instance.error = getErrorMessage(error);
     instance.updatedAt = new Date().toISOString();
     instance.completedAt = instance.updatedAt;
     instance.history.push({
@@ -713,6 +807,8 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Get a workflow instance
+   * @param {string} instanceId
+   * @returns {WorkflowInstance | undefined}
    */
   getInstance(instanceId) {
     return this.instances.get(instanceId);
@@ -720,6 +816,8 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * List workflow instances
+   * @param {{ workflowId?: string | null, status?: WorkflowStatus | null, limit?: number }} [param0]
+   * @returns {ReturnType<WorkflowInstance['toJSON']>[]}
    */
   listInstances({ workflowId = null, status = null, limit = 100 } = {}) {
     let instances = Array.from(this.instances.values());
@@ -740,9 +838,11 @@ export class WorkflowEngine extends EventEmitter {
 
   /**
    * Get workflow instance status
+   * @returns {{ totalWorkflows: number, totalInstances: number, byStatus: Record<string, number>, recentInstances: Array<{ id: string, workflowName: string, currentState: string, status: WorkflowStatus, updatedAt: string }> }}
    */
   getStatus() {
     const instances = Array.from(this.instances.values());
+    /** @type {Record<string, number>} */
     const byStatus = {};
 
     for (const instance of instances) {

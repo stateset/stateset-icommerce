@@ -81,9 +81,7 @@ pub struct FfiOrder {
 
 impl From<&Order> for FfiOrder {
     fn from(order: &Order) -> Self {
-        let cents = (order.total_amount * rust_decimal::Decimal::from(100))
-            .to_i64()
-            .unwrap_or(0);
+        let cents = (order.total_amount * rust_decimal::Decimal::from(100)).to_i64().unwrap_or(0);
 
         let mut currency = [0u8; 3];
         let code_bytes = order.currency.as_bytes();
@@ -107,15 +105,12 @@ use rust_decimal::prelude::ToPrimitive;
 // Tests
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
     use rust_decimal_macros::dec;
-    use stateset_core::models::order::{
-        FulfillmentStatus, OrderItem, PaymentStatus,
-    };
+    use stateset_core::models::order::{FulfillmentStatus, OrderItem, PaymentStatus};
     use stateset_primitives::{CustomerId, OrderId, OrderItemId, ProductId};
 
     fn make_test_order(status: OrderStatus) -> Order {

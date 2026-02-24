@@ -9,7 +9,9 @@ use stateset_primitives::{GiftCardId, GiftCardTransactionId};
 use strum::{Display, EnumString};
 
 /// Gift card status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -26,7 +28,9 @@ pub enum GiftCardStatus {
 }
 
 /// Gift card transaction type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -77,11 +81,7 @@ impl GiftCard {
 
     /// Check if the gift card has expired
     pub fn is_expired(&self) -> bool {
-        if let Some(expires_at) = self.expires_at {
-            Utc::now() > expires_at
-        } else {
-            false
-        }
+        if let Some(expires_at) = self.expires_at { Utc::now() > expires_at } else { false }
     }
 
     /// Check if a charge of the given amount can be applied
@@ -206,19 +206,15 @@ mod tests {
 
     #[test]
     fn is_expired_returns_true_for_past_date() {
-        let gc = GiftCard {
-            expires_at: Some(Utc::now() - Duration::hours(1)),
-            ..make_test_gift_card()
-        };
+        let gc =
+            GiftCard { expires_at: Some(Utc::now() - Duration::hours(1)), ..make_test_gift_card() };
         assert!(gc.is_expired());
     }
 
     #[test]
     fn is_expired_returns_false_for_future_date() {
-        let gc = GiftCard {
-            expires_at: Some(Utc::now() + Duration::days(30)),
-            ..make_test_gift_card()
-        };
+        let gc =
+            GiftCard { expires_at: Some(Utc::now() + Duration::days(30)), ..make_test_gift_card() };
         assert!(!gc.is_expired());
     }
 

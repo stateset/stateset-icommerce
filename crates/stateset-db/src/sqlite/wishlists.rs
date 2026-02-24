@@ -20,9 +20,7 @@ impl SqliteWishlistRepository {
 
     #[allow(dead_code)]
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 }
 
@@ -47,11 +45,7 @@ impl WishlistRepository for SqliteWishlistRepository {
         todo!("SQLite wishlist delete")
     }
 
-    fn add_item(
-        &self,
-        _wishlist_id: WishlistId,
-        _item: AddWishlistItem,
-    ) -> Result<WishlistItem> {
+    fn add_item(&self, _wishlist_id: WishlistId, _item: AddWishlistItem) -> Result<WishlistItem> {
         todo!("SQLite wishlist add_item")
     }
 

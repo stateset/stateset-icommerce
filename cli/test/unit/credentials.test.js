@@ -18,6 +18,10 @@ function tmpDbPath() {
   return path.join(dir, 'credentials.db');
 }
 
+function tmpDbDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'cred-test-dir-'));
+}
+
 // ===========================================================================
 // CredentialStore
 // ===========================================================================
@@ -41,6 +45,20 @@ describe('CredentialStore', () => {
     assert.ok(fs.existsSync(dbPath));
   });
 
+  it('uses restricted permissions for credential storage', () => {
+    if (process.platform === 'win32') return;
+    const dbPath = tmpDbPath();
+    store = new CredentialStore({ dbPath });
+
+    const dbMode = fs.statSync(dbPath).mode & 0o777;
+    const dirMode = fs.statSync(path.dirname(dbPath)).mode & 0o777;
+    const keyMode = fs.statSync(path.join(path.dirname(dbPath), 'credentials.key')).mode & 0o777;
+
+    assert.strictEqual(dbMode, 0o600);
+    assert.strictEqual(dirMode, 0o700);
+    assert.strictEqual(keyMode, 0o600);
+  });
+
   it('getApiKey returns null for unknown provider', () => {
     store = new CredentialStore({ dbPath: tmpDbPath() });
     assert.strictEqual(store.getApiKey('nonexistent'), null);
@@ -51,6 +69,46 @@ describe('CredentialStore', () => {
     const result = store.setApiKey('openai', 'sk-test-123');
     assert.strictEqual(result, true);
     assert.strictEqual(store.getApiKey('openai'), 'sk-test-123');
+  });
+
+  it('stores encrypted api keys at rest', () => {
+    store = new CredentialStore({ dbPath: tmpDbPath() });
+    store.setApiKey('openai', 'sk-secret-plaintext');
+    const row = store.db
+      .prepare('SELECT api_key FROM provider_credentials WHERE provider = ?')
+      .get('openai');
+    assert.ok(row.api_key.startsWith('enc:v1:'));
+    assert.notStrictEqual(row.api_key, 'sk-secret-plaintext');
+  });
+
+  it('supports reading legacy plaintext rows', () => {
+    store = new CredentialStore({ dbPath: tmpDbPath() });
+    store.db
+      .prepare(
+        `INSERT INTO provider_credentials (provider, api_key, updated_at) VALUES (?, ?, ?)`,
+      )
+      .run('legacy-provider', 'legacy-plain-key', Date.now());
+    assert.strictEqual(store.getApiKey('legacy-provider'), 'legacy-plain-key');
+  });
+
+  it('returns null when encrypted payload is malformed', () => {
+    store = new CredentialStore({ dbPath: tmpDbPath() });
+    store.db
+      .prepare(
+        `INSERT INTO provider_credentials (provider, api_key, updated_at) VALUES (?, ?, ?)`,
+      )
+      .run('broken-provider', 'enc:v1:not-valid', Date.now());
+    assert.strictEqual(store.getApiKey('broken-provider'), null);
+  });
+
+  it('fails fast when existing key file is corrupted', () => {
+    const dir = tmpDbDir();
+    const dbPath = path.join(dir, 'credentials.db');
+    fs.writeFileSync(path.join(dir, 'credentials.key'), 'not-a-valid-key');
+    assert.throws(
+      () => new CredentialStore({ dbPath }),
+      /Credential key file is invalid/,
+    );
   });
 
   it('setApiKey returns false for empty provider', () => {

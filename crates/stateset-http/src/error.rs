@@ -84,12 +84,8 @@ impl HttpError {
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         let status = self.status_code();
-        let body = ErrorBody {
-            error: ErrorDetail {
-                code: self.code(),
-                message: self.to_string(),
-            },
-        };
+        let body =
+            ErrorBody { error: ErrorDetail { code: self.code(), message: self.to_string() } };
         (status, axum::Json(body)).into_response()
     }
 }
@@ -246,21 +242,15 @@ mod tests {
         let err = HttpError::NotFound("widget".into());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+        let content_type =
+            response.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
         assert!(content_type.contains("application/json"));
     }
 
     #[test]
     fn error_body_json_structure() {
         let body = super::ErrorBody {
-            error: super::ErrorDetail {
-                code: "not_found",
-                message: "Order not found".into(),
-            },
+            error: super::ErrorDetail { code: "not_found", message: "Order not found".into() },
         };
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(json["error"]["code"], "not_found");

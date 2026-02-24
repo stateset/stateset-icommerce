@@ -4,9 +4,9 @@
 //! works correctly through the full Commerce stack.
 
 use rust_decimal_macros::dec;
+use stateset_core::ProductFilter;
 use stateset_core::models::order::OrderStatus;
 use stateset_core::models::product::UpdateProduct;
-use stateset_core::ProductFilter;
 use stateset_integration_tests::create_test_commerce;
 use stateset_test_utils::fixtures;
 
@@ -35,11 +35,8 @@ fn batch_create_20_customers() {
 
     // Verify each customer can be retrieved
     for id in &customer_ids {
-        let customer = commerce
-            .customers()
-            .get(*id)
-            .expect("get customer")
-            .expect("customer exists");
+        let customer =
+            commerce.customers().get(*id).expect("get customer").expect("customer exists");
         assert_eq!(customer.first_name, "Test");
     }
 }
@@ -48,10 +45,8 @@ fn batch_create_20_customers() {
 fn batch_create_10_orders() {
     let (commerce, _dir) = create_test_commerce();
 
-    let customer = commerce
-        .customers()
-        .create(fixtures::create_customer_input())
-        .expect("create customer");
+    let customer =
+        commerce.customers().create(fixtures::create_customer_input()).expect("create customer");
 
     let mut order_ids = Vec::new();
 
@@ -73,10 +68,7 @@ fn batch_create_10_orders() {
     assert_eq!(unique_count, 10, "All 10 order IDs should be unique");
 
     // List and verify count
-    let orders = commerce
-        .orders()
-        .list_for_customer(customer.id)
-        .expect("list orders");
+    let orders = commerce.orders().list_for_customer(customer.id).expect("list orders");
     assert_eq!(orders.len(), 10);
 }
 
@@ -84,10 +76,8 @@ fn batch_create_10_orders() {
 fn create_order_with_multiple_items_verify_item_count() {
     let (commerce, _dir) = create_test_commerce();
 
-    let customer = commerce
-        .customers()
-        .create(fixtures::create_customer_input())
-        .expect("create customer");
+    let customer =
+        commerce.customers().create(fixtures::create_customer_input()).expect("create customer");
 
     let items = vec![
         fixtures::create_order_item_with("BATCH-A", 1, dec!(10.00)),
@@ -145,10 +135,7 @@ fn batch_create_products_list_all() {
             .expect("create product");
     }
 
-    let products = commerce
-        .products()
-        .list(ProductFilter::default())
-        .expect("list products");
+    let products = commerce.products().list(ProductFilter::default()).expect("list products");
 
     assert_eq!(products.len(), 8);
 }
@@ -170,11 +157,7 @@ fn batch_create_inventory_items() {
     // Verify each item
     for i in 0..15 {
         let sku = format!("BATCH-INV-{i:03}");
-        let stock = commerce
-            .inventory()
-            .get_stock(&sku)
-            .expect("get stock")
-            .expect("stock exists");
+        let stock = commerce.inventory().get_stock(&sku).expect("get stock").expect("stock exists");
         assert_eq!(stock.total_on_hand, dec!(100) + rust_decimal::Decimal::from(i));
     }
 }
@@ -183,10 +166,8 @@ fn batch_create_inventory_items() {
 fn batch_cancel_orders() {
     let (commerce, _dir) = create_test_commerce();
 
-    let customer = commerce
-        .customers()
-        .create(fixtures::create_customer_input())
-        .expect("create customer");
+    let customer =
+        commerce.customers().create(fixtures::create_customer_input()).expect("create customer");
 
     let mut order_ids = Vec::new();
     for _ in 0..5 {
@@ -204,11 +185,7 @@ fn batch_cancel_orders() {
 
     // Verify all cancelled
     for id in &order_ids {
-        let order = commerce
-            .orders()
-            .get(*id)
-            .expect("get order")
-            .expect("order exists");
+        let order = commerce.orders().get(*id).expect("get order").expect("order exists");
         assert_eq!(order.status, OrderStatus::Cancelled);
     }
 }
@@ -230,21 +207,20 @@ fn batch_inventory_adjustments() {
             .expect("adjust");
     }
 
-    let stock = commerce
-        .inventory()
-        .get_stock(&item.sku)
-        .expect("get stock")
-        .expect("stock exists");
+    let stock =
+        commerce.inventory().get_stock(&item.sku).expect("get stock").expect("stock exists");
 
     // 1000 - (10 * 5) = 950
     assert_eq!(stock.total_on_hand, dec!(950));
 
     // Verify transaction history
-    let transactions = commerce
-        .inventory()
-        .get_transactions(item.id, 20)
-        .expect("get transactions");
+    let transactions =
+        commerce.inventory().get_transactions(item.id, 20).expect("get transactions");
 
     // Should have 10 adjustment transactions (plus initial receipt)
-    assert!(transactions.len() >= 10, "Expected at least 10 transactions, got {}", transactions.len());
+    assert!(
+        transactions.len() >= 10,
+        "Expected at least 10 transactions, got {}",
+        transactions.len()
+    );
 }

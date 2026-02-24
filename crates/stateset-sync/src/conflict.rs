@@ -111,15 +111,7 @@ mod tests {
 
     fn make_event_at(name: &str, ts_offset_secs: i64) -> SyncEvent {
         let ts = Utc::now() + Duration::seconds(ts_offset_secs);
-        SyncEvent::with_id(
-            Uuid::new_v4(),
-            0,
-            name,
-            "order",
-            "ORD-1",
-            json!({"action": name}),
-            ts,
-        )
+        SyncEvent::with_id(Uuid::new_v4(), 0, name, "order", "ORD-1", json!({"action": name}), ts)
     }
 
     #[test]

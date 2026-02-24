@@ -150,10 +150,7 @@ mod tests {
 
     impl AsyncInMemoryRepo {
         fn new() -> Self {
-            Self {
-                items: tokio::sync::Mutex::new(Vec::new()),
-                next_id: tokio::sync::Mutex::new(1),
-            }
+            Self { items: tokio::sync::Mutex::new(Vec::new()), next_id: tokio::sync::Mutex::new(1) }
         }
     }
 

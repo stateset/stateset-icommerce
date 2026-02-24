@@ -32,11 +32,7 @@ impl RateLimitRule {
     /// Creates a new rate limit rule.
     #[must_use]
     pub fn new(resource_type: impl Into<String>, max_requests: u32, window: Duration) -> Self {
-        Self {
-            resource_type: resource_type.into(),
-            max_requests,
-            window,
-        }
+        Self { resource_type: resource_type.into(), max_requests, window }
     }
 
     /// Returns the resource type this rule applies to.
@@ -112,9 +108,7 @@ struct RateLimitState {
 
 impl RateLimitState {
     const fn new() -> Self {
-        Self {
-            requests: Vec::new(),
-        }
+        Self { requests: Vec::new() }
     }
 
     /// Removes timestamps outside the window and returns the count within the window.
@@ -167,10 +161,7 @@ impl RateLimiter {
     /// Creates an empty rate limiter with no rules.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            rules: HashMap::new(),
-            state: HashMap::new(),
-        }
+        Self { rules: HashMap::new(), state: HashMap::new() }
     }
 
     /// Adds a rate limit rule. If a rule for the same resource type already exists,
@@ -221,17 +212,10 @@ impl RateLimiter {
 
     // -- Internal helpers with injectable `now` for testing --
 
-    fn check_at(
-        &mut self,
-        actor_id: &str,
-        resource_type: &str,
-        now: Instant,
-    ) -> RateLimitDecision {
+    fn check_at(&mut self, actor_id: &str, resource_type: &str, now: Instant) -> RateLimitDecision {
         let Some(rule) = self.rules.get(resource_type) else {
             // No rule means no limit
-            return RateLimitDecision::Allowed {
-                remaining: u32::MAX,
-            };
+            return RateLimitDecision::Allowed { remaining: u32::MAX };
         };
 
         let key = state_key(actor_id, resource_type);
@@ -249,9 +233,7 @@ impl RateLimiter {
 
             RateLimitDecision::Exceeded { retry_after }
         } else {
-            RateLimitDecision::Allowed {
-                remaining: rule.max_requests - count,
-            }
+            RateLimitDecision::Allowed { remaining: rule.max_requests - count }
         }
     }
 
@@ -266,9 +248,7 @@ impl RateLimiter {
             self.record_at(actor_id, resource_type, now);
             // Adjust remaining to reflect the state *after* recording
             if let RateLimitDecision::Allowed { remaining } = decision {
-                return RateLimitDecision::Allowed {
-                    remaining: remaining.saturating_sub(1),
-                };
+                return RateLimitDecision::Allowed { remaining: remaining.saturating_sub(1) };
             }
         }
         decision
@@ -487,9 +467,7 @@ mod tests {
 
     #[test]
     fn display_exceeded() {
-        let d = RateLimitDecision::Exceeded {
-            retry_after: Duration::from_secs(30),
-        };
+        let d = RateLimitDecision::Exceeded { retry_after: Duration::from_secs(30) };
         assert_eq!(d.to_string(), "exceeded (retry after 30000ms)");
     }
 

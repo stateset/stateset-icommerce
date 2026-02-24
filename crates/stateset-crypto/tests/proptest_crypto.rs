@@ -4,8 +4,8 @@
 
 use proptest::prelude::*;
 use stateset_crypto::canonicalize::canonicalize_json;
-use stateset_crypto::encrypt::{generate_x25519_keypair, RecipientKey};
-use stateset_crypto::hash::{compute_payload_aad, compute_payload_plain_hash, PayloadAadParams};
+use stateset_crypto::encrypt::{RecipientKey, generate_x25519_keypair};
+use stateset_crypto::hash::{PayloadAadParams, compute_payload_aad, compute_payload_plain_hash};
 use stateset_crypto::merkle::{compute_merkle_root, compute_node_hash};
 use stateset_crypto::sign::{generate_keypair, sign_event_hash, verify_event_signature};
 
@@ -38,24 +38,16 @@ fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
         "[a-zA-Z0-9 _]{0,20}".prop_map(serde_json::Value::String),
     ];
     leaf.prop_recursive(
-        3,   // depth
-        64,  // max nodes
-        8,   // items per collection
+        3,  // depth
+        64, // max nodes
+        8,  // items per collection
         |inner| {
             prop_oneof![
                 // Array of values
-                prop::collection::vec(inner.clone(), 0..6)
-                    .prop_map(serde_json::Value::Array),
+                prop::collection::vec(inner.clone(), 0..6).prop_map(serde_json::Value::Array),
                 // Object with sorted string keys
-                prop::collection::vec(
-                    ("[a-z]{1,8}", inner),
-                    0..6,
-                )
-                    .prop_map(|pairs| {
-                        serde_json::Value::Object(
-                            pairs.into_iter().collect(),
-                        )
-                    }),
+                prop::collection::vec(("[a-z]{1,8}", inner), 0..6,)
+                    .prop_map(|pairs| { serde_json::Value::Object(pairs.into_iter().collect(),) }),
             ]
         },
     )
@@ -67,9 +59,7 @@ fn arb_json_object() -> impl Strategy<Value = serde_json::Value> {
         ("[a-z]{1,8}", "[a-zA-Z0-9]{0,16}".prop_map(serde_json::Value::String)),
         1..6,
     )
-        .prop_map(|pairs| {
-            serde_json::Value::Object(pairs.into_iter().collect())
-        })
+    .prop_map(|pairs| serde_json::Value::Object(pairs.into_iter().collect()))
 }
 
 /// Generate a vector of leaf hashes for Merkle tree tests.

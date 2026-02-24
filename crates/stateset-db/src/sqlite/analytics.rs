@@ -10,9 +10,8 @@ use rust_decimal::Decimal;
 use stateset_core::{
     AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast, FulfillmentMetrics,
     InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductId,
-    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod,
-    RevenueForecast, SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct,
-    TopReturnedProduct, Trend,
+    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast,
+    SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
     validate_batch_size,
 };
 use uuid::Uuid;

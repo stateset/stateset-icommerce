@@ -7,7 +7,9 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum MigrationError {
     /// A migration with the same version is already registered.
-    #[error("version conflict: migration version {version} already registered as '{existing_name}', cannot register '{new_name}'")]
+    #[error(
+        "version conflict: migration version {version} already registered as '{existing_name}', cannot register '{new_name}'"
+    )]
     VersionConflict {
         /// The conflicting version number.
         version: u32,
@@ -18,7 +20,9 @@ pub enum MigrationError {
     },
 
     /// An applied migration's checksum does not match the registered migration.
-    #[error("checksum mismatch for migration v{version} '{name}': expected {expected}, found {actual}")]
+    #[error(
+        "checksum mismatch for migration v{version} '{name}': expected {expected}, found {actual}"
+    )]
     ChecksumMismatch {
         /// The migration version.
         version: u32,

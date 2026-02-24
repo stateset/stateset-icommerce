@@ -34,48 +34,28 @@ pub fn builtin_registry() -> crate::error::Result<MigrationRegistry> {
 /// manufacturing, shipments, payments, warranties, purchase orders, invoices.
 #[must_use]
 pub fn v1_core_tables() -> Migration {
-    Migration::with_down(
-        1,
-        "core_tables",
-        V1_UP,
-        V1_DOWN,
-    )
+    Migration::with_down(1, "core_tables", V1_UP, V1_DOWN)
 }
 
 /// V2 — Commerce extensions: carts, multi-currency, tax, promotions,
 /// subscriptions.
 #[must_use]
 pub fn v2_commerce_extensions() -> Migration {
-    Migration::with_down(
-        2,
-        "commerce_extensions",
-        V2_UP,
-        V2_DOWN,
-    )
+    Migration::with_down(2, "commerce_extensions", V2_UP, V2_DOWN)
 }
 
 /// V3 — A2A tables: x402 payment intents, agent cards, A2A quotes/purchases,
 /// x402 credits, ERC-8004 identity, custom objects.
 #[must_use]
 pub fn v3_a2a_tables() -> Migration {
-    Migration::with_down(
-        3,
-        "a2a_tables",
-        V3_UP,
-        V3_DOWN,
-    )
+    Migration::with_down(3, "a2a_tables", V3_UP, V3_DOWN)
 }
 
 /// V4 — New entity tables: fraud, gift cards, loyalty, reviews, segments,
 /// shipping zones, store credits, wishlists.
 #[must_use]
 pub fn v4_new_entities() -> Migration {
-    Migration::with_down(
-        4,
-        "new_entities",
-        V4_UP,
-        V4_DOWN,
-    )
+    Migration::with_down(4, "new_entities", V4_UP, V4_DOWN)
 }
 
 // ---------------------------------------------------------------------------

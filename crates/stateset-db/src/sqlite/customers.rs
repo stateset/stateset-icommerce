@@ -249,7 +249,9 @@ impl CustomerRepository for SqliteCustomerRepository {
                 row.get(0)
             })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::CustomerNotFound(id.into_uuid()),
+                rusqlite::Error::QueryReturnedNoRows => {
+                    CommerceError::CustomerNotFound(id.into_uuid())
+                }
                 e => map_db_error(e),
             })?;
 
@@ -431,9 +433,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                 AddressType::Both => {
                     "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?"
                 }
-                _ => {
-                    "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?"
-                }
+                _ => "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?",
             };
 
             // Clear defaults for the relevant address types.
@@ -822,7 +822,10 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(results)
     }
 
-    fn update_batch(&self, updates: Vec<(CustomerId, UpdateCustomer)>) -> Result<BatchResult<Customer>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(CustomerId, UpdateCustomer)>,
+    ) -> Result<BatchResult<Customer>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -836,7 +839,10 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(result)
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(CustomerId, UpdateCustomer)>) -> Result<Vec<Customer>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(CustomerId, UpdateCustomer)>,
+    ) -> Result<Vec<Customer>> {
         validate_batch_size(&updates)?;
         if updates.is_empty() {
             return Ok(vec![]);
@@ -853,7 +859,9 @@ impl CustomerRepository for SqliteCustomerRepository {
                     row.get(0)
                 })
                 .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => CommerceError::CustomerNotFound(id.into_uuid()),
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        CommerceError::CustomerNotFound(id.into_uuid())
+                    }
                     e => map_db_error(e),
                 })?;
 

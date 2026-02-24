@@ -8,7 +8,9 @@ use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Shipping carrier for deliveries
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -49,7 +51,9 @@ impl ShippingCarrier {
 }
 
 /// Shipping method/speed
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -68,7 +72,9 @@ pub enum ShippingMethod {
 }
 
 /// Status of a shipment through its lifecycle
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -135,13 +141,9 @@ impl ShipmentStatus {
 
     /// Check if this is a terminal status
     pub const fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            Self::Delivered | Self::Cancelled | Self::Returned
-        )
+        matches!(self, Self::Delivered | Self::Cancelled | Self::Returned)
     }
 }
-
 
 /// A shipment tracks the physical delivery of items from an order
 #[derive(Debug, Clone, Serialize, Deserialize)]

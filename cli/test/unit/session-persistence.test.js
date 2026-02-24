@@ -62,6 +62,14 @@ describe('SessionPersistence', () => {
     assert.strictEqual(content.id, 'sess-disk');
   });
 
+  it('saveSession rejects unsafe session ids', async () => {
+    sp = new SessionPersistence({ sessionDir: tmpSessionDir() });
+    await assert.rejects(
+      () => sp.saveSession({ id: '../escape', operations: [] }),
+      /Invalid session id/,
+    );
+  });
+
   it('getSession retrieves saved session', async () => {
     sp = new SessionPersistence({ sessionDir: tmpSessionDir() });
     await sp.saveSession({ id: 'sess-get', operations: [{ tool: 'list_orders' }] });
@@ -75,6 +83,13 @@ describe('SessionPersistence', () => {
     sp = new SessionPersistence({ sessionDir: tmpSessionDir() });
     await sp.initialize();
     const session = await sp.getSession('nonexistent');
+    assert.strictEqual(session, null);
+  });
+
+  it('getSession returns null for unsafe session ids', async () => {
+    sp = new SessionPersistence({ sessionDir: tmpSessionDir() });
+    await sp.initialize();
+    const session = await sp.getSession('../escape');
     assert.strictEqual(session, null);
   });
 
@@ -162,6 +177,15 @@ describe('SessionPersistence', () => {
     sp = new SessionPersistence({ sessionDir: dir, sessionTtl: 24 * 60 * 60 * 1000 });
     await sp.initialize();
     assert.strictEqual(sp.sessions.has('old-session'), false);
+  });
+
+  it('writes session files with restricted permissions', async () => {
+    if (process.platform === 'win32') return;
+    const dir = tmpSessionDir();
+    sp = new SessionPersistence({ sessionDir: dir });
+    await sp.saveSession({ id: 'sess-perm', operations: [] });
+    const mode = fs.statSync(path.join(dir, 'sess-perm.json')).mode & 0o777;
+    assert.strictEqual(mode, 0o600);
   });
 });
 

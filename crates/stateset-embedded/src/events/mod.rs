@@ -81,7 +81,6 @@ pub struct EventConfig {
     pub webhook_max_delivery_history: usize,
 }
 
-
 impl Default for EventConfig {
     fn default() -> Self {
         Self {
@@ -127,9 +126,7 @@ pub struct EventSystem {
 
 impl std::fmt::Debug for EventSystem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventSystem")
-            .field("config", &self.config)
-            .finish_non_exhaustive()
+        f.debug_struct("EventSystem").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
@@ -243,10 +240,7 @@ impl EventSystem {
 
     /// Get delivery history for a webhook (newest-first).
     pub fn webhook_deliveries(&self, webhook_id: uuid::Uuid) -> Vec<WebhookDelivery> {
-        self.webhook_manager
-            .as_ref()
-            .map(|wm| wm.deliveries(webhook_id))
-            .unwrap_or_default()
+        self.webhook_manager.as_ref().map(|wm| wm.deliveries(webhook_id)).unwrap_or_default()
     }
 
     /// Get the event bus for advanced usage

@@ -56,26 +56,15 @@ fn arb_rounding_policy() -> impl Strategy<Value = RoundingPolicy> {
         Just(RoundingPolicy::bhd()),
         Just(RoundingPolicy::eur()),
         Just(RoundingPolicy::gbp()),
-        (0u32..=4u32).prop_map(|dp| {
-            RoundingPolicy::new(RoundingMode::HalfEven, dp)
-        }),
-        (0u32..=4u32).prop_map(|dp| {
-            RoundingPolicy::new(RoundingMode::Down, dp)
-        }),
-        (0u32..=4u32).prop_map(|dp| {
-            RoundingPolicy::new(RoundingMode::Up, dp)
-        }),
+        (0u32..=4u32).prop_map(|dp| { RoundingPolicy::new(RoundingMode::HalfEven, dp) }),
+        (0u32..=4u32).prop_map(|dp| { RoundingPolicy::new(RoundingMode::Down, dp) }),
+        (0u32..=4u32).prop_map(|dp| { RoundingPolicy::new(RoundingMode::Up, dp) }),
     ]
 }
 
 /// Build a `LineItem` from arbitrary pieces.
 fn arb_line_item() -> impl Strategy<Value = LineItem> {
-    (
-        arb_price(),
-        arb_qty(),
-        prop::option::of(arb_line_discount()),
-        prop::option::of(arb_rate()),
-    )
+    (arb_price(), arb_qty(), prop::option::of(arb_line_discount()), prop::option::of(arb_rate()))
         .prop_map(|(price, qty, discount, tax_rate)| LineItem {
             sku: "PROP".into(),
             name: "PropTest Item".into(),
@@ -93,10 +82,7 @@ fn arb_order_total_input() -> impl Strategy<Value = OrderTotalInput> {
         arb_price(),                  // shipping_cost
         prop::option::of(arb_rate()), // shipping_tax_rate
         arb_order_discount(),
-        prop::collection::vec(
-            arb_price().prop_map(|a| Fee { name: "F".into(), amount: a }),
-            0..4,
-        ),
+        prop::collection::vec(arb_price().prop_map(|a| Fee { name: "F".into(), amount: a }), 0..4),
         arb_rounding_policy(),
     )
         .prop_map(

@@ -7,11 +7,11 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use rust_decimal_macros::dec;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use stateset_embedded::Commerce;
 use stateset_http::{
-    AppState, CreateCustomerRequest, CreateOrderRequest, CreateOrderItemRequest,
-    PaginationParams, ServerBuilder,
+    AppState, CreateCustomerRequest, CreateOrderItemRequest, CreateOrderRequest, PaginationParams,
+    ServerBuilder,
 };
 use stateset_primitives::{CustomerId, OrderId, ProductId};
 use tower::ServiceExt;
@@ -34,10 +34,8 @@ fn app_with_state() -> (axum::Router, AppState) {
 
 fn secure_app() -> (axum::Router, String) {
     let builder = ServerBuilder::new(test_commerce());
-    let token = builder
-        .bearer_auth_token()
-        .expect("default auth token should be configured")
-        .to_string();
+    let token =
+        builder.bearer_auth_token().expect("default auth token should be configured").to_string();
     (builder.build(), token)
 }
 
@@ -47,9 +45,7 @@ fn test_commerce() -> Commerce {
 
 /// Read a response body into a [`serde_json::Value`].
 async fn body_json(response: axum::response::Response) -> Value {
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&body).unwrap()
 }
 
@@ -92,10 +88,7 @@ fn seed_product(state: &AppState) -> String {
 
 #[tokio::test]
 async fn health_returns_200_with_status_ok() {
-    let resp = app()
-        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
+    let resp = app().oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
@@ -104,14 +97,8 @@ async fn health_returns_200_with_status_ok() {
 
 #[tokio::test]
 async fn health_ready_returns_200_with_database_connected() {
-    let resp = app()
-        .oneshot(
-            Request::get("/health/ready")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let resp =
+        app().oneshot(Request::get("/health/ready").body(Body::empty()).unwrap()).await.unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
@@ -123,14 +110,8 @@ async fn health_ready_returns_200_with_database_connected() {
 async fn api_requires_bearer_auth_by_default() {
     let (router, _token) = secure_app();
 
-    let resp = router
-        .oneshot(
-            Request::get("/api/v1/orders")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let resp =
+        router.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
@@ -154,14 +135,8 @@ async fn api_accepts_valid_bearer_auth() {
 
 #[tokio::test]
 async fn list_orders_returns_200_with_empty_paginated_list() {
-    let resp = app()
-        .oneshot(
-            Request::get("/api/v1/orders")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let resp =
+        app().oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
@@ -174,11 +149,7 @@ async fn list_orders_returns_200_with_empty_paginated_list() {
 #[tokio::test]
 async fn list_customers_returns_200_with_empty_paginated_list() {
     let resp = app()
-        .oneshot(
-            Request::get("/api/v1/customers")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/customers").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -192,14 +163,8 @@ async fn list_customers_returns_200_with_empty_paginated_list() {
 
 #[tokio::test]
 async fn list_products_returns_200_with_empty_paginated_list() {
-    let resp = app()
-        .oneshot(
-            Request::get("/api/v1/products")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let resp =
+        app().oneshot(Request::get("/api/v1/products").body(Body::empty()).unwrap()).await.unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
@@ -310,11 +275,7 @@ async fn get_order_by_id_returns_correct_order() {
     // Get order by ID
     let get_router = stateset_http::routes::api_router().with_state(state);
     let resp = get_router
-        .oneshot(
-            Request::get(format!("/api/v1/orders/{order_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/orders/{order_id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -354,9 +315,7 @@ async fn get_customer_by_id_returns_correct_customer() {
     let get_router = stateset_http::routes::api_router().with_state(state);
     let resp = get_router
         .oneshot(
-            Request::get(format!("/api/v1/customers/{customer_id}"))
-                .body(Body::empty())
-                .unwrap(),
+            Request::get(format!("/api/v1/customers/{customer_id}")).body(Body::empty()).unwrap(),
         )
         .await
         .unwrap();
@@ -377,11 +336,7 @@ async fn get_customer_by_id_returns_correct_customer() {
 async fn get_order_nonexistent_returns_404_with_error_body() {
     let id = OrderId::new();
     let resp = app()
-        .oneshot(
-            Request::get(format!("/api/v1/orders/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/orders/{id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -395,11 +350,7 @@ async fn get_order_nonexistent_returns_404_with_error_body() {
 async fn get_customer_nonexistent_returns_404() {
     let id = CustomerId::new();
     let resp = app()
-        .oneshot(
-            Request::get(format!("/api/v1/customers/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/customers/{id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -412,11 +363,7 @@ async fn get_customer_nonexistent_returns_404() {
 async fn get_product_nonexistent_returns_404() {
     let id = ProductId::new();
     let resp = app()
-        .oneshot(
-            Request::get(format!("/api/v1/products/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/products/{id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -477,11 +424,7 @@ async fn post_order_with_empty_body_returns_client_error() {
 #[tokio::test]
 async fn nonexistent_route_returns_404() {
     let resp = app()
-        .oneshot(
-            Request::get("/api/v1/does-not-exist")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/does-not-exist").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -491,11 +434,7 @@ async fn nonexistent_route_returns_404() {
 #[tokio::test]
 async fn nonexistent_top_level_route_returns_404() {
     let resp = app()
-        .oneshot(
-            Request::get("/completely/unknown/path")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/completely/unknown/path").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -563,10 +502,7 @@ fn create_customer_request_serialization_roundtrip() {
     assert_eq!(deserialized.last_name, "Trip");
     assert_eq!(deserialized.phone, Some("+1-555-0199".into()));
     assert_eq!(deserialized.accepts_marketing, Some(false));
-    assert_eq!(
-        deserialized.tags,
-        Some(vec!["vip".into(), "wholesale".into()])
-    );
+    assert_eq!(deserialized.tags, Some(vec!["vip".into(), "wholesale".into()]));
     assert_eq!(deserialized.metadata.unwrap()["source"], "integration_test");
 }
 
@@ -582,20 +518,14 @@ fn pagination_params_defaults() {
 
 #[test]
 fn pagination_params_custom_values() {
-    let params = PaginationParams {
-        limit: Some(25),
-        offset: Some(100),
-    };
+    let params = PaginationParams { limit: Some(25), offset: Some(100) };
     assert_eq!(params.resolved_limit(), 25);
     assert_eq!(params.resolved_offset(), 100);
 }
 
 #[test]
 fn pagination_params_clamps_above_max() {
-    let params = PaginationParams {
-        limit: Some(500),
-        offset: None,
-    };
+    let params = PaginationParams { limit: Some(500), offset: None };
     assert_eq!(params.resolved_limit(), PaginationParams::MAX_LIMIT);
     assert_eq!(PaginationParams::MAX_LIMIT, 200);
 }
@@ -673,14 +603,8 @@ async fn e2e_create_customer_create_order_list_orders_verify() {
 
     // Step 4: List orders and verify the created order appears
     let router = stateset_http::routes::api_router().with_state(state.clone());
-    let resp = router
-        .oneshot(
-            Request::get("/api/v1/orders")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let resp =
+        router.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let list = body_json(resp).await;
@@ -693,11 +617,7 @@ async fn e2e_create_customer_create_order_list_orders_verify() {
     // Step 5: Get the specific order by ID and verify
     let router = stateset_http::routes::api_router().with_state(state);
     let resp = router
-        .oneshot(
-            Request::get(format!("/api/v1/orders/{order_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/orders/{order_id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -738,11 +658,7 @@ async fn e2e_create_customer_then_get_verify_fields() {
     // Get by ID and verify all fields
     let router = stateset_http::routes::api_router().with_state(state);
     let resp = router
-        .oneshot(
-            Request::get(format!("/api/v1/customers/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/customers/{id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -787,11 +703,7 @@ async fn e2e_create_product_then_list_products() {
     // List products and verify
     let router = stateset_http::routes::api_router().with_state(state);
     let resp = router
-        .oneshot(
-            Request::get("/api/v1/products")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/products").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -806,11 +718,7 @@ async fn e2e_create_product_then_list_products() {
 #[tokio::test]
 async fn list_orders_with_custom_pagination_params() {
     let resp = app()
-        .oneshot(
-            Request::get("/api/v1/orders?limit=10&offset=5")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/orders?limit=10&offset=5").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -823,11 +731,7 @@ async fn list_orders_with_custom_pagination_params() {
 #[tokio::test]
 async fn list_customers_with_custom_pagination_params() {
     let resp = app()
-        .oneshot(
-            Request::get("/api/v1/customers?limit=5&offset=10")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/customers?limit=5&offset=10").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -841,20 +745,13 @@ async fn list_customers_with_custom_pagination_params() {
 async fn error_response_has_json_content_type() {
     let id = OrderId::new();
     let resp = app()
-        .oneshot(
-            Request::get(format!("/api/v1/orders/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/orders/{id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let content_type =
+        resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
     assert!(
         content_type.contains("application/json"),
         "Error responses should have JSON content type, got: {content_type}"
@@ -884,21 +781,13 @@ async fn create_multiple_customers_then_list_all() {
             .await
             .unwrap();
 
-        assert_eq!(
-            resp.status(),
-            StatusCode::CREATED,
-            "Customer {i} creation failed"
-        );
+        assert_eq!(resp.status(), StatusCode::CREATED, "Customer {i} creation failed");
     }
 
     // List all customers
     let router = stateset_http::routes::api_router().with_state(state);
     let resp = router
-        .oneshot(
-            Request::get("/api/v1/customers")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/customers").body(Body::empty()).unwrap())
         .await
         .unwrap();
 

@@ -98,7 +98,10 @@ impl SplitPaymentTransition {
 /// - If all recipients failed, the status is [`SplitPaymentStatus::Failed`].
 /// - Otherwise, the status is [`SplitPaymentStatus::Partial`].
 #[must_use]
-pub const fn determine_final_status(completed_count: usize, failed_count: usize) -> SplitPaymentStatus {
+pub const fn determine_final_status(
+    completed_count: usize,
+    failed_count: usize,
+) -> SplitPaymentStatus {
     if failed_count == 0 {
         SplitPaymentStatus::Completed
     } else if completed_count == 0 {
@@ -167,36 +170,25 @@ mod tests {
 
     #[test]
     fn transition_new_invalid() {
-        let err = SplitPaymentTransition::new(
-            SplitPaymentStatus::Pending,
-            SplitPaymentStatus::Completed,
-        )
-        .unwrap_err();
+        let err =
+            SplitPaymentTransition::new(SplitPaymentStatus::Pending, SplitPaymentStatus::Completed)
+                .unwrap_err();
         assert!(matches!(err, A2AError::InvalidTransition { .. }));
     }
 
     #[test]
     fn determine_final_all_completed() {
-        assert_eq!(
-            determine_final_status(5, 0),
-            SplitPaymentStatus::Completed
-        );
+        assert_eq!(determine_final_status(5, 0), SplitPaymentStatus::Completed);
     }
 
     #[test]
     fn determine_final_all_failed() {
-        assert_eq!(
-            determine_final_status(0, 5),
-            SplitPaymentStatus::Failed
-        );
+        assert_eq!(determine_final_status(0, 5), SplitPaymentStatus::Failed);
     }
 
     #[test]
     fn determine_final_partial() {
-        assert_eq!(
-            determine_final_status(3, 2),
-            SplitPaymentStatus::Partial
-        );
+        assert_eq!(determine_final_status(3, 2), SplitPaymentStatus::Partial);
     }
 
     #[test]

@@ -187,7 +187,7 @@ impl CommerceBuilder {
             }
 
             let sqlite_db = Arc::new(SqliteDatabase::new(&config)?);
-            let db: Arc<dyn Database> = sqlite_db;
+            let db: Arc<dyn Database> = sqlite_db.clone();
             Ok(Commerce {
                 db,
                 backend: CommerceBackend::Sqlite,

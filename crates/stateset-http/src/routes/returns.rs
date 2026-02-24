@@ -9,7 +9,9 @@ use axum::{
 use crate::dto::{CreateReturnRequest, ReturnResponse};
 use crate::error::HttpError;
 use crate::state::AppState;
-use stateset_core::{CreateReturn, CreateReturnItem, ItemCondition, OrderItemId, ReturnId, ReturnReason};
+use stateset_core::{
+    CreateReturn, CreateReturnItem, ItemCondition, OrderItemId, ReturnId, ReturnReason,
+};
 use std::str::FromStr;
 
 /// Build the returns sub-router.
@@ -89,20 +91,14 @@ mod tests {
     use tower::ServiceExt;
 
     fn app() -> Router {
-        router().with_state(AppState::new(
-            Commerce::new(":memory:").expect("in-memory Commerce"),
-        ))
+        router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
     }
 
     #[tokio::test]
     async fn get_return_not_found() {
         let id = ReturnId::new();
         let resp = app()
-            .oneshot(
-                Request::get(format!("/returns/{id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get(format!("/returns/{id}")).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);

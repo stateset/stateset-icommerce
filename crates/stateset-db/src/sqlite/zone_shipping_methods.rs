@@ -21,9 +21,7 @@ impl SqliteZoneShippingMethodRepository {
 
     #[allow(dead_code)]
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 }
 
@@ -44,10 +42,7 @@ impl ZoneShippingMethodRepository for SqliteZoneShippingMethodRepository {
         todo!("SQLite zone shipping method delete")
     }
 
-    fn calculate_rates(
-        &self,
-        _request: ZoneShippingRateRequest,
-    ) -> Result<Vec<ZoneShippingRate>> {
+    fn calculate_rates(&self, _request: ZoneShippingRateRequest) -> Result<Vec<ZoneShippingRate>> {
         todo!("SQLite zone shipping method calculate_rates")
     }
 }

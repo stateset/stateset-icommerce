@@ -16,8 +16,7 @@ use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
     CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, CustomerRepository, OrderId,
-    OrderRepository,
-    OrderStatus, PaymentStatus, ProductId, PromotionType, Result, SetCartPayment,
+    OrderRepository, OrderStatus, PaymentStatus, ProductId, PromotionType, Result, SetCartPayment,
     SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem, UpdateOrder,
     X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData, X402IntentStatus,
     X402PaymentRequiredData, validate_batch_size, validate_currency_code, validate_price,
@@ -57,7 +56,8 @@ impl SqliteCartRepository {
                 row.get::<_, Option<String>>("customer_id")?,
                 "cart",
                 "customer_id",
-            )?.map(CustomerId::from),
+            )?
+            .map(CustomerId::from),
             status: parse_enum_row(&row.get::<_, String>("status")?, "cart", "status")?,
             currency: row.get("currency")?,
 
@@ -120,7 +120,8 @@ impl SqliteCartRepository {
                 row.get::<_, Option<String>>("order_id")?,
                 "cart",
                 "order_id",
-            )?.map(OrderId::from),
+            )?
+            .map(OrderId::from),
             order_number: row.get("order_number")?,
 
             notes: row.get("notes")?,
@@ -135,22 +136,27 @@ impl SqliteCartRepository {
 
             // x402 payment fields
             x402_payment: {
-                let payer: Option<String> = row.get("x402_payer_address").ok().flatten();
+                let payer: Option<String> = row.get("x402_payer_address")?;
                 if let Some(payer_address) = payer {
-                    let network_str: Option<String> = row.get("x402_network").ok().flatten();
-                    let asset_str: Option<String> = row.get("x402_asset").ok().flatten();
-                    let intent_id: Option<String> = row.get("x402_intent_id").ok().flatten();
-                    let status_str: Option<String> = row.get("x402_status").ok().flatten();
+                    let network_str: Option<String> = row.get("x402_network")?;
+                    let asset_str: Option<String> = row.get("x402_asset")?;
+                    let intent_id: Option<String> = row.get("x402_intent_id")?;
+                    let status_str: Option<String> = row.get("x402_status")?;
                     Some(CartX402Payment {
                         intent_id: parse_uuid_opt_row(intent_id, "cart", "x402_intent_id")?,
                         payer_address,
-                        network: network_str
-                            .map(|s| s.parse().unwrap_or_default())
-                            .unwrap_or_default(),
-                        asset: asset_str.map(|s| s.parse().unwrap_or_default()).unwrap_or_default(),
-                        status: status_str
-                            .map(|s| s.parse().unwrap_or_default())
-                            .unwrap_or_default(),
+                        network: match network_str {
+                            Some(value) => parse_enum_row(&value, "cart", "x402_network")?,
+                            None => Default::default(),
+                        },
+                        asset: match asset_str {
+                            Some(value) => parse_enum_row(&value, "cart", "x402_asset")?,
+                            None => Default::default(),
+                        },
+                        status: match status_str {
+                            Some(value) => parse_enum_row(&value, "cart", "x402_status")?,
+                            None => Default::default(),
+                        },
                     })
                 } else {
                     None
@@ -207,7 +213,8 @@ impl SqliteCartRepository {
                         row.get::<_, Option<String>>("product_id")?,
                         "cart_item",
                         "product_id",
-                    )?.map(ProductId::from),
+                    )?
+                    .map(ProductId::from),
                     variant_id: parse_uuid_opt_row(
                         row.get::<_, Option<String>>("variant_id")?,
                         "cart_item",
@@ -817,7 +824,8 @@ impl CartRepository for SqliteCartRepository {
                         row.get::<_, Option<String>>("product_id")?,
                         "cart_item",
                         "product_id",
-                    )?.map(ProductId::from),
+                    )?
+                    .map(ProductId::from),
                     variant_id: parse_uuid_opt_row(
                         row.get::<_, Option<String>>("variant_id")?,
                         "cart_item",

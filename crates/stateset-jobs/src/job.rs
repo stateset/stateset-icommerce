@@ -88,9 +88,7 @@ fn validate_cron_token(token: &str, label: &str, min: u32, max: u32) -> Result<(
     let err = |msg: String| JobError::InvalidSchedule(format!("{label}: {msg}"));
 
     if let Some(step_str) = token.strip_prefix("*/") {
-        let step: u32 = step_str
-            .parse()
-            .map_err(|_| err(format!("invalid step '{step_str}'")))?;
+        let step: u32 = step_str.parse().map_err(|_| err(format!("invalid step '{step_str}'")))?;
         if step == 0 {
             return Err(err("step must be > 0".to_owned()));
         }
@@ -102,12 +100,10 @@ fn validate_cron_token(token: &str, label: &str, min: u32, max: u32) -> Result<(
         if parts.len() != 2 {
             return Err(err(format!("malformed range '{token}'")));
         }
-        let start: u32 = parts[0]
-            .parse()
-            .map_err(|_| err(format!("invalid range start '{}'", parts[0])))?;
-        let end: u32 = parts[1]
-            .parse()
-            .map_err(|_| err(format!("invalid range end '{}'", parts[1])))?;
+        let start: u32 =
+            parts[0].parse().map_err(|_| err(format!("invalid range start '{}'", parts[0])))?;
+        let end: u32 =
+            parts[1].parse().map_err(|_| err(format!("invalid range end '{}'", parts[1])))?;
         if start < min || start > max || end < min || end > max {
             return Err(err(format!("range {start}-{end} out of bounds {min}-{max}")));
         }
@@ -117,9 +113,7 @@ fn validate_cron_token(token: &str, label: &str, min: u32, max: u32) -> Result<(
         return Ok(());
     }
 
-    let val: u32 = token
-        .parse()
-        .map_err(|_| err(format!("invalid value '{token}'")))?;
+    let val: u32 = token.parse().map_err(|_| err(format!("invalid value '{token}'")))?;
     if val < min || val > max {
         return Err(err(format!("value {val} out of bounds {min}-{max}")));
     }
@@ -184,8 +178,8 @@ impl BackoffStrategy {
                 if delay > *max { *max } else { delay }
             }
             Self::Linear { step, max } => {
-                let delay_ms = (step.as_millis() as u64)
-                    .saturating_mul(u64::from(attempt).saturating_add(1));
+                let delay_ms =
+                    (step.as_millis() as u64).saturating_mul(u64::from(attempt).saturating_add(1));
                 let delay = Duration::from_millis(delay_ms);
                 if delay > *max { *max } else { delay }
             }
@@ -288,9 +282,7 @@ impl JobDefinition {
 // We implement Debug for dyn JobHandler so JobDefinition's derive(Debug) works.
 impl std::fmt::Debug for dyn JobHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JobHandler")
-            .field("name", &self.name())
-            .finish()
+        f.debug_struct("JobHandler").field("name", &self.name()).finish()
     }
 }
 
@@ -431,10 +423,7 @@ mod tests {
 
     #[test]
     fn backoff_exponential_doubles() {
-        let b = BackoffStrategy::exponential(
-            Duration::from_secs(1),
-            Duration::from_secs(60),
-        );
+        let b = BackoffStrategy::exponential(Duration::from_secs(1), Duration::from_secs(60));
         assert_eq!(b.delay_for_attempt(0), Duration::from_secs(1));
         assert_eq!(b.delay_for_attempt(1), Duration::from_secs(2));
         assert_eq!(b.delay_for_attempt(2), Duration::from_secs(4));
@@ -443,20 +432,14 @@ mod tests {
 
     #[test]
     fn backoff_exponential_caps_at_max() {
-        let b = BackoffStrategy::exponential(
-            Duration::from_secs(1),
-            Duration::from_secs(10),
-        );
+        let b = BackoffStrategy::exponential(Duration::from_secs(1), Duration::from_secs(10));
         assert_eq!(b.delay_for_attempt(5), Duration::from_secs(10));
         assert_eq!(b.delay_for_attempt(100), Duration::from_secs(10));
     }
 
     #[test]
     fn backoff_linear_increments() {
-        let b = BackoffStrategy::linear(
-            Duration::from_secs(5),
-            Duration::from_secs(30),
-        );
+        let b = BackoffStrategy::linear(Duration::from_secs(5), Duration::from_secs(30));
         assert_eq!(b.delay_for_attempt(0), Duration::from_secs(5));
         assert_eq!(b.delay_for_attempt(1), Duration::from_secs(10));
         assert_eq!(b.delay_for_attempt(2), Duration::from_secs(15));
@@ -464,10 +447,7 @@ mod tests {
 
     #[test]
     fn backoff_linear_caps_at_max() {
-        let b = BackoffStrategy::linear(
-            Duration::from_secs(5),
-            Duration::from_secs(15),
-        );
+        let b = BackoffStrategy::linear(Duration::from_secs(5), Duration::from_secs(15));
         assert_eq!(b.delay_for_attempt(3), Duration::from_secs(15));
         assert_eq!(b.delay_for_attempt(100), Duration::from_secs(15));
     }
@@ -479,7 +459,10 @@ mod tests {
     struct NoopHandler;
 
     impl JobHandler for NoopHandler {
-        fn execute<'a>(&'a self, _ctx: &'a JobContext) -> BoxFuture<'a, Result<JobOutput, JobError>> {
+        fn execute<'a>(
+            &'a self,
+            _ctx: &'a JobContext,
+        ) -> BoxFuture<'a, Result<JobOutput, JobError>> {
             Box::pin(async { Ok(JobOutput::new("noop")) })
         }
         fn name(&self) -> &str {
@@ -503,29 +486,19 @@ mod tests {
             .with_retry_backoff(BackoffStrategy::fixed(Duration::from_secs(2)));
         assert_eq!(def.timeout, Duration::from_secs(10));
         assert_eq!(def.max_retries, 5);
-        assert_eq!(
-            def.retry_backoff,
-            BackoffStrategy::Fixed(Duration::from_secs(2))
-        );
+        assert_eq!(def.retry_backoff, BackoffStrategy::Fixed(Duration::from_secs(2)));
     }
 
     #[test]
     fn job_definition_validate_valid() {
-        let def = JobDefinition::new(
-            "test",
-            Schedule::Cron("0 * * * *".into()),
-            Box::new(NoopHandler),
-        );
+        let def =
+            JobDefinition::new("test", Schedule::Cron("0 * * * *".into()), Box::new(NoopHandler));
         assert!(def.validate().is_ok());
     }
 
     #[test]
     fn job_definition_validate_invalid_cron() {
-        let def = JobDefinition::new(
-            "test",
-            Schedule::Cron("bad".into()),
-            Box::new(NoopHandler),
-        );
+        let def = JobDefinition::new("test", Schedule::Cron("bad".into()), Box::new(NoopHandler));
         assert!(def.validate().is_err());
     }
 

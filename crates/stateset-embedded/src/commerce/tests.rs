@@ -486,7 +486,11 @@ fn test_webhook_registration_disabled() {
     );
     let id = commerce.register_webhook(webhook);
     assert_eq!(id, Uuid::nil());
-    assert_eq!(commerce.try_register_webhook(Webhook::new("Disabled Webhook", "https://example.com/webhook")), None);
+    assert_eq!(
+        commerce
+            .try_register_webhook(Webhook::new("Disabled Webhook", "https://example.com/webhook")),
+        None
+    );
     assert!(commerce.list_webhooks().is_empty());
     assert!(commerce.webhook_deliveries(id).is_empty());
 }
@@ -503,10 +507,14 @@ fn test_webhook_registration_rejects_unsafe_url() {
 
     assert_eq!(commerce.try_register_webhook(webhook), None);
     assert_eq!(
-        commerce.register_webhook_strict(Webhook::new("Unsafe Webhook", "http://localhost:8080/webhook")),
+        commerce.register_webhook_strict(Webhook::new(
+            "Unsafe Webhook",
+            "http://localhost:8080/webhook"
+        )),
         Err(WebhookRegistrationError::UnsafeUrl)
     );
-    let fallback_id = commerce.register_webhook(Webhook::new("Fallback Webhook", "http://localhost:8080/webhook"));
+    let fallback_id = commerce
+        .register_webhook(Webhook::new("Fallback Webhook", "http://localhost:8080/webhook"));
     assert_eq!(fallback_id, Uuid::nil());
     assert!(commerce.list_webhooks().is_empty());
 }

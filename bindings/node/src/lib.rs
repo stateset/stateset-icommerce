@@ -12097,10 +12097,7 @@ pub fn aes_gcm_encrypt(plaintext: Buffer, key: Buffer, aad: Buffer) -> Result<Bu
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
-    let payload = aes_gcm::aead::Payload {
-        msg: plaintext.as_ref(),
-        aad: aad.as_ref(),
-    };
+    let payload = aes_gcm::aead::Payload { msg: plaintext.as_ref(), aad: aad.as_ref() };
     let ciphertext_tag = cipher
         .encrypt(nonce, payload)
         .map_err(|e| Error::from_reason(format!("Encryption failed: {}", e)))?;
@@ -12132,10 +12129,7 @@ pub fn aes_gcm_decrypt(encrypted: Buffer, key: Buffer, aad: Buffer) -> Result<Bu
     let aes_key = Key::<Aes256Gcm>::from_slice(key.as_ref());
     let cipher = Aes256Gcm::new(aes_key);
 
-    let payload = aes_gcm::aead::Payload {
-        msg: ciphertext_tag,
-        aad: aad.as_ref(),
-    };
+    let payload = aes_gcm::aead::Payload { msg: ciphertext_tag, aad: aad.as_ref() };
     let plaintext = cipher
         .decrypt(nonce, payload)
         .map_err(|e| Error::from_reason(format!("Decryption failed: {}", e)))?;

@@ -253,8 +253,10 @@ fn test_return_list_for_customer() {
     create_test_return(&commerce, &order1);
     create_test_return(&commerce, &order2);
 
-    let returns =
-        commerce.returns().list_for_customer(customer_id.into()).expect("Failed to list customer returns");
+    let returns = commerce
+        .returns()
+        .list_for_customer(customer_id.into())
+        .expect("Failed to list customer returns");
     assert_eq!(returns.len(), 2);
 }
 

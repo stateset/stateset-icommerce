@@ -7,9 +7,7 @@ fn bench_money_add(c: &mut Criterion) {
     let b = Money::new(dec!(7890.12), CurrencyCode::USD);
 
     c.bench_function("money_add", |bencher| {
-        bencher.iter(|| {
-            black_box(a).checked_add(black_box(b))
-        });
+        bencher.iter(|| black_box(a).checked_add(black_box(b)));
     });
 }
 
@@ -18,9 +16,7 @@ fn bench_money_sub(c: &mut Criterion) {
     let b = Money::new(dec!(1234.56), CurrencyCode::USD);
 
     c.bench_function("money_sub", |bencher| {
-        bencher.iter(|| {
-            black_box(a).checked_sub(black_box(b))
-        });
+        bencher.iter(|| black_box(a).checked_sub(black_box(b)));
     });
 }
 

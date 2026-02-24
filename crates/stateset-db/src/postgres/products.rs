@@ -7,8 +7,8 @@ use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product, ProductFilter,
-    ProductId, ProductRepository, ProductStatus, ProductType, ProductVariant, Result, UpdateProduct,
-    validate_batch_size,
+    ProductId, ProductRepository, ProductStatus, ProductType, ProductVariant, Result,
+    UpdateProduct, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -971,11 +971,17 @@ impl ProductRepository for PgProductRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<BatchResult<Product>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(ProductId, UpdateProduct)>,
+    ) -> Result<BatchResult<Product>> {
         super::block_on(self.update_batch_async(updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(ProductId, UpdateProduct)>) -> Result<Vec<Product>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(ProductId, UpdateProduct)>,
+    ) -> Result<Vec<Product>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 

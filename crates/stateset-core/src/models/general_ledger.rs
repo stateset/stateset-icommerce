@@ -61,9 +61,7 @@ impl AccountType {
     pub const fn normal_balance(&self) -> BalanceSide {
         match self {
             Self::Asset | Self::Expense => BalanceSide::Debit,
-            Self::Liability | Self::Equity | Self::Revenue => {
-                BalanceSide::Credit
-            }
+            Self::Liability | Self::Equity | Self::Revenue => BalanceSide::Credit,
         }
     }
 

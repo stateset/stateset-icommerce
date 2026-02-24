@@ -37,10 +37,7 @@ impl EventBuffer {
     /// A capacity of 0 means the buffer will evict every event immediately.
     #[must_use]
     pub fn new(capacity: usize) -> Self {
-        Self {
-            buffer: VecDeque::with_capacity(capacity),
-            capacity,
-        }
+        Self { buffer: VecDeque::with_capacity(capacity), capacity }
     }
 
     /// Push an event into the buffer.
@@ -48,11 +45,8 @@ impl EventBuffer {
     /// If the buffer is at capacity, the oldest event is evicted and returned.
     /// Returns `None` if no eviction was needed.
     pub fn push(&mut self, event: SyncEvent) -> Option<SyncEvent> {
-        let evicted = if self.buffer.len() >= self.capacity {
-            self.buffer.pop_front()
-        } else {
-            None
-        };
+        let evicted =
+            if self.buffer.len() >= self.capacity { self.buffer.pop_front() } else { None };
         // For zero-capacity buffers, don't actually store the event
         if self.capacity > 0 {
             self.buffer.push_back(event);

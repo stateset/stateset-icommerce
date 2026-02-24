@@ -143,9 +143,8 @@ pub fn create_test_json_payloads(n: usize) -> Vec<serde_json::Value> {
 pub fn create_temp_commerce() -> (Commerce, tempfile::TempDir) {
     let dir = tempfile::TempDir::new().expect("failed to create temp dir");
     let db_path = dir.path().join("bench.db");
-    let commerce =
-        Commerce::new(db_path.to_str().expect("non-UTF-8 temp path"))
-            .expect("failed to create Commerce instance");
+    let commerce = Commerce::new(db_path.to_str().expect("non-UTF-8 temp path"))
+        .expect("failed to create Commerce instance");
     (commerce, dir)
 }
 

@@ -7,8 +7,7 @@ use std::collections::HashMap;
 
 use crate::{
     AccessDecision, Action, AuditFilter, AuditLog, AuditRecord, AuthzError, AuthzResult,
-    RateLimitDecision, RateLimitRule, RateLimiter, RedactionConfig, Resource,
-    Role,
+    RateLimitDecision, RateLimitRule, RateLimiter, RedactionConfig, Resource, Role,
 };
 
 /// Default audit log capacity.
@@ -83,9 +82,8 @@ impl AuthzEngine {
         let role = match self.resolve_role(actor_id) {
             Some(r) => r,
             None => {
-                let decision = AccessDecision::denied(format!(
-                    "actor '{actor_id}' has no assigned role"
-                ));
+                let decision =
+                    AccessDecision::denied(format!("actor '{actor_id}' has no assigned role"));
                 self.record_audit(actor_id, action, resource, &decision);
                 return decision;
             }
@@ -99,9 +97,7 @@ impl AuthzEngine {
         }
 
         // 3. Check rate limits
-        let rate_decision =
-            self.rate_limiter
-                .check_and_record(actor_id, resource.resource_type());
+        let rate_decision = self.rate_limiter.check_and_record(actor_id, resource.resource_type());
         if let RateLimitDecision::Exceeded { retry_after } = rate_decision {
             let decision = AccessDecision::denied(format!(
                 "rate limit exceeded for '{}' on '{}' (retry after {}ms)",
@@ -115,10 +111,8 @@ impl AuthzEngine {
 
         // 4. Check approval-required rules
         for rule in &self.approval_required {
-            let resource_match = rule
-                .resource_type
-                .as_ref()
-                .is_none_or(|rt| rt == resource.resource_type());
+            let resource_match =
+                rule.resource_type.as_ref().is_none_or(|rt| rt == resource.resource_type());
             let action_match = rule.action.as_ref().is_none_or(|a| a == action);
 
             if resource_match && action_match {
@@ -151,8 +145,7 @@ impl AuthzEngine {
         if !self.roles.contains_key(role_name) {
             return Err(AuthzError::invalid_role(role_name));
         }
-        self.actor_roles
-            .insert(actor_id.to_owned(), role_name.to_owned());
+        self.actor_roles.insert(actor_id.to_owned(), role_name.to_owned());
         Ok(())
     }
 
@@ -207,15 +200,8 @@ impl AuthzEngine {
     }
 
     /// Requires explicit approval for operations matching the criteria.
-    pub fn require_approval(
-        &mut self,
-        resource_type: Option<String>,
-        action: Option<Action>,
-    ) {
-        self.approval_required.push(ApprovalRule {
-            resource_type,
-            action,
-        });
+    pub fn require_approval(&mut self, resource_type: Option<String>, action: Option<Action>) {
+        self.approval_required.push(ApprovalRule { resource_type, action });
     }
 
     // -- Private helpers --
@@ -286,9 +272,12 @@ impl AuthzEngineBuilder {
 
     /// Assigns a role to an actor. The role must be added before building.
     #[must_use]
-    pub fn assign_role(mut self, actor_id: impl Into<String>, role_name: impl Into<String>) -> Self {
-        self.actor_roles
-            .insert(actor_id.into(), role_name.into());
+    pub fn assign_role(
+        mut self,
+        actor_id: impl Into<String>,
+        role_name: impl Into<String>,
+    ) -> Self {
+        self.actor_roles.insert(actor_id.into(), role_name.into());
         self
     }
 
@@ -320,10 +309,7 @@ impl AuthzEngineBuilder {
         resource_type: Option<String>,
         action: Option<Action>,
     ) -> Self {
-        self.approval_rules.push(ApprovalRule {
-            resource_type,
-            action,
-        });
+        self.approval_rules.push(ApprovalRule { resource_type, action });
         self
     }
 
@@ -384,20 +370,14 @@ mod tests {
     #[test]
     fn viewer_can_only_read() {
         let mut engine = basic_engine();
-        assert!(engine
-            .authorize("bob", &Resource::new("orders"), &Action::Read)
-            .is_allowed());
-        assert!(engine
-            .authorize("bob", &Resource::new("orders"), &Action::Create)
-            .is_denied());
+        assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Read).is_allowed());
+        assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Create).is_denied());
     }
 
     #[test]
     fn none_role_denied() {
         let mut engine = basic_engine();
-        assert!(engine
-            .authorize("nobody", &Resource::new("orders"), &Action::Read)
-            .is_denied());
+        assert!(engine.authorize("nobody", &Resource::new("orders"), &Action::Read).is_denied());
     }
 
     #[test]
@@ -418,12 +398,8 @@ mod tests {
             .rate_limit_rule(RateLimitRule::new("orders", 2, Duration::from_secs(60)))
             .build();
 
-        assert!(engine
-            .authorize("alice", &Resource::new("orders"), &Action::Read)
-            .is_allowed());
-        assert!(engine
-            .authorize("alice", &Resource::new("orders"), &Action::Read)
-            .is_allowed());
+        assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
+        assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
         let d = engine.authorize("alice", &Resource::new("orders"), &Action::Read);
         assert!(d.is_denied());
         assert!(d.reason().unwrap().contains("rate limit"));
@@ -445,9 +421,7 @@ mod tests {
         assert!(d.reason().unwrap().contains("requires explicit approval"));
 
         // But read is fine
-        assert!(engine
-            .authorize("alice", &Resource::new("orders"), &Action::Read)
-            .is_allowed());
+        assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
     }
 
     #[test]
@@ -491,16 +465,14 @@ mod tests {
     #[test]
     fn add_role_at_runtime() {
         let mut engine = basic_engine();
-        let custom = RoleBuilder::new("custom")
-            .default_level(PermissionLevel::Write)
-            .build();
+        let custom = RoleBuilder::new("custom").default_level(PermissionLevel::Write).build();
 
         engine.add_role(custom);
         engine.assign_role("charlie", "custom").unwrap();
 
-        assert!(engine
-            .authorize("charlie", &Resource::new("orders"), &Action::Create)
-            .is_allowed());
+        assert!(
+            engine.authorize("charlie", &Resource::new("orders"), &Action::Create).is_allowed()
+        );
     }
 
     #[test]
@@ -513,15 +485,11 @@ mod tests {
     #[test]
     fn remove_role_denies_access() {
         let mut engine = basic_engine();
-        assert!(engine
-            .authorize("alice", &Resource::new("orders"), &Action::Read)
-            .is_allowed());
+        assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
 
         engine.remove_role("alice");
 
-        assert!(engine
-            .authorize("alice", &Resource::new("orders"), &Action::Read)
-            .is_denied());
+        assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_denied());
     }
 
     #[test]
@@ -557,18 +525,14 @@ mod tests {
 
     #[test]
     fn builder_custom_audit_size() {
-        let engine = AuthzEngineBuilder::new()
-            .audit_max_size(50)
-            .build();
+        let engine = AuthzEngineBuilder::new().audit_max_size(50).build();
         assert_eq!(engine.audit_log().max_size(), 50);
     }
 
     #[test]
     fn builder_custom_redaction() {
         let config = RedactionConfig::with_fields(["custom_field"]);
-        let engine = AuthzEngineBuilder::new()
-            .redaction_config(config)
-            .build();
+        let engine = AuthzEngineBuilder::new().redaction_config(config).build();
 
         assert!(engine.redaction_config().should_redact("custom_field"));
         assert!(!engine.redaction_config().should_redact("password"));
@@ -615,9 +579,9 @@ mod tests {
             .build();
 
         for _ in 0..3 {
-            assert!(engine
-                .authorize("alice", &Resource::new("orders"), &Action::Read)
-                .is_allowed());
+            assert!(
+                engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed()
+            );
         }
 
         let d = engine.authorize("alice", &Resource::new("orders"), &Action::Read);
@@ -636,23 +600,21 @@ mod tests {
         assert_eq!(engine.rate_limiter().rule_count(), 1);
 
         // Add another via mutable accessor
-        engine
-            .rate_limiter_mut()
-            .add_rule(RateLimitRule::new("customers", 10, Duration::from_secs(60)));
+        engine.rate_limiter_mut().add_rule(RateLimitRule::new(
+            "customers",
+            10,
+            Duration::from_secs(60),
+        ));
         assert_eq!(engine.rate_limiter().rule_count(), 2);
     }
 
     #[test]
     fn require_approval_at_runtime() {
-        let mut engine = AuthzEngineBuilder::new()
-            .add_role(Role::admin())
-            .assign_role("alice", "admin")
-            .build();
+        let mut engine =
+            AuthzEngineBuilder::new().add_role(Role::admin()).assign_role("alice", "admin").build();
 
         // Initially allowed
-        assert!(engine
-            .authorize("alice", &Resource::new("orders"), &Action::Delete)
-            .is_allowed());
+        assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Delete).is_allowed());
 
         // Add approval requirement
         engine.require_approval(Some("orders".to_owned()), Some(Action::Delete));

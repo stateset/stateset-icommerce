@@ -4,7 +4,7 @@ Comprehensive examples demonstrating all features of the StateSet iCommerce engi
 
 ## Prerequisites
 
-- Node.js 18 or higher
+- Node.js 20.20.0+ and npm 10.0.0+
 - npm or yarn
 
 ## Installation

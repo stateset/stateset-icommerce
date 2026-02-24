@@ -45,13 +45,11 @@ impl FfiCustomer {
     pub fn from_domain(c: &Customer) -> Self {
         let full_name = format!("{} {}", c.first_name, c.last_name);
 
-        let name_ptr = CString::new(full_name)
-            .map(CString::into_raw)
-            .unwrap_or(std::ptr::null_mut());
+        let name_ptr =
+            CString::new(full_name).map(CString::into_raw).unwrap_or(std::ptr::null_mut());
 
-        let email_ptr = CString::new(c.email.clone())
-            .map(CString::into_raw)
-            .unwrap_or(std::ptr::null_mut());
+        let email_ptr =
+            CString::new(c.email.clone()).map(CString::into_raw).unwrap_or(std::ptr::null_mut());
 
         Self {
             id: FfiUuid::from(c.id),
@@ -87,7 +85,6 @@ pub extern "C" fn stateset_customer_free(customer: FfiCustomer) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
 
 #[cfg(test)]
 mod tests {

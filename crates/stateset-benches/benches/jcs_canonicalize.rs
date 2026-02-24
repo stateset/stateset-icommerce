@@ -58,21 +58,15 @@ fn bench_jcs_canonicalize(c: &mut Criterion) {
     let mut group = c.benchmark_group("jcs_canonicalize");
 
     group.bench_function("jcs_small", |bencher| {
-        bencher.iter(|| {
-            canonicalize_json(black_box(&small)).unwrap()
-        });
+        bencher.iter(|| canonicalize_json(black_box(&small)).unwrap());
     });
 
     group.bench_function("jcs_medium", |bencher| {
-        bencher.iter(|| {
-            canonicalize_json(black_box(&medium)).unwrap()
-        });
+        bencher.iter(|| canonicalize_json(black_box(&medium)).unwrap());
     });
 
     group.bench_function("jcs_large", |bencher| {
-        bencher.iter(|| {
-            canonicalize_json(black_box(&large)).unwrap()
-        });
+        bencher.iter(|| canonicalize_json(black_box(&large)).unwrap());
     });
 
     group.finish();

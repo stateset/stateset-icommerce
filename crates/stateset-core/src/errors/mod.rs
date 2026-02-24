@@ -733,11 +733,7 @@ impl From<&CommerceError> for BatchErrorCode {
             CommerceError::DatabaseError(_) | CommerceError::Database(_) => Self::DatabaseError,
 
             // Also catch constraint violations from DbError as duplicate key
-            _ if matches!(
-                err.as_db_error(),
-                Some(DbError::ConstraintViolation { .. })
-            ) =>
-            {
+            _ if matches!(err.as_db_error(), Some(DbError::ConstraintViolation { .. })) => {
                 Self::DuplicateKey
             }
 
@@ -1037,9 +1033,7 @@ pub fn validate_phone(phone: &str) -> Result<()> {
     }
 
     if digit_count > 15 {
-        return Err(CommerceError::ValidationError(
-            "Phone number cannot exceed 15 digits".into(),
-        ));
+        return Err(CommerceError::ValidationError("Phone number cannot exceed 15 digits".into()));
     }
 
     Ok(())
@@ -1360,19 +1354,10 @@ mod tests {
     fn suggested_status_codes() {
         assert_eq!(CommerceError::NotFound.suggested_status_code(), 404);
         assert_eq!(CommerceError::OrderNotFound(Uuid::nil()).suggested_status_code(), 404);
-        assert_eq!(
-            CommerceError::ValidationError("bad".into()).suggested_status_code(),
-            400
-        );
+        assert_eq!(CommerceError::ValidationError("bad".into()).suggested_status_code(), 400);
         assert_eq!(CommerceError::DuplicateSku("X".into()).suggested_status_code(), 409);
-        assert_eq!(
-            CommerceError::NotPermitted("no".into()).suggested_status_code(),
-            403
-        );
-        assert_eq!(
-            CommerceError::ExternalServiceError("t".into()).suggested_status_code(),
-            502
-        );
+        assert_eq!(CommerceError::NotPermitted("no".into()).suggested_status_code(), 403);
+        assert_eq!(CommerceError::ExternalServiceError("t".into()).suggested_status_code(), 502);
         assert_eq!(CommerceError::Internal("x".into()).suggested_status_code(), 500);
     }
 

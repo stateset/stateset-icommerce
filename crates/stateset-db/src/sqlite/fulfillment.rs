@@ -81,9 +81,14 @@ impl SqliteFulfillmentRepository {
 
         Ok(PickTask {
             id: parse_uuid_row(&id_str, "pick_task", "id")?,
-            wave_id: parse_uuid_opt_row(wave_id_str, "pick_task", "wave_id")?.map(FulfillmentId::from),
+            wave_id: parse_uuid_opt_row(wave_id_str, "pick_task", "wave_id")?
+                .map(FulfillmentId::from),
             order_id: OrderId::from(parse_uuid_row(&order_id_str, "pick_task", "order_id")?),
-            order_item_id: OrderItemId::from(parse_uuid_row(&order_item_id_str, "pick_task", "order_item_id")?),
+            order_item_id: OrderItemId::from(parse_uuid_row(
+                &order_item_id_str,
+                "pick_task",
+                "order_item_id",
+            )?),
             warehouse_id: row.get("warehouse_id")?,
             status: parse_enum_row(&status_str, "pick_task", "status")?,
             sku: row.get("sku")?,
@@ -126,7 +131,8 @@ impl SqliteFulfillmentRepository {
         Ok(PackTask {
             id: parse_uuid_row(&id_str, "pack_task", "id")?,
             order_id: OrderId::from(parse_uuid_row(&order_id_str, "pack_task", "order_id")?),
-            shipment_id: parse_uuid_opt_row(shipment_id_str, "pack_task", "shipment_id")?.map(ShipmentId::from),
+            shipment_id: parse_uuid_opt_row(shipment_id_str, "pack_task", "shipment_id")?
+                .map(ShipmentId::from),
             status: parse_enum_row(&status_str, "pack_task", "status")?,
             carton_count: row.get("carton_count")?,
             total_weight_kg: parse_decimal_opt_row(weight_str, "pack_task", "total_weight_kg")?,
@@ -204,7 +210,11 @@ impl SqliteFulfillmentRepository {
         Ok(ShipTask {
             id: parse_uuid_row(&id_str, "ship_task", "id")?,
             order_id: OrderId::from(parse_uuid_row(&order_id_str, "ship_task", "order_id")?),
-            shipment_id: ShipmentId::from(parse_uuid_row(&shipment_id_str, "ship_task", "shipment_id")?),
+            shipment_id: ShipmentId::from(parse_uuid_row(
+                &shipment_id_str,
+                "ship_task",
+                "shipment_id",
+            )?),
             pack_task_id: parse_uuid_row(&pack_task_id_str, "ship_task", "pack_task_id")?,
             status: parse_enum_row(&status_str, "ship_task", "status")?,
             carrier: row.get("carrier")?,
@@ -1053,7 +1063,11 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     // Workflow Helpers
     // ========================================================================
 
-    fn create_picks_for_order(&self, order_id: OrderId, warehouse_id: i32) -> Result<Vec<PickTask>> {
+    fn create_picks_for_order(
+        &self,
+        order_id: OrderId,
+        warehouse_id: i32,
+    ) -> Result<Vec<PickTask>> {
         let conn = self.conn()?;
 
         let mut inputs = Vec::new();

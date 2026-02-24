@@ -254,10 +254,32 @@ mod tests {
     }
 
     // Test that auto_impl works with Arc<T>
-    fn _takes_arc_repo(_: Arc<dyn Repository<Entity = (), Id = u64, CreateInput = (), UpdateInput = (), Filter = NoFilter>>) {}
+    fn _takes_arc_repo(
+        _: Arc<
+            dyn Repository<
+                    Entity = (),
+                    Id = u64,
+                    CreateInput = (),
+                    UpdateInput = (),
+                    Filter = NoFilter,
+                >,
+        >,
+    ) {
+    }
 
     // Test that auto_impl works with Box<T>
-    fn _takes_box_repo(_: Box<dyn Repository<Entity = (), Id = u64, CreateInput = (), UpdateInput = (), Filter = NoFilter>>) {}
+    fn _takes_box_repo(
+        _: Box<
+            dyn Repository<
+                    Entity = (),
+                    Id = u64,
+                    CreateInput = (),
+                    UpdateInput = (),
+                    Filter = NoFilter,
+                >,
+        >,
+    ) {
+    }
 
     // Test that auto_impl works with &T
     fn _takes_ref_repo<R: Repository>(_: &R) {}

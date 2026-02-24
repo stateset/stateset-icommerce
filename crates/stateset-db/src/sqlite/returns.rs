@@ -34,7 +34,11 @@ impl SqliteReturnRepository {
     fn row_to_return(row: &rusqlite::Row<'_>) -> rusqlite::Result<Return> {
         Ok(Return {
             id: ReturnId::from(parse_uuid_row(&row.get::<_, String>("id")?, "return", "id")?),
-            order_id: OrderId::from(parse_uuid_row(&row.get::<_, String>("order_id")?, "return", "order_id")?),
+            order_id: OrderId::from(parse_uuid_row(
+                &row.get::<_, String>("order_id")?,
+                "return",
+                "order_id",
+            )?),
             customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "return",

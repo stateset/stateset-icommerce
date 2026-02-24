@@ -277,9 +277,7 @@ impl FromStr for CreditApplicationStatus {
             "under_review" | "underreview" => Ok(Self::UnderReview),
             "approved" => Ok(Self::Approved),
             "denied" | "rejected" => Ok(Self::Denied),
-            "more_info_needed" | "moreinfoneeded" | "info_needed" => {
-                Ok(Self::MoreInfoNeeded)
-            }
+            "more_info_needed" | "moreinfoneeded" | "info_needed" => Ok(Self::MoreInfoNeeded),
             "withdrawn" => Ok(Self::Withdrawn),
             _ => Err(format!("Unknown credit application status: {}", s)),
         }

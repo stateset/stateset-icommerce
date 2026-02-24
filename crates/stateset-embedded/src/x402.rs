@@ -46,11 +46,11 @@
 //! ```
 
 use stateset_core::{
-    AgentCard, AgentCardFilter, CreateAgentCard, CreateX402PaymentIntent, Result,
-    SignX402PaymentIntent, TrustLevel, UpdateAgentCard, X402Asset, X402CreditAccount,
-    X402CreditAdjustment, X402CreditDirection, X402CreditTransaction, X402CreditTransactionFilter,
-    A2APurchase, A2APurchaseFilter, CreateA2APurchase, CreateA2AQuote, PurchaseStatus, QuoteStatus,
-    SkillQuote, SkillQuoteFilter, X402IntentStatus, X402Network, X402PaymentIntent,
+    A2APurchase, A2APurchaseFilter, AgentCard, AgentCardFilter, CreateA2APurchase, CreateA2AQuote,
+    CreateAgentCard, CreateX402PaymentIntent, PurchaseStatus, QuoteStatus, Result,
+    SignX402PaymentIntent, SkillQuote, SkillQuoteFilter, TrustLevel, UpdateAgentCard, X402Asset,
+    X402CreditAccount, X402CreditAdjustment, X402CreditDirection, X402CreditTransaction,
+    X402CreditTransactionFilter, X402IntentStatus, X402Network, X402PaymentIntent,
     X402PaymentIntentFilter,
 };
 use stateset_db::Database;
@@ -306,9 +306,7 @@ impl X402 {
         rating: Option<u8>,
         feedback: Option<&str>,
     ) -> Result<A2APurchase> {
-        self.db
-            .a2a_purchases()
-            .confirm_delivery(purchase_id, signature, rating, feedback)
+        self.db.a2a_purchases().confirm_delivery(purchase_id, signature, rating, feedback)
     }
 
     /// List A2A purchases with filter
@@ -989,10 +987,8 @@ mod tests {
         let quoted = commerce.x402().update_quote_status(quote.id, QuoteStatus::Quoted).unwrap();
         assert_eq!(quoted.status, QuoteStatus::Quoted);
 
-        let no_op_quote = commerce
-            .x402()
-            .update_quote_status(quote.id, QuoteStatus::Quoted)
-            .unwrap();
+        let no_op_quote =
+            commerce.x402().update_quote_status(quote.id, QuoteStatus::Quoted).unwrap();
         assert_eq!(no_op_quote.status, QuoteStatus::Quoted);
 
         let purchase = commerce
@@ -1014,8 +1010,10 @@ mod tests {
         assert_eq!(purchase.status, PurchaseStatus::Initiated);
         assert_eq!(purchase.quote_id, Some(quoted.id));
 
-        let payment_pending =
-            commerce.x402().update_purchase_status(purchase.id, PurchaseStatus::PaymentPending).unwrap();
+        let payment_pending = commerce
+            .x402()
+            .update_purchase_status(purchase.id, PurchaseStatus::PaymentPending)
+            .unwrap();
         assert_eq!(payment_pending.status, PurchaseStatus::PaymentPending);
 
         let shipped =
@@ -1023,7 +1021,9 @@ mod tests {
         assert_eq!(shipped.status, PurchaseStatus::Shipped);
 
         let refreshed_quote = commerce.x402().get_quote(quote.id).unwrap();
-        assert!(matches!(refreshed_quote.as_ref(), Some(value) if value.status == QuoteStatus::Purchased));
+        assert!(
+            matches!(refreshed_quote.as_ref(), Some(value) if value.status == QuoteStatus::Purchased)
+        );
 
         let listed_quotes = commerce
             .x402()
@@ -1040,7 +1040,10 @@ mod tests {
 
         let counted_quotes = commerce
             .x402()
-            .count_quotes(SkillQuoteFilter { seller_agent_id: Some(seller.id), ..Default::default() })
+            .count_quotes(SkillQuoteFilter {
+                seller_agent_id: Some(seller.id),
+                ..Default::default()
+            })
             .unwrap();
         assert!(counted_quotes >= 1);
 
@@ -1049,23 +1052,30 @@ mod tests {
             .confirm_delivery(purchase.id, "delivery_signature", Some(5), Some("good"))
             .unwrap();
         assert_eq!(completed.status, PurchaseStatus::Completed);
-        assert_eq!(completed.delivery_confirmation_signature, Some("delivery_signature".to_string()));
+        assert_eq!(
+            completed.delivery_confirmation_signature,
+            Some("delivery_signature".to_string())
+        );
 
-        let no_op_purchase = commerce
-            .x402()
-            .update_purchase_status(purchase.id, PurchaseStatus::Completed)
-            .unwrap();
+        let no_op_purchase =
+            commerce.x402().update_purchase_status(purchase.id, PurchaseStatus::Completed).unwrap();
         assert_eq!(no_op_purchase.status, PurchaseStatus::Completed);
 
         let listed_purchases = commerce
             .x402()
-            .list_purchases(A2APurchaseFilter { buyer_agent_id: Some(buyer_id), ..Default::default() })
+            .list_purchases(A2APurchaseFilter {
+                buyer_agent_id: Some(buyer_id),
+                ..Default::default()
+            })
             .unwrap();
         assert!(listed_purchases.iter().any(|item| item.id == purchase.id));
 
         let counted_purchases = commerce
             .x402()
-            .count_purchases(A2APurchaseFilter { buyer_agent_id: Some(buyer_id), ..Default::default() })
+            .count_purchases(A2APurchaseFilter {
+                buyer_agent_id: Some(buyer_id),
+                ..Default::default()
+            })
             .unwrap();
         assert!(counted_purchases >= 1);
     }
@@ -1132,63 +1142,63 @@ mod tests {
             })
             .unwrap();
 
-        assert!(commerce
-            .x402()
-            .update_quote_status(quote.id, QuoteStatus::Accepted)
-            .is_err());
+        assert!(commerce.x402().update_quote_status(quote.id, QuoteStatus::Accepted).is_err());
 
-        let quoted = commerce
-            .x402()
-            .update_quote_status(quote.id, QuoteStatus::Quoted)
-            .unwrap();
+        let quoted = commerce.x402().update_quote_status(quote.id, QuoteStatus::Quoted).unwrap();
 
-        assert!(commerce
-            .x402()
-            .create_purchase(CreateA2APurchase {
-                buyer_agent_id: buyer_id,
-                seller_agent_id: other_seller.id,
-                quote_id: Some(quoted.id),
-                items: quoted.items.clone(),
-                total: quoted.total,
-                currency: Some("USD".to_string()),
-                fulfillment_type: Some("digital".to_string()),
-                notes: Some("mismatched seller".into()),
-                metadata: None,
-                payment_intent_id: None,
-            })
-            .is_err());
+        assert!(
+            commerce
+                .x402()
+                .create_purchase(CreateA2APurchase {
+                    buyer_agent_id: buyer_id,
+                    seller_agent_id: other_seller.id,
+                    quote_id: Some(quoted.id),
+                    items: quoted.items.clone(),
+                    total: quoted.total,
+                    currency: Some("USD".to_string()),
+                    fulfillment_type: Some("digital".to_string()),
+                    notes: Some("mismatched seller".into()),
+                    metadata: None,
+                    payment_intent_id: None,
+                })
+                .is_err()
+        );
 
-        assert!(commerce
-            .x402()
-            .create_purchase(CreateA2APurchase {
-                buyer_agent_id: buyer_id,
-                seller_agent_id: seller.id,
-                quote_id: Some(quoted.id),
-                items: quoted.items.clone(),
-                total: quoted.total,
-                currency: Some("EUR".to_string()),
-                fulfillment_type: Some("digital".to_string()),
-                notes: Some("mismatched currency".into()),
-                metadata: None,
-                payment_intent_id: None,
-            })
-            .is_err());
+        assert!(
+            commerce
+                .x402()
+                .create_purchase(CreateA2APurchase {
+                    buyer_agent_id: buyer_id,
+                    seller_agent_id: seller.id,
+                    quote_id: Some(quoted.id),
+                    items: quoted.items.clone(),
+                    total: quoted.total,
+                    currency: Some("EUR".to_string()),
+                    fulfillment_type: Some("digital".to_string()),
+                    notes: Some("mismatched currency".into()),
+                    metadata: None,
+                    payment_intent_id: None,
+                })
+                .is_err()
+        );
 
-        assert!(commerce
-            .x402()
-            .create_purchase(CreateA2APurchase {
-                buyer_agent_id: buyer_id,
-                seller_agent_id: seller.id,
-                quote_id: Some(quoted.id),
-                items: quoted.items.clone(),
-                total: quoted.total + rust_decimal::Decimal::ONE,
-                currency: Some("USD".to_string()),
-                fulfillment_type: Some("digital".to_string()),
-                notes: Some("mismatched total".into()),
-                metadata: None,
-                payment_intent_id: None,
-            })
-            .is_err());
+        assert!(
+            commerce
+                .x402()
+                .create_purchase(CreateA2APurchase {
+                    buyer_agent_id: buyer_id,
+                    seller_agent_id: seller.id,
+                    quote_id: Some(quoted.id),
+                    items: quoted.items.clone(),
+                    total: quoted.total + rust_decimal::Decimal::ONE,
+                    currency: Some("USD".to_string()),
+                    fulfillment_type: Some("digital".to_string()),
+                    notes: Some("mismatched total".into()),
+                    metadata: None,
+                    payment_intent_id: None,
+                })
+                .is_err()
+        );
 
         let purchase = commerce
             .x402()
@@ -1208,15 +1218,16 @@ mod tests {
 
         assert_eq!(purchase.status, PurchaseStatus::Initiated);
 
-        assert!(commerce
-            .x402()
-            .update_purchase_status(purchase.id, PurchaseStatus::Completed)
-            .is_err());
+        assert!(
+            commerce.x402().update_purchase_status(purchase.id, PurchaseStatus::Completed).is_err()
+        );
 
-        assert!(commerce
-            .x402()
-            .confirm_delivery(purchase.id, "delivery_signature", Some(5), Some("blocked"))
-            .is_err());
+        assert!(
+            commerce
+                .x402()
+                .confirm_delivery(purchase.id, "delivery_signature", Some(5), Some("blocked"))
+                .is_err()
+        );
     }
 
     #[test]
@@ -1239,34 +1250,36 @@ mod tests {
             .unwrap();
 
         let buyer_id = Uuid::new_v4();
-        assert!(commerce
-            .x402()
-            .create_quote(CreateA2AQuote {
-                buyer_agent_id: buyer_id,
-                seller_agent_id: seller.id,
-                items: vec![QuotedItem {
-                    line_number: 1,
-                    sku: Some("SKU-EX".to_string()),
-                    name: "Expired service".to_string(),
-                    quantity: 1,
-                    unit_price: rust_decimal_macros::dec!(15.00),
+        assert!(
+            commerce
+                .x402()
+                .create_quote(CreateA2AQuote {
+                    buyer_agent_id: buyer_id,
+                    seller_agent_id: seller.id,
+                    items: vec![QuotedItem {
+                        line_number: 1,
+                        sku: Some("SKU-EX".to_string()),
+                        name: "Expired service".to_string(),
+                        quantity: 1,
+                        unit_price: rust_decimal_macros::dec!(15.00),
+                        total: rust_decimal_macros::dec!(15.00),
+                        availability: ItemAvailability::InStock,
+                        lead_time_days: Some(1),
+                    }],
+                    subtotal: rust_decimal_macros::dec!(15.00),
                     total: rust_decimal_macros::dec!(15.00),
-                    availability: ItemAvailability::InStock,
-                    lead_time_days: Some(1),
-                }],
-                subtotal: rust_decimal_macros::dec!(15.00),
-                total: rust_decimal_macros::dec!(15.00),
-                currency: Some("USD".to_string()),
-                tax_amount: Some(rust_decimal::Decimal::ZERO),
-                shipping_amount: Some(rust_decimal::Decimal::ZERO),
-                discount_amount: Some(rust_decimal::Decimal::ZERO),
-                valid_until: chrono::Utc::now() - chrono::Duration::hours(1),
-                payment_network: Some(X402Network::SetChain),
-                payment_asset: Some(X402Asset::Usdc),
-                notes: Some("expired quote".into()),
-                ..Default::default()
-            })
-            .is_err());
+                    currency: Some("USD".to_string()),
+                    tax_amount: Some(rust_decimal::Decimal::ZERO),
+                    shipping_amount: Some(rust_decimal::Decimal::ZERO),
+                    discount_amount: Some(rust_decimal::Decimal::ZERO),
+                    valid_until: chrono::Utc::now() - chrono::Duration::hours(1),
+                    payment_network: Some(X402Network::SetChain),
+                    payment_asset: Some(X402Asset::Usdc),
+                    notes: Some("expired quote".into()),
+                    ..Default::default()
+                })
+                .is_err()
+        );
 
         let quote = commerce
             .x402()
@@ -1297,32 +1310,28 @@ mod tests {
             })
             .unwrap();
 
-        let quoted = commerce
-            .x402()
-            .update_quote_status(quote.id, QuoteStatus::Quoted)
-            .unwrap();
-        let expired = commerce
-            .x402()
-            .update_quote_status(quoted.id, QuoteStatus::Expired)
-            .unwrap();
+        let quoted = commerce.x402().update_quote_status(quote.id, QuoteStatus::Quoted).unwrap();
+        let expired = commerce.x402().update_quote_status(quoted.id, QuoteStatus::Expired).unwrap();
         assert_eq!(quoted.status, QuoteStatus::Quoted);
         assert_eq!(expired.status, QuoteStatus::Expired);
 
-        assert!(commerce
-            .x402()
-            .create_purchase(CreateA2APurchase {
-                buyer_agent_id: buyer_id,
-                seller_agent_id: seller.id,
-                quote_id: Some(expired.id),
-                items: expired.items,
-                total: expired.total,
-                currency: Some(expired.currency),
-                fulfillment_type: Some("digital".to_string()),
-                notes: Some("expired quote blocked".into()),
-                metadata: None,
-                payment_intent_id: None,
-            })
-            .is_err());
+        assert!(
+            commerce
+                .x402()
+                .create_purchase(CreateA2APurchase {
+                    buyer_agent_id: buyer_id,
+                    seller_agent_id: seller.id,
+                    quote_id: Some(expired.id),
+                    items: expired.items,
+                    total: expired.total,
+                    currency: Some(expired.currency),
+                    fulfillment_type: Some("digital".to_string()),
+                    notes: Some("expired quote blocked".into()),
+                    metadata: None,
+                    payment_intent_id: None,
+                })
+                .is_err()
+        );
     }
 
     #[test]
@@ -1374,14 +1383,10 @@ mod tests {
             metadata: None,
         };
 
-        let cancelled_quote = commerce
-            .x402()
-            .create_quote(make_quote(buyer_id, seller.id))
-            .unwrap();
-        let cancelled_quote = commerce
-            .x402()
-            .update_quote_status(cancelled_quote.id, QuoteStatus::Quoted)
-            .unwrap();
+        let cancelled_quote =
+            commerce.x402().create_quote(make_quote(buyer_id, seller.id)).unwrap();
+        let cancelled_quote =
+            commerce.x402().update_quote_status(cancelled_quote.id, QuoteStatus::Quoted).unwrap();
 
         let cancelled_purchase = commerce
             .x402()
@@ -1411,23 +1416,23 @@ mod tests {
             .unwrap();
         assert_eq!(no_op.status, PurchaseStatus::Cancelled);
 
-        assert!(commerce
-            .x402()
-            .update_purchase_status(cancelled_purchase.id, PurchaseStatus::PaymentPending)
-            .is_err());
-        assert!(commerce
-            .x402()
-            .confirm_delivery(cancelled_purchase.id, "sig", Some(4), Some("should fail"))
-            .is_err());
+        assert!(
+            commerce
+                .x402()
+                .update_purchase_status(cancelled_purchase.id, PurchaseStatus::PaymentPending)
+                .is_err()
+        );
+        assert!(
+            commerce
+                .x402()
+                .confirm_delivery(cancelled_purchase.id, "sig", Some(4), Some("should fail"))
+                .is_err()
+        );
 
-        let disputed_quote = commerce
-            .x402()
-            .create_quote(make_quote(Uuid::new_v4(), seller.id))
-            .unwrap();
-        let disputed_quote = commerce
-            .x402()
-            .update_quote_status(disputed_quote.id, QuoteStatus::Quoted)
-            .unwrap();
+        let disputed_quote =
+            commerce.x402().create_quote(make_quote(Uuid::new_v4(), seller.id)).unwrap();
+        let disputed_quote =
+            commerce.x402().update_quote_status(disputed_quote.id, QuoteStatus::Quoted).unwrap();
 
         let disputed_purchase = commerce
             .x402()
@@ -1451,17 +1456,23 @@ mod tests {
             .unwrap();
         assert_eq!(disputed.status, PurchaseStatus::Disputed);
 
-        assert!(commerce
-            .x402()
-            .update_purchase_status(disputed_purchase.id, PurchaseStatus::Shipped)
-            .is_err());
-        assert!(commerce
-            .x402()
-            .confirm_delivery(disputed_purchase.id, "sig", Some(4), Some("blocked"))
-            .is_err());
-        assert!(commerce
-            .x402()
-            .update_purchase_status(disputed_purchase.id, PurchaseStatus::Disputed)
-            .is_ok());
+        assert!(
+            commerce
+                .x402()
+                .update_purchase_status(disputed_purchase.id, PurchaseStatus::Shipped)
+                .is_err()
+        );
+        assert!(
+            commerce
+                .x402()
+                .confirm_delivery(disputed_purchase.id, "sig", Some(4), Some("blocked"))
+                .is_err()
+        );
+        assert!(
+            commerce
+                .x402()
+                .update_purchase_status(disputed_purchase.id, PurchaseStatus::Disputed)
+                .is_ok()
+        );
     }
 }

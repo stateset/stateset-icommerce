@@ -37,7 +37,8 @@ See `CODE_OF_CONDUCT.md`.
 ### Prerequisites
 
 - **Rust 1.85+** - Install via [rustup](https://rustup.rs/)
-- **Node.js 18+** - For CLI and Node.js bindings
+- **Node.js 20.20.0+** - For CLI and Node.js bindings (`nvm use` from repo root)
+- **npm 10.0.0+** - Required for root tooling checks
 - **Python 3.8+** - For Python bindings (optional)
 - **wasm-pack** - For WebAssembly bindings (optional)
 - **Java 11+** - For Java/Kotlin bindings (optional)

@@ -145,11 +145,8 @@ fn snapshot_order() {
 
 #[test]
 fn snapshot_customer_status_variants() {
-    let statuses = vec![
-        CustomerStatus::Active,
-        CustomerStatus::Inactive,
-        CustomerStatus::Suspended,
-    ];
+    let statuses =
+        vec![CustomerStatus::Active, CustomerStatus::Inactive, CustomerStatus::Suspended];
     assert_json_snapshot!("customer_status_variants", statuses);
 }
 
@@ -170,11 +167,7 @@ fn snapshot_return_status_variants() {
 
 #[test]
 fn snapshot_product_status_variants() {
-    let statuses = vec![
-        ProductStatus::Draft,
-        ProductStatus::Active,
-        ProductStatus::Archived,
-    ];
+    let statuses = vec![ProductStatus::Draft, ProductStatus::Active, ProductStatus::Archived];
     assert_json_snapshot!("product_status_variants", statuses);
 }
 
@@ -251,11 +244,7 @@ fn snapshot_reward_type_variants() {
 
 #[test]
 fn snapshot_fraud_decision_variants() {
-    let variants = vec![
-        FraudDecision::Accept,
-        FraudDecision::Review,
-        FraudDecision::Reject,
-    ];
+    let variants = vec![FraudDecision::Accept, FraudDecision::Review, FraudDecision::Reject];
     assert_json_snapshot!("fraud_decision_variants", variants);
 }
 
@@ -289,10 +278,7 @@ fn snapshot_review_status_variants() {
 
 #[test]
 fn snapshot_segment_type_variants() {
-    let variants = vec![
-        SegmentType::Static,
-        SegmentType::Dynamic,
-    ];
+    let variants = vec![SegmentType::Static, SegmentType::Dynamic];
     assert_json_snapshot!("segment_type_variants", variants);
 }
 

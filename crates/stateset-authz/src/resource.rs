@@ -32,19 +32,13 @@ impl Resource {
     /// Creates a resource with only a type (e.g., "orders").
     #[must_use]
     pub fn new(resource_type: impl Into<String>) -> Self {
-        Self {
-            resource_type: resource_type.into(),
-            resource_id: None,
-        }
+        Self { resource_type: resource_type.into(), resource_id: None }
     }
 
     /// Creates a resource with a type and a specific ID.
     #[must_use]
     pub fn with_id(resource_type: impl Into<String>, resource_id: impl Into<String>) -> Self {
-        Self {
-            resource_type: resource_type.into(),
-            resource_id: Some(resource_id.into()),
-        }
+        Self { resource_type: resource_type.into(), resource_id: Some(resource_id.into()) }
     }
 
     /// Returns the resource type (e.g., "orders", "customers").
@@ -119,14 +113,7 @@ impl Action {
     /// Returns all action variants.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[
-            Self::Create,
-            Self::Read,
-            Self::Update,
-            Self::Delete,
-            Self::List,
-            Self::Execute,
-        ]
+        &[Self::Create, Self::Read, Self::Update, Self::Delete, Self::List, Self::Execute]
     }
 }
 

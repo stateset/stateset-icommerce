@@ -27,15 +27,13 @@ pub trait FromFfi<F>: Sized {
 // IntoFfi implementations
 // ---------------------------------------------------------------------------
 
-use stateset_core::models::order::Order;
 use stateset_core::models::customer::Customer;
-use stateset_core::models::product::Product;
 use stateset_core::models::inventory::StockLevel;
+use stateset_core::models::order::Order;
+use stateset_core::models::product::Product;
 use stateset_primitives::Money;
 
-use crate::types::{
-    FfiOrder, FfiCustomer, FfiProduct, FfiInventoryLevel, FfiMoney, FfiUuid,
-};
+use crate::types::{FfiCustomer, FfiInventoryLevel, FfiMoney, FfiOrder, FfiProduct, FfiUuid};
 
 impl IntoFfi<FfiOrder> for Order {
     fn into_ffi(&self) -> FfiOrder {
@@ -93,20 +91,15 @@ impl FromFfi<FfiUuid> for uuid::Uuid {
 // Tests
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
     use rust_decimal_macros::dec;
     use stateset_core::models::customer::CustomerStatus;
-    use stateset_core::models::order::{
-        FulfillmentStatus, OrderItem, OrderStatus, PaymentStatus,
-    };
+    use stateset_core::models::order::{FulfillmentStatus, OrderItem, OrderStatus, PaymentStatus};
     use stateset_core::models::product::{ProductStatus, ProductType};
-    use stateset_primitives::{
-        CurrencyCode, CustomerId, OrderId, OrderItemId, ProductId,
-    };
+    use stateset_primitives::{CurrencyCode, CustomerId, OrderId, OrderItemId, ProductId};
     use uuid::Uuid;
 
     fn make_order() -> Order {

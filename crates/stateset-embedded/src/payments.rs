@@ -247,7 +247,11 @@ impl Payments {
     }
 
     /// Set a payment method as the default for a customer
-    pub fn set_default_payment_method(&self, customer_id: CustomerId, method_id: Uuid) -> Result<()> {
+    pub fn set_default_payment_method(
+        &self,
+        customer_id: CustomerId,
+        method_id: Uuid,
+    ) -> Result<()> {
         self.db.payments().set_default_payment_method(customer_id, method_id)
     }
 

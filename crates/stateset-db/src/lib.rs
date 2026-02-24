@@ -60,16 +60,15 @@ pub use sqlite::SqliteDatabase;
 pub use postgres::PostgresDatabase;
 
 use stateset_core::{
-    AccountsPayableRepository, AccountsReceivableRepository, AgentCardRepository,
-    AgentIdentityRepository, AgentReputationRepository, AgentValidationRepository,
-    A2ACommerceRepository, AnalyticsRepository, BackorderRepository, BomRepository,
+    A2ACommerceRepository, AccountsPayableRepository, AccountsReceivableRepository,
+    AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
+    AgentValidationRepository, AnalyticsRepository, BackorderRepository, BomRepository,
     CartRepository, CostAccountingRepository, CreditRepository, CurrencyRepository,
-    CustomObjectRepository,
-    CustomerRepository, FraudRepository, FulfillmentRepository, GeneralLedgerRepository,
-    GiftCardRepository, InventoryRepository, InvoiceRepository, LotRepository,
-    LoyaltyProgramRepository, OrderRepository, PaymentRepository, ProductRepository,
-    PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository,
-    Result, ReturnRepository, ReviewRepository, RewardRepository, SearchConfigRepository,
+    CustomObjectRepository, CustomerRepository, FraudRepository, FulfillmentRepository,
+    GeneralLedgerRepository, GiftCardRepository, InventoryRepository, InvoiceRepository,
+    LotRepository, LoyaltyProgramRepository, OrderRepository, PaymentRepository, ProductRepository,
+    PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result,
+    ReturnRepository, ReviewRepository, RewardRepository, SearchConfigRepository,
     SegmentRepository, SerialRepository, ShipmentRepository, ShippingZoneRepository,
     StoreCreditRepository, SubscriptionRepository, TaxRepository, WarehouseRepository,
     WarrantyRepository, WishlistRepository, WorkOrderRepository, X402CreditRepository,
@@ -344,7 +343,7 @@ pub trait AsyncDatabaseExt {
     where
         F: FnMut(&mut sqlx::Transaction<'a, sqlx::Postgres>) -> Fut + Send,
         Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>> + Send,
-        T: Send
+        T: Send,
     {
         self.with_transaction_async_opts(crate::TransactionOptions::new(), f).await
     }

@@ -10,6 +10,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use uuid::Uuid;
 
+use stateset_a2a::A2AError;
 use stateset_a2a::escrow::conditions::{
     evaluate_all_conditions, evaluate_buyer_confirmed, evaluate_condition, evaluate_milestone,
     evaluate_seller_fulfilled, evaluate_time_lock,
@@ -19,26 +20,17 @@ use stateset_a2a::events::matches_event_filter;
 use stateset_a2a::notifications::{sign_webhook, validate_url, verify_webhook};
 use stateset_a2a::splits::{Recipient, calculate_fixed_split, calculate_percentage_split};
 use stateset_a2a::subscriptions::{BillingInterval, compute_next_billing_date};
-use stateset_a2a::A2AError;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn pct_recipient(address: &str, percent: Decimal) -> Recipient {
-    Recipient {
-        address: address.into(),
-        percent: Some(percent),
-        amount: None,
-    }
+    Recipient { address: address.into(), percent: Some(percent), amount: None }
 }
 
 fn fixed_recipient(address: &str, amount: Decimal) -> Recipient {
-    Recipient {
-        address: address.into(),
-        percent: None,
-        amount: Some(amount),
-    }
+    Recipient { address: address.into(), percent: None, amount: Some(amount) }
 }
 
 fn dt(y: i32, m: u32, d: u32) -> DateTime<Utc> {
@@ -70,10 +62,7 @@ fn pct_split_three_recipients_50_30_20_shares_sum_to_total() {
 
 #[test]
 fn pct_split_platform_fee_matches_expected_percentage() {
-    let recipients = vec![
-        pct_recipient("0xA", dec!(60)),
-        pct_recipient("0xB", dec!(40)),
-    ];
+    let recipients = vec![pct_recipient("0xA", dec!(60)), pct_recipient("0xB", dec!(40))];
     let result = calculate_percentage_split(dec!(200), dec!(5), &recipients).unwrap();
 
     // 200 * 5% = 10
@@ -106,10 +95,7 @@ fn pct_split_rounding_drift_last_recipient_absorbs_remainder() {
 
 #[test]
 fn pct_split_equal_two_way_50_50() {
-    let recipients = vec![
-        pct_recipient("0xA", dec!(50)),
-        pct_recipient("0xB", dec!(50)),
-    ];
+    let recipients = vec![pct_recipient("0xA", dec!(50)), pct_recipient("0xB", dec!(50))];
     let result = calculate_percentage_split(dec!(100), dec!(0), &recipients).unwrap();
 
     assert_eq!(result.shares[0].amount, dec!(50));
@@ -119,10 +105,7 @@ fn pct_split_equal_two_way_50_50() {
 
 #[test]
 fn pct_split_edge_very_small_total() {
-    let recipients = vec![
-        pct_recipient("0xA", dec!(60)),
-        pct_recipient("0xB", dec!(40)),
-    ];
+    let recipients = vec![pct_recipient("0xA", dec!(60)), pct_recipient("0xB", dec!(40))];
     let result = calculate_percentage_split(dec!(0.01), dec!(0), &recipients).unwrap();
 
     assert_eq!(result.total_distributed, dec!(0.01));
@@ -133,12 +116,8 @@ fn pct_split_edge_very_small_total() {
 
 #[test]
 fn pct_split_edge_large_total() {
-    let recipients = vec![
-        pct_recipient("0xA", dec!(70)),
-        pct_recipient("0xB", dec!(30)),
-    ];
-    let result =
-        calculate_percentage_split(dec!(1_000_000.00), dec!(1), &recipients).unwrap();
+    let recipients = vec![pct_recipient("0xA", dec!(70)), pct_recipient("0xB", dec!(30))];
+    let result = calculate_percentage_split(dec!(1_000_000.00), dec!(1), &recipients).unwrap();
 
     assert_eq!(result.platform_fee, dec!(10_000.000000));
     assert_eq!(result.total_distributed, dec!(1_000_000.00));
@@ -146,10 +125,7 @@ fn pct_split_edge_large_total() {
 
 #[test]
 fn pct_split_zero_platform_fee() {
-    let recipients = vec![
-        pct_recipient("0xA", dec!(80)),
-        pct_recipient("0xB", dec!(20)),
-    ];
+    let recipients = vec![pct_recipient("0xA", dec!(80)), pct_recipient("0xB", dec!(20))];
     let result = calculate_percentage_split(dec!(500), dec!(0), &recipients).unwrap();
 
     assert_eq!(result.platform_fee, Decimal::ZERO);
@@ -165,10 +141,7 @@ fn pct_split_rejects_single_recipient() {
 
 #[test]
 fn pct_split_rejects_percentages_not_summing_to_100() {
-    let recipients = vec![
-        pct_recipient("0xA", dec!(50)),
-        pct_recipient("0xB", dec!(40)),
-    ];
+    let recipients = vec![pct_recipient("0xA", dec!(50)), pct_recipient("0xB", dec!(40))];
     let err = calculate_percentage_split(dec!(100), dec!(0), &recipients).unwrap_err();
     assert!(matches!(err, A2AError::PercentageSumMismatch { .. }));
 }
@@ -179,10 +152,7 @@ fn pct_split_rejects_percentages_not_summing_to_100() {
 
 #[test]
 fn fixed_split_amounts_per_recipient() {
-    let recipients = vec![
-        fixed_recipient("0xA", dec!(60)),
-        fixed_recipient("0xB", dec!(40)),
-    ];
+    let recipients = vec![fixed_recipient("0xA", dec!(60)), fixed_recipient("0xB", dec!(40))];
     let result = calculate_fixed_split(dec!(100), dec!(0), &recipients).unwrap();
 
     assert_eq!(result.shares[0].amount, dec!(60));
@@ -193,10 +163,7 @@ fn fixed_split_amounts_per_recipient() {
 #[test]
 fn fixed_split_total_distributed_equals_shares_plus_fee() {
     // 100 total, 5% fee = 5, remaining 95 split as 55 + 40
-    let recipients = vec![
-        fixed_recipient("0xA", dec!(55)),
-        fixed_recipient("0xB", dec!(40)),
-    ];
+    let recipients = vec![fixed_recipient("0xA", dec!(55)), fixed_recipient("0xB", dec!(40))];
     let result = calculate_fixed_split(dec!(100), dec!(5), &recipients).unwrap();
 
     let share_sum: Decimal = result.shares.iter().map(|s| s.amount).sum();
@@ -207,10 +174,7 @@ fn fixed_split_total_distributed_equals_shares_plus_fee() {
 
 #[test]
 fn fixed_split_error_when_amounts_exceed_total() {
-    let recipients = vec![
-        fixed_recipient("0xA", dec!(70)),
-        fixed_recipient("0xB", dec!(50)),
-    ];
+    let recipients = vec![fixed_recipient("0xA", dec!(70)), fixed_recipient("0xB", dec!(50))];
     // Sum = 120, total = 100 => mismatch
     let err = calculate_fixed_split(dec!(100), dec!(0), &recipients).unwrap_err();
     assert!(matches!(err, A2AError::FixedSumMismatch { .. }));
@@ -218,10 +182,7 @@ fn fixed_split_error_when_amounts_exceed_total() {
 
 #[test]
 fn fixed_split_error_when_amounts_under_total() {
-    let recipients = vec![
-        fixed_recipient("0xA", dec!(30)),
-        fixed_recipient("0xB", dec!(20)),
-    ];
+    let recipients = vec![fixed_recipient("0xA", dec!(30)), fixed_recipient("0xB", dec!(20))];
     // Sum = 50, total = 100 => mismatch
     let err = calculate_fixed_split(dec!(100), dec!(0), &recipients).unwrap_err();
     assert!(matches!(err, A2AError::FixedSumMismatch { .. }));
@@ -390,11 +351,7 @@ fn escrow_evaluate_all_conditions_all_met() {
     let conditions = vec![buyer, time_lock, milestone, seller];
 
     let (all_met, evals) = evaluate_all_conditions(&conditions, now, |id| {
-        if id == Some(&quote_id) {
-            Some("fulfilled".into())
-        } else {
-            None
-        }
+        if id == Some(&quote_id) { Some("fulfilled".into()) } else { None }
     });
 
     assert!(all_met);
@@ -496,10 +453,7 @@ fn hmac_signature_is_64_hex_chars() {
     let sig = sign_webhook(b"any_key", b"any_data");
 
     assert_eq!(sig.len(), 64, "HMAC-SHA256 hex output must be 64 chars");
-    assert!(
-        sig.chars().all(|c| c.is_ascii_hexdigit()),
-        "signature must be valid hex"
-    );
+    assert!(sig.chars().all(|c| c.is_ascii_hexdigit()), "signature must be valid hex");
     // 64 hex chars = 32 bytes
     let decoded = hex::decode(&sig).expect("must be valid hex");
     assert_eq!(decoded.len(), 32);
@@ -510,10 +464,7 @@ fn hmac_known_test_vector() {
     // HMAC-SHA256("key", "The quick brown fox jumps over the lazy dog")
     // is a well-known test vector.
     let sig = sign_webhook(b"key", b"The quick brown fox jumps over the lazy dog");
-    assert_eq!(
-        sig,
-        "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
-    );
+    assert_eq!(sig, "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8");
 }
 
 #[test]
@@ -684,10 +635,7 @@ fn integration_split_then_webhook_notify() {
     // Step 3: sign + verify a webhook notification per share
     let secret = b"whsec_integration_test";
     for share in &split.shares {
-        let payload = format!(
-            r#"{{"recipient":"{}","amount":"{}"}}"#,
-            share.address, share.amount
-        );
+        let payload = format!(r#"{{"recipient":"{}","amount":"{}"}}"#, share.address, share.amount);
         let sig = sign_webhook(secret, payload.as_bytes());
         assert!(verify_webhook(secret, payload.as_bytes(), &sig));
     }
@@ -721,22 +669,24 @@ fn integration_escrow_progressive_completion() {
     let seller = Condition::seller_fulfilled(Some(quote_id));
 
     let quote_lookup = |id: Option<&Uuid>| -> Option<String> {
-        if id == Some(&quote_id) {
-            Some("fulfilled".into())
-        } else {
-            None
-        }
+        if id == Some(&quote_id) { Some("fulfilled".into()) } else { None }
     };
 
     // Initially: buyer not confirmed, milestone not done
-    let (all_met, _) =
-        evaluate_all_conditions(&[buyer.clone(), time_lock.clone(), milestone.clone(), seller.clone()], now, quote_lookup);
+    let (all_met, _) = evaluate_all_conditions(
+        &[buyer.clone(), time_lock.clone(), milestone.clone(), seller.clone()],
+        now,
+        quote_lookup,
+    );
     assert!(!all_met);
 
     // Confirm buyer
     buyer.confirm();
-    let (all_met, _) =
-        evaluate_all_conditions(&[buyer.clone(), time_lock.clone(), milestone.clone(), seller.clone()], now, quote_lookup);
+    let (all_met, _) = evaluate_all_conditions(
+        &[buyer.clone(), time_lock.clone(), milestone.clone(), seller.clone()],
+        now,
+        quote_lookup,
+    );
     assert!(!all_met, "milestone still incomplete");
 
     // Complete milestone

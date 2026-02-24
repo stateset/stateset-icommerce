@@ -21,9 +21,7 @@ use serde::{Deserialize, Serialize};
 /// assert!(PermissionLevel::Read < PermissionLevel::Delete);
 /// assert_eq!(PermissionLevel::None as u8, 0);
 /// ```
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum PermissionLevel {
@@ -68,14 +66,7 @@ impl PermissionLevel {
     /// ```
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[
-            Self::None,
-            Self::Read,
-            Self::Preview,
-            Self::Write,
-            Self::Delete,
-            Self::Admin,
-        ]
+        &[Self::None, Self::Read, Self::Preview, Self::Write, Self::Delete, Self::Admin]
     }
 }
 

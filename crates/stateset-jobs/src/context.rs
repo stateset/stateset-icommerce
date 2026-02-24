@@ -24,12 +24,7 @@ impl JobContext {
     /// Create a new job context.
     #[must_use]
     pub fn new(job_id: Uuid, attempt: u32, scheduled_at: DateTime<Utc>) -> Self {
-        Self {
-            job_id,
-            attempt,
-            scheduled_at,
-            metadata: HashMap::new(),
-        }
+        Self { job_id, attempt, scheduled_at, metadata: HashMap::new() }
     }
 
     /// Add a metadata entry.

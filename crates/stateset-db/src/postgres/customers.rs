@@ -553,7 +553,10 @@ impl PgCustomerRepository {
     }
 
     /// Get customer addresses (async)
-    pub async fn get_addresses_async(&self, customer_id: CustomerId) -> Result<Vec<CustomerAddress>> {
+    pub async fn get_addresses_async(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Vec<CustomerAddress>> {
         let rows = sqlx::query_as::<_, AddressRow>(
             "SELECT * FROM customer_addresses WHERE customer_id = $1",
         )
@@ -1042,7 +1045,10 @@ impl PgCustomerRepository {
     }
 
     /// Delete multiple customers - partial success allowed (async)
-    pub async fn delete_batch_async(&self, ids: Vec<CustomerId>) -> Result<BatchResult<CustomerId>> {
+    pub async fn delete_batch_async(
+        &self,
+        ids: Vec<CustomerId>,
+    ) -> Result<BatchResult<CustomerId>> {
         validate_batch_size(&ids)?;
 
         let mut result = BatchResult::with_capacity(ids.len());

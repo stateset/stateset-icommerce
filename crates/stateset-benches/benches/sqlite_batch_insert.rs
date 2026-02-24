@@ -19,10 +19,7 @@ fn bench_batch_orders(c: &mut Criterion) {
                     let customer = commerce
                         .customers()
                         .create(stateset_core::models::customer::CreateCustomer {
-                            email: format!(
-                                "batch-bench-{}@example.com",
-                                uuid::Uuid::new_v4()
-                            ),
+                            email: format!("batch-bench-{}@example.com", uuid::Uuid::new_v4()),
                             first_name: "Bench".into(),
                             last_name: "User".into(),
                             phone: None,
@@ -67,10 +64,7 @@ fn bench_batch_customers(c: &mut Criterion) {
                 },
                 |(commerce, _dir, customers)| {
                     for customer in customers {
-                        commerce
-                            .customers()
-                            .create(customer)
-                            .expect("customer insert");
+                        commerce.customers().create(customer).expect("customer insert");
                     }
                 },
             );

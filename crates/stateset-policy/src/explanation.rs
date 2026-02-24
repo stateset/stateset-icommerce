@@ -55,11 +55,7 @@ impl std::fmt::Display for PolicyExplanation {
             write!(
                 f,
                 "\n  - {} {} {} (actual: {}, matched: {})",
-                c.field,
-                c.operator,
-                c.expected_value,
-                c.actual_value,
-                c.matched,
+                c.field, c.operator, c.expected_value, c.actual_value, c.matched,
             )?;
         }
 
@@ -205,10 +201,7 @@ mod tests {
 
     #[test]
     fn matched_rule_serde() {
-        let mr = MatchedRule {
-            id: Uuid::nil(),
-            name: "test-rule".into(),
-        };
+        let mr = MatchedRule { id: Uuid::nil(), name: "test-rule".into() };
         let json_str = serde_json::to_string(&mr).unwrap();
         assert!(json_str.contains("test-rule"));
         let deser: MatchedRule = serde_json::from_str(&json_str).unwrap();

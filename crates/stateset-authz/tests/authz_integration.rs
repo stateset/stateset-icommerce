@@ -9,8 +9,8 @@ use std::time::Duration;
 use chrono::Utc;
 use serde_json::json;
 use stateset_authz::{
-    Action, AuditFilter, AuthzEngineBuilder, PermissionLevel, RateLimitRule,
-    RedactionConfig, Resource, Role, RoleBuilder, redact_string, redact_value,
+    Action, AuditFilter, AuthzEngineBuilder, PermissionLevel, RateLimitRule, RedactionConfig,
+    Resource, Role, RoleBuilder, redact_string, redact_value,
 };
 
 // ---------------------------------------------------------------------------
@@ -40,10 +40,7 @@ fn admin_can_perform_all_actions() {
     let mut engine = standard_engine();
     for &action in Action::all() {
         let d = engine.authorize("alice", &Resource::new("orders"), &action);
-        assert!(
-            d.is_allowed(),
-            "admin should be allowed to {action} on orders"
-        );
+        assert!(d.is_allowed(), "admin should be allowed to {action} on orders");
     }
 }
 
@@ -52,28 +49,16 @@ fn viewer_can_only_read_and_list() {
     let mut engine = standard_engine();
 
     // Read and List require PermissionLevel::Read — viewer should pass.
-    assert!(engine
-        .authorize("bob", &Resource::new("orders"), &Action::Read)
-        .is_allowed());
-    assert!(engine
-        .authorize("bob", &Resource::new("orders"), &Action::List)
-        .is_allowed());
+    assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Read).is_allowed());
+    assert!(engine.authorize("bob", &Resource::new("orders"), &Action::List).is_allowed());
 
     // Write-level actions must be denied.
-    assert!(engine
-        .authorize("bob", &Resource::new("orders"), &Action::Create)
-        .is_denied());
-    assert!(engine
-        .authorize("bob", &Resource::new("orders"), &Action::Update)
-        .is_denied());
-    assert!(engine
-        .authorize("bob", &Resource::new("orders"), &Action::Execute)
-        .is_denied());
+    assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Create).is_denied());
+    assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Update).is_denied());
+    assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Execute).is_denied());
 
     // Delete-level action must be denied.
-    assert!(engine
-        .authorize("bob", &Resource::new("orders"), &Action::Delete)
-        .is_denied());
+    assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Delete).is_denied());
 }
 
 #[test]
@@ -81,24 +66,12 @@ fn operator_can_create_read_update_and_delete() {
     let mut engine = standard_engine();
 
     // Operator has PermissionLevel::Delete, which covers Read, Write, and Delete.
-    assert!(engine
-        .authorize("carol", &Resource::new("orders"), &Action::Create)
-        .is_allowed());
-    assert!(engine
-        .authorize("carol", &Resource::new("orders"), &Action::Read)
-        .is_allowed());
-    assert!(engine
-        .authorize("carol", &Resource::new("orders"), &Action::Update)
-        .is_allowed());
-    assert!(engine
-        .authorize("carol", &Resource::new("orders"), &Action::Delete)
-        .is_allowed());
-    assert!(engine
-        .authorize("carol", &Resource::new("orders"), &Action::List)
-        .is_allowed());
-    assert!(engine
-        .authorize("carol", &Resource::new("orders"), &Action::Execute)
-        .is_allowed());
+    assert!(engine.authorize("carol", &Resource::new("orders"), &Action::Create).is_allowed());
+    assert!(engine.authorize("carol", &Resource::new("orders"), &Action::Read).is_allowed());
+    assert!(engine.authorize("carol", &Resource::new("orders"), &Action::Update).is_allowed());
+    assert!(engine.authorize("carol", &Resource::new("orders"), &Action::Delete).is_allowed());
+    assert!(engine.authorize("carol", &Resource::new("orders"), &Action::List).is_allowed());
+    assert!(engine.authorize("carol", &Resource::new("orders"), &Action::Execute).is_allowed());
 }
 
 #[test]
@@ -135,36 +108,22 @@ fn custom_role_with_per_resource_overrides() {
         .allow("inventory", PermissionLevel::None)
         .build();
 
-    let mut engine = AuthzEngineBuilder::new()
-        .add_role(custom)
-        .assign_role("emma", "order-manager")
-        .build();
+    let mut engine =
+        AuthzEngineBuilder::new().add_role(custom).assign_role("emma", "order-manager").build();
 
     // Admin-level on orders — everything allowed.
-    assert!(engine
-        .authorize("emma", &Resource::new("orders"), &Action::Delete)
-        .is_allowed());
+    assert!(engine.authorize("emma", &Resource::new("orders"), &Action::Delete).is_allowed());
 
     // Write-level on customers — Create/Update allowed, Delete denied.
-    assert!(engine
-        .authorize("emma", &Resource::new("customers"), &Action::Create)
-        .is_allowed());
-    assert!(engine
-        .authorize("emma", &Resource::new("customers"), &Action::Delete)
-        .is_denied());
+    assert!(engine.authorize("emma", &Resource::new("customers"), &Action::Create).is_allowed());
+    assert!(engine.authorize("emma", &Resource::new("customers"), &Action::Delete).is_denied());
 
     // None-level on inventory — everything denied.
-    assert!(engine
-        .authorize("emma", &Resource::new("inventory"), &Action::Read)
-        .is_denied());
+    assert!(engine.authorize("emma", &Resource::new("inventory"), &Action::Read).is_denied());
 
     // Default Read-level on unlisted resources.
-    assert!(engine
-        .authorize("emma", &Resource::new("shipments"), &Action::Read)
-        .is_allowed());
-    assert!(engine
-        .authorize("emma", &Resource::new("shipments"), &Action::Create)
-        .is_denied());
+    assert!(engine.authorize("emma", &Resource::new("shipments"), &Action::Read).is_allowed());
+    assert!(engine.authorize("emma", &Resource::new("shipments"), &Action::Create).is_denied());
 }
 
 // ===========================================================================
@@ -173,9 +132,7 @@ fn custom_role_with_per_resource_overrides() {
 
 #[test]
 fn write_level_allows_create_and_update_but_not_delete() {
-    let role = RoleBuilder::new("writer")
-        .default_level(PermissionLevel::Write)
-        .build();
+    let role = RoleBuilder::new("writer").default_level(PermissionLevel::Write).build();
 
     assert!(role.check("orders", &Action::Create).is_allowed());
     assert!(role.check("orders", &Action::Update).is_allowed());
@@ -188,9 +145,7 @@ fn write_level_allows_create_and_update_but_not_delete() {
 
 #[test]
 fn delete_level_allows_everything_write_does_plus_delete() {
-    let role = RoleBuilder::new("deleter")
-        .default_level(PermissionLevel::Delete)
-        .build();
+    let role = RoleBuilder::new("deleter").default_level(PermissionLevel::Delete).build();
 
     assert!(role.check("orders", &Action::Create).is_allowed());
     assert!(role.check("orders", &Action::Update).is_allowed());
@@ -200,9 +155,7 @@ fn delete_level_allows_everything_write_does_plus_delete() {
 
 #[test]
 fn admin_level_allows_everything() {
-    let role = RoleBuilder::new("full-admin")
-        .default_level(PermissionLevel::Admin)
-        .build();
+    let role = RoleBuilder::new("full-admin").default_level(PermissionLevel::Admin).build();
 
     for &action in Action::all() {
         assert!(
@@ -214,9 +167,7 @@ fn admin_level_allows_everything() {
 
 #[test]
 fn read_level_does_not_allow_create_update_delete() {
-    let role = RoleBuilder::new("reader")
-        .default_level(PermissionLevel::Read)
-        .build();
+    let role = RoleBuilder::new("reader").default_level(PermissionLevel::Read).build();
 
     assert!(role.check("orders", &Action::Read).is_allowed());
     assert!(role.check("orders", &Action::List).is_allowed());
@@ -263,19 +214,12 @@ fn at_limit_returns_denied_with_rate_limit_reason() {
         .rate_limit_rule(RateLimitRule::new("orders", 2, Duration::from_secs(60)))
         .build();
 
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Read)
-        .is_allowed());
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Read)
-        .is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
 
     let d = engine.authorize("alice", &Resource::new("orders"), &Action::Read);
     assert!(d.is_denied());
-    assert!(
-        d.reason().unwrap().contains("rate limit"),
-        "denial should mention rate limit"
-    );
+    assert!(d.reason().unwrap().contains("rate limit"), "denial should mention rate limit");
 }
 
 #[test]
@@ -288,17 +232,11 @@ fn different_resources_have_independent_rate_limits() {
         .build();
 
     // Exhaust orders limit.
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Read)
-        .is_allowed());
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Read)
-        .is_denied());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_denied());
 
     // Customers should still be available.
-    assert!(engine
-        .authorize("alice", &Resource::new("customers"), &Action::Read)
-        .is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("customers"), &Action::Read).is_allowed());
 }
 
 #[test]
@@ -311,17 +249,11 @@ fn different_actors_tracked_independently() {
         .build();
 
     // Alice exhausts her limit.
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Read)
-        .is_allowed());
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Read)
-        .is_denied());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_denied());
 
     // Bob is independent and still has quota.
-    assert!(engine
-        .authorize("bob", &Resource::new("orders"), &Action::Read)
-        .is_allowed());
+    assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Read).is_allowed());
 }
 
 #[test]
@@ -333,9 +265,7 @@ fn no_rate_limit_rule_means_unlimited() {
         .build();
 
     for _ in 0..100 {
-        assert!(engine
-            .authorize("alice", &Resource::new("orders"), &Action::Read)
-            .is_allowed());
+        assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
     }
 }
 
@@ -399,10 +329,8 @@ fn filter_audit_by_resource_type() {
 
 #[test]
 fn filter_audit_by_time_range() {
-    let mut engine = AuthzEngineBuilder::new()
-        .add_role(Role::admin())
-        .assign_role("alice", "admin")
-        .build();
+    let mut engine =
+        AuthzEngineBuilder::new().add_role(Role::admin()).assign_role("alice", "admin").build();
 
     // Perform several operations; all timestamps will be "now".
     engine.authorize("alice", &Resource::new("orders"), &Action::Read);
@@ -555,18 +483,13 @@ fn custom_redaction_config() {
     assert_eq!(data["social_security"], "[REDACTED]");
     assert_eq!(data["driver_license"], "[REDACTED]");
     // "password" is not in the custom config, so it stays.
-    assert_eq!(
-        data["password"],
-        "should_not_be_redacted_with_custom_config"
-    );
+    assert_eq!(data["password"], "should_not_be_redacted_with_custom_config");
 }
 
 #[test]
 fn redaction_via_engine_uses_configured_config() {
     let config = RedactionConfig::with_fields(["custom_secret"]);
-    let engine = AuthzEngineBuilder::new()
-        .redaction_config(config)
-        .build();
+    let engine = AuthzEngineBuilder::new().redaction_config(config).build();
 
     let mut data = json!({
         "custom_secret": "hidden",
@@ -629,26 +552,16 @@ fn builder_fluent_api_constructs_working_engine() {
         .audit_max_size(500)
         .build();
 
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Delete)
-        .is_allowed());
-    assert!(engine
-        .authorize("bob", &Resource::new("orders"), &Action::Delete)
-        .is_denied());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Delete).is_allowed());
+    assert!(engine.authorize("bob", &Resource::new("orders"), &Action::Delete).is_denied());
     assert_eq!(engine.audit_log().max_size(), 500);
 }
 
 #[test]
 fn builder_multiple_roles_registered() {
-    let role_a = RoleBuilder::new("role-a")
-        .default_level(PermissionLevel::Read)
-        .build();
-    let role_b = RoleBuilder::new("role-b")
-        .default_level(PermissionLevel::Write)
-        .build();
-    let role_c = RoleBuilder::new("role-c")
-        .default_level(PermissionLevel::Admin)
-        .build();
+    let role_a = RoleBuilder::new("role-a").default_level(PermissionLevel::Read).build();
+    let role_b = RoleBuilder::new("role-b").default_level(PermissionLevel::Write).build();
+    let role_c = RoleBuilder::new("role-c").default_level(PermissionLevel::Admin).build();
 
     let mut engine = AuthzEngineBuilder::new()
         .add_role(role_a)
@@ -660,20 +573,12 @@ fn builder_multiple_roles_registered() {
         .build();
 
     // actor-a (Read) cannot create.
-    assert!(engine
-        .authorize("actor-a", &Resource::new("orders"), &Action::Create)
-        .is_denied());
+    assert!(engine.authorize("actor-a", &Resource::new("orders"), &Action::Create).is_denied());
     // actor-b (Write) can create but not delete.
-    assert!(engine
-        .authorize("actor-b", &Resource::new("orders"), &Action::Create)
-        .is_allowed());
-    assert!(engine
-        .authorize("actor-b", &Resource::new("orders"), &Action::Delete)
-        .is_denied());
+    assert!(engine.authorize("actor-b", &Resource::new("orders"), &Action::Create).is_allowed());
+    assert!(engine.authorize("actor-b", &Resource::new("orders"), &Action::Delete).is_denied());
     // actor-c (Admin) can do everything.
-    assert!(engine
-        .authorize("actor-c", &Resource::new("orders"), &Action::Delete)
-        .is_allowed());
+    assert!(engine.authorize("actor-c", &Resource::new("orders"), &Action::Delete).is_allowed());
 }
 
 #[test]
@@ -686,28 +591,19 @@ fn builder_multiple_actors_on_same_role() {
         .build();
 
     for user in &["user1", "user2", "user3"] {
-        assert!(engine
-            .authorize(user, &Resource::new("orders"), &Action::Read)
-            .is_allowed());
-        assert!(engine
-            .authorize(user, &Resource::new("orders"), &Action::Create)
-            .is_denied());
+        assert!(engine.authorize(user, &Resource::new("orders"), &Action::Read).is_allowed());
+        assert!(engine.authorize(user, &Resource::new("orders"), &Action::Create).is_denied());
     }
 }
 
 #[test]
 fn invalid_role_assignment_at_runtime_returns_error() {
-    let mut engine = AuthzEngineBuilder::new()
-        .add_role(Role::admin())
-        .build();
+    let mut engine = AuthzEngineBuilder::new().add_role(Role::admin()).build();
 
     let result = engine.assign_role("alice", "nonexistent");
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(
-        err.to_string().contains("nonexistent"),
-        "error should mention the invalid role name"
-    );
+    assert!(err.to_string().contains("nonexistent"), "error should mention the invalid role name");
 }
 
 #[test]
@@ -730,14 +626,10 @@ fn builder_with_approval_rules() {
     assert!(d.requires_approval_check());
 
     // Read on payments is fine.
-    assert!(engine
-        .authorize("alice", &Resource::new("payments"), &Action::Read)
-        .is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("payments"), &Action::Read).is_allowed());
 
     // Delete on orders (not in the approval rule) is also fine.
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Delete)
-        .is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Delete).is_allowed());
 }
 
 // ===========================================================================
@@ -789,29 +681,21 @@ fn role_reassignment_changes_permissions() {
         .build();
 
     // Initially viewer — cannot create.
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Create)
-        .is_denied());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Create).is_denied());
 
     // Reassign to admin.
     engine.assign_role("alice", "admin").unwrap();
 
     // Now she can create.
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Create)
-        .is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Create).is_allowed());
 }
 
 #[test]
 fn remove_role_denies_all_subsequent_access() {
-    let mut engine = AuthzEngineBuilder::new()
-        .add_role(Role::admin())
-        .assign_role("alice", "admin")
-        .build();
+    let mut engine =
+        AuthzEngineBuilder::new().add_role(Role::admin()).assign_role("alice", "admin").build();
 
-    assert!(engine
-        .authorize("alice", &Resource::new("orders"), &Action::Read)
-        .is_allowed());
+    assert!(engine.authorize("alice", &Resource::new("orders"), &Action::Read).is_allowed());
 
     engine.remove_role("alice");
 

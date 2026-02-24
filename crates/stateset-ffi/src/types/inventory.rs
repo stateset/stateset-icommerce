@@ -21,12 +21,7 @@ pub struct FfiInventoryLevel {
 
 impl Default for FfiInventoryLevel {
     fn default() -> Self {
-        Self {
-            sku: [0u8; 64],
-            quantity: 0,
-            reserved: 0,
-            available: 0,
-        }
+        Self { sku: [0u8; 64], quantity: 0, reserved: 0, available: 0 }
     }
 }
 
@@ -59,7 +54,6 @@ impl FfiInventoryLevel {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
 
 #[cfg(test)]
 mod tests {

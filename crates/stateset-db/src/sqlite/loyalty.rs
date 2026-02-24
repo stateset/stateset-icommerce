@@ -3,8 +3,8 @@
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
-    AdjustPoints, CommerceError, CreateLoyaltyProgram, CustomerId, EnrollCustomer,
-    LoyaltyAccount, LoyaltyAccountFilter, LoyaltyAccountId, LoyaltyProgram, LoyaltyProgramId,
+    AdjustPoints, CommerceError, CreateLoyaltyProgram, CustomerId, EnrollCustomer, LoyaltyAccount,
+    LoyaltyAccountFilter, LoyaltyAccountId, LoyaltyProgram, LoyaltyProgramId,
     LoyaltyProgramRepository, LoyaltyTransaction, Result,
 };
 
@@ -21,9 +21,7 @@ impl SqliteLoyaltyProgramRepository {
 
     #[allow(dead_code)]
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 }
 

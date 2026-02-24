@@ -9,7 +9,9 @@ use stateset_primitives::{CustomerId, StoreCreditId, StoreCreditTransactionId};
 use strum::{Display, EnumString};
 
 /// Store credit status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -26,7 +28,9 @@ pub enum StoreCreditStatus {
 }
 
 /// Reason for issuing store credit
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -47,7 +51,9 @@ pub enum StoreCreditReason {
 }
 
 /// Store credit transaction type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -166,14 +172,15 @@ impl StoreCredit {
 
     /// Whether this credit has expired
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| exp < Utc::now())
-            .unwrap_or(false)
+        self.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false)
     }
 
     /// Whether the given amount can be applied from this credit
     pub fn can_apply(&self, amount: Decimal) -> bool {
-        self.is_active() && !self.is_expired() && self.current_balance >= amount && amount > Decimal::ZERO
+        self.is_active()
+            && !self.is_expired()
+            && self.current_balance >= amount
+            && amount > Decimal::ZERO
     }
 }
 
@@ -184,7 +191,11 @@ mod tests {
     use rust_decimal_macros::dec;
     use stateset_primitives::{CustomerId, StoreCreditId};
 
-    fn make_store_credit(status: StoreCreditStatus, current_balance: Decimal, expires_at: Option<DateTime<Utc>>) -> StoreCredit {
+    fn make_store_credit(
+        status: StoreCreditStatus,
+        current_balance: Decimal,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> StoreCredit {
         StoreCredit {
             id: StoreCreditId::new(),
             customer_id: CustomerId::new(),
@@ -232,13 +243,21 @@ mod tests {
 
     #[test]
     fn is_expired_returns_true_for_past_expiry() {
-        let sc = make_store_credit(StoreCreditStatus::Active, dec!(25.00), Some(Utc::now() - Duration::hours(1)));
+        let sc = make_store_credit(
+            StoreCreditStatus::Active,
+            dec!(25.00),
+            Some(Utc::now() - Duration::hours(1)),
+        );
         assert!(sc.is_expired());
     }
 
     #[test]
     fn is_expired_returns_false_for_future_expiry() {
-        let sc = make_store_credit(StoreCreditStatus::Active, dec!(25.00), Some(Utc::now() + Duration::days(30)));
+        let sc = make_store_credit(
+            StoreCreditStatus::Active,
+            dec!(25.00),
+            Some(Utc::now() + Duration::days(30)),
+        );
         assert!(!sc.is_expired());
     }
 
@@ -264,7 +283,11 @@ mod tests {
 
     #[test]
     fn can_apply_fails_when_expired() {
-        let sc = make_store_credit(StoreCreditStatus::Active, dec!(50.00), Some(Utc::now() - Duration::hours(1)));
+        let sc = make_store_credit(
+            StoreCreditStatus::Active,
+            dec!(50.00),
+            Some(Utc::now() - Duration::hours(1)),
+        );
         assert!(!sc.can_apply(dec!(25.00)));
     }
 

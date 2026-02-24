@@ -267,12 +267,9 @@ mod tests {
             bus_for_publish.publish(event.clone());
         });
 
-        let got = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            sub.next(),
-        )
-        .await
-        .expect("timed out while waiting for published event");
+        let got = tokio::time::timeout(std::time::Duration::from_millis(500), sub.next())
+            .await
+            .expect("timed out while waiting for published event");
 
         publish_task.await.expect("publisher task failed");
         assert!(got.is_some());

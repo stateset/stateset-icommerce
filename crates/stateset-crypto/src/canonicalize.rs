@@ -76,10 +76,7 @@ mod tests {
 
     #[test]
     fn array_of_values() {
-        assert_eq!(
-            canonicalize_json(&json!([1, "two", true])).unwrap(),
-            "[1,\"two\",true]"
-        );
+        assert_eq!(canonicalize_json(&json!([1, "two", true])).unwrap(), "[1,\"two\",true]");
     }
 
     #[test]
