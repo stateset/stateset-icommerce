@@ -82,6 +82,16 @@ impl Outbox {
         self.events.iter().take(count).collect()
     }
 
+    /// Retain only events matching the given predicate.
+    ///
+    /// Preserves FIFO order and does not modify sequence allocation.
+    pub fn retain<F>(&mut self, mut predicate: F)
+    where
+        F: FnMut(&SyncEvent) -> bool,
+    {
+        self.events.retain(|event| predicate(event));
+    }
+
     /// Return the number of events currently in the outbox.
     #[must_use]
     pub fn count(&self) -> usize {
@@ -215,6 +225,21 @@ mod tests {
 
         let peeked = outbox.peek(10);
         assert_eq!(peeked.len(), 1);
+    }
+
+    #[test]
+    fn retain_filters_events_and_preserves_order() {
+        let mut outbox = Outbox::new(10);
+        outbox.append(make_event("a")).unwrap();
+        outbox.append(make_event("b")).unwrap();
+        outbox.append(make_event("c")).unwrap();
+
+        outbox.retain(|event| event.event_type != "b");
+
+        let remaining = outbox.peek(10);
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[0].event_type, "a");
+        assert_eq!(remaining[1].event_type, "c");
     }
 
     #[test]

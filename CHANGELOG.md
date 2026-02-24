@@ -6,6 +6,17 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-02-24
+
+### Changed
+- Bumped workspace and cross-language release metadata from `0.7.5` to `0.7.6`.
+
+### Fixed
+- Fixed policy engine domain index replacement behavior when re-registering a policy set with the same ID.
+- Implemented sync engine conflict resolution effects for local-vs-remote event handling.
+- Implemented paginated pull handling in sync full-sync flows.
+- Cleared strict `clippy -D warnings` regressions in embedded commerce constructors/builders.
+
 ## [0.7.4] - 2026-02-22
 
 ### Added

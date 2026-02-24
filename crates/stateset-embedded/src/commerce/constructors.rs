@@ -43,7 +43,10 @@ impl Commerce {
         };
 
         let sqlite_db = Arc::new(SqliteDatabase::new(&config)?);
+        #[cfg(all(feature = "sqlite", feature = "vector"))]
         let db: Arc<dyn Database> = sqlite_db.clone();
+        #[cfg(not(all(feature = "sqlite", feature = "vector")))]
+        let db: Arc<dyn Database> = sqlite_db;
         let metrics = init_metrics(MetricsConfig::default());
 
         Ok(Self {

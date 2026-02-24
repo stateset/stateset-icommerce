@@ -66,7 +66,15 @@ impl PolicyEngine {
         let id = set.id;
         let domain = set.domain.clone();
 
-        self.policy_sets.insert(id, set);
+        if let Some(previous) = self.policy_sets.insert(id, set) {
+            // If an existing set is being replaced, remove stale domain index entries.
+            if let Some(ids) = self.domain_index.get_mut(&previous.domain) {
+                ids.retain(|existing_id| existing_id != &id);
+                if ids.is_empty() {
+                    self.domain_index.remove(&previous.domain);
+                }
+            }
+        }
 
         let domain_ids = self.domain_index.entry(domain).or_default();
         if !domain_ids.contains(&id) {
@@ -481,6 +489,23 @@ mod tests {
         assert!(removed.is_some());
         assert_eq!(engine.policy_set_count(), 0);
         assert!(engine.get_policies_for_domain("orders").is_empty());
+    }
+
+    #[test]
+    fn engine_re_register_same_id_updates_domain_index() {
+        let mut engine = PolicyEngine::new();
+        let id = Uuid::new_v4();
+
+        let orders_set = PolicySet::new("limits", "orders").with_id(id);
+        engine.register_policy_set(orders_set);
+        assert_eq!(engine.get_policies_for_domain("orders").len(), 1);
+
+        let returns_set = PolicySet::new("limits-v2", "returns").with_id(id);
+        engine.register_policy_set(returns_set);
+
+        assert!(engine.get_policies_for_domain("orders").is_empty());
+        assert_eq!(engine.get_policies_for_domain("returns").len(), 1);
+        assert_eq!(engine.policy_set_count(), 1);
     }
 
     #[test]

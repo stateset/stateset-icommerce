@@ -1,13 +1,18 @@
+use std::collections::HashSet;
+
 use chrono::Utc;
 
 use crate::buffer::EventBuffer;
 use crate::config::SyncConfig;
-use crate::conflict::{ConflictResolver, ConflictStrategy};
+use crate::conflict::{ConflictResolver, ConflictStrategy, Resolution};
 use crate::error::SyncError;
 use crate::event::SyncEvent;
 use crate::outbox::Outbox;
 use crate::state::{SyncState, SyncStatus};
 use crate::transport::{PullResult, PushResult, Transport};
+
+/// Safety stop for paginated pull loops in `full_sync`.
+const MAX_PULL_PAGES: usize = 10_000;
 
 /// The sync engine orchestrates synchronization between local state and
 /// a remote sequencer.
@@ -129,22 +134,49 @@ impl SyncEngine {
         let result = transport.pull_events(since, limit).await?;
 
         // Detect and resolve conflicts between pending outbox events and pulled events
-        let pending = self.outbox.peek(self.outbox.count());
+        let pending: Vec<SyncEvent> =
+            self.outbox.peek(self.outbox.count()).into_iter().cloned().collect();
+        let mut drop_local_ids = HashSet::new();
+        let mut events_to_buffer = Vec::with_capacity(result.events.len());
+
         for pulled_event in &result.events {
+            let mut keep_remote = true;
+
             for local_event in &pending {
                 if local_event.entity_type == pulled_event.entity_type
                     && local_event.entity_id == pulled_event.entity_id
                 {
-                    let _resolution = self.resolver.resolve(local_event, pulled_event);
-                    // In a full implementation, we'd apply the resolution
-                    // (e.g., remove the local event from outbox if KeepRemote)
+                    match self.resolver.resolve(local_event, pulled_event) {
+                        Resolution::KeepLocal => {
+                            keep_remote = false;
+                            break;
+                        }
+                        Resolution::KeepRemote => {
+                            drop_local_ids.insert(local_event.id);
+                        }
+                        Resolution::Merge(merged) => {
+                            drop_local_ids.insert(local_event.id);
+                            events_to_buffer.push(merged);
+                            keep_remote = false;
+                            break;
+                        }
+                    }
                 }
+            }
+
+            if keep_remote {
+                events_to_buffer.push(pulled_event.clone());
             }
         }
 
-        // Buffer all pulled events
-        for event in &result.events {
-            self.buffer.push(event.clone());
+        if !drop_local_ids.is_empty() {
+            self.outbox.retain(|event| !drop_local_ids.contains(&event.id));
+            self.state.pending_count = self.outbox.count();
+        }
+
+        // Buffer resolved events
+        for event in events_to_buffer {
+            self.buffer.push(event);
         }
 
         self.state.remote_head = result.remote_head;
@@ -213,7 +245,23 @@ impl SyncEngine {
         transport: &dyn Transport,
     ) -> Result<(PushResult, PullResult), SyncError> {
         let push_result = self.push(transport).await?;
-        let pull_result = self.pull(transport).await?;
+        let mut pull_result = self.pull(transport).await?;
+        let mut pull_pages = 1;
+
+        while pull_result.has_more {
+            if pull_pages >= MAX_PULL_PAGES {
+                return Err(SyncError::Transport(
+                    "pull pagination exceeded safety limit".to_string(),
+                ));
+            }
+
+            let next_page = self.pull(transport).await?;
+            pull_result.events.extend(next_page.events);
+            pull_result.remote_head = next_page.remote_head;
+            pull_result.has_more = next_page.has_more;
+            pull_pages += 1;
+        }
+
         Ok((push_result, pull_result))
     }
 }
@@ -537,8 +585,94 @@ mod tests {
         let transport = ConflictTransport;
         let result = engine.pull(&transport).await.unwrap();
         assert_eq!(result.events.len(), 1);
-        // Conflict resolution happened (RemoteWins) -- events still buffered
+        // RemoteWins removes conflicting local outbox events and keeps pulled event.
         assert_eq!(engine.buffered_count(), 1);
+        assert_eq!(engine.pending_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn pull_conflict_local_wins_keeps_pending_and_skips_remote() {
+        #[derive(Debug)]
+        struct ConflictTransport;
+
+        #[async_trait::async_trait]
+        impl Transport for ConflictTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult { accepted: events.len(), remote_head: 10 })
+            }
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                let remote_event =
+                    SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "remote"}))
+                        .with_sequence(5);
+                Ok(PullResult { events: vec![remote_event], remote_head: 5, has_more: false })
+            }
+        }
+
+        let mut engine = SyncEngine::with_strategy(make_config(), ConflictStrategy::LocalWins);
+        engine
+            .record(SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "local"})))
+            .unwrap();
+
+        let result = engine.pull(&ConflictTransport).await.unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(engine.pending_count(), 1);
+        assert_eq!(engine.buffered_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn full_sync_paginates_pull_until_complete() {
+        #[derive(Debug)]
+        struct PagingTransport {
+            pulls: Arc<AtomicU64>,
+        }
+
+        #[async_trait::async_trait]
+        impl Transport for PagingTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult { accepted: events.len(), remote_head: 0 })
+            }
+
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                let call = self.pulls.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    Ok(PullResult {
+                        events: vec![
+                            SyncEvent::new("order.updated", "order", "ORD-1", json!({}))
+                                .with_sequence(1),
+                        ],
+                        remote_head: 1,
+                        has_more: true,
+                    })
+                } else {
+                    Ok(PullResult {
+                        events: vec![
+                            SyncEvent::new("order.updated", "order", "ORD-2", json!({}))
+                                .with_sequence(2),
+                        ],
+                        remote_head: 2,
+                        has_more: false,
+                    })
+                }
+            }
+        }
+
+        let transport = PagingTransport { pulls: Arc::new(AtomicU64::new(0)) };
+        let mut engine = SyncEngine::new(make_config());
+        let (_push_result, pull_result) = engine.full_sync(&transport).await.unwrap();
+
+        assert_eq!(pull_result.events.len(), 2);
+        assert!(!pull_result.has_more);
+        assert_eq!(engine.buffered_count(), 2);
+        assert_eq!(engine.state().remote_head, 2);
+        assert_eq!(transport.pulls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
