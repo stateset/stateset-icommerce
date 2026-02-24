@@ -22,7 +22,57 @@
  */
 
 import { installShutdownHandlers } from '../src/graceful-shutdown.js';
+import { MAIN_CLI_OPTIONS, MAIN_CLI_LONG_FLAGS } from '../src/cli-schema.js';
 installShutdownHandlers('stateset-completion');
+
+const MAIN_BASH_FLAGS = MAIN_CLI_LONG_FLAGS.join(' ');
+
+function escapeSingleQuotes(value) {
+  return String(value).replace(/'/g, "\\'");
+}
+
+function getZshValueSpec(option) {
+  if (option.type !== 'string') return '';
+  if (option.valueType === 'path') {
+    return `:${option.valueName || 'value'}:_files`;
+  }
+  if (Array.isArray(option.values) && option.values.length > 0) {
+    return `:${option.valueName || 'value'}:(${option.values.join(' ')})`;
+  }
+  return `:${option.valueName || 'value'}:`;
+}
+
+function buildMainZshArguments() {
+  const lines = [];
+  for (const option of MAIN_CLI_OPTIONS) {
+    const longSpec = `${option.flag}[${escapeSingleQuotes(option.description)}]${getZshValueSpec(option)}`;
+    lines.push(`        '${longSpec}' \\`);
+    if (option.short) {
+      const shortSpec = `-${option.short}[${escapeSingleQuotes(option.description)}]`;
+      lines.push(`        '${shortSpec}' \\`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function buildMainFishCompletions() {
+  const lines = [];
+  for (const option of MAIN_CLI_OPTIONS) {
+    const longName = option.flag.replace(/^--/, '');
+    let line = `complete -c stateset -l ${longName} -d '${escapeSingleQuotes(option.description)}'`;
+    if (option.short) line += ` -s ${option.short}`;
+    if (option.type === 'string') line += ' -r';
+    if (Array.isArray(option.values) && option.values.length > 0) {
+      line += ` -xa '${option.values.join(' ')}'`;
+    }
+    lines.push(line);
+  }
+  return lines.join('\n');
+}
+
+const MAIN_ZSH_ARGUMENTS = buildMainZshArguments();
+const MAIN_FISH_COMPLETIONS = buildMainFishCompletions();
+const UPDATE_OPTIONS = '--json --yes --channel --tag --timeout --help --version';
 
 const HELP = `
 StateSet CLI - Shell Completion Generator
@@ -58,77 +108,11 @@ EXAMPLES:
 // Command structure for completions
 const _COMMANDS = {
   ss: {
-    options: [
-      '--db',
-      '--apply',
-      '--agent',
-      '--profile',
-      '--model',
-      '--provider',
-      '--think',
-      '--stream',
-      '--budget',
-      '--memory',
-      '--no-memory',
-      '--x402',
-      '--treasury',
-      '--treasury-chain',
-      '--treasury-token',
-      '--treasury-agent',
-      '--treasury-db',
-      '--treasury-erc8004-registry',
-      '--treasury-erc8004-db',
-      '--resume',
-      '--json',
-      '--format',
-      '--output',
-      '--verbose',
-      '--stats',
-      '--yes',
-      '--quiet',
-      '--stdin',
-      '--batch',
-      '--parallel',
-      '--help',
-      '--version',
-    ],
+    options: [...MAIN_CLI_LONG_FLAGS],
     description: 'Shorthand for stateset',
   },
   stateset: {
-    options: [
-      '--db',
-      '--apply',
-      '--agent',
-      '--profile',
-      '--model',
-      '--provider',
-      '--think',
-      '--stream',
-      '--budget',
-      '--memory',
-      '--no-memory',
-      '--x402',
-      '--treasury',
-      '--treasury-chain',
-      '--treasury-token',
-      '--treasury-agent',
-      '--treasury-db',
-      '--treasury-erc8004-registry',
-      '--treasury-erc8004-db',
-      '--resume',
-      '--json',
-      '--format',
-      '--output',
-      '--verbose',
-      '--stats',
-      '--yes',
-      '--quiet',
-      '--stdin',
-      '--batch',
-      '--parallel',
-      '--help',
-      '--version',
-    ],
+    options: [...MAIN_CLI_LONG_FLAGS],
     description: 'AI-powered commerce CLI',
   },
   'stateset-direct': {
@@ -185,9 +169,14 @@ const _COMMANDS = {
     options: ['--db', '--verbose', '--json', '--output', '--checks', '--fix', '--help'],
     description: 'Health check & diagnostics',
   },
+  'stateset-update': {
+    subcommands: ['status', 'check', 'apply'],
+    options: UPDATE_OPTIONS.split(' '),
+    description: 'Check/install CLI updates',
+  },
   'stateset-config': {
     subcommands: ['set-key', 'show-keys', 'list', 'show', 'create', 'use', 'set', 'get', 'path'],
-    options: ['--profile', '--json', '--output', '--help'],
+    options: ['--profile', '--force', '--json', '--output', '--help'],
   },
   'stateset-mcp-events': {
     options: [
@@ -420,12 +409,12 @@ _stateset_complete() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="stateset ss stateset-direct stateset-chat stateset-doctor stateset-config stateset-sync stateset-pay stateset-checkout stateset-orders stateset-inventory stateset-returns stateset-analytics stateset-promotions stateset-subscriptions stateset-create stateset-events stateset-mcp-events stateset-channels stateset-daemon stateset-skills stateset-x402 stateset-x402-mcp stateset-install-service stateset-autonomous stateset-slack stateset-discord stateset-telegram stateset-whatsapp stateset-signal stateset-google-chat stateset-manufacturing stateset-payments stateset-shipments stateset-suppliers stateset-invoices stateset-warranties stateset-currency stateset-tax"
+    local commands="stateset ss stateset-direct stateset-chat stateset-doctor stateset-update stateset-config stateset-sync stateset-pay stateset-checkout stateset-orders stateset-inventory stateset-returns stateset-analytics stateset-promotions stateset-subscriptions stateset-create stateset-events stateset-mcp-events stateset-channels stateset-daemon stateset-skills stateset-x402 stateset-x402-mcp stateset-install-service stateset-autonomous stateset-slack stateset-discord stateset-telegram stateset-whatsapp stateset-signal stateset-google-chat stateset-manufacturing stateset-payments stateset-shipments stateset-suppliers stateset-invoices stateset-warranties stateset-currency stateset-tax"
 
     case "\${words[0]}" in
         stateset|ss)
             if [[ "\${cur}" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--db --apply --agent --profile --model --provider --think --stream --budget --memory --no-memory --x402 --treasury --treasury-chain --treasury-token --treasury-agent --treasury-db --treasury-erc8004-registry --treasury-erc8004-db --resume --json --format --output --verbose --stats --yes --quiet --stdin --batch --parallel --help --version" -- "\${cur}") )
+                COMPREPLY=( $(compgen -W "${MAIN_BASH_FLAGS}" -- "\${cur}") )
             fi
             ;;
         stateset-chat)
@@ -466,11 +455,18 @@ _stateset_complete() {
         stateset-doctor)
             COMPREPLY=( $(compgen -W "--db --verbose --json --output --checks --fix --help" -- "\${cur}") )
             ;;
+        stateset-update)
+            if [[ \${cword} -eq 1 ]]; then
+                COMPREPLY=( $(compgen -W "status check apply" -- "\${cur}") )
+            elif [[ "\${cur}" == -* ]]; then
+                COMPREPLY=( $(compgen -W "${UPDATE_OPTIONS}" -- "\${cur}") )
+            fi
+            ;;
         stateset-config)
             if [[ \${cword} -eq 1 ]]; then
                 COMPREPLY=( $(compgen -W "set-key show-keys list show create use set get path" -- "\${cur}") )
             elif [[ "\${cur}" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--profile --json --output --help" -- "\${cur}") )
+                COMPREPLY=( $(compgen -W "--profile --force --json --output --help" -- "\${cur}") )
             fi
             ;;
         stateset-sync)
@@ -592,6 +588,7 @@ complete -F _stateset_complete ss
 complete -F _stateset_complete stateset-direct
 complete -F _stateset_complete stateset-chat
 complete -F _stateset_complete stateset-doctor
+complete -F _stateset_complete stateset-update
 complete -F _stateset_complete stateset-config
 complete -F _stateset_complete stateset-sync
 complete -F _stateset_complete stateset-checkout
@@ -630,7 +627,7 @@ complete -F _stateset_complete stateset-tax
 }
 
 function generateZshCompletion() {
-  return `#compdef stateset ss stateset-direct stateset-chat stateset-doctor stateset-config stateset-sync stateset-events stateset-mcp-events stateset-channels stateset-daemon stateset-skills stateset-x402 stateset-x402-mcp stateset-install-service stateset-pay stateset-autonomous stateset-slack stateset-discord stateset-telegram stateset-whatsapp stateset-signal stateset-google-chat stateset-create stateset-analytics stateset-checkout stateset-currency stateset-inventory stateset-invoices stateset-manufacturing stateset-orders stateset-payments stateset-promotions stateset-returns stateset-shipments stateset-subscriptions stateset-suppliers stateset-tax stateset-warranties
+  return `#compdef stateset ss stateset-direct stateset-chat stateset-doctor stateset-update stateset-config stateset-sync stateset-events stateset-mcp-events stateset-channels stateset-daemon stateset-skills stateset-x402 stateset-x402-mcp stateset-install-service stateset-pay stateset-autonomous stateset-slack stateset-discord stateset-telegram stateset-whatsapp stateset-signal stateset-google-chat stateset-create stateset-analytics stateset-checkout stateset-currency stateset-inventory stateset-invoices stateset-manufacturing stateset-orders stateset-payments stateset-promotions stateset-returns stateset-shipments stateset-subscriptions stateset-suppliers stateset-tax stateset-warranties
 
 # StateSet CLI Zsh Completion
 # Generated by stateset-completion
@@ -640,31 +637,7 @@ _stateset() {
     typeset -A opt_args
 
     _arguments -C \\
-        '--db[Database path]:path:_files' \\
-        '--apply[Enable write operations]' \\
-        '--agent[Use specific agent]:agent:' \\
-        '--profile[Use profile]:profile:' \\
-        '--model[Claude model]:model:(claude-sonnet-4-5-20250929 claude-opus-4-5-20251101 claude-haiku-3-5-20241022)' \\
-        '--provider[AI provider]:provider:(claude openai gemini ollama)' \\
-        '--think[Extended thinking]:level:(off low medium high)' \\
-        '--stream[Stream output]' \\
-        '--budget[Maximum spend in USD]:usd:' \\
-        '--memory[Enable memory]' \\
-        '--no-memory[Disable memory]' \\
-        '--x402[Enable x402 MCP tools]' \\
-        '--resume[Resume session]:session_id:' \\
-        '--json[JSON output]' \\
-        '--format[Output format]:format:(table json csv yaml)' \\
-        '--output[Write output to file]:file:_files' \\
-        '--verbose[Verbose output]' \\
-        '--stats[Show execution statistics]' \\
-        '--yes[Skip confirmation prompts]' \\
-        '--quiet[Quiet output]' \\
-        '--stdin[Read requests from stdin]' \\
-        '--batch[Read requests from file]:file:_files' \\
-        '--parallel[Parallel requests]:count:' \\
-        '--help[Show help]' \\
-        '--version[Show version]' \\
+${MAIN_ZSH_ARGUMENTS}
         '*::arg:->args'
 }
 
@@ -768,6 +741,18 @@ _stateset_doctor() {
         '--help[Show help]'
 }
 
+_stateset_update() {
+    _arguments -C \\
+        '1:command:(status check apply)' \\
+        '--json[JSON output]' \\
+        '--yes[Skip confirmation prompts]' \\
+        '--channel[Release channel]:channel:(latest next beta)' \\
+        '--tag[Exact package tag]:tag:' \\
+        '--timeout[Timeout in ms]:ms:' \\
+        '--help[Show help]' \\
+        '--version[Show version]'
+}
+
 _stateset_config() {
     local subcommands=(
         'set-key:Set API key'
@@ -783,6 +768,7 @@ _stateset_config() {
 
     _arguments -C \\
         '--profile[Target profile]:profile:' \\
+        '--force[Allow unknown config keys]' \\
         '--json[JSON output]' \\
         '--output[Write output to file]:file:_files' \\
         '--help[Show help]' \\
@@ -1205,6 +1191,7 @@ compdef _stateset ss
 compdef _stateset_chat stateset-chat
 compdef _stateset_direct stateset-direct
 compdef _stateset_doctor stateset-doctor
+compdef _stateset_update stateset-update
 compdef _stateset_config stateset-config
 compdef _stateset_sync stateset-sync
 compdef _stateset_events stateset-events
@@ -1252,6 +1239,7 @@ complete -c ss -w stateset
 complete -c stateset-direct -f
 complete -c stateset-chat -f
 complete -c stateset-doctor -f
+complete -c stateset-update -f
 complete -c stateset-config -f
 complete -c stateset-sync -f
 complete -c stateset-events -f
@@ -1273,31 +1261,17 @@ complete -c stateset-signal -f
 complete -c stateset-google-chat -f
 
 # stateset main command
-complete -c stateset -l db -d 'Database path' -r
-complete -c stateset -l apply -d 'Enable write operations'
-complete -c stateset -l agent -d 'Use specific agent' -r
-complete -c stateset -l profile -s p -d 'Use profile' -r
-complete -c stateset -l model -d 'Claude model' -xa 'claude-sonnet-4-5-20250929 claude-opus-4-5-20251101 claude-haiku-3-5-20241022'
-complete -c stateset -l provider -d 'AI provider' -xa 'claude openai gemini ollama'
-complete -c stateset -l think -d 'Extended thinking' -xa 'off low medium high'
-complete -c stateset -l stream -d 'Stream output'
-complete -c stateset -l budget -d 'Maximum spend in USD' -r
-complete -c stateset -l memory -d 'Enable memory'
-complete -c stateset -l no-memory -d 'Disable memory'
-complete -c stateset -l x402 -d 'Enable x402 MCP tools'
-complete -c stateset -l resume -d 'Resume session' -r
-complete -c stateset -l json -d 'JSON output'
-complete -c stateset -l format -d 'Output format' -xa 'table json csv yaml'
-complete -c stateset -l output -d 'Write output to file' -r
-complete -c stateset -l verbose -s V -d 'Verbose output'
-complete -c stateset -l stats -d 'Show execution statistics'
-complete -c stateset -l yes -s y -d 'Skip confirmation prompts'
-complete -c stateset -l quiet -s q -d 'Quiet output'
-complete -c stateset -l stdin -d 'Read requests from stdin'
-complete -c stateset -l batch -d 'Read requests from file' -r
-complete -c stateset -l parallel -d 'Parallel requests' -r
-complete -c stateset -l help -d 'Show help'
-complete -c stateset -l version -d 'Show version'
+${MAIN_FISH_COMPLETIONS}
+
+# stateset-update
+complete -c stateset-update -n '__fish_is_first_arg' -a 'status check apply' -d 'Update commands'
+complete -c stateset-update -l json -d 'JSON output'
+complete -c stateset-update -l yes -d 'Skip confirmation prompts'
+complete -c stateset-update -l channel -d 'Release channel' -xa 'latest next beta'
+complete -c stateset-update -l tag -d 'Exact package tag' -r
+complete -c stateset-update -l timeout -d 'Timeout in ms' -r
+complete -c stateset-update -l help -d 'Show help'
+complete -c stateset-update -l version -d 'Show version'
 
 # stateset-chat
 complete -c stateset-chat -l db -d 'Database path' -r
@@ -1404,6 +1378,7 @@ complete -c stateset-config -n '__fish_is_first_arg' -a 'set' -d 'Set config val
 complete -c stateset-config -n '__fish_is_first_arg' -a 'get' -d 'Get config value'
 complete -c stateset-config -n '__fish_is_first_arg' -a 'path' -d 'Show config path'
 complete -c stateset-config -l profile -s p -d 'Target profile' -r
+complete -c stateset-config -l force -d 'Allow unknown keys'
 complete -c stateset-config -l json -d 'JSON output'
 complete -c stateset-config -l output -d 'Write output to file' -r
 complete -c stateset-config -l help -d 'Show help'

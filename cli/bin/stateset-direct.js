@@ -15,6 +15,15 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { createConfirmHandler } from '../src/utils/confirm.js';
+import {
+  StateSetError,
+  ValidationError,
+  PermissionError,
+  ConfigError,
+  DatabaseError,
+  NotFoundError,
+  EXIT_CODES,
+} from '../src/errors.js';
 
 // ============================================================================
 // Resource & Action Aliases
@@ -48,6 +57,63 @@ const ACTION_ALIASES = {
   n: 'count',
   '#': 'count',
 };
+
+function normalizeDirectError(error, context = {}) {
+  if (error instanceof StateSetError) return error;
+
+  const message = error?.message || String(error);
+  const lower = message.toLowerCase();
+
+  if (
+    lower.startsWith('usage:') ||
+    lower.includes('\nusage:') ||
+    lower.includes('unknown action') ||
+    lower.includes('unknown resource') ||
+    lower.includes('unsupported format') ||
+    lower.includes('ambiguous id') ||
+    lower.includes('ambiguous sku') ||
+    lower.includes('invalid status')
+  ) {
+    return new ValidationError(message, { cause: error, code: 'DIRECT_INVALID_ARGUMENTS' });
+  }
+
+  if (
+    lower.includes('preview mode') ||
+    lower.includes('--apply') ||
+    lower.includes('confirmation')
+  ) {
+    return new PermissionError(message, { cause: error, code: 'DIRECT_WRITE_PROTECTED' });
+  }
+
+  if (
+    lower.includes('openai_api_key') ||
+    lower.includes('vector search requires an openai api key')
+  ) {
+    return new ConfigError(message, {
+      cause: error,
+      configKey: 'OPENAI_API_KEY',
+      code: 'DIRECT_MISSING_CONFIG',
+    });
+  }
+
+  if (lower.includes('sqlite') || lower.includes('database')) {
+    return new DatabaseError(message, {
+      cause: error,
+      dbPath: context.dbPath,
+      code: 'DIRECT_DATABASE_ERROR',
+    });
+  }
+
+  if (lower.includes('not found') || /no\s+\S+\s+found/i.test(message)) {
+    return new NotFoundError(message, { cause: error, code: 'DIRECT_NOT_FOUND' });
+  }
+
+  return new StateSetError(message, {
+    cause: error,
+    code: 'DIRECT_ERROR',
+    exitCode: EXIT_CODES.USER_ERROR,
+  });
+}
 
 /**
  * Expand resource alias to full name
@@ -1034,12 +1100,26 @@ Created: ${ret.createdAt}
 
     process.exit(0);
   } catch (error) {
+    const normalized = normalizeDirectError(error, { dbPath });
+
     if (jsonOutput) {
-      console.log(JSON.stringify({ error: error.message }));
+      console.log(
+        JSON.stringify({
+          error: normalized.userMessage || normalized.message,
+          code: normalized.code,
+          exitCode: normalized.exitCode,
+          suggestions: normalized.getSuggestions ? normalized.getSuggestions() : [],
+        }),
+      );
     } else {
-      console.error(`Error: ${error.message}`);
+      console.error(
+        normalized.format({
+          color: process.stderr.isTTY,
+          verbose: false,
+        }),
+      );
     }
-    process.exit(1);
+    process.exit(normalized.exitCode || EXIT_CODES.USER_ERROR);
   }
 }
 

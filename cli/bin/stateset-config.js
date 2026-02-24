@@ -22,6 +22,20 @@ const CONFIG_DIR = path.join(os.homedir(), '.stateset');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const PROFILES_DIR = path.join(CONFIG_DIR, 'profiles');
 const ENV_FILE = path.join(CONFIG_DIR, '.env');
+const CONFIG_RECOVERY_WARNINGS = [];
+
+const KNOWN_CONFIG_KEYS = {
+  db: 'string',
+  model: 'string',
+  provider: 'string',
+  apply: 'boolean',
+  verbose: 'boolean',
+  memory: 'boolean',
+  stream: 'boolean',
+  think: 'string',
+  format: 'string',
+  budget: 'string',
+};
 
 // Supported API key providers
 const API_KEY_PROVIDERS = {
@@ -67,6 +81,7 @@ COMMANDS:
 
 OPTIONS:
   --profile, -p <name>    Target a specific profile
+  --force                 Allow unknown config keys (advanced)
   --json                  Output as JSON
   --output <file>         Write output to file (implies --json)
   --help, -h              Show this help message
@@ -103,46 +118,101 @@ EXAMPLES:
   stateset-config show
 `;
 
+function addRecoveryWarning(message) {
+  CONFIG_RECOVERY_WARNINGS.push(message);
+}
+
+function secureWriteFile(filePath, content, mode = 0o600) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, content, { mode });
+  fs.renameSync(tempPath, filePath);
+  try {
+    fs.chmodSync(filePath, mode);
+  } catch {
+    // Best-effort permission hardening.
+  }
+}
+
+function backupCorruptFile(filePath) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = `${filePath}.corrupt-${stamp}`;
+  fs.renameSync(filePath, backupPath);
+  return backupPath;
+}
+
+function parseJsonFileSafely(filePath, fallbackFactory) {
+  if (!fs.existsSync(filePath)) {
+    return fallbackFactory();
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (error) {
+    try {
+      const backupPath = backupCorruptFile(filePath);
+      addRecoveryWarning(
+        `Recovered from invalid JSON in ${filePath}. Original file moved to ${backupPath}.`,
+      );
+    } catch (backupError) {
+      addRecoveryWarning(
+        `Recovered from invalid JSON in ${filePath}, but failed to create backup: ${backupError.message}`,
+      );
+    }
+    return fallbackFactory();
+  }
+}
+
+function escapeEnvValue(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 // Ensure config directory exists
 function ensureConfigDir() {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
   }
+  try {
+    fs.chmodSync(CONFIG_DIR, 0o700);
+  } catch {
+    // Best-effort permission hardening.
+  }
   if (!fs.existsSync(PROFILES_DIR)) {
     fs.mkdirSync(PROFILES_DIR, { recursive: true });
+  }
+  try {
+    fs.chmodSync(PROFILES_DIR, 0o700);
+  } catch {
+    // Best-effort permission hardening.
   }
 }
 
 // Load main config
 function loadConfig() {
   ensureConfigDir();
-  if (fs.existsSync(CONFIG_FILE)) {
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-  }
-  return { defaultProfile: 'default', version: CLI_VERSION };
+  return parseJsonFileSafely(CONFIG_FILE, () => ({
+    defaultProfile: 'default',
+    version: CLI_VERSION,
+  }));
 }
 
 // Save main config
 function saveConfig(config) {
   ensureConfigDir();
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  secureWriteFile(CONFIG_FILE, JSON.stringify(config, null, 2), 0o600);
 }
 
 // Load a profile
 function loadProfile(name) {
   const profilePath = path.join(PROFILES_DIR, `${name}.json`);
-  if (fs.existsSync(profilePath)) {
-    return JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-  }
-  // Return defaults for new profiles
-  return {
+  return parseJsonFileSafely(profilePath, () => ({
+    // Return defaults for new profiles
     name,
     db: './store.db',
     model: 'claude-sonnet-4-20250514',
     apply: false,
     verbose: false,
     created: new Date().toISOString(),
-  };
+  }));
 }
 
 // Save a profile
@@ -150,7 +220,7 @@ function saveProfile(name, profile) {
   ensureConfigDir();
   const profilePath = path.join(PROFILES_DIR, `${name}.json`);
   profile.updated = new Date().toISOString();
-  fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
+  secureWriteFile(profilePath, JSON.stringify(profile, null, 2), 0o600);
 }
 
 // List all profiles
@@ -178,6 +248,10 @@ function loadEnvFile() {
       const [key, ...valueParts] = trimmed.split('=');
       if (key && valueParts.length > 0) {
         let value = valueParts.join('=');
+        let normalizedKey = key.trim();
+        if (normalizedKey.startsWith('export ')) {
+          normalizedKey = normalizedKey.slice('export '.length).trim();
+        }
         // Remove surrounding quotes if present
         if (
           (value.startsWith('"') && value.endsWith('"')) ||
@@ -185,7 +259,7 @@ function loadEnvFile() {
         ) {
           value = value.slice(1, -1);
         }
-        env[key.trim()] = value;
+        env[normalizedKey] = value;
       }
     }
   }
@@ -195,16 +269,54 @@ function loadEnvFile() {
 // Save .env file
 function saveEnvFile(env) {
   ensureConfigDir();
-  const lines = [
-    '# StateSet CLI API Keys',
-    '# Generated by stateset-config set-key',
-    '# Add this to your shell profile: source ~/.stateset/.env',
-    '',
-  ];
-  for (const [key, value] of Object.entries(env)) {
-    lines.push(`${key}="${value}"`);
+  const hasExisting = fs.existsSync(ENV_FILE);
+  const lines = hasExisting
+    ? fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/)
+    : [
+        '# StateSet CLI API Keys',
+        '# Managed by stateset-config set-key',
+        '# Add this to your shell profile: source ~/.stateset/.env',
+        '',
+      ];
+
+  const next = [];
+  const remaining = new Map(Object.entries(env));
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      next.push(line);
+      continue;
+    }
+
+    const eqIdx = line.indexOf('=');
+    if (eqIdx < 0) {
+      next.push(line);
+      continue;
+    }
+
+    let key = line.slice(0, eqIdx).trim();
+    if (key.startsWith('export ')) {
+      key = key.slice('export '.length).trim();
+    }
+
+    if (!remaining.has(key)) {
+      next.push(line);
+      continue;
+    }
+
+    next.push(`${key}="${escapeEnvValue(remaining.get(key))}"`);
+    remaining.delete(key);
   }
-  fs.writeFileSync(ENV_FILE, lines.join('\n') + '\n');
+
+  for (const [key, value] of remaining.entries()) {
+    if (next.length > 0 && next[next.length - 1].trim()) {
+      next.push('');
+    }
+    next.push(`${key}="${escapeEnvValue(value)}"`);
+  }
+
+  secureWriteFile(ENV_FILE, `${next.join('\n').replace(/\n*$/, '')}\n`, 0o600);
 }
 
 // Mask API key for display
@@ -359,6 +471,7 @@ async function main() {
   const { values, positionals } = parseArgs({
     options: {
       profile: { type: 'string', short: 'p' },
+      force: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       output: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
@@ -395,6 +508,17 @@ async function main() {
   const command = positionals[0];
   const args = positionals.slice(1);
   const config = loadConfig();
+
+  if (CONFIG_RECOVERY_WARNINGS.length > 0) {
+    const warningText = CONFIG_RECOVERY_WARNINGS.join('\n');
+    if (values.json) {
+      console.error(warningText);
+    } else {
+      for (const warning of CONFIG_RECOVERY_WARNINGS) {
+        console.warn(output.yellow(`Warning: ${warning}`));
+      }
+    }
+  }
 
   switch (command) {
     case 'set-key': {
@@ -525,27 +649,14 @@ async function main() {
         process.exit(1);
       }
 
-      // Known config keys with validation rules
-      const KNOWN_CONFIG_KEYS = {
-        db: 'string',
-        model: 'string',
-        provider: 'string',
-        apply: 'boolean',
-        verbose: 'boolean',
-        memory: 'boolean',
-        stream: 'boolean',
-        think: 'string',
-        format: 'string',
-        budget: 'string',
-      };
-
-      // Warn on unknown keys (non-breaking — still saves)
-      if (!(key in KNOWN_CONFIG_KEYS)) {
-        if (!values.json) {
-          console.warn(
-            `Warning: '${key}' is not a recognized config key. Known keys: ${Object.keys(KNOWN_CONFIG_KEYS).join(', ')}`,
-          );
-        }
+      if (!(key in KNOWN_CONFIG_KEYS) && !values.force) {
+        await emitError(
+          `Error: Unknown config key '${key}'. Known keys: ${Object.keys(KNOWN_CONFIG_KEYS).join(', ')}. Use --force to set custom keys.`,
+        );
+        process.exit(1);
+      }
+      if (!(key in KNOWN_CONFIG_KEYS) && values.force && !values.json) {
+        console.warn(output.yellow(`Warning: setting custom key '${key}' due to --force`));
       }
 
       const profileName = values.profile || config.defaultProfile || 'default';

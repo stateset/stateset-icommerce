@@ -1,23 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runNodeScript } from './helpers/run-node-script.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const BIN_DIR = join(__dirname, '..', 'bin');
 
 function runCli(bin, args = []) {
-  const result = spawnSync('node', [join(BIN_DIR, bin), ...args], {
-    encoding: 'utf-8',
-  });
-
-  if (result.error) {
-    throw result.error;
-  }
-
-  return result;
+  return runNodeScript(join(BIN_DIR, bin), args);
 }
 
 const HELP_TARGETS = [
@@ -29,6 +21,7 @@ const HELP_TARGETS = [
   { bin: 'stateset-promotions.js', label: 'stateset-promotions' },
   { bin: 'stateset-config.js', label: 'stateset-config' },
   { bin: 'stateset-doctor.js', label: 'stateset-doctor' },
+  { bin: 'stateset-update.js', label: 'stateset-update' },
   { bin: 'stateset-mcp-events.js', label: 'stateset-mcp-events' },
 ];
 
@@ -37,6 +30,7 @@ const VERSION_TARGETS = [
   { bin: 'stateset-orders.js', label: 'stateset-orders' },
   { bin: 'stateset-inventory.js', label: 'stateset-inventory' },
   { bin: 'stateset-returns.js', label: 'stateset-returns' },
+  { bin: 'stateset-update.js', label: 'stateset-update' },
   { bin: 'stateset-mcp-events.js', label: 'stateset-mcp-events' },
 ];
 

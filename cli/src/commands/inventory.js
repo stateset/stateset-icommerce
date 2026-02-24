@@ -4,6 +4,61 @@
  * Handles all inventory-related CLI operations for stateset-direct
  */
 
+const STOCK_FETCH_CONCURRENCY = (() => {
+  const raw = Number.parseInt(process.env.STATESET_INVENTORY_STOCK_CONCURRENCY || '8', 10);
+  if (!Number.isFinite(raw) || raw < 1) return 8;
+  return Math.min(raw, 32);
+})();
+
+function collectVariantSkus(products) {
+  const seen = new Set();
+  const skus = [];
+
+  for (const product of products) {
+    if (!product.variants) continue;
+    for (const variant of product.variants) {
+      if (!variant.sku || seen.has(variant.sku)) continue;
+      seen.add(variant.sku);
+      skus.push({
+        sku: variant.sku,
+        name: variant.name || product.name,
+      });
+    }
+  }
+
+  return skus;
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  if (items.length === 0) return [];
+
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await mapper(items[index], index);
+    }
+  };
+
+  const workers = [];
+  for (let i = 0; i < Math.min(concurrency, items.length); i++) {
+    workers.push(worker());
+  }
+
+  await Promise.all(workers);
+  return results;
+}
+
+async function loadStockSnapshot(commerce, products) {
+  const skuEntries = collectVariantSkus(products);
+  return mapWithConcurrency(skuEntries, STOCK_FETCH_CONCURRENCY, async (entry) => ({
+    ...entry,
+    stock: await commerce.inventory.getStock(entry.sku),
+  }));
+}
+
 /**
  * Execute inventory commands
  * @param {string} action - The action to perform
@@ -15,24 +70,14 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
   switch (action) {
     case 'list': {
       const products = await commerce.products.list();
-      const skuItems = [];
-
-      for (const product of products) {
-        if (product.variants) {
-          for (const variant of product.variants) {
-            if (variant.sku) {
-              const stock = await commerce.inventory.getStock(variant.sku);
-              skuItems.push({
-                sku: variant.sku,
-                name: variant.name || product.name,
-                onHand: stock?.totalOnHand ?? 0,
-                available: stock?.totalAvailable ?? 0,
-                allocated: stock?.totalAllocated ?? 0,
-              });
-            }
-          }
-        }
-      }
+      const snapshot = await loadStockSnapshot(commerce, products);
+      const skuItems = snapshot.map((entry) => ({
+        sku: entry.sku,
+        name: entry.name,
+        onHand: entry.stock?.totalOnHand ?? 0,
+        available: entry.stock?.totalAvailable ?? 0,
+        allocated: entry.stock?.totalAllocated ?? 0,
+      }));
 
       return formatInventoryList(skuItems, { output, jsonOutput });
     }
@@ -95,25 +140,15 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
     case 'low': {
       const threshold = parseInt(args[0], 10) || 10;
       const products = await commerce.products.list();
-      const lowStock = [];
-
-      for (const product of products) {
-        if (product.variants) {
-          for (const variant of product.variants) {
-            if (variant.sku) {
-              const stock = await commerce.inventory.getStock(variant.sku);
-              if (stock && stock.totalAvailable <= threshold) {
-                lowStock.push({
-                  sku: variant.sku,
-                  name: variant.name || product.name,
-                  available: stock.totalAvailable,
-                  onHand: stock.totalOnHand,
-                });
-              }
-            }
-          }
-        }
-      }
+      const snapshot = await loadStockSnapshot(commerce, products);
+      const lowStock = snapshot
+        .filter((entry) => entry.stock && entry.stock.totalAvailable <= threshold)
+        .map((entry) => ({
+          sku: entry.sku,
+          name: entry.name,
+          available: entry.stock.totalAvailable,
+          onHand: entry.stock.totalOnHand,
+        }));
 
       return formatLowStock(lowStock, threshold, { output, jsonOutput });
     }

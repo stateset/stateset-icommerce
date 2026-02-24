@@ -15,9 +15,78 @@
  */
 
 import { parseArgs } from 'node:util';
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import module from 'node:module';
+import { getMainCliParseOptions, normalizeMainCliValues } from '../src/cli-schema.js';
+
+if (module.enableCompileCache && !process.env.NODE_DISABLE_COMPILE_CACHE) {
+  try {
+    module.enableCompileCache();
+  } catch {
+    // Ignore compile cache setup failures.
+  }
+}
 // IMPORTANT: Save and clean argv BEFORE importing SDK modules
 // The Claude Agent SDK reads process.argv and passes it to the spawned process
 const __savedArgv = [...process.argv];
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const MAX_PARALLELISM = (() => {
+  const raw = Number.parseInt(process.env.STATESET_MAX_PARALLEL || '16', 10);
+  if (!Number.isFinite(raw) || raw < 1) return 16;
+  return Math.min(raw, 64);
+})();
+const BACKPRESSURE_DELAY_MS = 1000;
+const QUEUE_ADMIN_ENV = 'STATESET_QUEUE_ADMIN';
+
+function runLifecycleScript(scriptName, args) {
+  const scriptPath = join(__dirname, scriptName);
+  const result = spawnSync(process.execPath, [scriptPath, ...args], {
+    stdio: 'inherit',
+    env: process.env,
+  });
+
+  if (result.error && result.status === null) {
+    console.error(`[stateset] Failed to run ${scriptName}: ${result.error.message}`);
+    process.exit(1);
+  }
+
+  process.exit(typeof result.status === 'number' ? result.status : 1);
+}
+
+function routeLifecycleCommands(argv) {
+  if (argv.includes('--update')) {
+    const forwarded = [];
+    let removed = false;
+    for (const arg of argv) {
+      if (!removed && arg === '--update') {
+        removed = true;
+        continue;
+      }
+      forwarded.push(arg);
+    }
+    runLifecycleScript('stateset-update.js', forwarded);
+    return true;
+  }
+
+  const first = argv[0];
+  if (first === 'doctor') {
+    runLifecycleScript('stateset-doctor.js', argv.slice(1));
+    return true;
+  }
+
+  if (first === 'update') {
+    runLifecycleScript('stateset-update.js', argv.slice(1));
+    return true;
+  }
+
+  return false;
+}
+
+routeLifecycleCommands(__savedArgv.slice(2));
 
 // Fast path: --version without loading heavy modules
 if (__savedArgv.includes('--version') || __savedArgv.includes('-v')) {
@@ -118,12 +187,14 @@ OPTIONS:
   --queue-clear        Clear queue lanes and exit
   --queue-lane <id>    Queue lane ID to inspect/remove
   --queue-force        Force clear/remove busy queue lanes (admin)
+  --queue-admin        Required for queue admin commands (with ${QUEUE_ADMIN_ENV}=1)
   --json             Output as JSON
   --format <fmt>     Output format: table, json, csv, yaml (default: table)
   --output <file>    Write output to file instead of stdout
   --verbose, -V      Enable verbose output with telemetry
   --stats            Show execution statistics after completion
   --timeout <ms>     Abort requests that exceed this duration
+  --update           Check for CLI updates and exit
   --yes, -y          Skip confirmation prompts
   --quiet, -q        Minimal output (for scripting)
   --no-color         Disable colored output (also respects NO_COLOR env var)
@@ -184,6 +255,7 @@ AGENTS:
 
 SPECIALIZED COMMANDS:
   stateset-setup           Guided first-time setup wizard
+  stateset-update          Check/install CLI updates
   stateset-chat            Interactive multi-turn REPL
   stateset-direct          Direct CLI (no AI, structured commands)
   stateset-pay             Native stablecoin payments
@@ -206,6 +278,10 @@ SPECIALIZED COMMANDS:
     stateset-google-chat   Google Chat / Workspace
 
 EXAMPLES:
+  # Lifecycle shortcuts
+  stateset doctor --checks api,db
+  stateset update status
+
   # List customers (read-only)
   stateset "show me all customers"
   ss "show me all customers"
@@ -305,6 +381,15 @@ async function readStdin() {
     .trim()
     .split('\n')
     .filter((line) => line.trim());
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldBackpressure(errorMessage) {
+  if (!errorMessage) return false;
+  return /429|rate limit|too many requests|resource exhausted|overload|timeout/i.test(errorMessage);
 }
 
 /**
@@ -485,6 +570,7 @@ async function processParallel(
   const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
   let completed = 0;
+  let cooldownUntil = 0;
 
   // Create a queue of work
   const queue = requests
@@ -500,6 +586,11 @@ async function processParallel(
   // Process queue with controlled concurrency
   const processNext = async () => {
     while (queue.length > 0) {
+      const waitMs = cooldownUntil - Date.now();
+      if (waitMs > 0) {
+        await sleep(waitMs);
+      }
+
       const item = queue.shift();
       if (!item) break;
 
@@ -517,6 +608,10 @@ async function processParallel(
       results.push(result);
       completed++;
 
+      if (!result.success && shouldBackpressure(result.error)) {
+        cooldownUntil = Math.max(cooldownUntil, Date.now() + BACKPRESSURE_DELAY_MS);
+      }
+
       // Progress update for non-quiet mode
       if (!isQuiet && !values.json) {
         const pct = Math.round((completed / total) * 100);
@@ -525,6 +620,9 @@ async function processParallel(
           `\r${status} ${output.dim(`Progress: ${completed}/${total} (${pct}%)`)}  `,
         );
       }
+
+      // Yield between queue items to avoid starving the event loop.
+      await new Promise((resolve) => setImmediate(resolve));
     }
   };
 
@@ -557,6 +655,12 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
   let parallelism = values.parallel ? parseInt(values.parallel, 10) : 0;
   if (values.parallel && (!Number.isFinite(parallelism) || parallelism < 1)) {
     console.error('Error: --parallel must be a positive integer');
+    process.exit(1);
+  }
+  if (parallelism > MAX_PARALLELISM) {
+    console.error(
+      `Error: --parallel cannot exceed ${MAX_PARALLELISM}. Set STATESET_MAX_PARALLEL=<n> (max 64) to adjust the cap.`,
+    );
     process.exit(1);
   }
   if (!parallelism) parallelism = 0;
@@ -695,50 +799,13 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
 
 async function main() {
   // Parse arguments using the saved argv (before we cleaned it for the SDK)
-  const { values, positionals } = parseArgs({
+  const parsed = parseArgs({
     args: __savedArgv.slice(2), // Use saved argv, skip node and script path
-    options: {
-      db: { type: 'string' },
-      apply: { type: 'boolean', default: false },
-      agent: { type: 'string' },
-      profile: { type: 'string', short: 'p' },
-      model: { type: 'string' },
-      provider: { type: 'string' },
-      think: { type: 'string', default: 'off' },
-      stream: { type: 'boolean', default: false },
-      budget: { type: 'string' },
-      memory: { type: 'boolean', default: false },
-      noMemory: { type: 'boolean', default: false },
-      x402: { type: 'boolean', default: false },
-      treasury: { type: 'boolean', default: false },
-      treasuryChain: { type: 'string' },
-      treasuryToken: { type: 'string' },
-      treasuryAgent: { type: 'string' },
-      treasuryDb: { type: 'string' },
-      treasuryErc8004Registry: { type: 'string' },
-      treasuryErc8004Db: { type: 'string' },
-      resume: { type: 'string' },
-      json: { type: 'boolean', default: false },
-      format: { type: 'string', default: 'table' },
-      output: { type: 'string' },
-      queueStatus: { type: 'boolean', default: false },
-      queueClear: { type: 'boolean', default: false },
-      queueLane: { type: 'string' },
-      queueForce: { type: 'boolean', default: false },
-      verbose: { type: 'boolean', short: 'V', default: false },
-      stats: { type: 'boolean', default: false },
-      yes: { type: 'boolean', short: 'y', default: false },
-      quiet: { type: 'boolean', short: 'q', default: false },
-      color: { type: 'boolean', default: true },
-      stdin: { type: 'boolean', default: false },
-      batch: { type: 'string' },
-      parallel: { type: 'string' },
-      timeout: { type: 'string' },
-      help: { type: 'boolean', short: 'h', default: false },
-      version: { type: 'boolean', short: 'v', default: false },
-    },
+    options: getMainCliParseOptions(),
     allowPositionals: true,
   });
+  const values = normalizeMainCliValues(parsed.values);
+  const { positionals } = parsed;
 
   // Load profile config and merge with CLI args (CLI args take precedence)
   const profileConfig = loadConfigWithProfile(values.profile);
@@ -794,11 +861,24 @@ async function main() {
     process.exit(0);
   }
 
+  if (values.update) {
+    runLifecycleScript('stateset-update.js', []);
+    return;
+  }
+
   if (values.queueStatus || values.queueClear) {
     const outputQueueError = (message, code = 1) => {
       console.error(message);
       process.exit(code);
     };
+
+    const queueAdminAuthorized =
+      values.queueAdmin && String(process.env[QUEUE_ADMIN_ENV] || '').trim() === '1';
+    if (!queueAdminAuthorized) {
+      outputQueueError(
+        `Error: Queue admin commands require --queue-admin and ${QUEUE_ADMIN_ENV}=1.`,
+      );
+    }
 
     if (values.queueClear) {
       if (values.queueLane) {

@@ -1,25 +1,17 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { runNodeScript } from './helpers/run-node-script.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const BIN_DIR = join(__dirname, '..', 'bin');
 
 function runDirect(args = []) {
-  const result = spawnSync('node', [join(BIN_DIR, 'stateset-direct.js'), ...args], {
-    encoding: 'utf-8',
-  });
-
-  if (result.error) {
-    throw result.error;
-  }
-
-  return result;
+  return runNodeScript(join(BIN_DIR, 'stateset-direct.js'), args);
 }
 
 function newDbPath() {
