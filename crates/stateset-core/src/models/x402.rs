@@ -597,6 +597,7 @@ impl X402PaymentIntent {
             "nonce": self.nonce,
             "validUntil": self.valid_until,
             "resourceUri": self.resource_uri,
+            "resourceMethod": self.resource_method,
         });
         serde_jcs::to_string(&payload).unwrap_or_default()
     }
@@ -614,6 +615,24 @@ impl X402PaymentIntent {
         hasher.update(self.chain_id.to_be_bytes());
         hasher.update(self.valid_until.to_be_bytes());
         hasher.update(self.nonce.to_be_bytes());
+        // Bind signatures to the protected resource and method to prevent replay
+        // across endpoints with identical payment parameters.
+        match &self.resource_uri {
+            Some(uri) => {
+                hasher.update([1u8]);
+                hasher.update((uri.len() as u64).to_be_bytes());
+                hasher.update(uri.as_bytes());
+            }
+            None => hasher.update([0u8]),
+        }
+        match &self.resource_method {
+            Some(method) => {
+                hasher.update([1u8]);
+                hasher.update((method.len() as u64).to_be_bytes());
+                hasher.update(method.as_bytes());
+            }
+            None => hasher.update([0u8]),
+        }
 
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
@@ -1115,11 +1134,16 @@ pub fn generate_x402_intent_id() -> Uuid {
 
 /// Calculate amount in smallest unit from decimal
 pub fn to_smallest_unit(amount: Decimal, asset: X402Asset) -> u64 {
+    if amount <= Decimal::ZERO {
+        return 0;
+    }
+
     let decimals = asset.decimals();
     let multiplier = Decimal::from(10u64.pow(decimals as u32));
     let scaled = amount * multiplier;
     if scaled.fract() != Decimal::ZERO {
-        return 0;
+        // Prevent positive sub-unit values from silently turning into zero.
+        return scaled.ceil().to_u64().unwrap_or(u64::MAX);
     }
     scaled.to_u64().unwrap_or(0)
 }
@@ -1233,6 +1257,43 @@ mod tests {
 
         let back = from_smallest_unit(smallest, X402Asset::Usdc);
         assert_eq!(back, decimal);
+    }
+
+    #[test]
+    fn test_amount_conversion_rounds_up_sub_precision() {
+        let decimal = Decimal::new(1, 7); // 0.0000001
+        let smallest = to_smallest_unit(decimal, X402Asset::Usdc);
+        assert_eq!(smallest, 1);
+    }
+
+    #[test]
+    fn test_amount_conversion_non_positive_maps_to_zero() {
+        assert_eq!(to_smallest_unit(Decimal::ZERO, X402Asset::Usdc), 0);
+        assert_eq!(to_smallest_unit(Decimal::new(-1, 0), X402Asset::Usdc), 0);
+    }
+
+    #[test]
+    fn test_signature_fails_when_resource_binding_changes() {
+        let mut intent = X402PaymentIntent::new(
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "0xabcdef1234567890abcdef1234567890abcdef12",
+            1_000_000,
+            X402Asset::Usdc,
+            X402Network::SetChain,
+        )
+        .with_resource("/a", "GET")
+        .with_nonce(42);
+
+        intent.sign_with_ed25519(&[7u8; 32]).unwrap();
+        assert!(intent.verify_signature().unwrap());
+
+        let mut replayed = intent.clone();
+        replayed.resource_uri = Some("/premium".to_string());
+        assert!(!replayed.verify_signature().unwrap());
+
+        let mut method_changed = intent;
+        method_changed.resource_method = Some("POST".to_string());
+        assert!(!method_changed.verify_signature().unwrap());
     }
 
     #[test]

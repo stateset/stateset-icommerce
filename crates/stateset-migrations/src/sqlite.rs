@@ -7,7 +7,7 @@
 use std::time::Instant;
 
 use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{MigrationError, Result};
 use crate::migration::MigrationRecord;
@@ -95,6 +95,18 @@ impl SqliteMigrator {
         Ok(records)
     }
 
+    fn is_version_conflict(error: &rusqlite::Error) -> bool {
+        match error {
+            rusqlite::Error::SqliteFailure(code, msg) => {
+                code.code == rusqlite::ErrorCode::ConstraintViolation
+                    && msg
+                        .as_deref()
+                        .is_some_and(|text| text.contains("_migrations.version"))
+            }
+            _ => false,
+        }
+    }
+
     /// Run all pending migrations within transactions.
     ///
     /// Returns the list of newly applied migration records.
@@ -116,8 +128,41 @@ impl SqliteMigrator {
             let start = Instant::now();
 
             let tx = conn.unchecked_transaction()?;
-            tx.execute_batch(&migration.up_sql)?;
-            tx.execute(
+            let already_applied = tx
+                .query_row(
+                    &format!(
+                        "SELECT 1 FROM {MIGRATIONS_TABLE} WHERE version = ?1 LIMIT 1",
+                    ),
+                    rusqlite::params![migration.version],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if already_applied {
+                tx.rollback()?;
+                continue;
+            }
+
+            if let Err(exec_err) = tx.execute_batch(&migration.up_sql) {
+                // Another migrator may have committed this version while we were running.
+                let now_applied = tx
+                    .query_row(
+                        &format!(
+                            "SELECT 1 FROM {MIGRATIONS_TABLE} WHERE version = ?1 LIMIT 1",
+                        ),
+                        rusqlite::params![migration.version],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_some();
+                if now_applied {
+                    tx.rollback()?;
+                    continue;
+                }
+                return Err(exec_err.into());
+            }
+
+            let insert_result = tx.execute(
                 &format!(
                     "INSERT INTO {MIGRATIONS_TABLE} (version, name, applied_at, checksum, execution_time_ms)
                      VALUES (?1, ?2, ?3, ?4, ?5)"
@@ -129,7 +174,16 @@ impl SqliteMigrator {
                     migration.checksum,
                     start.elapsed().as_millis() as u64,
                 ],
-            )?;
+            );
+
+            if let Err(insert_err) = insert_result {
+                if Self::is_version_conflict(&insert_err) {
+                    tx.rollback()?;
+                    continue;
+                }
+                return Err(insert_err.into());
+            }
+
             tx.commit()?;
 
             let execution_time_ms = start.elapsed().as_millis() as u64;

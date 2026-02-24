@@ -201,7 +201,23 @@ impl Scheduler {
         }
 
         let ready = self.queue.dequeue_ready(now);
-        let to_run = ready.into_iter().take(available_slots);
+        let mut to_run = Vec::with_capacity(available_slots.min(ready.len()));
+        let mut deferred = Vec::new();
+        for instance in ready {
+            if instance.status == JobStatus::Cancelled {
+                continue;
+            }
+            if to_run.len() < available_slots {
+                to_run.push(instance);
+            } else {
+                deferred.push(instance);
+            }
+        }
+
+        // Keep overflow jobs scheduled instead of dropping them.
+        for instance in deferred {
+            let _ = self.queue.enqueue(instance);
+        }
 
         for mut instance in to_run {
             if instance.status == JobStatus::Cancelled {
@@ -521,6 +537,33 @@ mod tests {
         let actions = s.tick(now);
         assert_eq!(actions.len(), 1);
         assert_eq!(s.status().running_jobs, 1);
+        assert_eq!(s.status().queued_jobs, 1);
+    }
+
+    #[test]
+    fn tick_requeues_jobs_over_concurrent_limit() {
+        let mut s = make_scheduler();
+        s.max_concurrent = 1;
+
+        register_noop(&mut s, "a");
+        register_noop(&mut s, "b");
+
+        let now = Utc::now();
+        s.schedule("a", now).unwrap();
+        s.schedule("b", now).unwrap();
+
+        let first_actions = s.tick(now);
+        assert_eq!(first_actions.len(), 1);
+        assert_eq!(s.status().queued_jobs, 1);
+
+        let first_job_id = match &first_actions[0] {
+            TickAction::Execute { job_id, .. } => *job_id,
+            _ => panic!("expected execute action"),
+        };
+        s.complete(first_job_id, JobOutput::new("ok")).unwrap();
+
+        let second_actions = s.tick(now);
+        assert_eq!(second_actions.len(), 1);
     }
 
     #[test]

@@ -22,7 +22,7 @@ use tower::ServiceExt;
 
 /// Build a full application router backed by an in-memory database.
 fn app() -> axum::Router {
-    ServerBuilder::new(test_commerce()).build()
+    ServerBuilder::new(test_commerce()).without_auth().build()
 }
 
 /// Build a router and return the shared state for direct Commerce access.
@@ -30,6 +30,15 @@ fn app_with_state() -> (axum::Router, AppState) {
     let state = AppState::new(test_commerce());
     let router = stateset_http::routes::api_router().with_state(state.clone());
     (router, state)
+}
+
+fn secure_app() -> (axum::Router, String) {
+    let builder = ServerBuilder::new(test_commerce());
+    let token = builder
+        .bearer_auth_token()
+        .expect("default auth token should be configured")
+        .to_string();
+    (builder.build(), token)
 }
 
 fn test_commerce() -> Commerce {
@@ -108,6 +117,39 @@ async fn health_ready_returns_200_with_database_connected() {
     let json = body_json(resp).await;
     assert_eq!(json["status"], "ok");
     assert_eq!(json["database"], "connected");
+}
+
+#[tokio::test]
+async fn api_requires_bearer_auth_by_default() {
+    let (router, _token) = secure_app();
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_accepts_valid_bearer_auth() {
+    let (router, token) = secure_app();
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]

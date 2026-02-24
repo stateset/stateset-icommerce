@@ -94,7 +94,8 @@ impl SyncEngine {
     /// Returns [`SyncError::Transport`] if the transport operation fails.
     pub async fn push(&mut self, transport: &dyn Transport) -> Result<PushResult, SyncError> {
         let batch_size = self.config.batch_size;
-        let events = self.outbox.drain(batch_size);
+        let events: Vec<SyncEvent> =
+            self.outbox.peek(batch_size).into_iter().cloned().collect();
 
         if events.is_empty() {
             return Ok(PushResult {
@@ -104,6 +105,10 @@ impl SyncEngine {
         }
 
         let result = transport.push_events(&events).await?;
+        let accepted = result.accepted.min(events.len());
+        if accepted > 0 {
+            let _ = self.outbox.drain(accepted);
+        }
 
         self.state.remote_head = result.remote_head;
         self.state.last_push = Some(Utc::now());
@@ -474,9 +479,49 @@ mod tests {
         let result = engine.push(&transport).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SyncError::Transport(_)));
+        // Failed push must not drop local events.
+        assert_eq!(engine.pending_count(), 1);
 
         let pull_result = engine.pull(&transport).await;
         assert!(pull_result.is_err());
+    }
+
+    #[tokio::test]
+    async fn push_only_drains_accepted_events() {
+        /// Transport that only accepts one event from each batch.
+        #[derive(Debug)]
+        struct PartialAcceptTransport;
+
+        #[async_trait::async_trait]
+        impl Transport for PartialAcceptTransport {
+            async fn push_events(&self, _events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult {
+                    accepted: 1,
+                    remote_head: 1,
+                })
+            }
+
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                Ok(PullResult {
+                    events: vec![],
+                    remote_head: 1,
+                    has_more: false,
+                })
+            }
+        }
+
+        let mut engine = SyncEngine::new(make_config());
+        engine.record(make_event("a")).unwrap();
+        engine.record(make_event("b")).unwrap();
+        engine.record(make_event("c")).unwrap();
+
+        let result = engine.push(&PartialAcceptTransport).await.unwrap();
+        assert_eq!(result.accepted, 1);
+        assert_eq!(engine.pending_count(), 2);
     }
 
     #[tokio::test]

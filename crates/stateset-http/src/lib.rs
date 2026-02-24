@@ -29,6 +29,7 @@
 //!     .bind(addr)
 //!     .with_cors()
 //!     .with_request_id()
+//!     .with_bearer_auth("replace-me-with-a-secret")
 //!     .serve()
 //!     .await?;
 //! ```
@@ -65,3 +66,5 @@ pub use state::AppState;
 // Re-export the router assembly function for users who want to embed the
 // routes in a larger application.
 pub use routes::api_router;
+
+use http as _;

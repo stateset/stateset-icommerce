@@ -32,6 +32,15 @@ impl SqliteX402PaymentIntentRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
+    fn validate_input(input: &CreateX402PaymentIntent) -> Result<()> {
+        if input.amount == 0 {
+            return Err(CommerceError::ValidationError(
+                "x402 amount must be greater than zero".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     fn parse_inclusion_proof(value: Option<String>) -> rusqlite::Result<Option<Vec<String>>> {
         value
             .map(|raw| {
@@ -152,6 +161,7 @@ impl SqliteX402PaymentIntentRepository {
 
 impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     fn create(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
+        Self::validate_input(&input)?;
         let mut conn = self.conn()?;
         let tx =
             conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_db_error)?;
@@ -616,6 +626,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let mut next_nonce_by_payer: HashMap<String, u64> = HashMap::new();
 
         for input in inputs {
+            Self::validate_input(&input)?;
             let now = Utc::now();
             let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();

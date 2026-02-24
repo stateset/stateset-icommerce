@@ -78,6 +78,13 @@ fn parse_url_components(url: &str) -> A2AResult<(String, String)> {
         .unwrap_or(after_scheme.len());
     let host_with_port = &after_scheme[..host_end];
 
+    // Disallow userinfo (`user:pass@host`) to prevent host confusion bypasses.
+    if host_with_port.contains('@') {
+        return Err(A2AError::SsrfBlocked(
+            "URL userinfo is not allowed for webhook targets".to_string(),
+        ));
+    }
+
     // Strip port if present (handle IPv6 bracket notation)
     let host = if host_with_port.starts_with('[') {
         // IPv6: [::1]:8080
@@ -353,5 +360,17 @@ mod tests {
     fn parse_components_query_string() {
         let (_, host) = parse_url_components("https://example.com?foo=bar").unwrap();
         assert_eq!(host, "example.com");
+    }
+
+    #[test]
+    fn rejects_userinfo_host_confusion() {
+        let err = validate_url("http://attacker@localhost:8080/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn parse_rejects_userinfo() {
+        let err = parse_url_components("https://user:pass@example.com/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 }

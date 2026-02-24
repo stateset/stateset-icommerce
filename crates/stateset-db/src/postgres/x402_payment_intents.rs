@@ -219,7 +219,17 @@ impl PgX402PaymentIntentRepository {
         Ok(max_nonce.map(|n| n as u64 + 1).unwrap_or(0))
     }
 
+    fn validate_input(input: &CreateX402PaymentIntent) -> Result<()> {
+        if input.amount == 0 {
+            return Err(CommerceError::ValidationError(
+                "x402 amount must be greater than zero".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn create_async(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
+        Self::validate_input(&input)?;
         let auto_nonce = input.nonce.is_none();
         let attempts = if auto_nonce { Self::NONCE_RETRY_ATTEMPTS } else { 1 };
 
@@ -734,6 +744,7 @@ impl PgX402PaymentIntentRepository {
         let mut locked_payers: HashSet<String> = HashSet::new();
 
         for input in inputs {
+            Self::validate_input(&input)?;
             let now = Utc::now();
             let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
