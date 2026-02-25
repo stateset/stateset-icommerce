@@ -26,30 +26,34 @@ impl SqliteWishlistRepository {
 
 impl WishlistRepository for SqliteWishlistRepository {
     fn create(&self, _input: CreateWishlist) -> Result<Wishlist> {
-        todo!("SQLite wishlist create")
+        Err(CommerceError::DatabaseError("SQLite wishlist create not yet implemented".to_string()))
     }
 
     fn get(&self, _id: WishlistId) -> Result<Option<Wishlist>> {
-        todo!("SQLite wishlist get")
+        Err(CommerceError::DatabaseError("SQLite wishlist get not yet implemented".to_string()))
     }
 
     fn update(&self, _id: WishlistId, _input: UpdateWishlist) -> Result<Wishlist> {
-        todo!("SQLite wishlist update")
+        Err(CommerceError::DatabaseError("SQLite wishlist update not yet implemented".to_string()))
     }
 
     fn list(&self, _filter: WishlistFilter) -> Result<Vec<Wishlist>> {
-        todo!("SQLite wishlist list")
+        Err(CommerceError::DatabaseError("SQLite wishlist list not yet implemented".to_string()))
     }
 
     fn delete(&self, _id: WishlistId) -> Result<()> {
-        todo!("SQLite wishlist delete")
+        Err(CommerceError::DatabaseError("SQLite wishlist delete not yet implemented".to_string()))
     }
 
     fn add_item(&self, _wishlist_id: WishlistId, _item: AddWishlistItem) -> Result<WishlistItem> {
-        todo!("SQLite wishlist add_item")
+        Err(CommerceError::DatabaseError(
+            "SQLite wishlist add_item not yet implemented".to_string(),
+        ))
     }
 
     fn remove_item(&self, _wishlist_id: WishlistId, _product_id: ProductId) -> Result<()> {
-        todo!("SQLite wishlist remove_item")
+        Err(CommerceError::DatabaseError(
+            "SQLite wishlist remove_item not yet implemented".to_string(),
+        ))
     }
 }

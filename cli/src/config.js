@@ -84,7 +84,7 @@ export const DEFAULT_DB_PATH = './store.db';
 // CLI CONFIGURATION
 // =============================================================================
 
-export const CLI_VERSION = '0.7.6';
+export const CLI_VERSION = '0.7.7';
 
 export const CLI_DEFAULTS = {
   dbPath: DEFAULT_DB_PATH,
@@ -209,7 +209,7 @@ export const HTTP_GATEWAY_DEFAULTS = {
   host: '127.0.0.1',
   apiKeys: [], // when empty, protected routes return 401 (health/ready still public)
   allowAnonymous: false, // insecure: allow requests without keys (see http-auth.js)
-  anonymousIdentity: { name: 'anonymous', level: 'admin' },
+  anonymousIdentity: { name: 'anonymous', level: 'read' },
   allowQueryParamAuth: false, // insecure: allow ?api_key=... auth
   corsOrigins: ['loopback'], // allow browser requests from localhost/127.0.0.1 origins
   allowRemoteAdminEndpoints: false, // restrict /daemon and /remote-access to loopback by default

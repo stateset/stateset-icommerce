@@ -27,22 +27,32 @@ impl SqliteZoneShippingMethodRepository {
 
 impl ZoneShippingMethodRepository for SqliteZoneShippingMethodRepository {
     fn create(&self, _input: CreateZoneShippingMethod) -> Result<ZoneShippingMethod> {
-        todo!("SQLite zone shipping method create")
+        Err(CommerceError::DatabaseError(
+            "SQLite zone shipping method create not yet implemented".to_string(),
+        ))
     }
 
     fn get(&self, _id: ShippingMethodId) -> Result<Option<ZoneShippingMethod>> {
-        todo!("SQLite zone shipping method get")
+        Err(CommerceError::DatabaseError(
+            "SQLite zone shipping method get not yet implemented".to_string(),
+        ))
     }
 
     fn list(&self, _filter: ZoneShippingMethodFilter) -> Result<Vec<ZoneShippingMethod>> {
-        todo!("SQLite zone shipping method list")
+        Err(CommerceError::DatabaseError(
+            "SQLite zone shipping method list not yet implemented".to_string(),
+        ))
     }
 
     fn delete(&self, _id: ShippingMethodId) -> Result<()> {
-        todo!("SQLite zone shipping method delete")
+        Err(CommerceError::DatabaseError(
+            "SQLite zone shipping method delete not yet implemented".to_string(),
+        ))
     }
 
     fn calculate_rates(&self, _request: ZoneShippingRateRequest) -> Result<Vec<ZoneShippingRate>> {
-        todo!("SQLite zone shipping method calculate_rates")
+        Err(CommerceError::DatabaseError(
+            "SQLite zone shipping method calculate_rates not yet implemented".to_string(),
+        ))
     }
 }

@@ -115,11 +115,11 @@ export function createApiKeyAuth(apiKeys = [], opts = {}) {
   const allowQueryParam = opts.allowQueryParam === true;
   const anonymousIdentity = {
     name: opts.anonymousIdentity?.name || 'anonymous',
-    level: opts.anonymousIdentity?.level || 'admin',
+    level: opts.anonymousIdentity?.level || 'read',
     channels: opts.anonymousIdentity?.channels || null,
   };
   if (!Object.hasOwn(LEVELS, anonymousIdentity.level)) {
-    anonymousIdentity.level = 'admin';
+    anonymousIdentity.level = 'read';
   }
 
   function authenticate(req, url) {

@@ -6,6 +6,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-02-25
+
+### Changed
+- Bumped workspace and cross-language release metadata from `0.7.6` to `0.7.7`.
+- Expanded Rust CI/runtime checks to include `stateset-observability`, `stateset-integration-tests`, and `stateset-core --features metrics`.
+- Updated local `check:rust` coverage to match the broader CI test surface.
+
+### Fixed
+- Reduced HTTP gateway anonymous-mode blast radius by defaulting anonymous identities to `read` instead of `admin`.
+- Replaced SQLite repository `todo!()` placeholders with structured `CommerceError` responses to avoid runtime panics on unimplemented paths.
+- Hardened default deployment settings: removed production JWT placeholder secret, restricted dev API bind host to loopback, and required explicit Grafana credentials.
+
 ## [0.7.6] - 2026-02-24
 
 ### Changed

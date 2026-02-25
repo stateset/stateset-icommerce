@@ -26,23 +26,23 @@ impl SqliteSegmentRepository {
 
 impl SegmentRepository for SqliteSegmentRepository {
     fn create(&self, _input: CreateSegment) -> Result<Segment> {
-        todo!("SQLite segment create")
+        Err(CommerceError::DatabaseError("SQLite segment create not yet implemented".to_string()))
     }
 
     fn get(&self, _id: SegmentId) -> Result<Option<Segment>> {
-        todo!("SQLite segment get")
+        Err(CommerceError::DatabaseError("SQLite segment get not yet implemented".to_string()))
     }
 
     fn update(&self, _id: SegmentId, _input: UpdateSegment) -> Result<Segment> {
-        todo!("SQLite segment update")
+        Err(CommerceError::DatabaseError("SQLite segment update not yet implemented".to_string()))
     }
 
     fn list(&self, _filter: SegmentFilter) -> Result<Vec<Segment>> {
-        todo!("SQLite segment list")
+        Err(CommerceError::DatabaseError("SQLite segment list not yet implemented".to_string()))
     }
 
     fn delete(&self, _id: SegmentId) -> Result<()> {
-        todo!("SQLite segment delete")
+        Err(CommerceError::DatabaseError("SQLite segment delete not yet implemented".to_string()))
     }
 
     fn add_member(
@@ -50,11 +50,15 @@ impl SegmentRepository for SqliteSegmentRepository {
         _segment_id: SegmentId,
         _customer_id: CustomerId,
     ) -> Result<SegmentMembership> {
-        todo!("SQLite segment add_member")
+        Err(CommerceError::DatabaseError(
+            "SQLite segment add_member not yet implemented".to_string(),
+        ))
     }
 
     fn remove_member(&self, _segment_id: SegmentId, _customer_id: CustomerId) -> Result<()> {
-        todo!("SQLite segment remove_member")
+        Err(CommerceError::DatabaseError(
+            "SQLite segment remove_member not yet implemented".to_string(),
+        ))
     }
 
     fn list_members(
@@ -63,14 +67,20 @@ impl SegmentRepository for SqliteSegmentRepository {
         _limit: Option<u32>,
         _offset: Option<u32>,
     ) -> Result<Vec<SegmentMembership>> {
-        todo!("SQLite segment list_members")
+        Err(CommerceError::DatabaseError(
+            "SQLite segment list_members not yet implemented".to_string(),
+        ))
     }
 
     fn is_member(&self, _segment_id: SegmentId, _customer_id: CustomerId) -> Result<bool> {
-        todo!("SQLite segment is_member")
+        Err(CommerceError::DatabaseError(
+            "SQLite segment is_member not yet implemented".to_string(),
+        ))
     }
 
     fn count_members(&self, _segment_id: SegmentId) -> Result<u64> {
-        todo!("SQLite segment count_members")
+        Err(CommerceError::DatabaseError(
+            "SQLite segment count_members not yet implemented".to_string(),
+        ))
     }
 }

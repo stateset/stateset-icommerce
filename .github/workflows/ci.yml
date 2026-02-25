@@ -314,7 +314,10 @@ jobs:
           cargo check -p stateset-embedded --features postgres
 
       - name: Test
-        run: cargo test -p stateset-core -p stateset-db -p stateset-embedded
+        run: |
+          cargo test -p stateset-core -p stateset-db -p stateset-embedded
+          cargo test -p stateset-observability -p stateset-integration-tests
+          cargo test -p stateset-core --features metrics
 
       - name: Mutation Testing (Core)
         if: >

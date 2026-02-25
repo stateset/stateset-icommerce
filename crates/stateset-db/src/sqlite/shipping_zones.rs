@@ -26,23 +26,33 @@ impl SqliteShippingZoneRepository {
 
 impl ShippingZoneRepository for SqliteShippingZoneRepository {
     fn create(&self, _input: CreateShippingZone) -> Result<ShippingZone> {
-        todo!("SQLite shipping zone create")
+        Err(CommerceError::DatabaseError(
+            "SQLite shipping zone create not yet implemented".to_string(),
+        ))
     }
 
     fn get(&self, _id: ShippingZoneId) -> Result<Option<ShippingZone>> {
-        todo!("SQLite shipping zone get")
+        Err(CommerceError::DatabaseError(
+            "SQLite shipping zone get not yet implemented".to_string(),
+        ))
     }
 
     fn update(&self, _id: ShippingZoneId, _input: UpdateShippingZone) -> Result<ShippingZone> {
-        todo!("SQLite shipping zone update")
+        Err(CommerceError::DatabaseError(
+            "SQLite shipping zone update not yet implemented".to_string(),
+        ))
     }
 
     fn list(&self, _filter: ShippingZoneFilter) -> Result<Vec<ShippingZone>> {
-        todo!("SQLite shipping zone list")
+        Err(CommerceError::DatabaseError(
+            "SQLite shipping zone list not yet implemented".to_string(),
+        ))
     }
 
     fn delete(&self, _id: ShippingZoneId) -> Result<()> {
-        todo!("SQLite shipping zone delete")
+        Err(CommerceError::DatabaseError(
+            "SQLite shipping zone delete not yet implemented".to_string(),
+        ))
     }
 
     fn find_matching_zones(
@@ -51,6 +61,8 @@ impl ShippingZoneRepository for SqliteShippingZoneRepository {
         _region: Option<&str>,
         _postal_code: Option<&str>,
     ) -> Result<Vec<ShippingZone>> {
-        todo!("SQLite shipping zone find_matching_zones")
+        Err(CommerceError::DatabaseError(
+            "SQLite shipping zone find_matching_zones not yet implemented".to_string(),
+        ))
     }
 }

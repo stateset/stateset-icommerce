@@ -27,19 +27,25 @@ impl SqliteStoreCreditRepository {
 
 impl StoreCreditRepository for SqliteStoreCreditRepository {
     fn create(&self, _input: CreateStoreCredit) -> Result<StoreCredit> {
-        todo!("SQLite store credit create")
+        Err(CommerceError::DatabaseError(
+            "SQLite store credit create not yet implemented".to_string(),
+        ))
     }
 
     fn get(&self, _id: StoreCreditId) -> Result<Option<StoreCredit>> {
-        todo!("SQLite store credit get")
+        Err(CommerceError::DatabaseError("SQLite store credit get not yet implemented".to_string()))
     }
 
     fn list(&self, _filter: StoreCreditFilter) -> Result<Vec<StoreCredit>> {
-        todo!("SQLite store credit list")
+        Err(CommerceError::DatabaseError(
+            "SQLite store credit list not yet implemented".to_string(),
+        ))
     }
 
     fn adjust(&self, _id: StoreCreditId, _input: AdjustStoreCredit) -> Result<StoreCredit> {
-        todo!("SQLite store credit adjust")
+        Err(CommerceError::DatabaseError(
+            "SQLite store credit adjust not yet implemented".to_string(),
+        ))
     }
 
     fn apply(
@@ -48,13 +54,17 @@ impl StoreCreditRepository for SqliteStoreCreditRepository {
         _amount: Decimal,
         _reference_id: Option<String>,
     ) -> Result<StoreCreditTransaction> {
-        todo!("SQLite store credit apply")
+        Err(CommerceError::DatabaseError(
+            "SQLite store credit apply not yet implemented".to_string(),
+        ))
     }
 
     fn get_transactions(
         &self,
         _store_credit_id: StoreCreditId,
     ) -> Result<Vec<StoreCreditTransaction>> {
-        todo!("SQLite store credit get_transactions")
+        Err(CommerceError::DatabaseError(
+            "SQLite store credit get_transactions not yet implemented".to_string(),
+        ))
     }
 }

@@ -26,30 +26,44 @@ impl SqliteSearchConfigRepository {
 
 impl SearchConfigRepository for SqliteSearchConfigRepository {
     fn create(&self, _input: CreateSearchConfig) -> Result<SearchConfig> {
-        todo!("SQLite search config create")
+        Err(CommerceError::DatabaseError(
+            "SQLite search config create not yet implemented".to_string(),
+        ))
     }
 
     fn get(&self, _id: SearchConfigId) -> Result<Option<SearchConfig>> {
-        todo!("SQLite search config get")
+        Err(CommerceError::DatabaseError(
+            "SQLite search config get not yet implemented".to_string(),
+        ))
     }
 
     fn update(&self, _id: SearchConfigId, _input: UpdateSearchConfig) -> Result<SearchConfig> {
-        todo!("SQLite search config update")
+        Err(CommerceError::DatabaseError(
+            "SQLite search config update not yet implemented".to_string(),
+        ))
     }
 
     fn list(&self, _filter: SearchConfigFilter) -> Result<Vec<SearchConfig>> {
-        todo!("SQLite search config list")
+        Err(CommerceError::DatabaseError(
+            "SQLite search config list not yet implemented".to_string(),
+        ))
     }
 
     fn delete(&self, _id: SearchConfigId) -> Result<()> {
-        todo!("SQLite search config delete")
+        Err(CommerceError::DatabaseError(
+            "SQLite search config delete not yet implemented".to_string(),
+        ))
     }
 
     fn get_active(&self) -> Result<Option<SearchConfig>> {
-        todo!("SQLite search config get_active")
+        Err(CommerceError::DatabaseError(
+            "SQLite search config get_active not yet implemented".to_string(),
+        ))
     }
 
     fn set_active(&self, _id: SearchConfigId) -> Result<SearchConfig> {
-        todo!("SQLite search config set_active")
+        Err(CommerceError::DatabaseError(
+            "SQLite search config set_active not yet implemented".to_string(),
+        ))
     }
 }

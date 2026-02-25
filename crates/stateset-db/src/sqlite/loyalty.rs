@@ -27,23 +27,33 @@ impl SqliteLoyaltyProgramRepository {
 
 impl LoyaltyProgramRepository for SqliteLoyaltyProgramRepository {
     fn create(&self, _input: CreateLoyaltyProgram) -> Result<LoyaltyProgram> {
-        todo!("SQLite loyalty program create")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program create not yet implemented".to_string(),
+        ))
     }
 
     fn get(&self, _id: LoyaltyProgramId) -> Result<Option<LoyaltyProgram>> {
-        todo!("SQLite loyalty program get")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program get not yet implemented".to_string(),
+        ))
     }
 
     fn list(&self) -> Result<Vec<LoyaltyProgram>> {
-        todo!("SQLite loyalty program list")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program list not yet implemented".to_string(),
+        ))
     }
 
     fn enroll(&self, _input: EnrollCustomer) -> Result<LoyaltyAccount> {
-        todo!("SQLite loyalty program enroll")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program enroll not yet implemented".to_string(),
+        ))
     }
 
     fn get_account(&self, _id: LoyaltyAccountId) -> Result<Option<LoyaltyAccount>> {
-        todo!("SQLite loyalty program get_account")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program get_account not yet implemented".to_string(),
+        ))
     }
 
     fn get_account_by_customer(
@@ -51,15 +61,21 @@ impl LoyaltyProgramRepository for SqliteLoyaltyProgramRepository {
         _customer_id: CustomerId,
         _program_id: LoyaltyProgramId,
     ) -> Result<Option<LoyaltyAccount>> {
-        todo!("SQLite loyalty program get_account_by_customer")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program get_account_by_customer not yet implemented".to_string(),
+        ))
     }
 
     fn list_accounts(&self, _filter: LoyaltyAccountFilter) -> Result<Vec<LoyaltyAccount>> {
-        todo!("SQLite loyalty program list_accounts")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program list_accounts not yet implemented".to_string(),
+        ))
     }
 
     fn adjust_points(&self, _input: AdjustPoints) -> Result<LoyaltyTransaction> {
-        todo!("SQLite loyalty program adjust_points")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program adjust_points not yet implemented".to_string(),
+        ))
     }
 
     fn get_transactions(
@@ -67,6 +83,8 @@ impl LoyaltyProgramRepository for SqliteLoyaltyProgramRepository {
         _account_id: LoyaltyAccountId,
         _limit: Option<u32>,
     ) -> Result<Vec<LoyaltyTransaction>> {
-        todo!("SQLite loyalty program get_transactions")
+        Err(CommerceError::DatabaseError(
+            "SQLite loyalty program get_transactions not yet implemented".to_string(),
+        ))
     }
 }

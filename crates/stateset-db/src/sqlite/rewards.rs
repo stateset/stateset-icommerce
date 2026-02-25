@@ -25,18 +25,18 @@ impl SqliteRewardRepository {
 
 impl RewardRepository for SqliteRewardRepository {
     fn create(&self, _input: CreateReward) -> Result<Reward> {
-        todo!("SQLite reward create")
+        Err(CommerceError::DatabaseError("SQLite reward create not yet implemented".to_string()))
     }
 
     fn get(&self, _id: RewardId) -> Result<Option<Reward>> {
-        todo!("SQLite reward get")
+        Err(CommerceError::DatabaseError("SQLite reward get not yet implemented".to_string()))
     }
 
     fn list(&self, _filter: RewardFilter) -> Result<Vec<Reward>> {
-        todo!("SQLite reward list")
+        Err(CommerceError::DatabaseError("SQLite reward list not yet implemented".to_string()))
     }
 
     fn delete(&self, _id: RewardId) -> Result<()> {
-        todo!("SQLite reward delete")
+        Err(CommerceError::DatabaseError("SQLite reward delete not yet implemented".to_string()))
     }
 }

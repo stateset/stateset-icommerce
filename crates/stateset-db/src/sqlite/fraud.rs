@@ -27,15 +27,21 @@ impl SqliteFraudRepository {
 
 impl FraudRepository for SqliteFraudRepository {
     fn create_assessment(&self, _input: CreateFraudAssessment) -> Result<FraudAssessment> {
-        todo!("SQLite fraud create_assessment")
+        Err(CommerceError::DatabaseError(
+            "SQLite fraud create_assessment not yet implemented".to_string(),
+        ))
     }
 
     fn get_assessment(&self, _order_id: OrderId) -> Result<Option<FraudAssessment>> {
-        todo!("SQLite fraud get_assessment")
+        Err(CommerceError::DatabaseError(
+            "SQLite fraud get_assessment not yet implemented".to_string(),
+        ))
     }
 
     fn list_assessments(&self, _filter: FraudAssessmentFilter) -> Result<Vec<FraudAssessment>> {
-        todo!("SQLite fraud list_assessments")
+        Err(CommerceError::DatabaseError(
+            "SQLite fraud list_assessments not yet implemented".to_string(),
+        ))
     }
 
     fn review_assessment(
@@ -45,30 +51,40 @@ impl FraudRepository for SqliteFraudRepository {
         _reviewer: String,
         _notes: Option<String>,
     ) -> Result<FraudAssessment> {
-        todo!("SQLite fraud review_assessment")
+        Err(CommerceError::DatabaseError(
+            "SQLite fraud review_assessment not yet implemented".to_string(),
+        ))
     }
 
     fn create_rule(&self, _input: CreateFraudRule) -> Result<FraudRule> {
-        todo!("SQLite fraud create_rule")
+        Err(CommerceError::DatabaseError(
+            "SQLite fraud create_rule not yet implemented".to_string(),
+        ))
     }
 
     fn get_rule(&self, _id: FraudRuleId) -> Result<Option<FraudRule>> {
-        todo!("SQLite fraud get_rule")
+        Err(CommerceError::DatabaseError("SQLite fraud get_rule not yet implemented".to_string()))
     }
 
     fn update_rule(&self, _id: FraudRuleId, _input: UpdateFraudRule) -> Result<FraudRule> {
-        todo!("SQLite fraud update_rule")
+        Err(CommerceError::DatabaseError(
+            "SQLite fraud update_rule not yet implemented".to_string(),
+        ))
     }
 
     fn list_rules(&self, _filter: FraudRuleFilter) -> Result<Vec<FraudRule>> {
-        todo!("SQLite fraud list_rules")
+        Err(CommerceError::DatabaseError("SQLite fraud list_rules not yet implemented".to_string()))
     }
 
     fn delete_rule(&self, _id: FraudRuleId) -> Result<()> {
-        todo!("SQLite fraud delete_rule")
+        Err(CommerceError::DatabaseError(
+            "SQLite fraud delete_rule not yet implemented".to_string(),
+        ))
     }
 
     fn get_active_rules(&self) -> Result<Vec<FraudRule>> {
-        todo!("SQLite fraud get_active_rules")
+        Err(CommerceError::DatabaseError(
+            "SQLite fraud get_active_rules not yet implemented".to_string(),
+        ))
     }
 }

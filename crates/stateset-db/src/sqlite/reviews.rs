@@ -26,34 +26,40 @@ impl SqliteReviewRepository {
 
 impl ReviewRepository for SqliteReviewRepository {
     fn create(&self, _input: CreateReview) -> Result<Review> {
-        todo!("SQLite review create")
+        Err(CommerceError::DatabaseError("SQLite review create not yet implemented".to_string()))
     }
 
     fn get(&self, _id: ReviewId) -> Result<Option<Review>> {
-        todo!("SQLite review get")
+        Err(CommerceError::DatabaseError("SQLite review get not yet implemented".to_string()))
     }
 
     fn update(&self, _id: ReviewId, _input: UpdateReview) -> Result<Review> {
-        todo!("SQLite review update")
+        Err(CommerceError::DatabaseError("SQLite review update not yet implemented".to_string()))
     }
 
     fn list(&self, _filter: ReviewFilter) -> Result<Vec<Review>> {
-        todo!("SQLite review list")
+        Err(CommerceError::DatabaseError("SQLite review list not yet implemented".to_string()))
     }
 
     fn delete(&self, _id: ReviewId) -> Result<()> {
-        todo!("SQLite review delete")
+        Err(CommerceError::DatabaseError("SQLite review delete not yet implemented".to_string()))
     }
 
     fn get_summary(&self, _product_id: ProductId) -> Result<ReviewSummary> {
-        todo!("SQLite review get_summary")
+        Err(CommerceError::DatabaseError(
+            "SQLite review get_summary not yet implemented".to_string(),
+        ))
     }
 
     fn mark_helpful(&self, _id: ReviewId) -> Result<()> {
-        todo!("SQLite review mark_helpful")
+        Err(CommerceError::DatabaseError(
+            "SQLite review mark_helpful not yet implemented".to_string(),
+        ))
     }
 
     fn mark_reported(&self, _id: ReviewId) -> Result<()> {
-        todo!("SQLite review mark_reported")
+        Err(CommerceError::DatabaseError(
+            "SQLite review mark_reported not yet implemented".to_string(),
+        ))
     }
 }

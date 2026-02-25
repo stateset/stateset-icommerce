@@ -27,23 +27,25 @@ impl SqliteGiftCardRepository {
 
 impl GiftCardRepository for SqliteGiftCardRepository {
     fn create(&self, _input: CreateGiftCard) -> Result<GiftCard> {
-        todo!("SQLite gift card create")
+        Err(CommerceError::DatabaseError("SQLite gift card create not yet implemented".to_string()))
     }
 
     fn get(&self, _id: GiftCardId) -> Result<Option<GiftCard>> {
-        todo!("SQLite gift card get")
+        Err(CommerceError::DatabaseError("SQLite gift card get not yet implemented".to_string()))
     }
 
     fn get_by_code(&self, _code: &str) -> Result<Option<GiftCard>> {
-        todo!("SQLite gift card get_by_code")
+        Err(CommerceError::DatabaseError(
+            "SQLite gift card get_by_code not yet implemented".to_string(),
+        ))
     }
 
     fn update(&self, _id: GiftCardId, _input: UpdateGiftCard) -> Result<GiftCard> {
-        todo!("SQLite gift card update")
+        Err(CommerceError::DatabaseError("SQLite gift card update not yet implemented".to_string()))
     }
 
     fn list(&self, _filter: GiftCardFilter) -> Result<Vec<GiftCard>> {
-        todo!("SQLite gift card list")
+        Err(CommerceError::DatabaseError("SQLite gift card list not yet implemented".to_string()))
     }
 
     fn charge(
@@ -52,7 +54,7 @@ impl GiftCardRepository for SqliteGiftCardRepository {
         _amount: Decimal,
         _reference_id: Option<String>,
     ) -> Result<GiftCardTransaction> {
-        todo!("SQLite gift card charge")
+        Err(CommerceError::DatabaseError("SQLite gift card charge not yet implemented".to_string()))
     }
 
     fn refund(
@@ -61,14 +63,18 @@ impl GiftCardRepository for SqliteGiftCardRepository {
         _amount: Decimal,
         _reference_id: Option<String>,
     ) -> Result<GiftCardTransaction> {
-        todo!("SQLite gift card refund")
+        Err(CommerceError::DatabaseError("SQLite gift card refund not yet implemented".to_string()))
     }
 
     fn disable(&self, _id: GiftCardId) -> Result<GiftCard> {
-        todo!("SQLite gift card disable")
+        Err(CommerceError::DatabaseError(
+            "SQLite gift card disable not yet implemented".to_string(),
+        ))
     }
 
     fn get_transactions(&self, _gift_card_id: GiftCardId) -> Result<Vec<GiftCardTransaction>> {
-        todo!("SQLite gift card get_transactions")
+        Err(CommerceError::DatabaseError(
+            "SQLite gift card get_transactions not yet implemented".to_string(),
+        ))
     }
 }

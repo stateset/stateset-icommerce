@@ -119,6 +119,13 @@ describe('createApiKeyAuth', () => {
       assert.strictEqual(result.identity.name, 'anonymous');
       assert.strictEqual(result.identity.level, 'admin');
     });
+
+    it('defaults anonymous identity to read-level', () => {
+      const auth = createApiKeyAuth([], { allowAnonymous: true });
+      const result = auth.authenticate(mockReq(), mockUrl());
+      assert.strictEqual(result.authenticated, true);
+      assert.strictEqual(result.identity.level, 'read');
+    });
   });
 
   describe('with API keys', () => {
