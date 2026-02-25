@@ -9,10 +9,10 @@ use stateset_core::{
     AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine,
     BalanceSide, BatchResult, CommerceError, CreateAutoPostingConfig, CreateGlAccount,
     CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, GeneralLedgerRepository, GlAccount,
-    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, IncomeStatementLine, JournalEntry,
-    JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType,
-    PeriodStatus, Result, TrialBalance, TrialBalanceLine, create_default_chart_of_accounts,
-    generate_journal_entry_number,
+    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, IncomeStatementLine, InvoiceId,
+    JournalEntry, JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus,
+    JournalEntryType, PeriodStatus, Result, TrialBalance, TrialBalanceLine,
+    create_default_chart_of_accounts, generate_journal_entry_number,
 };
 use uuid::Uuid;
 
@@ -1359,6 +1359,7 @@ impl PgGeneralLedgerRepository {
             let (debit_balance, credit_balance) = match normal {
                 BalanceSide::Debit => (balance, Decimal::ZERO),
                 BalanceSide::Credit => (Decimal::ZERO, balance),
+                _ => (balance, Decimal::ZERO),
             };
             let account_type: AccountType = account_type.parse().map_err(|e| {
                 CommerceError::DatabaseError(format!(
@@ -1818,8 +1819,8 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.set_auto_posting_config_async(input))
     }
 
-    fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry> {
-        block_on(self.auto_post_invoice_async(invoice_id))
+    fn auto_post_invoice(&self, invoice_id: InvoiceId) -> Result<JournalEntry> {
+        block_on(self.auto_post_invoice_async(invoice_id.into_uuid()))
     }
 
     fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {

@@ -1231,6 +1231,7 @@ impl PgCostAccountingRepository {
             CostMethod::Average => "COALESCE(ic.average_cost, 0)",
             CostMethod::Fifo | CostMethod::Lifo => "COALESCE(ic.average_cost, 0)",
             CostMethod::Specific => "COALESCE(ic.last_cost, 0)",
+            _ => "COALESCE(ic.average_cost, 0)",
         };
 
         let sql = format!(

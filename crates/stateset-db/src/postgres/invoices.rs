@@ -5,9 +5,9 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::{FromRow, postgres::PgPool};
 use stateset_core::{
-    BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter,
-    InvoiceItem, InvoiceRepository, InvoiceStatus, InvoiceType, RecordInvoicePayment, Result,
-    UpdateInvoice, generate_invoice_number, validate_batch_size,
+    BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, CustomerId, Invoice,
+    InvoiceFilter, InvoiceId, InvoiceItem, InvoiceRepository, InvoiceStatus, InvoiceType, OrderId,
+    RecordInvoicePayment, Result, UpdateInvoice, generate_invoice_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -64,10 +64,10 @@ impl InvoiceRow {
         })?;
 
         Ok(Invoice {
-            id: self.id,
+            id: self.id.into(),
             invoice_number: self.invoice_number,
-            customer_id: self.customer_id,
-            order_id: self.order_id,
+            customer_id: self.customer_id.into(),
+            order_id: self.order_id.map(Into::into),
             status,
             invoice_type,
             invoice_date: self.invoice_date,
@@ -128,9 +128,9 @@ impl From<InvoiceItemRow> for InvoiceItem {
     fn from(row: InvoiceItemRow) -> Self {
         InvoiceItem {
             id: row.id,
-            invoice_id: row.invoice_id,
-            order_item_id: row.order_item_id,
-            product_id: row.product_id,
+            invoice_id: row.invoice_id.into(),
+            order_item_id: row.order_item_id.map(Into::into),
+            product_id: row.product_id.map(Into::into),
             sku: row.sku,
             description: row.description,
             quantity: row.quantity,
@@ -535,12 +535,16 @@ impl PgInvoiceRepository {
     }
 
     pub async fn for_customer_async(&self, customer_id: Uuid) -> Result<Vec<Invoice>> {
-        self.list_async(InvoiceFilter { customer_id: Some(customer_id), ..Default::default() })
-            .await
+        self.list_async(InvoiceFilter {
+            customer_id: Some(customer_id.into()),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn for_order_async(&self, order_id: Uuid) -> Result<Vec<Invoice>> {
-        self.list_async(InvoiceFilter { order_id: Some(order_id), ..Default::default() }).await
+        self.list_async(InvoiceFilter { order_id: Some(order_id.into()), ..Default::default() })
+            .await
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -1003,7 +1007,7 @@ impl PgInvoiceRepository {
 
                 items.push(InvoiceItem {
                     id: item_id,
-                    invoice_id: id,
+                    invoice_id: id.into(),
                     order_item_id: item.order_item_id,
                     product_id: item.product_id,
                     sku: item.sku,
@@ -1047,7 +1051,7 @@ impl PgInvoiceRepository {
             .map_err(map_db_error)?;
 
             invoices.push(Invoice {
-                id,
+                id: id.into(),
                 invoice_number,
                 customer_id: input.customer_id,
                 order_id: input.order_id,
@@ -1269,60 +1273,60 @@ impl InvoiceRepository for PgInvoiceRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Invoice>> {
-        super::block_on(self.get_async(id))
+    fn get(&self, id: InvoiceId) -> Result<Option<Invoice>> {
+        super::block_on(self.get_async(id.into_uuid()))
     }
 
     fn get_by_number(&self, invoice_number: &str) -> Result<Option<Invoice>> {
         super::block_on(self.get_by_number_async(invoice_number))
     }
 
-    fn update(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: InvoiceId, input: UpdateInvoice) -> Result<Invoice> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: InvoiceFilter) -> Result<Vec<Invoice>> {
         super::block_on(self.list_async(filter))
     }
 
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Invoice>> {
-        super::block_on(self.for_customer_async(customer_id))
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Invoice>> {
+        super::block_on(self.for_customer_async(customer_id.into_uuid()))
     }
 
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Invoice>> {
-        super::block_on(self.for_order_async(order_id))
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Invoice>> {
+        super::block_on(self.for_order_async(order_id.into_uuid()))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
-        super::block_on(self.delete_async(id))
+    fn delete(&self, id: InvoiceId) -> Result<()> {
+        super::block_on(self.delete_async(id.into_uuid()))
     }
 
-    fn send(&self, id: Uuid) -> Result<Invoice> {
-        super::block_on(self.send_async(id))
+    fn send(&self, id: InvoiceId) -> Result<Invoice> {
+        super::block_on(self.send_async(id.into_uuid()))
     }
 
-    fn mark_viewed(&self, id: Uuid) -> Result<Invoice> {
-        super::block_on(self.mark_viewed_async(id))
+    fn mark_viewed(&self, id: InvoiceId) -> Result<Invoice> {
+        super::block_on(self.mark_viewed_async(id.into_uuid()))
     }
 
-    fn record_payment(&self, id: Uuid, payment: RecordInvoicePayment) -> Result<Invoice> {
-        super::block_on(self.record_payment_async(id, payment))
+    fn record_payment(&self, id: InvoiceId, payment: RecordInvoicePayment) -> Result<Invoice> {
+        super::block_on(self.record_payment_async(id.into_uuid(), payment))
     }
 
-    fn void(&self, id: Uuid) -> Result<Invoice> {
-        super::block_on(self.void_async(id))
+    fn void(&self, id: InvoiceId) -> Result<Invoice> {
+        super::block_on(self.void_async(id.into_uuid()))
     }
 
-    fn write_off(&self, id: Uuid) -> Result<Invoice> {
-        super::block_on(self.write_off_async(id))
+    fn write_off(&self, id: InvoiceId) -> Result<Invoice> {
+        super::block_on(self.write_off_async(id.into_uuid()))
     }
 
-    fn dispute(&self, id: Uuid) -> Result<Invoice> {
-        super::block_on(self.dispute_async(id))
+    fn dispute(&self, id: InvoiceId) -> Result<Invoice> {
+        super::block_on(self.dispute_async(id.into_uuid()))
     }
 
-    fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        super::block_on(self.add_item_async(invoice_id, item))
+    fn add_item(&self, invoice_id: InvoiceId, item: CreateInvoiceItem) -> Result<InvoiceItem> {
+        super::block_on(self.add_item_async(invoice_id.into_uuid(), item))
     }
 
     fn update_item(&self, item_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
@@ -1333,12 +1337,12 @@ impl InvoiceRepository for PgInvoiceRepository {
         super::block_on(self.remove_item_async(item_id))
     }
 
-    fn get_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
-        super::block_on(self.get_items_async(invoice_id))
+    fn get_items(&self, invoice_id: InvoiceId) -> Result<Vec<InvoiceItem>> {
+        super::block_on(self.get_items_async(invoice_id.into_uuid()))
     }
 
-    fn recalculate(&self, id: Uuid) -> Result<Invoice> {
-        super::block_on(self.recalculate_invoice_async(id))
+    fn recalculate(&self, id: InvoiceId) -> Result<Invoice> {
+        super::block_on(self.recalculate_invoice_async(id.into_uuid()))
     }
 
     fn get_overdue(&self) -> Result<Vec<Invoice>> {
@@ -1359,23 +1363,36 @@ impl InvoiceRepository for PgInvoiceRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<BatchResult<Invoice>> {
-        super::block_on(self.update_batch_async(updates))
+    fn update_batch(
+        &self,
+        updates: Vec<(InvoiceId, UpdateInvoice)>,
+    ) -> Result<BatchResult<Invoice>> {
+        let raw_updates: Vec<(Uuid, UpdateInvoice)> =
+            updates.into_iter().map(|(id, input)| (id.into_uuid(), input)).collect();
+        super::block_on(self.update_batch_async(raw_updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<Vec<Invoice>> {
-        super::block_on(self.update_batch_atomic_async(updates))
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(InvoiceId, UpdateInvoice)>,
+    ) -> Result<Vec<Invoice>> {
+        let raw_updates: Vec<(Uuid, UpdateInvoice)> =
+            updates.into_iter().map(|(id, input)| (id.into_uuid(), input)).collect();
+        super::block_on(self.update_batch_atomic_async(raw_updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
-        super::block_on(self.delete_batch_async(ids))
+    fn delete_batch(&self, ids: Vec<InvoiceId>) -> Result<BatchResult<Uuid>> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.delete_batch_async(raw_ids))
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
-        super::block_on(self.delete_batch_atomic_async(ids))
+    fn delete_batch_atomic(&self, ids: Vec<InvoiceId>) -> Result<()> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.delete_batch_atomic_async(raw_ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Invoice>> {
-        super::block_on(self.get_batch_async(ids))
+    fn get_batch(&self, ids: Vec<InvoiceId>) -> Result<Vec<Invoice>> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.get_batch_async(raw_ids))
     }
 }

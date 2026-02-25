@@ -2199,7 +2199,7 @@ impl Orders {
         }
 
         // Now get immutable references for the response
-        let data = store.orders.get(&uuid).unwrap();
+        let data = store.orders.get(&uuid).ok_or_else(|| JsValue::from_str("Order not found"))?;
         let items = store.order_items.get(&uuid).cloned().unwrap_or_default();
         let js_items: Vec<JsOrderItem> = items.iter().map(|i| i.into()).collect();
 
@@ -2239,7 +2239,7 @@ impl Orders {
         }
 
         // Now get immutable references for the response
-        let data = store.orders.get(&uuid).unwrap();
+        let data = store.orders.get(&uuid).ok_or_else(|| JsValue::from_str("Order not found"))?;
         let items = store.order_items.get(&uuid).cloned().unwrap_or_default();
         let js_items: Vec<JsOrderItem> = items.iter().map(|i| i.into()).collect();
 
@@ -3710,7 +3710,7 @@ impl Carts {
         store.cart_items.entry(uuid).or_default().push(item);
 
         // Now update cart totals
-        let cart = store.carts.get_mut(&uuid).unwrap();
+        let cart = store.carts.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Cart not found"))?;
         cart.subtotal += total;
         cart.grand_total =
             cart.subtotal + cart.tax_amount + cart.shipping_amount - cart.discount_amount;
@@ -3748,7 +3748,10 @@ impl Carts {
 
         // Update cart totals if item was removed
         if let Some(total) = item_total {
-            let cart = store.carts.get_mut(&cart_uuid).unwrap();
+            let cart = store
+                .carts
+                .get_mut(&cart_uuid)
+                .ok_or_else(|| JsValue::from_str("Cart not found"))?;
             cart.subtotal -= total;
             cart.grand_total =
                 cart.subtotal + cart.tax_amount + cart.shipping_amount - cart.discount_amount;
@@ -3773,7 +3776,7 @@ impl Carts {
         store.cart_items.insert(uuid, Vec::new());
 
         // Now update cart totals
-        let cart = store.carts.get_mut(&uuid).unwrap();
+        let cart = store.carts.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Cart not found"))?;
         cart.subtotal = Money::zero();
         cart.grand_total = cart.tax_amount + cart.shipping_amount - cart.discount_amount;
         cart.updated_at = Utc::now().to_rfc3339();
@@ -3803,7 +3806,7 @@ impl Carts {
             .unwrap_or_default();
 
         // Now update the cart (mutable borrow)
-        let cart = store.carts.get_mut(&uuid).unwrap();
+        let cart = store.carts.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Cart not found"))?;
         cart.payment_method = Some(input.payment_method);
         cart.updated_at = Utc::now().to_rfc3339();
 
@@ -3944,7 +3947,7 @@ impl Carts {
             .unwrap_or_default();
 
         // Now update the cart (mutable borrow)
-        let cart = store.carts.get_mut(&uuid).unwrap();
+        let cart = store.carts.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Cart not found"))?;
         cart.status = "cancelled".to_string();
         cart.updated_at = Utc::now().to_rfc3339();
 
@@ -4477,7 +4480,7 @@ impl Subscriptions {
         let cycles: Vec<JsBillingCycle> = store
             .billing_cycles
             .values()
-            .filter(|c| sub_uuid.map_or(true, |id| c.subscription_id == id))
+            .filter(|c| sub_uuid.is_none_or(|id| c.subscription_id == id))
             .map(|c| c.into())
             .collect();
 
@@ -4541,6 +4544,12 @@ impl Subscriptions {
 #[wasm_bindgen]
 pub struct Promotions {
     store: StoreRef,
+}
+
+impl Default for Promotions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[wasm_bindgen]
@@ -4649,8 +4658,8 @@ impl Promotions {
             .promotions
             .values()
             .filter(|p| {
-                let status_match = status.as_ref().map_or(true, |s| &p.status == s);
-                let active_match = is_active.map_or(true, |active| {
+                let status_match = status.as_ref().is_none_or(|s| &p.status == s);
+                let active_match = is_active.is_none_or(|active| {
                     if active { p.status == "active" } else { p.status != "active" }
                 });
                 status_match && active_match
@@ -4851,7 +4860,7 @@ impl Promotions {
         let coupons: Vec<JsCoupon> = store
             .coupons
             .values()
-            .filter(|c| promo_uuid.map_or(true, |id| c.promotion_id == id))
+            .filter(|c| promo_uuid.is_none_or(|id| c.promotion_id == id))
             .map(|c| c.into())
             .collect();
 
@@ -4986,6 +4995,7 @@ impl Promotions {
 
     /// Record promotion usage.
     #[wasm_bindgen(js_name = recordUsage)]
+    #[allow(clippy::too_many_arguments)]
     pub fn record_usage(
         &self,
         promotion_id: &str,
@@ -5558,8 +5568,8 @@ impl Tax {
             .tax_jurisdictions
             .values()
             .filter(|j| {
-                let country_match = country_code.as_ref().map_or(true, |c| &j.country_code == c);
-                let level_match = level.as_ref().map_or(true, |l| &j.level == l);
+                let country_match = country_code.as_ref().is_none_or(|c| &j.country_code == c);
+                let level_match = level.as_ref().is_none_or(|l| &j.level == l);
                 country_match && level_match
             })
             .map(|d| d.into())
@@ -5634,7 +5644,7 @@ impl Tax {
         let rates: Vec<JsTaxRate> = store
             .tax_rates
             .values()
-            .filter(|r| filter_id.map_or(true, |id| r.jurisdiction_id == id))
+            .filter(|r| filter_id.is_none_or(|id| r.jurisdiction_id == id))
             .map(|d| d.into())
             .collect();
 
@@ -5752,9 +5762,10 @@ impl Tax {
                 // Simple matching - in a real implementation this would be more sophisticated
                 if let Some(jurisdiction) = store.tax_jurisdictions.get(&r.jurisdiction_id) {
                     let country_match = jurisdiction.country_code == input.shipping_address.country;
-                    let state_match = input.shipping_address.state.as_ref().map_or(true, |s| {
-                        jurisdiction.state_code.as_ref().map_or(true, |js| js == s)
-                    });
+                    let state_match =
+                        input.shipping_address.state.as_ref().is_none_or(|s| {
+                            jurisdiction.state_code.as_ref().is_none_or(|js| js == s)
+                        });
                     country_match && state_match && r.active
                 } else {
                     false
@@ -5874,7 +5885,7 @@ impl Tax {
         let mut shipping_tax = Money::zero();
         if has_shipping {
             let settings = store.tax_settings.as_ref();
-            if settings.map_or(true, |s| s.tax_shipping) {
+            if settings.is_none_or(|s| s.tax_shipping) {
                 let mut shipping_taxable =
                     if shipping_amount > Money::zero() { shipping_amount } else { Money::zero() };
                 if shipping_taxable < Money::zero() {
@@ -5963,7 +5974,7 @@ impl Tax {
                     let country_match = j.country_code == country;
                     let state_match = state
                         .as_ref()
-                        .map_or(true, |s| j.state_code.as_ref().map_or(true, |js| js == s));
+                        .is_none_or(|s| j.state_code.as_ref().is_none_or(|js| js == s));
                     country_match && state_match && r.active
                 } else {
                     false
@@ -6111,7 +6122,7 @@ impl Tax {
     /// Check if tax calculation is enabled.
     #[wasm_bindgen(js_name = isEnabled)]
     pub fn is_enabled(&self) -> bool {
-        self.store.borrow().tax_settings.as_ref().map_or(true, |s| s.enabled)
+        self.store.borrow().tax_settings.as_ref().is_none_or(|s| s.enabled)
     }
 
     // ========================================================================

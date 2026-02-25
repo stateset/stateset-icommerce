@@ -21,6 +21,7 @@ rust_decimal = { workspace = true }
 thiserror = { workspace = true }
 proptest = { version = "1.4", optional = true }
 proptest-derive = { version = "0.5", optional = true }
+sqlx = { workspace = true, optional = true, default-features = false, features = ["postgres", "uuid"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -32,3 +33,4 @@ proptest-derive = "0.5"
 default = ["std"]
 std = []
 arbitrary = ["dep:proptest", "dep:proptest-derive"]
+sqlx-postgres = ["dep:sqlx"]

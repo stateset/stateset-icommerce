@@ -603,9 +603,8 @@ impl X402PaymentIntent {
     }
 
     /// Get canonical JSON for signing (JCS - RFC 8785).
-    pub fn canonical_signing_data(&self) -> String {
+    pub fn canonical_signing_data(&self) -> Result<String, X402CryptoError> {
         self.try_canonical_signing_data()
-            .expect("x402 canonical signing payload serialization failed")
     }
 
     /// Compute sequencer-compatible signing hash (`X402_PAYMENT_V1`)
@@ -793,8 +792,8 @@ impl X402PaymentRequired {
     }
 
     /// Encode as base64 for HTTP header.
-    pub fn to_header_value(&self) -> String {
-        self.try_to_header_value().expect("x402 payment-required header serialization failed")
+    pub fn to_header_value(&self) -> std::result::Result<String, serde_json::Error> {
+        self.try_to_header_value()
     }
 
     /// Decode from HTTP header value
@@ -1314,7 +1313,7 @@ mod tests {
         let req =
             X402PaymentRequired::new("0xpayee", 1_000_000, X402Asset::Usdc, "/api/resource", "GET");
 
-        let header = req.to_header_value();
+        let header = req.to_header_value().unwrap();
         let decoded = X402PaymentRequired::from_header_value(&header).unwrap();
 
         assert_eq!(decoded.payee_address, "0xpayee");

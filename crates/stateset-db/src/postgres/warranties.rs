@@ -89,6 +89,9 @@ impl PgWarrantyRepository {
             WarrantyStatus::Voided => {
                 Err(CommerceError::ValidationError("Warranty is already voided".to_string()))
             }
+            _ => Err(CommerceError::ValidationError(
+                "Warranty status does not allow void".to_string(),
+            )),
         }
     }
 
@@ -101,6 +104,9 @@ impl PgWarrantyRepository {
             WarrantyStatus::Voided => {
                 Err(CommerceError::ValidationError("Cannot expire a voided warranty".to_string()))
             }
+            _ => Err(CommerceError::ValidationError(
+                "Warranty status does not allow expire".to_string(),
+            )),
         }
     }
 
@@ -120,6 +126,9 @@ impl PgWarrantyRepository {
             WarrantyStatus::Voided => {
                 Err(CommerceError::ValidationError("Cannot transfer a voided warranty".to_string()))
             }
+            _ => Err(CommerceError::ValidationError(
+                "Warranty status does not allow transfer".to_string(),
+            )),
         }
     }
 
@@ -142,6 +151,9 @@ impl PgWarrantyRepository {
             }
             ClaimStatus::InProgress => Err(CommerceError::ValidationError(
                 "Cannot approve a claim already in progress".to_string(),
+            )),
+            _ => Err(CommerceError::ValidationError(
+                "Claim status does not allow approval".to_string(),
             )),
         }
     }
@@ -166,6 +178,9 @@ impl PgWarrantyRepository {
             ClaimStatus::InProgress => {
                 Err(CommerceError::ValidationError("Cannot deny a claim in progress".to_string()))
             }
+            _ => Err(CommerceError::ValidationError(
+                "Claim status does not allow denial".to_string(),
+            )),
         }
     }
 
@@ -190,6 +205,11 @@ impl PgWarrantyRepository {
             ClaimStatus::Cancelled => {
                 return Err(CommerceError::ValidationError(
                     "Cannot complete a cancelled claim".to_string(),
+                ));
+            }
+            _ => {
+                return Err(CommerceError::ValidationError(
+                    "Claim status does not allow completion".to_string(),
                 ));
             }
         }
@@ -221,6 +241,9 @@ impl PgWarrantyRepository {
             ClaimStatus::Cancelled => {
                 Err(CommerceError::ValidationError("Claim is already cancelled".to_string()))
             }
+            _ => Err(CommerceError::ValidationError(
+                "Claim status does not allow cancellation".to_string(),
+            )),
         }
     }
 
@@ -261,6 +284,7 @@ impl PgWarrantyRepository {
                 matches!(next, ClaimStatus::Completed | ClaimStatus::Cancelled)
             }
             ClaimStatus::Denied | ClaimStatus::Completed | ClaimStatus::Cancelled => false,
+            _ => false,
         };
 
         if allowed {
@@ -1299,7 +1323,7 @@ impl WarrantyRepository for PgWarrantyRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Warranty>> {
+    fn get(&self, id: WarrantyId) -> Result<Option<Warranty>> {
         super::block_on(self.get_async(id))
     }
 
@@ -1311,7 +1335,7 @@ impl WarrantyRepository for PgWarrantyRepository {
         super::block_on(self.get_by_serial_async(serial_number))
     }
 
-    fn update(&self, id: Uuid, input: UpdateWarranty) -> Result<Warranty> {
+    fn update(&self, id: WarrantyId, input: UpdateWarranty) -> Result<Warranty> {
         super::block_on(self.update_async(id, input))
     }
 
@@ -1319,23 +1343,23 @@ impl WarrantyRepository for PgWarrantyRepository {
         super::block_on(self.list_async(filter))
     }
 
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Warranty>> {
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Warranty>> {
         super::block_on(self.for_customer_async(customer_id))
     }
 
-    fn for_order(&self, order_id: Uuid) -> Result<Vec<Warranty>> {
+    fn for_order(&self, order_id: OrderId) -> Result<Vec<Warranty>> {
         super::block_on(self.for_order_async(order_id))
     }
 
-    fn void(&self, id: Uuid) -> Result<Warranty> {
+    fn void(&self, id: WarrantyId) -> Result<Warranty> {
         super::block_on(self.void_async(id))
     }
 
-    fn expire(&self, id: Uuid) -> Result<Warranty> {
+    fn expire(&self, id: WarrantyId) -> Result<Warranty> {
         super::block_on(self.expire_async(id))
     }
 
-    fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
+    fn transfer(&self, id: WarrantyId, new_customer_id: CustomerId) -> Result<Warranty> {
         super::block_on(self.transfer_async(id, new_customer_id))
     }
 
@@ -1359,7 +1383,7 @@ impl WarrantyRepository for PgWarrantyRepository {
         super::block_on(self.list_claims_async(filter))
     }
 
-    fn get_claims(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>> {
+    fn get_claims(&self, warranty_id: WarrantyId) -> Result<Vec<WarrantyClaim>> {
         super::block_on(self.get_claims_async(warranty_id))
     }
 
@@ -1397,23 +1421,29 @@ impl WarrantyRepository for PgWarrantyRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(WarrantyId, UpdateWarranty)>,
+    ) -> Result<BatchResult<Warranty>> {
         super::block_on(self.update_batch_async(updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>> {
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(WarrantyId, UpdateWarranty)>,
+    ) -> Result<Vec<Warranty>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+    fn delete_batch(&self, ids: Vec<WarrantyId>) -> Result<BatchResult<Uuid>> {
         super::block_on(self.delete_batch_async(ids))
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+    fn delete_batch_atomic(&self, ids: Vec<WarrantyId>) -> Result<()> {
         super::block_on(self.delete_batch_atomic_async(ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Warranty>> {
+    fn get_batch(&self, ids: Vec<WarrantyId>) -> Result<Vec<Warranty>> {
         super::block_on(self.get_batch_async(ids))
     }
 }

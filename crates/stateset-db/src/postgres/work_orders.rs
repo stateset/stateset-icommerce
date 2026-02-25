@@ -116,7 +116,7 @@ impl PgWorkOrderRepository {
         Ok(WorkOrder {
             id,
             work_order_number,
-            product_id,
+            product_id: product_id.into(),
             bom_id,
             work_center_id,
             assigned_to,

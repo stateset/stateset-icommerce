@@ -7,7 +7,7 @@ use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
     BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
-    OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentMethodType,
+    InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentMethodType,
     PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
     generate_payment_number, generate_refund_number, validate_batch_size,
 };
@@ -1160,8 +1160,8 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.for_order_async(order_id.into_uuid()))
     }
 
-    fn for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
-        super::block_on(self.for_invoice_async(invoice_id))
+    fn for_invoice(&self, invoice_id: InvoiceId) -> Result<Vec<Payment>> {
+        super::block_on(self.for_invoice_async(invoice_id.into_uuid()))
     }
 
     fn mark_processing(&self, id: PaymentId) -> Result<Payment> {

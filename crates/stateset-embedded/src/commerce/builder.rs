@@ -1,3 +1,5 @@
+#[cfg(feature = "postgres")]
+use super::block_on_postgres;
 use super::{Commerce, CommerceBackend};
 
 use std::sync::Arc;
@@ -151,14 +153,12 @@ impl CommerceBuilder {
         // Check if PostgreSQL URL is set
         #[cfg(feature = "postgres")]
         if let Some(url) = self.postgres_url {
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {}", e)))?;
-
-            let db = rt.block_on(PostgresDatabase::connect_with_options(
-                &url,
-                self.max_connections.unwrap_or(10),
-                self.acquire_timeout_secs.unwrap_or(30),
-            ))?;
+            let max_connections = self.max_connections.unwrap_or(10);
+            let acquire_timeout_secs = self.acquire_timeout_secs.unwrap_or(30);
+            let db = block_on_postgres(move || async move {
+                PostgresDatabase::connect_with_options(&url, max_connections, acquire_timeout_secs)
+                    .await
+            })?;
             let db: Arc<dyn Database> = Arc::new(db);
 
             return Ok(Commerce {

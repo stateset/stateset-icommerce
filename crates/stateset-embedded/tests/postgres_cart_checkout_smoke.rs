@@ -94,7 +94,7 @@ async fn postgres_cart_checkout_creates_order() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id.into_uuid()),
+            customer_id: Some(customer.id),
             customer_email: Some(customer.email.clone()),
             customer_name: Some(format!("{} {}", customer.first_name, customer.last_name)),
             ..Default::default()
@@ -105,7 +105,7 @@ async fn postgres_cart_checkout_creates_order() {
     commerce
         .carts()
         .add_item(
-            cart.id,
+            cart.id.into_uuid(),
             AddCartItem {
                 product_id: Some(product.id),
                 sku: sku.clone(),
@@ -120,14 +120,14 @@ async fn postgres_cart_checkout_creates_order() {
 
     commerce
         .carts()
-        .set_shipping_address(cart.id, test_address())
+        .set_shipping_address(cart.id.into_uuid(), test_address())
         .await
         .expect("set shipping address");
 
     commerce
         .carts()
         .set_payment(
-            cart.id,
+            cart.id.into_uuid(),
             SetCartPayment {
                 payment_method: "credit_card".into(),
                 payment_token: Some("tok_test".into()),
@@ -137,9 +137,13 @@ async fn postgres_cart_checkout_creates_order() {
         .await
         .expect("set payment");
 
-    let result = commerce.carts().complete(cart.id).await.expect("complete checkout");
+    let result = commerce.carts().complete(cart.id.into_uuid()).await.expect("complete checkout");
 
-    let second = commerce.carts().complete(cart.id).await.expect("checkout should be idempotent");
+    let second = commerce
+        .carts()
+        .complete(cart.id.into_uuid())
+        .await
+        .expect("checkout should be idempotent");
     assert_eq!(second.order_id, result.order_id);
     assert_eq!(second.order_number, result.order_number);
 
@@ -148,13 +152,18 @@ async fn postgres_cart_checkout_creates_order() {
     assert!(result.order_number.starts_with("ORD-"));
     assert!(result.total_charged > dec!(0));
 
-    let updated_cart = commerce.carts().get(cart.id).await.expect("get cart").expect("cart row");
+    let updated_cart =
+        commerce.carts().get(cart.id.into_uuid()).await.expect("get cart").expect("cart row");
     assert_eq!(updated_cart.status, CartStatus::Completed);
     assert_eq!(updated_cart.order_id, Some(result.order_id));
     assert_eq!(updated_cart.order_number.as_deref(), Some(result.order_number.as_str()));
 
-    let order =
-        commerce.orders().get(result.order_id).await.expect("get order").expect("order row");
+    let order = commerce
+        .orders()
+        .get(result.order_id.into_uuid())
+        .await
+        .expect("get order")
+        .expect("order row");
     assert_eq!(order.customer_id, customer.id);
     assert_eq!(order.status, OrderStatus::Confirmed);
     assert_eq!(order.payment_status, PaymentStatus::Paid);
@@ -224,7 +233,7 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id.into_uuid()),
+            customer_id: Some(customer.id),
             customer_email: Some(customer.email.clone()),
             customer_name: Some(format!("{} {}", customer.first_name, customer.last_name)),
             ..Default::default()
@@ -235,7 +244,7 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
     commerce
         .carts()
         .add_item(
-            cart.id,
+            cart.id.into_uuid(),
             AddCartItem {
                 product_id: Some(product.id),
                 sku: sku.clone(),
@@ -250,14 +259,14 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
 
     commerce
         .carts()
-        .set_shipping_address(cart.id, test_address())
+        .set_shipping_address(cart.id.into_uuid(), test_address())
         .await
         .expect("set shipping address");
 
     commerce
         .carts()
         .set_payment(
-            cart.id,
+            cart.id.into_uuid(),
             SetCartPayment {
                 payment_method: "credit_card".into(),
                 payment_token: Some("tok_test".into()),
@@ -271,7 +280,7 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
     let order = db
         .orders()
         .create_from_cart_async(
-            cart.id,
+            cart.id.into_uuid(),
             CreateOrder {
                 customer_id: customer.id,
                 items: vec![CreateOrderItem {
@@ -296,18 +305,19 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
 
     let result = commerce
         .carts()
-        .complete(cart.id)
+        .complete(cart.id.into_uuid())
         .await
         .expect("checkout should complete the cart and reuse the existing order");
     assert_eq!(result.order_id, order.id);
     assert_eq!(result.order_number, order.order_number);
 
-    let updated_cart = commerce.carts().get(cart.id).await.expect("get cart").expect("cart row");
+    let updated_cart =
+        commerce.carts().get(cart.id.into_uuid()).await.expect("get cart").expect("cart row");
     assert_eq!(updated_cart.status, CartStatus::Completed);
     assert_eq!(updated_cart.order_id, Some(order.id));
 
     let updated_order =
-        commerce.orders().get(order.id).await.expect("get order").expect("order row");
+        commerce.orders().get(order.id.into_uuid()).await.expect("get order").expect("order row");
     assert_eq!(updated_order.status, OrderStatus::Confirmed);
     assert_eq!(updated_order.payment_status, PaymentStatus::Paid);
 }
@@ -369,7 +379,7 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id.into_uuid()),
+            customer_id: Some(customer.id),
             customer_email: Some(customer.email.clone()),
             customer_name: Some(format!("{} {}", customer.first_name, customer.last_name)),
             ..Default::default()
@@ -380,7 +390,7 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
     commerce
         .carts()
         .add_item(
-            cart.id,
+            cart.id.into_uuid(),
             AddCartItem {
                 product_id: Some(product.id),
                 sku: sku.clone(),
@@ -395,14 +405,14 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
 
     commerce
         .carts()
-        .set_shipping_address(cart.id, test_address())
+        .set_shipping_address(cart.id.into_uuid(), test_address())
         .await
         .expect("set shipping address");
 
     commerce
         .carts()
         .set_payment(
-            cart.id,
+            cart.id.into_uuid(),
             SetCartPayment {
                 payment_method: "credit_card".into(),
                 payment_token: Some("tok_test".into()),
@@ -415,8 +425,8 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
     let carts1 = commerce.carts();
     let carts2 = commerce.carts();
     let (r1, r2) = tokio::join!(
-        tokio::time::timeout(Duration::from_secs(10), carts1.complete(cart.id)),
-        tokio::time::timeout(Duration::from_secs(10), carts2.complete(cart.id)),
+        tokio::time::timeout(Duration::from_secs(10), carts1.complete(cart.id.into_uuid())),
+        tokio::time::timeout(Duration::from_secs(10), carts2.complete(cart.id.into_uuid())),
     );
 
     let r1 = r1.expect("timeout waiting for first checkout").expect("first checkout succeeds");
@@ -427,13 +437,14 @@ async fn postgres_cart_checkout_concurrent_complete_is_safe() {
 
     let order = db
         .orders()
-        .get_by_cart_id_async(cart.id)
+        .get_by_cart_id_async(cart.id.into_uuid())
         .await
         .expect("get order by cart_id")
         .expect("order should exist for cart_id");
     assert_eq!(order.id, r1.order_id);
 
-    let updated_cart = commerce.carts().get(cart.id).await.expect("get cart").expect("cart row");
+    let updated_cart =
+        commerce.carts().get(cart.id.into_uuid()).await.expect("get cart").expect("cart row");
     assert_eq!(updated_cart.status, CartStatus::Completed);
     assert_eq!(updated_cart.order_id, Some(order.id));
 }
@@ -494,7 +505,7 @@ async fn postgres_guest_cart_checkout_creates_customer() {
     commerce
         .carts()
         .add_item(
-            cart.id,
+            cart.id.into_uuid(),
             AddCartItem {
                 product_id: Some(product.id),
                 sku: sku.clone(),
@@ -509,14 +520,14 @@ async fn postgres_guest_cart_checkout_creates_customer() {
 
     commerce
         .carts()
-        .set_shipping_address(cart.id, test_address())
+        .set_shipping_address(cart.id.into_uuid(), test_address())
         .await
         .expect("set shipping address");
 
     commerce
         .carts()
         .set_payment(
-            cart.id,
+            cart.id.into_uuid(),
             SetCartPayment {
                 payment_method: "credit_card".into(),
                 payment_token: Some("tok_test".into()),
@@ -526,16 +537,21 @@ async fn postgres_guest_cart_checkout_creates_customer() {
         .await
         .expect("set payment");
 
-    let result = commerce.carts().complete(cart.id).await.expect("complete checkout");
+    let result = commerce.carts().complete(cart.id.into_uuid()).await.expect("complete checkout");
 
-    let updated_cart = commerce.carts().get(cart.id).await.expect("get cart").expect("cart row");
+    let updated_cart =
+        commerce.carts().get(cart.id.into_uuid()).await.expect("get cart").expect("cart row");
     assert_eq!(updated_cart.status, CartStatus::Completed);
 
     let customer_id = updated_cart.customer_id.expect("guest checkout should attach a customer_id");
 
-    let order =
-        commerce.orders().get(result.order_id).await.expect("get order").expect("order row");
-    assert_eq!(order.customer_id.into_uuid(), customer_id);
+    let order = commerce
+        .orders()
+        .get(result.order_id.into_uuid())
+        .await
+        .expect("get order")
+        .expect("order row");
+    assert_eq!(order.customer_id, customer_id);
 
     let customer = commerce
         .customers()
@@ -543,7 +559,7 @@ async fn postgres_guest_cart_checkout_creates_customer() {
         .await
         .expect("get customer by email")
         .expect("customer row");
-    assert_eq!(customer.id.into_uuid(), customer_id);
+    assert_eq!(customer.id, customer_id);
 }
 
 #[cfg(feature = "postgres")]
@@ -599,7 +615,7 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
     let cart = commerce
         .carts()
         .create(CreateCart {
-            customer_id: Some(customer.id.into_uuid()),
+            customer_id: Some(customer.id),
             customer_email: Some(customer.email.clone()),
             customer_name: Some(format!("{} {}", customer.first_name, customer.last_name)),
             ..Default::default()
@@ -610,7 +626,7 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
     commerce
         .carts()
         .add_item(
-            cart.id,
+            cart.id.into_uuid(),
             AddCartItem {
                 product_id: Some(product.id),
                 sku: sku.clone(),
@@ -625,14 +641,14 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
 
     commerce
         .carts()
-        .set_shipping_address(cart.id, test_address())
+        .set_shipping_address(cart.id.into_uuid(), test_address())
         .await
         .expect("set shipping address");
 
     commerce
         .carts()
         .set_payment(
-            cart.id,
+            cart.id.into_uuid(),
             SetCartPayment {
                 payment_method: "credit_card".into(),
                 payment_token: Some("tok_test".into()),
@@ -642,7 +658,7 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
         .await
         .expect("set payment");
 
-    let result = commerce.carts().complete(cart.id).await.expect("complete checkout");
+    let result = commerce.carts().complete(cart.id.into_uuid()).await.expect("complete checkout");
 
     let reservations = commerce
         .inventory()
@@ -652,7 +668,8 @@ async fn postgres_cart_checkout_cancel_releases_reservations() {
     assert!(!reservations.is_empty());
     assert!(reservations.iter().all(|r| r.status == ReservationStatus::Pending));
 
-    let cancelled = commerce.orders().cancel(result.order_id).await.expect("cancel order");
+    let cancelled =
+        commerce.orders().cancel(result.order_id.into_uuid()).await.expect("cancel order");
     assert_eq!(cancelled.status, OrderStatus::Cancelled);
 
     let reservations = commerce

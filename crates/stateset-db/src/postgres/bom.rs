@@ -74,7 +74,7 @@ impl PgBomRepository {
         Ok(BillOfMaterials {
             id,
             bom_number,
-            product_id,
+            product_id: product_id.into(),
             name,
             description,
             revision,
@@ -91,7 +91,7 @@ impl PgBomRepository {
         BomComponent {
             id: row.id,
             bom_id: row.bom_id,
-            component_product_id: row.component_product_id,
+            component_product_id: row.component_product_id.map(Into::into),
             component_sku: row.component_sku,
             name: row.name,
             quantity: row.quantity,

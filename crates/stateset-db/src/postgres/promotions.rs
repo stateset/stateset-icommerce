@@ -469,12 +469,12 @@ impl PgPromotionRepository {
             }
         }
 
-        self.get_async(id.into_uuid()).await?.ok_or_else(|| {
+        self.get_async(id).await?.ok_or_else(|| {
             CommerceError::DatabaseError("Failed to retrieve created promotion".into())
         })
     }
 
-    pub async fn get_async(&self, id: Uuid) -> Result<Option<Promotion>> {
+    pub async fn get_async(&self, id: PromotionId) -> Result<Option<Promotion>> {
         let row = sqlx::query_as::<_, PromotionRow>(
             "SELECT id, code, name, description, internal_notes, promotion_type, trigger, target,
                     stacking, status, percentage_off, fixed_amount_off, max_discount_amount,
@@ -485,14 +485,14 @@ impl PgPromotionRepository {
                     eligible_customer_groups, currency, priority, metadata, created_at, updated_at
              FROM promotions WHERE id = $1",
         )
-        .bind(id)
+        .bind(id.into_uuid())
         .fetch_optional(&self.pool)
         .await
         .map_err(map_db_error)?;
 
         if let Some(row) = row {
             let mut promo = self.row_to_promotion(row)?;
-            promo.conditions = self.get_conditions_async(id).await?;
+            promo.conditions = self.get_conditions_async(id.into_uuid()).await?;
             Ok(Some(promo))
         } else {
             Ok(None)
@@ -637,7 +637,7 @@ impl PgPromotionRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -908,11 +908,11 @@ impl PgPromotionRepository {
     #[allow(clippy::too_many_arguments)]
     pub async fn record_usage_async(
         &self,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
         coupon_id: Option<Uuid>,
-        customer_id: Option<Uuid>,
-        order_id: Option<Uuid>,
-        cart_id: Option<Uuid>,
+        customer_id: Option<CustomerId>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
@@ -924,11 +924,11 @@ impl PgPromotionRepository {
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         )
         .bind(id)
-        .bind(promotion_id)
+        .bind(promotion_id.into_uuid())
         .bind(coupon_id)
-        .bind(customer_id)
-        .bind(order_id)
-        .bind(cart_id)
+        .bind(customer_id.map(CustomerId::into_uuid))
+        .bind(order_id.map(OrderId::into_uuid))
+        .bind(cart_id.map(CartId::into_uuid))
         .bind(discount_amount)
         .bind(currency)
         .bind(now)
@@ -937,7 +937,7 @@ impl PgPromotionRepository {
         .map_err(map_db_error)?;
 
         sqlx::query("UPDATE promotions SET usage_count = usage_count + 1 WHERE id = $1")
-            .bind(promotion_id)
+            .bind(promotion_id.into_uuid())
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -1183,7 +1183,7 @@ impl PromotionRepository for PgPromotionRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Promotion>> {
+    fn get(&self, id: PromotionId) -> Result<Option<Promotion>> {
         super::block_on(self.get_async(id))
     }
 
@@ -1195,20 +1195,20 @@ impl PromotionRepository for PgPromotionRepository {
         super::block_on(self.list_async(filter))
     }
 
-    fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: PromotionId, input: UpdatePromotion) -> Result<Promotion> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
-        super::block_on(self.delete_async(id))
+    fn delete(&self, id: PromotionId) -> Result<()> {
+        super::block_on(self.delete_async(id.into_uuid()))
     }
 
-    fn activate(&self, id: Uuid) -> Result<Promotion> {
-        super::block_on(self.activate_async(id))
+    fn activate(&self, id: PromotionId) -> Result<Promotion> {
+        super::block_on(self.activate_async(id.into_uuid()))
     }
 
-    fn deactivate(&self, id: Uuid) -> Result<Promotion> {
-        super::block_on(self.deactivate_async(id))
+    fn deactivate(&self, id: PromotionId) -> Result<Promotion> {
+        super::block_on(self.deactivate_async(id.into_uuid()))
     }
 
     fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {
@@ -1233,11 +1233,11 @@ impl PromotionRepository for PgPromotionRepository {
 
     fn record_usage(
         &self,
-        promotion_id: Uuid,
+        promotion_id: PromotionId,
         coupon_id: Option<Uuid>,
-        customer_id: Option<Uuid>,
-        order_id: Option<Uuid>,
-        cart_id: Option<Uuid>,
+        customer_id: Option<CustomerId>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {

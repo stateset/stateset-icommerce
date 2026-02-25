@@ -368,205 +368,205 @@ macro_rules! impl_database_accessors {
     ($db_type:ty) => {
         impl Database for $db_type {
             fn orders(&self) -> Box<dyn OrderRepository + '_> {
-                Box::new(self.orders())
+                Box::new(<$db_type>::orders(self))
             }
 
             fn inventory(&self) -> Box<dyn InventoryRepository + '_> {
-                Box::new(self.inventory())
+                Box::new(<$db_type>::inventory(self))
             }
 
             fn customers(&self) -> Box<dyn CustomerRepository + '_> {
-                Box::new(self.customers())
+                Box::new(<$db_type>::customers(self))
             }
 
             fn products(&self) -> Box<dyn ProductRepository + '_> {
-                Box::new(self.products())
+                Box::new(<$db_type>::products(self))
             }
 
             fn custom_objects(&self) -> Box<dyn CustomObjectRepository + '_> {
-                Box::new(self.custom_objects())
+                Box::new(<$db_type>::custom_objects(self))
             }
 
             fn returns(&self) -> Box<dyn ReturnRepository + '_> {
-                Box::new(self.returns())
+                Box::new(<$db_type>::returns(self))
             }
 
             fn bom(&self) -> Box<dyn BomRepository + '_> {
-                Box::new(self.bom())
+                Box::new(<$db_type>::bom(self))
             }
 
             fn work_orders(&self) -> Box<dyn WorkOrderRepository + '_> {
-                Box::new(self.work_orders())
+                Box::new(<$db_type>::work_orders(self))
             }
 
             fn shipments(&self) -> Box<dyn ShipmentRepository + '_> {
-                Box::new(self.shipments())
+                Box::new(<$db_type>::shipments(self))
             }
 
             fn payments(&self) -> Box<dyn PaymentRepository + '_> {
-                Box::new(self.payments())
+                Box::new(<$db_type>::payments(self))
             }
 
             fn warranties(&self) -> Box<dyn WarrantyRepository + '_> {
-                Box::new(self.warranties())
+                Box::new(<$db_type>::warranties(self))
             }
 
             fn purchase_orders(&self) -> Box<dyn PurchaseOrderRepository + '_> {
-                Box::new(self.purchase_orders())
+                Box::new(<$db_type>::purchase_orders(self))
             }
 
             fn invoices(&self) -> Box<dyn InvoiceRepository + '_> {
-                Box::new(self.invoices())
+                Box::new(<$db_type>::invoices(self))
             }
 
             fn carts(&self) -> Box<dyn CartRepository + '_> {
-                Box::new(self.carts())
+                Box::new(<$db_type>::carts(self))
             }
 
             fn analytics(&self) -> Box<dyn AnalyticsRepository + '_> {
-                Box::new(self.analytics())
+                Box::new(<$db_type>::analytics(self))
             }
 
             fn currency(&self) -> Box<dyn CurrencyRepository + '_> {
-                Box::new(self.currency())
+                Box::new(<$db_type>::currency(self))
             }
 
             fn tax(&self) -> Box<dyn TaxRepository + '_> {
-                Box::new(self.tax())
+                Box::new(<$db_type>::tax(self))
             }
 
             fn promotions(&self) -> Box<dyn PromotionRepository + '_> {
-                Box::new(self.promotions())
+                Box::new(<$db_type>::promotions(self))
             }
 
             fn subscriptions(&self) -> Box<dyn SubscriptionRepository + '_> {
-                Box::new(self.subscriptions())
+                Box::new(<$db_type>::subscriptions(self))
             }
 
             fn quality(&self) -> Box<dyn QualityRepository + '_> {
-                Box::new(self.quality())
+                Box::new(<$db_type>::quality(self))
             }
 
             fn lots(&self) -> Box<dyn LotRepository + '_> {
-                Box::new(self.lots())
+                Box::new(<$db_type>::lots(self))
             }
 
             fn serials(&self) -> Box<dyn SerialRepository + '_> {
-                Box::new(self.serials())
+                Box::new(<$db_type>::serials(self))
             }
 
             fn warehouse(&self) -> Box<dyn WarehouseRepository + '_> {
-                Box::new(self.warehouse())
+                Box::new(<$db_type>::warehouse(self))
             }
 
             fn receiving(&self) -> Box<dyn ReceivingRepository + '_> {
-                Box::new(self.receiving())
+                Box::new(<$db_type>::receiving(self))
             }
 
             fn fulfillment(&self) -> Box<dyn FulfillmentRepository + '_> {
-                Box::new(self.fulfillment())
+                Box::new(<$db_type>::fulfillment(self))
             }
 
             fn accounts_payable(&self) -> Box<dyn AccountsPayableRepository + '_> {
-                Box::new(self.accounts_payable())
+                Box::new(<$db_type>::accounts_payable(self))
             }
 
             fn cost_accounting(&self) -> Box<dyn CostAccountingRepository + '_> {
-                Box::new(self.cost_accounting())
+                Box::new(<$db_type>::cost_accounting(self))
             }
 
             fn credit(&self) -> Box<dyn CreditRepository + '_> {
-                Box::new(self.credit())
+                Box::new(<$db_type>::credit(self))
             }
 
             fn backorder(&self) -> Box<dyn BackorderRepository + '_> {
-                Box::new(self.backorder())
+                Box::new(<$db_type>::backorder(self))
             }
 
             fn accounts_receivable(&self) -> Box<dyn AccountsReceivableRepository + '_> {
-                Box::new(self.accounts_receivable())
+                Box::new(<$db_type>::accounts_receivable(self))
             }
 
             fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_> {
-                Box::new(self.general_ledger())
+                Box::new(<$db_type>::general_ledger(self))
             }
 
             fn x402_payment_intents(&self) -> Box<dyn X402PaymentIntentRepository + '_> {
-                Box::new(self.x402_payment_intents())
+                Box::new(<$db_type>::x402_payment_intents(self))
             }
 
             fn x402_credits(&self) -> Box<dyn X402CreditRepository + '_> {
-                Box::new(self.x402_credits())
+                Box::new(<$db_type>::x402_credits(self))
             }
 
             fn a2a_quotes(&self) -> Box<dyn A2ACommerceRepository + '_> {
-                Box::new(self.a2a_quotes())
+                Box::new(<$db_type>::a2a_quotes(self))
             }
 
             fn a2a_purchases(&self) -> Box<dyn A2ACommerceRepository + '_> {
-                Box::new(self.a2a_purchases())
+                Box::new(<$db_type>::a2a_purchases(self))
             }
 
             fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_> {
-                Box::new(self.agent_cards())
+                Box::new(<$db_type>::agent_cards(self))
             }
 
             fn agent_identities(&self) -> Box<dyn AgentIdentityRepository + '_> {
-                Box::new(self.agent_identities())
+                Box::new(<$db_type>::agent_identities(self))
             }
 
             fn agent_reputation(&self) -> Box<dyn AgentReputationRepository + '_> {
-                Box::new(self.agent_reputation())
+                Box::new(<$db_type>::agent_reputation(self))
             }
 
             fn agent_validation(&self) -> Box<dyn AgentValidationRepository + '_> {
-                Box::new(self.agent_validation())
+                Box::new(<$db_type>::agent_validation(self))
             }
 
             // --- New domain repositories ---
 
             fn gift_cards(&self) -> Box<dyn GiftCardRepository + '_> {
-                Box::new(self.gift_cards())
+                panic!("gift_cards repository is not implemented for this backend")
             }
 
             fn store_credits(&self) -> Box<dyn StoreCreditRepository + '_> {
-                Box::new(self.store_credits())
+                panic!("store_credits repository is not implemented for this backend")
             }
 
             fn segments(&self) -> Box<dyn SegmentRepository + '_> {
-                Box::new(self.segments())
+                panic!("segments repository is not implemented for this backend")
             }
 
             fn shipping_zones(&self) -> Box<dyn ShippingZoneRepository + '_> {
-                Box::new(self.shipping_zones())
+                panic!("shipping_zones repository is not implemented for this backend")
             }
 
             fn zone_shipping_methods(&self) -> Box<dyn ZoneShippingMethodRepository + '_> {
-                Box::new(self.zone_shipping_methods())
+                panic!("zone_shipping_methods repository is not implemented for this backend")
             }
 
             fn reviews(&self) -> Box<dyn ReviewRepository + '_> {
-                Box::new(self.reviews())
+                panic!("reviews repository is not implemented for this backend")
             }
 
             fn wishlists(&self) -> Box<dyn WishlistRepository + '_> {
-                Box::new(self.wishlists())
+                panic!("wishlists repository is not implemented for this backend")
             }
 
             fn loyalty_programs(&self) -> Box<dyn LoyaltyProgramRepository + '_> {
-                Box::new(self.loyalty_programs())
+                panic!("loyalty_programs repository is not implemented for this backend")
             }
 
             fn rewards(&self) -> Box<dyn RewardRepository + '_> {
-                Box::new(self.rewards())
+                panic!("rewards repository is not implemented for this backend")
             }
 
             fn fraud(&self) -> Box<dyn FraudRepository + '_> {
-                Box::new(self.fraud())
+                panic!("fraud repository is not implemented for this backend")
             }
 
             fn search_configs(&self) -> Box<dyn SearchConfigRepository + '_> {
-                Box::new(self.search_configs())
+                panic!("search_configs repository is not implemented for this backend")
             }
         }
     };

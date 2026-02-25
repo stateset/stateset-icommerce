@@ -273,7 +273,7 @@ impl PgCustomObjectRepository {
         &self,
         filter: CustomObjectTypeFilter,
     ) -> Result<Vec<CustomObjectType>> {
-        let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+        let mut qb: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new(
             "SELECT id, handle, display_name, description, fields, created_at, updated_at, version FROM custom_object_types",
         );
 
@@ -566,7 +566,7 @@ impl PgCustomObjectRepository {
             Self::validate_owner_pair(&filter.owner_type, &filter.owner_id)?;
         }
 
-        let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+        let mut qb: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new(
             "SELECT r.id, r.type_id, t.handle AS type_handle, r.handle, r.owner_type, r.owner_id,
                     r.values, r.created_at, r.updated_at, r.version
              FROM custom_object_records r

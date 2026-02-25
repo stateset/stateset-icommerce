@@ -8,11 +8,11 @@ use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     CommerceError, CreateCreditAccount, CreditAccount, CreditAccountFilter, CreditAccountStatus,
     CreditAgingBucket, CreditApplication, CreditApplicationFilter, CreditApplicationStatus,
-    CreditCheckResult, CreditHold, CreditHoldFilter, CreditHoldStatus, CreditHoldType,
+    CreditCheckResult, CreditHold, CreditHoldFilter, CreditHoldStatus, CreditHoldType, CreditId,
     CreditRepository, CreditTransaction, CreditTransactionFilter, CreditTransactionType,
-    CustomerCreditSummary, PlaceCreditHold, RecordCreditTransaction, ReleaseCreditHold, Result,
-    ReviewCreditApplication, SubmitCreditApplication, UpdateCreditAccount,
-    generate_credit_application_number,
+    CustomerCreditSummary, CustomerId, OrderId, PlaceCreditHold, RecordCreditTransaction,
+    ReleaseCreditHold, Result, ReviewCreditApplication, SubmitCreditApplication,
+    UpdateCreditAccount, generate_credit_application_number,
 };
 use uuid::Uuid;
 
@@ -133,8 +133,8 @@ impl PgCreditRepository {
         };
 
         Ok(CreditAccount {
-            id,
-            customer_id,
+            id: id.into(),
+            customer_id: customer_id.into(),
             credit_limit,
             available_credit,
             current_balance,
@@ -180,8 +180,8 @@ impl PgCreditRepository {
 
         Ok(CreditHold {
             id,
-            customer_id,
-            order_id,
+            customer_id: customer_id.into(),
+            order_id: order_id.map(Into::into),
             hold_type,
             hold_amount,
             reason,
@@ -227,7 +227,7 @@ impl PgCreditRepository {
         Ok(CreditApplication {
             id,
             application_number,
-            customer_id,
+            customer_id: customer_id.into(),
             requested_limit,
             approved_limit,
             status,
@@ -268,7 +268,7 @@ impl PgCreditRepository {
 
         Ok(CreditTransaction {
             id,
-            customer_id,
+            customer_id: customer_id.into(),
             transaction_type,
             amount,
             running_balance,
@@ -387,7 +387,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.recalculate_available_credit_async(account.customer_id).await?;
+        self.recalculate_available_credit_async(account.customer_id.into_uuid()).await?;
         self.get_credit_account_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -458,7 +458,7 @@ impl PgCreditRepository {
         .map_err(map_db_error)?;
 
         self.record_transaction_async(RecordCreditTransaction {
-            customer_id,
+            customer_id: customer_id.into(),
             transaction_type: CreditTransactionType::LimitChange,
             amount: new_limit - old_limit,
             reference_type: None,
@@ -539,7 +539,7 @@ impl PgCreditRepository {
                 };
 
                 Ok(CreditCheckResult {
-                    customer_id,
+                    customer_id: customer_id.into(),
                     order_amount,
                     credit_limit: acc.credit_limit,
                     available_credit: acc.available_credit,
@@ -551,7 +551,7 @@ impl PgCreditRepository {
                 })
             }
             None => Ok(CreditCheckResult {
-                customer_id,
+                customer_id: customer_id.into(),
                 order_amount,
                 credit_limit: Decimal::ZERO,
                 available_credit: Decimal::ZERO,
@@ -659,7 +659,7 @@ impl PgCreditRepository {
         .map_err(map_db_error)?;
 
         self.record_transaction_async(RecordCreditTransaction {
-            customer_id,
+            customer_id: customer_id.into(),
             transaction_type: CreditTransactionType::Charge,
             amount,
             reference_type: Some("order".to_string()),
@@ -784,7 +784,7 @@ impl PgCreditRepository {
 
     pub async fn get_active_holds_async(&self, customer_id: Uuid) -> Result<Vec<CreditHold>> {
         self.list_holds_async(CreditHoldFilter {
-            customer_id: Some(customer_id),
+            customer_id: Some(customer_id.into()),
             status: Some(CreditHoldStatus::Active),
             ..Default::default()
         })
@@ -792,8 +792,11 @@ impl PgCreditRepository {
     }
 
     pub async fn get_holds_for_order_async(&self, order_id: Uuid) -> Result<Vec<CreditHold>> {
-        self.list_holds_async(CreditHoldFilter { order_id: Some(order_id), ..Default::default() })
-            .await
+        self.list_holds_async(CreditHoldFilter {
+            order_id: Some(order_id.into()),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn submit_application_async(
@@ -920,10 +923,11 @@ impl PgCreditRepository {
 
         if input.status == CreditApplicationStatus::Approved {
             if let Some(limit) = input.approved_limit {
-                let existing = self.get_credit_account_by_customer_async(app.customer_id).await?;
+                let existing =
+                    self.get_credit_account_by_customer_async(app.customer_id.into_uuid()).await?;
                 if existing.is_some() {
                     self.adjust_credit_limit_async(
-                        app.customer_id,
+                        app.customer_id.into_uuid(),
                         limit,
                         "Credit application approved",
                     )
@@ -1068,7 +1072,7 @@ impl PgCreditRepository {
         .map_err(map_db_error)?;
 
         self.record_transaction_async(RecordCreditTransaction {
-            customer_id,
+            customer_id: customer_id.into(),
             transaction_type: CreditTransactionType::Payment,
             amount,
             reference_type: Some("payment".to_string()),
@@ -1092,7 +1096,7 @@ impl PgCreditRepository {
                 let holds = self.get_active_holds_async(customer_id).await?;
 
                 Ok(Some(CustomerCreditSummary {
-                    customer_id,
+                    customer_id: customer_id.into(),
                     credit_limit: acc.credit_limit,
                     current_balance: acc.current_balance,
                     available_credit: acc.available_credit,
@@ -1105,7 +1109,7 @@ impl PgCreditRepository {
         }
     }
 
-    pub async fn get_aging_report_async(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>> {
+    pub async fn get_aging_report_async(&self) -> Result<Vec<(CustomerId, CreditAgingBucket)>> {
         let accounts = self.list_credit_accounts_async(CreditAccountFilter::default()).await?;
         let mut report = Vec::new();
 
@@ -1140,16 +1144,23 @@ impl CreditRepository for PgCreditRepository {
         block_on(self.create_credit_account_async(input))
     }
 
-    fn get_credit_account(&self, id: Uuid) -> Result<Option<CreditAccount>> {
-        block_on(self.get_credit_account_async(id))
+    fn get_credit_account(&self, id: CreditId) -> Result<Option<CreditAccount>> {
+        block_on(self.get_credit_account_async(id.into_uuid()))
     }
 
-    fn get_credit_account_by_customer(&self, customer_id: Uuid) -> Result<Option<CreditAccount>> {
-        block_on(self.get_credit_account_by_customer_async(customer_id))
+    fn get_credit_account_by_customer(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Option<CreditAccount>> {
+        block_on(self.get_credit_account_by_customer_async(customer_id.into_uuid()))
     }
 
-    fn update_credit_account(&self, id: Uuid, input: UpdateCreditAccount) -> Result<CreditAccount> {
-        block_on(self.update_credit_account_async(id, input))
+    fn update_credit_account(
+        &self,
+        id: CreditId,
+        input: UpdateCreditAccount,
+    ) -> Result<CreditAccount> {
+        block_on(self.update_credit_account_async(id.into_uuid(), input))
     }
 
     fn list_credit_accounts(&self, filter: CreditAccountFilter) -> Result<Vec<CreditAccount>> {
@@ -1158,49 +1169,59 @@ impl CreditRepository for PgCreditRepository {
 
     fn adjust_credit_limit(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         new_limit: Decimal,
         reason: &str,
     ) -> Result<CreditAccount> {
-        block_on(self.adjust_credit_limit_async(customer_id, new_limit, reason))
+        block_on(self.adjust_credit_limit_async(customer_id.into_uuid(), new_limit, reason))
     }
 
-    fn suspend_credit_account(&self, customer_id: Uuid, reason: &str) -> Result<CreditAccount> {
-        block_on(self.suspend_credit_account_async(customer_id, reason))
+    fn suspend_credit_account(
+        &self,
+        customer_id: CustomerId,
+        reason: &str,
+    ) -> Result<CreditAccount> {
+        block_on(self.suspend_credit_account_async(customer_id.into_uuid(), reason))
     }
 
-    fn reactivate_credit_account(&self, customer_id: Uuid) -> Result<CreditAccount> {
-        block_on(self.reactivate_credit_account_async(customer_id))
+    fn reactivate_credit_account(&self, customer_id: CustomerId) -> Result<CreditAccount> {
+        block_on(self.reactivate_credit_account_async(customer_id.into_uuid()))
     }
 
-    fn check_credit(&self, customer_id: Uuid, order_amount: Decimal) -> Result<CreditCheckResult> {
-        block_on(self.check_credit_async(customer_id, order_amount))
+    fn check_credit(
+        &self,
+        customer_id: CustomerId,
+        order_amount: Decimal,
+    ) -> Result<CreditCheckResult> {
+        block_on(self.check_credit_async(customer_id.into_uuid(), order_amount))
     }
 
     fn reserve_credit(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        block_on(self.reserve_credit_async(customer_id, order_id, amount))
+        block_on(self.reserve_credit_async(customer_id.into_uuid(), order_id.into_uuid(), amount))
     }
 
     fn release_credit_reservation(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
     ) -> Result<CreditAccount> {
-        block_on(self.release_credit_reservation_async(customer_id, order_id))
+        block_on(
+            self.release_credit_reservation_async(customer_id.into_uuid(), order_id.into_uuid()),
+        )
     }
 
     fn charge_credit(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        block_on(self.charge_credit_async(customer_id, order_id, amount))
+        block_on(self.charge_credit_async(customer_id.into_uuid(), order_id.into_uuid(), amount))
     }
 
     fn place_hold(&self, input: PlaceCreditHold) -> Result<CreditHold> {
@@ -1219,12 +1240,12 @@ impl CreditRepository for PgCreditRepository {
         block_on(self.release_hold_async(input))
     }
 
-    fn get_active_holds(&self, customer_id: Uuid) -> Result<Vec<CreditHold>> {
-        block_on(self.get_active_holds_async(customer_id))
+    fn get_active_holds(&self, customer_id: CustomerId) -> Result<Vec<CreditHold>> {
+        block_on(self.get_active_holds_async(customer_id.into_uuid()))
     }
 
-    fn get_holds_for_order(&self, order_id: Uuid) -> Result<Vec<CreditHold>> {
-        block_on(self.get_holds_for_order_async(order_id))
+    fn get_holds_for_order(&self, order_id: OrderId) -> Result<Vec<CreditHold>> {
+        block_on(self.get_holds_for_order_async(order_id.into_uuid()))
     }
 
     fn submit_application(&self, input: SubmitCreditApplication) -> Result<CreditApplication> {
@@ -1257,18 +1278,21 @@ impl CreditRepository for PgCreditRepository {
 
     fn apply_payment(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         amount: Decimal,
         reference_id: Option<Uuid>,
     ) -> Result<CreditAccount> {
-        block_on(self.apply_payment_async(customer_id, amount, reference_id))
+        block_on(self.apply_payment_async(customer_id.into_uuid(), amount, reference_id))
     }
 
-    fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerCreditSummary>> {
-        block_on(self.get_customer_summary_async(customer_id))
+    fn get_customer_summary(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Option<CustomerCreditSummary>> {
+        block_on(self.get_customer_summary_async(customer_id.into_uuid()))
     }
 
-    fn get_aging_report(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>> {
+    fn get_aging_report(&self) -> Result<Vec<(CustomerId, CreditAgingBucket)>> {
         block_on(self.get_aging_report_async())
     }
 

@@ -447,9 +447,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use stateset_core::{
-    A2APurchase, A2APurchaseFilter, A2AQuote as SkillQuote, A2ASkill, AgentCard, AgentCardFilter,
-    CreateA2APurchase, CreateA2AQuote, CreateAgentCard, CreateX402PaymentIntent, PurchaseStatus,
-    QuoteStatus, SignX402PaymentIntent, SkillQuoteFilter, TrustLevel, UpdateAgentCard, X402Asset,
+    A2APurchase, A2APurchaseFilter, A2ASkill, AgentCard, AgentCardFilter, CreateA2APurchase,
+    CreateA2AQuote, CreateAgentCard, CreateX402PaymentIntent, PurchaseStatus, QuoteStatus,
+    SignX402PaymentIntent, SkillQuote, SkillQuoteFilter, TrustLevel, UpdateAgentCard, X402Asset,
     X402CreditAccount, X402CreditAdjustment, X402CreditDirection, X402CreditTransaction,
     X402CreditTransactionFilter, X402IntentStatus, X402Network, X402PaymentIntent,
     X402PaymentIntentFilter, to_smallest_unit,
@@ -772,7 +772,7 @@ impl AsyncOrders {
     pub async fn list_for_customer(&self, customer_id: Uuid) -> Result<Vec<Order>> {
         self.db
             .orders()
-            .list_async(OrderFilter { customer_id: Some(customer_id), ..Default::default() })
+            .list_async(OrderFilter { customer_id: Some(customer_id.into()), ..Default::default() })
             .await
     }
 
@@ -971,7 +971,7 @@ impl AsyncCustomers {
 
     /// Get customer by ID.
     pub async fn get(&self, id: Uuid) -> Result<Option<Customer>> {
-        self.db.customers().get_async(id).await
+        self.db.customers().get_async(id.into()).await
     }
 
     /// Get customer by email.
@@ -981,7 +981,7 @@ impl AsyncCustomers {
 
     /// Update a customer.
     pub async fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
-        self.db.customers().update_async(id, input).await
+        self.db.customers().update_async(id.into(), input).await
     }
 
     /// List customers.
@@ -991,7 +991,7 @@ impl AsyncCustomers {
 
     /// Delete a customer.
     pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.customers().delete_async(id).await
+        self.db.customers().delete_async(id.into()).await
     }
 
     /// Add an address to a customer.
@@ -1001,7 +1001,7 @@ impl AsyncCustomers {
 
     /// Get addresses for a customer.
     pub async fn get_addresses(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>> {
-        self.db.customers().get_addresses_async(customer_id).await
+        self.db.customers().get_addresses_async(customer_id.into()).await
     }
 
     /// Count customers.
@@ -1034,7 +1034,7 @@ impl AsyncProducts {
 
     /// Get product by ID.
     pub async fn get(&self, id: Uuid) -> Result<Option<Product>> {
-        self.db.products().get_async(id).await
+        self.db.products().get_async(id.into()).await
     }
 
     /// Get product by slug.
@@ -1044,7 +1044,7 @@ impl AsyncProducts {
 
     /// Update a product.
     pub async fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
-        self.db.products().update_async(id, input).await
+        self.db.products().update_async(id.into(), input).await
     }
 
     /// List products.
@@ -1054,7 +1054,7 @@ impl AsyncProducts {
 
     /// Delete a product.
     pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.products().delete_async(id).await
+        self.db.products().delete_async(id.into()).await
     }
 
     /// Add a variant to a product.
@@ -1063,7 +1063,7 @@ impl AsyncProducts {
         product_id: Uuid,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
-        self.db.products().add_variant_public_async(product_id, variant).await
+        self.db.products().add_variant_public_async(product_id.into(), variant).await
     }
 
     /// Get variant by ID.
@@ -1092,7 +1092,7 @@ impl AsyncProducts {
 
     /// Get all variants for a product.
     pub async fn get_variants(&self, product_id: Uuid) -> Result<Vec<ProductVariant>> {
-        self.db.products().get_variants_async(product_id).await
+        self.db.products().get_variants_async(product_id.into()).await
     }
 
     /// Count products.
@@ -1557,7 +1557,7 @@ impl AsyncWarranties {
 
     /// Get warranty by ID.
     pub async fn get(&self, id: Uuid) -> Result<Option<Warranty>> {
-        self.db.warranties().get_async(id).await
+        self.db.warranties().get_async(id.into()).await
     }
 
     /// Get warranty by warranty number.
@@ -1572,7 +1572,7 @@ impl AsyncWarranties {
 
     /// Update a warranty.
     pub async fn update(&self, id: Uuid, input: UpdateWarranty) -> Result<Warranty> {
-        self.db.warranties().update_async(id, input).await
+        self.db.warranties().update_async(id.into(), input).await
     }
 
     /// List warranties.
@@ -1582,27 +1582,27 @@ impl AsyncWarranties {
 
     /// Get warranties for a customer.
     pub async fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Warranty>> {
-        self.db.warranties().for_customer_async(customer_id).await
+        self.db.warranties().for_customer_async(customer_id.into()).await
     }
 
     /// Get warranties for an order.
     pub async fn for_order(&self, order_id: Uuid) -> Result<Vec<Warranty>> {
-        self.db.warranties().for_order_async(order_id).await
+        self.db.warranties().for_order_async(order_id.into()).await
     }
 
     /// Void a warranty.
     pub async fn void(&self, id: Uuid) -> Result<Warranty> {
-        self.db.warranties().void_async(id).await
+        self.db.warranties().void_async(id.into()).await
     }
 
     /// Expire a warranty.
     pub async fn expire(&self, id: Uuid) -> Result<Warranty> {
-        self.db.warranties().expire_async(id).await
+        self.db.warranties().expire_async(id.into()).await
     }
 
     /// Transfer warranty to new owner.
     pub async fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
-        self.db.warranties().transfer_async(id, new_customer_id).await
+        self.db.warranties().transfer_async(id.into(), new_customer_id.into()).await
     }
 
     /// Create a warranty claim.
@@ -1636,7 +1636,7 @@ impl AsyncWarranties {
 
     /// Get claims for a warranty.
     pub async fn get_claims(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>> {
-        self.db.warranties().get_claims_async(warranty_id).await
+        self.db.warranties().get_claims_async(warranty_id.into()).await
     }
 
     /// Approve a claim.
@@ -2634,7 +2634,7 @@ impl AsyncPromotions {
     }
 
     pub async fn get(&self, id: Uuid) -> Result<Option<Promotion>> {
-        self.db.promotions().get_async(id).await
+        self.db.promotions().get_async(id.into()).await
     }
 
     pub async fn get_by_code(&self, code: &str) -> Result<Option<Promotion>> {
@@ -2698,11 +2698,11 @@ impl AsyncPromotions {
         self.db
             .promotions()
             .record_usage_async(
-                promotion_id,
+                promotion_id.into(),
                 coupon_id,
-                customer_id,
-                order_id,
-                cart_id,
+                customer_id.map(Into::into),
+                order_id.map(Into::into),
+                cart_id.map(Into::into),
                 discount_amount,
                 currency,
             )
@@ -2767,7 +2767,7 @@ impl AsyncSubscriptions {
     }
 
     pub async fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {
-        self.db.subscriptions().get_subscription_async(id).await
+        self.db.subscriptions().get_subscription_async(id.into()).await
     }
 
     pub async fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>> {
@@ -2786,7 +2786,7 @@ impl AsyncSubscriptions {
         id: Uuid,
         input: UpdateSubscription,
     ) -> Result<Subscription> {
-        self.db.subscriptions().update_subscription_async(id, input).await
+        self.db.subscriptions().update_subscription_async(id.into(), input).await
     }
 
     pub async fn cancel_subscription(
@@ -2794,7 +2794,7 @@ impl AsyncSubscriptions {
         id: Uuid,
         input: CancelSubscription,
     ) -> Result<Subscription> {
-        self.db.subscriptions().cancel_subscription_async(id, input).await
+        self.db.subscriptions().cancel_subscription_async(id.into(), input).await
     }
 
     pub async fn pause_subscription(
@@ -2802,11 +2802,11 @@ impl AsyncSubscriptions {
         id: Uuid,
         input: PauseSubscription,
     ) -> Result<Subscription> {
-        self.db.subscriptions().pause_subscription_async(id, input).await
+        self.db.subscriptions().pause_subscription_async(id.into(), input).await
     }
 
     pub async fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
-        self.db.subscriptions().resume_subscription_async(id).await
+        self.db.subscriptions().resume_subscription_async(id.into()).await
     }
 
     pub async fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
@@ -2837,7 +2837,7 @@ impl AsyncSubscriptions {
         id: Uuid,
         input: SkipBillingCycle,
     ) -> Result<Subscription> {
-        self.db.subscriptions().skip_billing_cycle_async(id, input).await
+        self.db.subscriptions().skip_billing_cycle_async(id.into(), input).await
     }
 
     pub async fn record_event(
@@ -2849,7 +2849,7 @@ impl AsyncSubscriptions {
         let description = notes.unwrap_or_else(|| "Event".to_string());
         self.db
             .subscriptions()
-            .record_event_async(subscription_id, event_type, &description, None, None)
+            .record_event_async(subscription_id.into(), event_type, &description, None, None)
             .await
     }
 
@@ -2857,7 +2857,7 @@ impl AsyncSubscriptions {
         &self,
         subscription_id: Uuid,
     ) -> Result<Vec<SubscriptionEvent>> {
-        self.db.subscriptions().get_subscription_events_async(subscription_id).await
+        self.db.subscriptions().get_subscription_events_async(subscription_id.into()).await
     }
 }
 
@@ -4275,7 +4275,14 @@ impl AsyncCredit {
     }
 
     pub async fn get_aging_report(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>> {
-        self.db.credit().get_aging_report_async().await
+        Ok(self
+            .db
+            .credit()
+            .get_aging_report_async()
+            .await?
+            .into_iter()
+            .map(|(customer_id, bucket)| (customer_id.into_uuid(), bucket))
+            .collect())
     }
 
     pub async fn get_over_limit_customers(&self) -> Result<Vec<CreditAccount>> {

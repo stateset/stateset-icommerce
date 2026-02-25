@@ -7,10 +7,10 @@ use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
     BatchResult, CommerceError, CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier,
-    PaymentTerms, PurchaseOrder, PurchaseOrderFilter, PurchaseOrderItem, PurchaseOrderRepository,
-    PurchaseOrderStatus, ReceivePurchaseOrderItems, Result, Supplier, SupplierFilter,
-    UpdatePurchaseOrder, UpdateSupplier, generate_po_number, generate_supplier_code,
-    validate_batch_size,
+    PaymentTerms, PurchaseOrder, PurchaseOrderFilter, PurchaseOrderId, PurchaseOrderItem,
+    PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItems, Result, Supplier,
+    SupplierFilter, UpdatePurchaseOrder, UpdateSupplier, generate_po_number,
+    generate_supplier_code, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -205,7 +205,7 @@ impl PgPurchaseOrderRepository {
         })?;
 
         Ok(PurchaseOrder {
-            id,
+            id: id.into(),
             po_number,
             supplier_id,
             status,
@@ -240,8 +240,8 @@ impl PgPurchaseOrderRepository {
     fn row_to_item(row: PurchaseOrderItemRow) -> PurchaseOrderItem {
         PurchaseOrderItem {
             id: row.id,
-            purchase_order_id: row.purchase_order_id,
-            product_id: row.product_id,
+            purchase_order_id: row.purchase_order_id.into(),
+            product_id: row.product_id.map(Into::into),
             sku: row.sku,
             name: row.name,
             supplier_sku: row.supplier_sku,
@@ -1356,16 +1356,16 @@ impl PurchaseOrderRepository for PgPurchaseOrderRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<PurchaseOrder>> {
-        super::block_on(self.get_async(id))
+    fn get(&self, id: PurchaseOrderId) -> Result<Option<PurchaseOrder>> {
+        super::block_on(self.get_async(id.into_uuid()))
     }
 
     fn get_by_number(&self, po_number: &str) -> Result<Option<PurchaseOrder>> {
         super::block_on(self.get_by_number_async(po_number))
     }
 
-    fn update(&self, id: Uuid, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: PurchaseOrderId, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: PurchaseOrderFilter) -> Result<Vec<PurchaseOrder>> {
@@ -1376,44 +1376,56 @@ impl PurchaseOrderRepository for PgPurchaseOrderRepository {
         super::block_on(self.for_supplier_async(supplier_id))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
-        super::block_on(self.delete_async(id))
+    fn delete(&self, id: PurchaseOrderId) -> Result<()> {
+        super::block_on(self.delete_async(id.into_uuid()))
     }
 
-    fn submit_for_approval(&self, id: Uuid) -> Result<PurchaseOrder> {
-        super::block_on(self.submit_for_approval_async(id))
+    fn submit_for_approval(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        super::block_on(self.submit_for_approval_async(id.into_uuid()))
     }
 
-    fn approve(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
-        super::block_on(self.approve_async(id, approved_by))
+    fn approve(&self, id: PurchaseOrderId, approved_by: &str) -> Result<PurchaseOrder> {
+        super::block_on(self.approve_async(id.into_uuid(), approved_by))
     }
 
-    fn send(&self, id: Uuid) -> Result<PurchaseOrder> {
-        super::block_on(self.send_async(id))
+    fn send(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        super::block_on(self.send_async(id.into_uuid()))
     }
 
-    fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
-        super::block_on(self.acknowledge_async(id, supplier_reference))
+    fn acknowledge(
+        &self,
+        id: PurchaseOrderId,
+        supplier_reference: Option<&str>,
+    ) -> Result<PurchaseOrder> {
+        super::block_on(self.acknowledge_async(id.into_uuid(), supplier_reference))
     }
 
-    fn hold(&self, id: Uuid) -> Result<PurchaseOrder> {
-        super::block_on(self.hold_async(id))
+    fn hold(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        super::block_on(self.hold_async(id.into_uuid()))
     }
 
-    fn cancel(&self, id: Uuid) -> Result<PurchaseOrder> {
-        super::block_on(self.cancel_async(id))
+    fn cancel(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        super::block_on(self.cancel_async(id.into_uuid()))
     }
 
-    fn receive(&self, id: Uuid, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
-        super::block_on(self.receive_async(id, items))
+    fn receive(
+        &self,
+        id: PurchaseOrderId,
+        items: ReceivePurchaseOrderItems,
+    ) -> Result<PurchaseOrder> {
+        super::block_on(self.receive_async(id.into_uuid(), items))
     }
 
-    fn complete(&self, id: Uuid) -> Result<PurchaseOrder> {
-        super::block_on(self.complete_async(id))
+    fn complete(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        super::block_on(self.complete_async(id.into_uuid()))
     }
 
-    fn add_item(&self, po_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
-        super::block_on(self.add_item_async(po_id, item))
+    fn add_item(
+        &self,
+        po_id: PurchaseOrderId,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
+        super::block_on(self.add_item_async(po_id.into_uuid(), item))
     }
 
     fn update_item(
@@ -1428,8 +1440,8 @@ impl PurchaseOrderRepository for PgPurchaseOrderRepository {
         super::block_on(self.remove_item_async(item_id))
     }
 
-    fn get_items(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>> {
-        super::block_on(self.get_items_async(po_id))
+    fn get_items(&self, po_id: PurchaseOrderId) -> Result<Vec<PurchaseOrderItem>> {
+        super::block_on(self.get_items_async(po_id.into_uuid()))
     }
 
     fn count(&self, filter: PurchaseOrderFilter) -> Result<u64> {
@@ -1452,27 +1464,41 @@ impl PurchaseOrderRepository for PgPurchaseOrderRepository {
 
     fn update_batch(
         &self,
-        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+        updates: Vec<(PurchaseOrderId, UpdatePurchaseOrder)>,
     ) -> Result<BatchResult<PurchaseOrder>> {
-        super::block_on(self.update_batch_async(updates))
+        let raw_updates: Vec<(Uuid, UpdatePurchaseOrder)> =
+            updates.into_iter().map(|(id, input)| (id.into_uuid(), input)).collect();
+        super::block_on(self.update_batch_async(raw_updates))
     }
 
     fn update_batch_atomic(
         &self,
-        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+        updates: Vec<(PurchaseOrderId, UpdatePurchaseOrder)>,
     ) -> Result<Vec<PurchaseOrder>> {
-        super::block_on(self.update_batch_atomic_async(updates))
+        let raw_updates: Vec<(Uuid, UpdatePurchaseOrder)> =
+            updates.into_iter().map(|(id, input)| (id.into_uuid(), input)).collect();
+        super::block_on(self.update_batch_atomic_async(raw_updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
-        super::block_on(self.delete_batch_async(ids))
+    fn delete_batch(&self, ids: Vec<PurchaseOrderId>) -> Result<BatchResult<PurchaseOrderId>> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        let result = super::block_on(self.delete_batch_async(raw_ids))?;
+        Ok(BatchResult {
+            succeeded: result.succeeded.into_iter().map(PurchaseOrderId::from_uuid).collect(),
+            failed: result.failed,
+            total_attempted: result.total_attempted,
+            success_count: result.success_count,
+            failure_count: result.failure_count,
+        })
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
-        super::block_on(self.delete_batch_atomic_async(ids))
+    fn delete_batch_atomic(&self, ids: Vec<PurchaseOrderId>) -> Result<()> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.delete_batch_atomic_async(raw_ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<PurchaseOrder>> {
-        super::block_on(self.get_batch_async(ids))
+    fn get_batch(&self, ids: Vec<PurchaseOrderId>) -> Result<Vec<PurchaseOrder>> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.get_batch_async(raw_ids))
     }
 }

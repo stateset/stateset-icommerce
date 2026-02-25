@@ -10,7 +10,7 @@ use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CartAddress, CommerceError,
     CreateA2APurchase, CreateA2AQuote, PurchaseStatus, QuoteStatus, QuotedItem, Result, SkillQuote,
-    SkillQuoteFilter, X402Asset, X402Network, validate_batch_size,
+    SkillQuoteFilter, X402Asset, X402Network,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -150,6 +150,7 @@ impl PgA2ARepository {
             }
             QuoteStatus::Accepted => matches!(next, QuoteStatus::Purchased),
             QuoteStatus::Rejected | QuoteStatus::Expired | QuoteStatus::Purchased => false,
+            _ => false,
         }
     }
 
@@ -212,6 +213,7 @@ impl PgA2ARepository {
             PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed => {
                 false
             }
+            _ => false,
         }
     }
 
@@ -246,18 +248,20 @@ impl PgA2ARepository {
     ) -> Result<Option<CartAddress>> {
         match value {
             Some(value) => match value {
-                Value::String(value) => serde_json::from_str::<CartAddress>(&value).map_err(|e| {
-                    CommerceError::DatabaseError(format!(
-                        "Invalid {}.{} JSON string: {}",
-                        entity, field, e
-                    ))
-                }),
+                Value::String(value) => {
+                    let parsed = serde_json::from_str::<CartAddress>(&value).map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Invalid {}.{} JSON string: {}",
+                            entity, field, e
+                        ))
+                    })?;
+                    Ok(Some(parsed))
+                }
                 _ => {
                     let value = Self::parse_json::<CartAddress>(value, entity, field)?;
                     Ok(Some(value))
                 }
-            }
-            .map(Some),
+            },
             None => Ok(None),
         }
     }

@@ -2,7 +2,7 @@
 //!
 //! Records every authorization decision for traceability.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -234,7 +234,7 @@ impl AuditFilter {
 /// ```
 #[derive(Debug, Clone)]
 pub struct AuditLog {
-    records: Vec<AuditRecord>,
+    records: VecDeque<AuditRecord>,
     max_size: usize,
 }
 
@@ -244,15 +244,15 @@ impl AuditLog {
     /// When the log exceeds `max_size`, the oldest records are discarded.
     #[must_use]
     pub const fn new(max_size: usize) -> Self {
-        Self { records: Vec::new(), max_size }
+        Self { records: VecDeque::new(), max_size }
     }
 
     /// Appends a record. If the log is full, the oldest record is removed.
     pub fn record(&mut self, record: AuditRecord) {
         if self.records.len() >= self.max_size && self.max_size > 0 {
-            self.records.remove(0);
+            let _ = self.records.pop_front();
         }
-        self.records.push(record);
+        self.records.push_back(record);
     }
 
     /// Queries the log with the given filter.
@@ -288,10 +288,10 @@ impl AuditLog {
         self.records.clear();
     }
 
-    /// Returns all records as a slice.
+    /// Returns all records in insertion order.
     #[must_use]
-    pub fn all(&self) -> &[AuditRecord] {
-        &self.records
+    pub fn all(&self) -> Vec<&AuditRecord> {
+        self.records.iter().collect()
     }
 }
 
@@ -473,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn all_returns_slice() {
+    fn all_returns_records() {
         let mut log = AuditLog::new(100);
         log.record(make_record("alice", "orders", AccessDecision::Allowed));
         let all = log.all();

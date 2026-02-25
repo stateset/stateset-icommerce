@@ -8,9 +8,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use stateset_core::{
     AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast, FulfillmentMetrics,
-    InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductPerformance,
-    Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast, SalesSummary,
-    TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
+    InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductId,
+    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast,
+    SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
     validate_batch_size,
 };
 use uuid::Uuid;
@@ -93,6 +93,7 @@ impl PgAnalyticsRepository {
                     (now - Duration::days(30), now)
                 }
             }
+            _ => (now - Duration::days(30), now),
         }
     }
 
@@ -205,6 +206,7 @@ impl PgAnalyticsRepository {
             TimeGranularity::Month => "YYYY-MM",
             TimeGranularity::Quarter => "YYYY-\"Q\"Q",
             TimeGranularity::Year => "YYYY",
+            _ => "YYYY-MM-DD",
         };
 
         let sql = format!(
@@ -276,7 +278,7 @@ impl PgAnalyticsRepository {
             .into_iter()
             .map(|(product_id, sku, name, units_sold, revenue, order_count, avg_price)| {
                 TopProduct {
-                    product_id,
+                    product_id: product_id.map(ProductId::from_uuid),
                     sku,
                     name,
                     units_sold: units_sold as u64,

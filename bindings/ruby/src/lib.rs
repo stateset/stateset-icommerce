@@ -2875,11 +2875,14 @@ impl CurrencyOps {
     }
 
     fn format(&self, amount: f64, currency: String) -> String {
-        let commerce = self.commerce.lock().unwrap();
-        commerce.currency().format(
-            Decimal::from_f64_retain(amount).unwrap_or_default(),
-            currency.parse().unwrap_or_default(),
-        )
+        let formatted = (|| -> Result<String, Error> {
+            let commerce = lock_commerce!(self.commerce);
+            Ok(commerce.currency().format(
+                Decimal::from_f64_retain(amount).unwrap_or_default(),
+                currency.parse().unwrap_or_default(),
+            ))
+        })();
+        formatted.unwrap_or_default()
     }
 }
 

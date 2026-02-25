@@ -7,10 +7,10 @@ use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CommerceError, CompletePick,
-    CompleteShip, CreatePackTask, CreatePickTask, CreateShipTask, CreateWave,
-    FulfillmentRepository, PackStatus, PackTask, PackTaskFilter, PackageType, PickStatus, PickTask,
-    PickTaskFilter, Result, ShipStatus, ShipTask, ShipTaskFilter, Wave, WaveFilter, WaveStatus,
-    generate_carton_number, generate_wave_number, validate_batch_size,
+    CompleteShip, CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, FulfillmentId,
+    FulfillmentRepository, OrderId, PackStatus, PackTask, PackTaskFilter, PackageType, PickStatus,
+    PickTask, PickTaskFilter, Result, ShipStatus, ShipTask, ShipTaskFilter, Wave, WaveFilter,
+    WaveStatus, generate_carton_number, generate_wave_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -136,7 +136,7 @@ impl PgFulfillmentRepository {
         })?;
 
         Ok(Wave {
-            id: row.id,
+            id: row.id.into(),
             wave_number: row.wave_number,
             warehouse_id: row.warehouse_id,
             status,
@@ -163,9 +163,9 @@ impl PgFulfillmentRepository {
 
         Ok(PickTask {
             id: row.id,
-            wave_id: row.wave_id,
-            order_id: row.order_id,
-            order_item_id: row.order_item_id,
+            wave_id: row.wave_id.map(Into::into),
+            order_id: row.order_id.into(),
+            order_item_id: row.order_item_id.into(),
             warehouse_id: row.warehouse_id,
             status,
             sku: row.sku,
@@ -198,8 +198,8 @@ impl PgFulfillmentRepository {
 
         Ok(PackTask {
             id: row.id,
-            order_id: row.order_id,
-            shipment_id: row.shipment_id,
+            order_id: row.order_id.into(),
+            shipment_id: row.shipment_id.map(Into::into),
             status,
             carton_count: row.carton_count,
             total_weight_kg: row.total_weight_kg,
@@ -257,8 +257,8 @@ impl PgFulfillmentRepository {
 
         Ok(ShipTask {
             id: row.id,
-            order_id: row.order_id,
-            shipment_id: row.shipment_id,
+            order_id: row.order_id.into(),
+            shipment_id: row.shipment_id.into(),
             pack_task_id: row.pack_task_id,
             status,
             carrier: row.carrier,
@@ -638,12 +638,19 @@ impl PgFulfillmentRepository {
     }
 
     pub async fn get_picks_for_order_async(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
-        self.list_picks_async(PickTaskFilter { order_id: Some(order_id), ..Default::default() })
-            .await
+        self.list_picks_async(PickTaskFilter {
+            order_id: Some(order_id.into()),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn get_picks_for_wave_async(&self, wave_id: Uuid) -> Result<Vec<PickTask>> {
-        self.list_picks_async(PickTaskFilter { wave_id: Some(wave_id), ..Default::default() }).await
+        self.list_picks_async(PickTaskFilter {
+            wave_id: Some(wave_id.into()),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn count_picks_async(&self, filter: PickTaskFilter) -> Result<u64> {
@@ -1097,8 +1104,8 @@ impl PgFulfillmentRepository {
             let pick = self
                 .create_pick_async(CreatePickTask {
                     wave_id: None,
-                    order_id,
-                    order_item_id: item_id,
+                    order_id: order_id.into(),
+                    order_item_id: item_id.into(),
                     warehouse_id,
                     sku,
                     product_name: name,
@@ -1188,8 +1195,8 @@ impl FulfillmentRepository for PgFulfillmentRepository {
         block_on(self.create_wave_async(input))
     }
 
-    fn get_wave(&self, id: Uuid) -> Result<Option<Wave>> {
-        block_on(self.get_wave_async(id))
+    fn get_wave(&self, id: FulfillmentId) -> Result<Option<Wave>> {
+        block_on(self.get_wave_async(id.into_uuid()))
     }
 
     fn get_wave_by_number(&self, number: &str) -> Result<Option<Wave>> {
@@ -1200,20 +1207,21 @@ impl FulfillmentRepository for PgFulfillmentRepository {
         block_on(self.list_waves_async(filter))
     }
 
-    fn release_wave(&self, id: Uuid) -> Result<Wave> {
-        block_on(self.release_wave_async(id))
+    fn release_wave(&self, id: FulfillmentId) -> Result<Wave> {
+        block_on(self.release_wave_async(id.into_uuid()))
     }
 
-    fn complete_wave(&self, id: Uuid) -> Result<Wave> {
-        block_on(self.complete_wave_async(id))
+    fn complete_wave(&self, id: FulfillmentId) -> Result<Wave> {
+        block_on(self.complete_wave_async(id.into_uuid()))
     }
 
-    fn cancel_wave(&self, id: Uuid) -> Result<Wave> {
-        block_on(self.cancel_wave_async(id))
+    fn cancel_wave(&self, id: FulfillmentId) -> Result<Wave> {
+        block_on(self.cancel_wave_async(id.into_uuid()))
     }
 
-    fn get_wave_orders(&self, wave_id: Uuid) -> Result<Vec<Uuid>> {
-        block_on(self.get_wave_orders_async(wave_id))
+    fn get_wave_orders(&self, wave_id: FulfillmentId) -> Result<Vec<OrderId>> {
+        let order_ids = block_on(self.get_wave_orders_async(wave_id.into_uuid()))?;
+        Ok(order_ids.into_iter().map(OrderId::from_uuid).collect())
     }
 
     fn count_waves(&self, filter: WaveFilter) -> Result<u64> {
@@ -1252,12 +1260,12 @@ impl FulfillmentRepository for PgFulfillmentRepository {
         block_on(self.cancel_pick_async(id))
     }
 
-    fn get_picks_for_order(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
-        block_on(self.get_picks_for_order_async(order_id))
+    fn get_picks_for_order(&self, order_id: OrderId) -> Result<Vec<PickTask>> {
+        block_on(self.get_picks_for_order_async(order_id.into_uuid()))
     }
 
-    fn get_picks_for_wave(&self, wave_id: Uuid) -> Result<Vec<PickTask>> {
-        block_on(self.get_picks_for_wave_async(wave_id))
+    fn get_picks_for_wave(&self, wave_id: FulfillmentId) -> Result<Vec<PickTask>> {
+        block_on(self.get_picks_for_wave_async(wave_id.into_uuid()))
     }
 
     fn count_picks(&self, filter: PickTaskFilter) -> Result<u64> {
@@ -1348,16 +1356,20 @@ impl FulfillmentRepository for PgFulfillmentRepository {
         block_on(self.count_ships_async(filter))
     }
 
-    fn create_picks_for_order(&self, order_id: Uuid, warehouse_id: i32) -> Result<Vec<PickTask>> {
-        block_on(self.create_picks_for_order_async(order_id, warehouse_id))
+    fn create_picks_for_order(
+        &self,
+        order_id: OrderId,
+        warehouse_id: i32,
+    ) -> Result<Vec<PickTask>> {
+        block_on(self.create_picks_for_order_async(order_id.into_uuid(), warehouse_id))
     }
 
-    fn is_order_ready_to_pack(&self, order_id: Uuid) -> Result<bool> {
-        block_on(self.is_order_ready_to_pack_async(order_id))
+    fn is_order_ready_to_pack(&self, order_id: OrderId) -> Result<bool> {
+        block_on(self.is_order_ready_to_pack_async(order_id.into_uuid()))
     }
 
-    fn is_order_ready_to_ship(&self, order_id: Uuid) -> Result<bool> {
-        block_on(self.is_order_ready_to_ship_async(order_id))
+    fn is_order_ready_to_ship(&self, order_id: OrderId) -> Result<bool> {
+        block_on(self.is_order_ready_to_ship_async(order_id.into_uuid()))
     }
 
     fn create_waves_batch(&self, inputs: Vec<CreateWave>) -> Result<BatchResult<Wave>> {

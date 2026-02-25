@@ -1,3 +1,5 @@
+#[cfg(feature = "postgres")]
+use super::block_on_postgres;
 use super::{Commerce, CommerceBackend, CommerceBuilder};
 
 use std::sync::Arc;
@@ -145,8 +147,8 @@ impl Commerce {
 
     /// Create a Commerce instance connected to PostgreSQL.
     ///
-    /// This requires the `postgres` feature to be enabled and creates
-    /// a new Tokio runtime for async operations.
+    /// This requires the `postgres` feature to be enabled and performs
+    /// synchronous initialization without panicking inside existing runtimes.
     ///
     /// # Arguments
     ///
@@ -162,10 +164,8 @@ impl Commerce {
     /// ```
     #[cfg(feature = "postgres")]
     pub fn with_postgres(url: &str) -> Result<Self, CommerceError> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {}", e)))?;
-
-        let db = rt.block_on(PostgresDatabase::connect(url))?;
+        let url = url.to_owned();
+        let db = block_on_postgres(move || async move { PostgresDatabase::connect(&url).await })?;
         let db: Arc<dyn Database> = Arc::new(db);
         let metrics = init_metrics(MetricsConfig::default());
 
@@ -206,14 +206,11 @@ impl Commerce {
         max_connections: u32,
         acquire_timeout_secs: u64,
     ) -> Result<Self, CommerceError> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {}", e)))?;
-
-        let db = rt.block_on(PostgresDatabase::connect_with_options(
-            url,
-            max_connections,
-            acquire_timeout_secs,
-        ))?;
+        let url = url.to_owned();
+        let db = block_on_postgres(move || async move {
+            PostgresDatabase::connect_with_options(&url, max_connections, acquire_timeout_secs)
+                .await
+        })?;
         let db: Arc<dyn Database> = Arc::new(db);
         let metrics = init_metrics(MetricsConfig::default());
 

@@ -117,6 +117,38 @@ macro_rules! define_id {
             }
         }
 
+        #[cfg(feature = "sqlx-postgres")]
+        impl sqlx::Type<sqlx::Postgres> for $name {
+            fn type_info() -> sqlx::postgres::PgTypeInfo {
+                <Uuid as sqlx::Type<sqlx::Postgres>>::type_info()
+            }
+        }
+
+        #[cfg(feature = "sqlx-postgres")]
+        impl sqlx::postgres::PgHasArrayType for $name {
+            fn array_type_info() -> sqlx::postgres::PgTypeInfo {
+                <Uuid as sqlx::postgres::PgHasArrayType>::array_type_info()
+            }
+        }
+
+        #[cfg(feature = "sqlx-postgres")]
+        impl<'q> sqlx::Encode<'q, sqlx::Postgres> for $name {
+            fn encode_by_ref(
+                &self,
+                buf: &mut sqlx::postgres::PgArgumentBuffer,
+            ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+                <Uuid as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+            }
+        }
+
+        #[cfg(feature = "sqlx-postgres")]
+        impl<'r> sqlx::Decode<'r, sqlx::Postgres> for $name {
+            fn decode(value: sqlx::postgres::PgValueRef<'r>)
+            -> Result<Self, sqlx::error::BoxDynError> {
+                <Uuid as sqlx::Decode<'r, sqlx::Postgres>>::decode(value).map(Self)
+            }
+        }
+
         #[cfg(any(test, feature = "arbitrary"))]
         impl proptest::arbitrary::Arbitrary for $name {
             type Parameters = ();

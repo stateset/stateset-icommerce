@@ -12,8 +12,8 @@ use stateset_core::{
     CollectionActivityType, CollectionStatus, CommerceError, CreateCollectionActivity,
     CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoReason,
     CreditMemoStatus, CustomerArAging, CustomerArSummary, CustomerStatement, DunningLetterType,
-    GenerateStatementRequest, Invoice, InvoiceStatus, InvoiceType, Result, StatementLineItem,
-    StatementTransactionType, WriteOff, WriteOffFilter, WriteOffReason,
+    GenerateStatementRequest, Invoice, InvoiceId, InvoiceStatus, InvoiceType, Result,
+    StatementLineItem, StatementTransactionType, WriteOff, WriteOffFilter, WriteOffReason,
     generate_credit_memo_number, generate_write_off_number,
 };
 use uuid::Uuid;
@@ -338,10 +338,10 @@ impl PgAccountsReceivableRepository {
         })?;
 
         Ok(Invoice {
-            id,
+            id: id.into(),
             invoice_number,
-            customer_id,
-            order_id,
+            customer_id: customer_id.into(),
+            order_id: order_id.map(Into::into),
             status,
             invoice_type,
             invoice_date,
@@ -583,6 +583,7 @@ impl PgAccountsReceivableRepository {
                 stateset_core::AgingBucket::DaysOver90 => {
                     "COALESCE(SUM(CASE WHEN i.due_date < NOW() - INTERVAL '90 days' THEN i.balance_due ELSE 0 END), 0) > 0"
                 }
+                _ => "1=1",
             };
             builder.push(condition);
         }
@@ -773,6 +774,7 @@ impl PgAccountsReceivableRepository {
             DunningLetterType::DemandLetter | DunningLetterType::CollectionNotice => {
                 CollectionStatus::InCollections
             }
+            _ => CollectionStatus::InCollections,
         };
 
         self.update_collection_status_async(invoice_id, new_status).await?;
@@ -1446,8 +1448,12 @@ impl AccountsReceivableRepository for PgAccountsReceivableRepository {
         block_on(self.list_collection_activities_async(filter))
     }
 
-    fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()> {
-        block_on(self.update_collection_status_async(invoice_id, status))
+    fn update_collection_status(
+        &self,
+        invoice_id: InvoiceId,
+        status: CollectionStatus,
+    ) -> Result<()> {
+        block_on(self.update_collection_status_async(invoice_id.into_uuid(), status))
     }
 
     fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>> {
@@ -1456,11 +1462,11 @@ impl AccountsReceivableRepository for PgAccountsReceivableRepository {
 
     fn send_dunning_letter(
         &self,
-        invoice_id: Uuid,
+        invoice_id: InvoiceId,
         letter_type: DunningLetterType,
         sent_by: Option<&str>,
     ) -> Result<CollectionActivity> {
-        block_on(self.send_dunning_letter_async(invoice_id, letter_type, sent_by))
+        block_on(self.send_dunning_letter_async(invoice_id.into_uuid(), letter_type, sent_by))
     }
 
     fn create_write_off(&self, input: CreateWriteOff) -> Result<WriteOff> {

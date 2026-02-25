@@ -1640,6 +1640,7 @@ fn plan_status_str(status: PlanStatus) -> &'static str {
         PlanStatus::Draft => "draft",
         PlanStatus::Active => "active",
         PlanStatus::Archived => "archived",
+        _ => "draft",
     }
 }
 
@@ -1652,6 +1653,7 @@ fn subscription_status_str(status: SubscriptionStatus) -> &'static str {
         SubscriptionStatus::Cancelled => "cancelled",
         SubscriptionStatus::Expired => "expired",
         SubscriptionStatus::Pending => "pending",
+        _ => "pending",
     }
 }
 
@@ -1664,6 +1666,7 @@ fn billing_cycle_status_str(status: BillingCycleStatus) -> &'static str {
         BillingCycleStatus::Skipped => "skipped",
         BillingCycleStatus::Refunded => "refunded",
         BillingCycleStatus::Voided => "voided",
+        _ => "scheduled",
     }
 }
 
@@ -1689,5 +1692,6 @@ fn event_type_str(event_type: SubscriptionEventType) -> &'static str {
         SubscriptionEventType::DiscountApplied => "discount_applied",
         SubscriptionEventType::DiscountRemoved => "discount_removed",
         SubscriptionEventType::Refunded => "refunded",
+        _ => "created",
     }
 }

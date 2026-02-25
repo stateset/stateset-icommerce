@@ -604,7 +604,7 @@ impl crate::AsyncDatabaseExt for PostgresDatabase {
 
             if let Err(error) =
                 sqlx::query(&format!("SET TRANSACTION ISOLATION LEVEL {}", isolation_sql))
-                    .execute(&mut tx)
+                    .execute(tx.as_mut())
                     .await
             {
                 if maybe_retry_with_backoff(&mut retries, &mut backoff_ms, &error).await {
@@ -615,7 +615,7 @@ impl crate::AsyncDatabaseExt for PostgresDatabase {
 
             if let Err(error) = sqlx::query("SET LOCAL statement_timeout = $1")
                 .bind(statement_timeout)
-                .execute(&mut tx)
+                .execute(tx.as_mut())
                 .await
             {
                 if maybe_retry_with_backoff(&mut retries, &mut backoff_ms, &error).await {

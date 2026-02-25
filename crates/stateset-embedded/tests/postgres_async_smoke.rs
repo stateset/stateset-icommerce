@@ -98,7 +98,8 @@ async fn postgres_async_commerce_smoke() {
         "expected reservations to be pending after order create"
     );
 
-    let shipped = commerce.orders().ship(order.id, Some("TRACK-TEST")).await.expect("ship order");
+    let shipped =
+        commerce.orders().ship(order.id.into_uuid(), Some("TRACK-TEST")).await.expect("ship order");
     assert_eq!(shipped.status, OrderStatus::Shipped);
 
     let reservations = commerce

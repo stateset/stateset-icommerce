@@ -257,6 +257,11 @@ impl PgX402CreditRepository {
                 }
                 account.balance - amount_i64
             }
+            _ => {
+                return Err(CommerceError::ValidationError(
+                    "Unsupported x402 credit direction".to_string(),
+                ));
+            }
         };
 
         let now = Utc::now();

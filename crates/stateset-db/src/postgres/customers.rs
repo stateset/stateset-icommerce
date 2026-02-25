@@ -480,6 +480,7 @@ impl PgCustomerRepository {
                 AddressType::Both => {
                     "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1"
                 }
+                _ => "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1",
             };
             sqlx::query(clear_sql)
                 .bind(input.customer_id.into_uuid())
@@ -527,6 +528,7 @@ impl PgCustomerRepository {
                     .await
                     .map_err(map_db_error)?;
                 }
+                _ => {}
             }
         }
 
@@ -687,6 +689,7 @@ impl PgCustomerRepository {
                     .await
                     .map_err(map_db_error)?;
                 }
+                _ => {}
             }
         }
 
@@ -738,6 +741,7 @@ impl PgCustomerRepository {
             AddressType::Both => {
                 "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1"
             }
+            _ => "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1",
         };
         sqlx::query(clear_sql)
             .bind(customer_id.into_uuid())
@@ -785,6 +789,7 @@ impl PgCustomerRepository {
                 .await
                 .map_err(map_db_error)?;
             }
+            _ => {}
         }
 
         tx.commit().await.map_err(map_db_error)?;

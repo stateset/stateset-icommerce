@@ -11,6 +11,8 @@ mod tests;
 
 use std::sync::Arc;
 
+#[cfg(feature = "postgres")]
+use stateset_core::CommerceError;
 use stateset_db::Database;
 use stateset_observability::Metrics;
 
@@ -22,6 +24,39 @@ use stateset_db::SqliteDatabase;
 
 pub use builder::CommerceBuilder;
 pub use introspection::CommerceHealth;
+
+#[cfg(feature = "postgres")]
+fn block_on_postgres<T, Fut, MakeFut>(make_fut: MakeFut) -> Result<T, CommerceError>
+where
+    T: Send + 'static,
+    Fut: std::future::Future<Output = Result<T, CommerceError>> + Send + 'static,
+    MakeFut: FnOnce() -> Fut + Send + 'static,
+{
+    let new_runtime = || {
+        tokio::runtime::Runtime::new()
+            .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {e}")))
+    };
+
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle)
+            if matches!(handle.runtime_flavor(), tokio::runtime::RuntimeFlavor::MultiThread) =>
+        {
+            tokio::task::block_in_place(|| handle.block_on(make_fut()))
+        }
+        Ok(_) => std::thread::spawn(move || {
+            let rt = new_runtime()?;
+            rt.block_on(make_fut())
+        })
+        .join()
+        .map_err(|_| {
+            CommerceError::Internal("PostgreSQL initialization thread panicked".to_string())
+        })?,
+        Err(_) => {
+            let rt = new_runtime()?;
+            rt.block_on(make_fut())
+        }
+    }
+}
 
 /// Active database backend used by a [`Commerce`] instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

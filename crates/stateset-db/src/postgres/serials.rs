@@ -1222,7 +1222,8 @@ impl PgSerialRepository {
 
         let warranty_status = if let Some(warranty_id) = serial_number.warranty_id {
             let warranty_repo = PgWarrantyRepository::new(self.pool.clone());
-            match warranty_repo.get_async(warranty_id).await? {
+            match warranty_repo.get_async(stateset_core::WarrantyId::from_uuid(warranty_id)).await?
+            {
                 Some(warranty) => Some(WarrantyLookupStatus {
                     warranty_id,
                     is_active: warranty.is_valid(),

@@ -8,8 +8,8 @@ use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
     CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, FulfillmentType, OrderStatus,
-    PaymentId, PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
-    ShippingRate, UpdateCart, UpdateCartItem, UpdateOrder, X402Asset, X402AwaitingSettlementData,
+    PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
+    UpdateCart, UpdateCartItem, UpdateOrder, X402Asset, X402AwaitingSettlementData,
     X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
     X402PaymentRequiredData, validate_batch_size,
 };
@@ -177,9 +177,9 @@ impl CartRow {
         };
 
         Ok(Cart {
-            id,
+            id: id.into(),
             cart_number,
-            customer_id,
+            customer_id: customer_id.map(Into::into),
             status,
             currency,
             items,
@@ -203,7 +203,7 @@ impl CartRow {
             payment_status,
             coupon_code,
             discount_description,
-            order_id,
+            order_id: order_id.map(Into::into),
             order_number,
             notes,
             metadata,
@@ -245,8 +245,8 @@ impl From<CartItemRow> for CartItem {
     fn from(row: CartItemRow) -> Self {
         CartItem {
             id: row.id,
-            cart_id: row.cart_id,
-            product_id: row.product_id,
+            cart_id: row.cart_id.into(),
+            product_id: row.product_id.map(Into::into),
             variant_id: row.variant_id,
             sku: row.sku,
             name: row.name,
@@ -281,7 +281,7 @@ impl PgCartRepository {
         let customer_repo = PgCustomerRepository::new(self.pool.clone());
 
         if let Some(id) = cart.customer_id {
-            return Ok(id);
+            return Ok(id.into_uuid());
         }
 
         let email = cart.customer_email.as_ref().ok_or_else(|| {
@@ -322,7 +322,7 @@ impl PgCartRepository {
         cart.items
             .iter()
             .map(|item| CreateOrderItem {
-                product_id: item.product_id.unwrap_or_else(Uuid::new_v4),
+                product_id: item.product_id.unwrap_or_else(|| Uuid::new_v4().into()),
                 variant_id: item.variant_id,
                 sku: item.sku.clone(),
                 name: item.name.clone(),
@@ -417,7 +417,7 @@ impl PgCartRepository {
             if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
             {
                 return Ok(X402CheckoutResult::Completed(CheckoutResult {
-                    cart_id,
+                    cart_id: cart_id.into(),
                     order_id,
                     order_number,
                     payment_id: None,
@@ -435,9 +435,9 @@ impl PgCartRepository {
         let billing_address = Self::billing_address_for_cart(&cart);
         let order = order_repo
             .create_from_cart_async(
-                cart_id,
+                cart_id.into(),
                 CreateOrder {
-                    customer_id,
+                    customer_id: customer_id.into(),
                     items: order_items,
                     currency: Some(cart.currency.clone()),
                     shipping_address,
@@ -451,7 +451,7 @@ impl PgCartRepository {
 
         let order = order_repo
             .update_async(
-                order.id,
+                order.id.into_uuid(),
                 UpdateOrder {
                     status: Some(OrderStatus::Confirmed),
                     payment_status: Some(PaymentStatus::Paid),
@@ -480,7 +480,7 @@ impl PgCartRepository {
         .map_err(map_db_error)?;
 
         Ok(X402CheckoutResult::Completed(CheckoutResult {
-            cart_id,
+            cart_id: cart_id.into(),
             order_id: order.id,
             order_number: order.order_number,
             payment_id: None,
@@ -612,7 +612,7 @@ impl PgCartRepository {
 
         Ok(CartItem {
             id: item_id,
-            cart_id,
+            cart_id: cart_id.into(),
             product_id: item.product_id,
             variant_id: item.variant_id,
             sku: item.sku,
@@ -782,7 +782,8 @@ impl PgCartRepository {
     }
 
     pub async fn for_customer_async(&self, customer_id: Uuid) -> Result<Vec<Cart>> {
-        self.list_async(CartFilter { customer_id: Some(customer_id), ..Default::default() }).await
+        self.list_async(CartFilter { customer_id: Some(customer_id.into()), ..Default::default() })
+            .await
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -1198,7 +1199,7 @@ impl PgCartRepository {
             if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
             {
                 return Ok(X402CheckoutResult::Completed(CheckoutResult {
-                    cart_id: id,
+                    cart_id: id.into(),
                     order_id,
                     order_number,
                     payment_id: None,
@@ -1247,7 +1248,7 @@ impl PgCartRepository {
                     | X402IntentStatus::Batched => {
                         return Ok(X402CheckoutResult::AwaitingSettlement(
                             X402AwaitingSettlementData {
-                                cart_id: id,
+                                cart_id: id.into(),
                                 intent_id,
                                 status,
                                 sequence_number: seq_num.map(|n| n as u64),
@@ -1257,7 +1258,7 @@ impl PgCartRepository {
                     }
                     X402IntentStatus::Created => {
                         return Ok(X402CheckoutResult::IntentCreated(X402IntentCreatedData {
-                            cart_id: id,
+                            cart_id: id.into(),
                             intent_id,
                             signing_hash: signing_hash.unwrap_or_default(),
                             amount,
@@ -1272,13 +1273,14 @@ impl PgCartRepository {
                     X402IntentStatus::Expired
                     | X402IntentStatus::Failed
                     | X402IntentStatus::Cancelled => {}
+                    _ => {}
                 }
             }
         }
 
         let chain_id = x402_payment.network.chain_id();
         Ok(X402CheckoutResult::PaymentRequired(X402PaymentRequiredData {
-            cart_id: id,
+            cart_id: id.into(),
             payee_address: payee_address.to_string(),
             amount,
             amount_display,
@@ -1384,7 +1386,7 @@ impl PgCartRepository {
             {
                 tx.commit().await.map_err(map_db_error)?;
                 return Ok(CheckoutResult {
-                    cart_id: id,
+                    cart_id: id.into(),
                     order_id,
                     order_number,
                     payment_id: None,
@@ -1410,9 +1412,9 @@ impl PgCartRepository {
         let order_repo = PgOrderRepository::new(self.pool.clone());
         let order = order_repo
             .create_from_cart_async(
-                id,
+                id.into(),
                 CreateOrder {
-                    customer_id,
+                    customer_id: customer_id.into(),
                     items: order_items,
                     currency: Some(cart.currency.clone()),
                     shipping_address,
@@ -1426,7 +1428,7 @@ impl PgCartRepository {
 
         let order = order_repo
             .update_async(
-                order.id,
+                order.id.into_uuid(),
                 UpdateOrder {
                     status: Some(OrderStatus::Confirmed),
                     payment_status: Some(PaymentStatus::Paid),
@@ -1455,7 +1457,7 @@ impl PgCartRepository {
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(CheckoutResult {
-            cart_id: id,
+            cart_id: id.into(),
             order_id: order.id,
             order_number: order.order_number,
             payment_id: None,
@@ -1707,7 +1709,7 @@ impl PgCartRepository {
 
                     items.push(CartItem {
                         id: item_id,
-                        cart_id: id,
+                        cart_id: id.into(),
                         product_id: item_input.product_id,
                         variant_id: item_input.variant_id,
                         sku: item_input.sku.clone(),
@@ -1741,7 +1743,7 @@ impl PgCartRepository {
                 .map_err(map_db_error)?;
 
             carts.push(Cart {
-                id,
+                id: id.into(),
                 cart_number,
                 customer_id: input.customer_id,
                 status: CartStatus::Active,
@@ -1937,32 +1939,32 @@ impl CartRepository for PgCartRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Cart>> {
-        super::block_on(self.get_async(id))
+    fn get(&self, id: CartId) -> Result<Option<Cart>> {
+        super::block_on(self.get_async(id.into_uuid()))
     }
 
     fn get_by_number(&self, cart_number: &str) -> Result<Option<Cart>> {
         super::block_on(self.get_by_number_async(cart_number))
     }
 
-    fn update(&self, id: Uuid, input: UpdateCart) -> Result<Cart> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: CartId, input: UpdateCart) -> Result<Cart> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: CartFilter) -> Result<Vec<Cart>> {
         super::block_on(self.list_async(filter))
     }
 
-    fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Cart>> {
-        super::block_on(self.for_customer_async(customer_id))
+    fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Cart>> {
+        super::block_on(self.for_customer_async(customer_id.into_uuid()))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
-        super::block_on(self.delete_async(id))
+    fn delete(&self, id: CartId) -> Result<()> {
+        super::block_on(self.delete_async(id.into_uuid()))
     }
 
-    fn add_item(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
-        super::block_on(self.add_item_async(cart_id, item))
+    fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
+        super::block_on(self.add_item_async(cart_id.into_uuid(), item))
     }
 
     fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
@@ -1973,88 +1975,88 @@ impl CartRepository for PgCartRepository {
         super::block_on(self.remove_item_async(item_id))
     }
 
-    fn get_items(&self, cart_id: Uuid) -> Result<Vec<CartItem>> {
-        super::block_on(self.get_items_async(cart_id))
+    fn get_items(&self, cart_id: CartId) -> Result<Vec<CartItem>> {
+        super::block_on(self.get_items_async(cart_id.into_uuid()))
     }
 
-    fn clear_items(&self, cart_id: Uuid) -> Result<()> {
-        super::block_on(self.clear_items_async(cart_id))
+    fn clear_items(&self, cart_id: CartId) -> Result<()> {
+        super::block_on(self.clear_items_async(cart_id.into_uuid()))
     }
 
-    fn set_shipping_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        super::block_on(self.set_shipping_address_async(id, address))
+    fn set_shipping_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
+        super::block_on(self.set_shipping_address_async(id.into_uuid(), address))
     }
 
-    fn set_billing_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        super::block_on(self.set_billing_address_async(id, address))
+    fn set_billing_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
+        super::block_on(self.set_billing_address_async(id.into_uuid(), address))
     }
 
-    fn set_shipping(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
-        super::block_on(self.set_shipping_async(id, shipping))
+    fn set_shipping(&self, id: CartId, shipping: SetCartShipping) -> Result<Cart> {
+        super::block_on(self.set_shipping_async(id.into_uuid(), shipping))
     }
 
-    fn get_shipping_rates(&self, id: Uuid) -> Result<Vec<ShippingRate>> {
-        super::block_on(self.get_shipping_rates_async(id))
+    fn get_shipping_rates(&self, id: CartId) -> Result<Vec<ShippingRate>> {
+        super::block_on(self.get_shipping_rates_async(id.into_uuid()))
     }
 
-    fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
-        super::block_on(self.set_payment_async(id, payment))
+    fn set_payment(&self, id: CartId, payment: SetCartPayment) -> Result<Cart> {
+        super::block_on(self.set_payment_async(id.into_uuid(), payment))
     }
 
-    fn set_x402_payment(&self, id: Uuid, payment: SetCartX402Payment) -> Result<Cart> {
-        super::block_on(self.set_x402_payment_async(id, payment))
+    fn set_x402_payment(&self, id: CartId, payment: SetCartX402Payment) -> Result<Cart> {
+        super::block_on(self.set_x402_payment_async(id.into_uuid(), payment))
     }
 
-    fn complete_with_x402(&self, id: Uuid, payee_address: &str) -> Result<X402CheckoutResult> {
-        super::block_on(self.complete_with_x402_async(id, payee_address))
+    fn complete_with_x402(&self, id: CartId, payee_address: &str) -> Result<X402CheckoutResult> {
+        super::block_on(self.complete_with_x402_async(id.into_uuid(), payee_address))
     }
 
-    fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
-        super::block_on(self.apply_discount_async(id, coupon_code))
+    fn apply_discount(&self, id: CartId, coupon_code: &str) -> Result<Cart> {
+        super::block_on(self.apply_discount_async(id.into_uuid(), coupon_code))
     }
 
-    fn remove_discount(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.remove_discount_async(id))
+    fn remove_discount(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.remove_discount_async(id.into_uuid()))
     }
 
-    fn mark_ready_for_payment(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.mark_ready_for_payment_async(id))
+    fn mark_ready_for_payment(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.mark_ready_for_payment_async(id.into_uuid()))
     }
 
-    fn begin_checkout(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.begin_checkout_async(id))
+    fn begin_checkout(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.begin_checkout_async(id.into_uuid()))
     }
 
-    fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
-        super::block_on(self.complete_async(id))
+    fn complete(&self, id: CartId) -> Result<CheckoutResult> {
+        super::block_on(self.complete_async(id.into_uuid()))
     }
 
-    fn cancel(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.cancel_async(id))
+    fn cancel(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.cancel_async(id.into_uuid()))
     }
 
-    fn abandon(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.abandon_async(id))
+    fn abandon(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.abandon_async(id.into_uuid()))
     }
 
-    fn expire(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.expire_async(id))
+    fn expire(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.expire_async(id.into_uuid()))
     }
 
-    fn reserve_inventory(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.reserve_inventory_async(id))
+    fn reserve_inventory(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.reserve_inventory_async(id.into_uuid()))
     }
 
-    fn release_inventory(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.release_inventory_async(id))
+    fn release_inventory(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.release_inventory_async(id.into_uuid()))
     }
 
-    fn recalculate(&self, id: Uuid) -> Result<Cart> {
-        super::block_on(self.recalculate_async(id))
+    fn recalculate(&self, id: CartId) -> Result<Cart> {
+        super::block_on(self.recalculate_async(id.into_uuid()))
     }
 
-    fn set_tax(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
-        super::block_on(self.set_tax_async(id, tax_amount))
+    fn set_tax(&self, id: CartId, tax_amount: Decimal) -> Result<Cart> {
+        super::block_on(self.set_tax_async(id.into_uuid(), tax_amount))
     }
 
     fn get_abandoned(&self) -> Result<Vec<Cart>> {
@@ -2079,23 +2081,37 @@ impl CartRepository for PgCartRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<BatchResult<Cart>> {
-        super::block_on(self.update_batch_async(updates))
+    fn update_batch(&self, updates: Vec<(CartId, UpdateCart)>) -> Result<BatchResult<Cart>> {
+        let raw_updates: Vec<(Uuid, UpdateCart)> =
+            updates.into_iter().map(|(id, input)| (id.into_uuid(), input)).collect();
+        super::block_on(self.update_batch_async(raw_updates))
     }
 
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<Vec<Cart>> {
-        super::block_on(self.update_batch_atomic_async(updates))
+    fn update_batch_atomic(&self, updates: Vec<(CartId, UpdateCart)>) -> Result<Vec<Cart>> {
+        let raw_updates: Vec<(Uuid, UpdateCart)> =
+            updates.into_iter().map(|(id, input)| (id.into_uuid(), input)).collect();
+        super::block_on(self.update_batch_atomic_async(raw_updates))
     }
 
-    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
-        super::block_on(self.delete_batch_async(ids))
+    fn delete_batch(&self, ids: Vec<CartId>) -> Result<BatchResult<CartId>> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        let result = super::block_on(self.delete_batch_async(raw_ids))?;
+        Ok(BatchResult {
+            succeeded: result.succeeded.into_iter().map(CartId::from_uuid).collect(),
+            failed: result.failed,
+            total_attempted: result.total_attempted,
+            success_count: result.success_count,
+            failure_count: result.failure_count,
+        })
     }
 
-    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
-        super::block_on(self.delete_batch_atomic_async(ids))
+    fn delete_batch_atomic(&self, ids: Vec<CartId>) -> Result<()> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.delete_batch_atomic_async(raw_ids))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Cart>> {
-        super::block_on(self.get_batch_async(ids))
+    fn get_batch(&self, ids: Vec<CartId>) -> Result<Vec<Cart>> {
+        let raw_ids: Vec<Uuid> = ids.into_iter().map(|id| id.into_uuid()).collect();
+        super::block_on(self.get_batch_async(raw_ids))
     }
 }

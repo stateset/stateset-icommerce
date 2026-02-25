@@ -155,13 +155,17 @@ fn state_key(actor_id: &str, resource_type: &str) -> String {
 pub struct RateLimiter {
     rules: HashMap<String, RateLimitRule>,
     state: HashMap<String, RateLimitState>,
+    ops_since_cleanup: u16,
 }
 
 impl RateLimiter {
+    /// Run global stale-entry cleanup every N operations.
+    const AUTO_CLEANUP_INTERVAL_OPS: u16 = 1024;
+
     /// Creates an empty rate limiter with no rules.
     #[must_use]
     pub fn new() -> Self {
-        Self { rules: HashMap::new(), state: HashMap::new() }
+        Self { rules: HashMap::new(), state: HashMap::new(), ops_since_cleanup: 0 }
     }
 
     /// Adds a rate limit rule. If a rule for the same resource type already exists,
@@ -175,17 +179,20 @@ impl RateLimiter {
     /// to atomically check and record.
     #[must_use]
     pub fn check(&mut self, actor_id: &str, resource_type: &str) -> RateLimitDecision {
+        self.maybe_cleanup();
         self.check_at(actor_id, resource_type, Instant::now())
     }
 
     /// Checks and records a request in one step.
     pub fn check_and_record(&mut self, actor_id: &str, resource_type: &str) -> RateLimitDecision {
+        self.maybe_cleanup();
         self.check_and_record_at(actor_id, resource_type, Instant::now())
     }
 
     /// Records a request without checking. Useful when the decision has already
     /// been made externally.
     pub fn record(&mut self, actor_id: &str, resource_type: &str) {
+        self.maybe_cleanup();
         self.record_at(actor_id, resource_type, Instant::now());
     }
 
@@ -211,6 +218,14 @@ impl RateLimiter {
     }
 
     // -- Internal helpers with injectable `now` for testing --
+
+    fn maybe_cleanup(&mut self) {
+        self.ops_since_cleanup = self.ops_since_cleanup.saturating_add(1);
+        if self.ops_since_cleanup >= Self::AUTO_CLEANUP_INTERVAL_OPS {
+            self.cleanup();
+            self.ops_since_cleanup = 0;
+        }
+    }
 
     fn check_at(&mut self, actor_id: &str, resource_type: &str, now: Instant) -> RateLimitDecision {
         let Some(rule) = self.rules.get(resource_type) else {
@@ -491,5 +506,23 @@ mod tests {
     fn default_impl() {
         let limiter = RateLimiter::default();
         assert_eq!(limiter.rule_count(), 0);
+    }
+
+    #[test]
+    fn auto_cleanup_runs_on_operation_threshold() {
+        let mut limiter = RateLimiter::new();
+        limiter.add_rule(rule_2_per_60s());
+
+        let base = Instant::now();
+        limiter.record_at("stale", "orders", base - Duration::from_secs(120));
+        limiter.record_at("fresh", "orders", base);
+        assert_eq!(limiter.state.len(), 2);
+
+        limiter.ops_since_cleanup = RateLimiter::AUTO_CLEANUP_INTERVAL_OPS - 1;
+        let _ = limiter.check("fresh", "orders");
+
+        assert!(limiter.state.contains_key("fresh:orders"));
+        assert!(!limiter.state.contains_key("stale:orders"));
+        assert_eq!(limiter.ops_since_cleanup, 0);
     }
 }

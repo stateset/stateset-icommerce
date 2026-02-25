@@ -64,6 +64,7 @@ impl PgAgentCardRepository {
             }
             TrustLevel::Verified => vec![TrustLevel::Verified, TrustLevel::Enterprise],
             TrustLevel::Enterprise => vec![TrustLevel::Enterprise],
+            _ => vec![min],
         }
     }
 

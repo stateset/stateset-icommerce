@@ -39,6 +39,7 @@ pub struct ServerBuilder {
     enable_cors: bool,
     enable_request_id: bool,
     api_bearer_token: Option<String>,
+    generated_default_token: bool,
 }
 
 impl ServerBuilder {
@@ -53,6 +54,7 @@ impl ServerBuilder {
             // Secure-by-default: API routes require an auth token unless
             // explicitly disabled.
             api_bearer_token: Some(Uuid::new_v4().to_string()),
+            generated_default_token: true,
         }
     }
 
@@ -86,6 +88,7 @@ impl ServerBuilder {
     #[must_use]
     pub fn with_bearer_auth(mut self, token: impl Into<String>) -> Self {
         self.api_bearer_token = Some(token.into());
+        self.generated_default_token = false;
         self
     }
 
@@ -93,6 +96,7 @@ impl ServerBuilder {
     #[must_use]
     pub fn without_auth(mut self) -> Self {
         self.api_bearer_token = None;
+        self.generated_default_token = false;
         self
     }
 
@@ -111,7 +115,7 @@ impl ServerBuilder {
             router,
             self.enable_cors,
             self.enable_request_id,
-            self.api_bearer_token.clone(),
+            self.api_bearer_token,
         )
     }
 
@@ -119,13 +123,20 @@ impl ServerBuilder {
     ///
     /// This method will block until the server is shut down.
     pub async fn serve(self) -> Result<(), HttpError> {
-        let auth_enabled = self.api_bearer_token.is_some();
+        let token = self.api_bearer_token.clone();
+        let generated_default_token = self.generated_default_token;
         let addr = self.addr;
         let app = self.build();
 
         tracing::info!("StateSet HTTP listening on {addr}");
-        if auth_enabled {
+        if let Some(token) = token.as_deref() {
             tracing::info!("API bearer authentication is enabled for /api/v1/*");
+            if generated_default_token {
+                tracing::warn!(
+                    "Using generated bearer token. Persist it and rotate for production deployments."
+                );
+                tracing::info!(api_bearer_token = %token, "Generated API bearer token");
+            }
         } else {
             tracing::warn!("API authentication is disabled for /api/v1/*");
         }
