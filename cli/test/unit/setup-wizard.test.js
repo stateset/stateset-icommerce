@@ -5,6 +5,31 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 
+const TRANSIENT_IO_ERROR_CODES = new Set(['EMFILE', 'ENFILE', 'EAGAIN', 'EBUSY', 'ETXTBSY']);
+const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSync(ms) {
+  Atomics.wait(sleepBuffer, 0, 0, ms);
+}
+
+function withIoRetry(fn, { attempts = 5, baseDelayMs = 20 } = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return fn();
+    } catch (error) {
+      lastError = error;
+      if (!TRANSIENT_IO_ERROR_CODES.has(error?.code) || attempt === attempts) {
+        throw error;
+      }
+      sleepSync(baseDelayMs * attempt);
+    }
+  }
+
+  throw lastError;
+}
+
 const setupScript = path.join(
   path.dirname(new URL(import.meta.url).pathname),
   '../../bin/stateset-setup.js',
@@ -14,34 +39,56 @@ describe('stateset-setup wizard', () => {
   let testHome;
 
   beforeEach(() => {
-    testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-setup-'));
+    testHome = withIoRetry(() => fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-setup-')));
   });
 
   afterEach(() => {
-    fs.rmSync(testHome, { recursive: true, force: true });
+    try {
+      withIoRetry(() => fs.rmSync(testHome, { recursive: true, force: true }), {
+        attempts: 3,
+        baseDelayMs: 15,
+      });
+    } catch {
+      // Best-effort cleanup for transient CI filesystem contention.
+    }
   });
 
   function runSetup(args = [], env = {}) {
-    try {
-      const result = execFileSync(process.execPath, [setupScript, '--yes', ...args], {
-        env: {
-          ...process.env,
-          HOME: testHome,
-          ANTHROPIC_API_KEY: '',
-          ...env,
-        },
-        timeout: 15000,
-        encoding: 'utf8',
-        cwd: testHome,
-      });
-      return { stdout: result, exitCode: 0 };
-    } catch (err) {
-      return {
-        stdout: err.stdout || '',
-        stderr: err.stderr || '',
-        exitCode: err.status,
-      };
+    const maxAttempts = 4;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const result = execFileSync(process.execPath, [setupScript, '--yes', ...args], {
+          env: {
+            ...process.env,
+            HOME: testHome,
+            ANTHROPIC_API_KEY: '',
+            ...env,
+          },
+          timeout: 30000,
+          encoding: 'utf8',
+          cwd: testHome,
+        });
+        return { stdout: result, exitCode: 0 };
+      } catch (err) {
+        const transient =
+          TRANSIENT_IO_ERROR_CODES.has(err?.code) ||
+          (err?.code === 'ETIMEDOUT' && attempt < maxAttempts);
+
+        if (transient && attempt < maxAttempts) {
+          sleepSync(25 * attempt);
+          continue;
+        }
+
+        return {
+          stdout: err.stdout || '',
+          stderr: err.stderr || '',
+          exitCode: err.status,
+        };
+      }
     }
+
+    return { stdout: '', stderr: '', exitCode: 1 };
   }
 
   it('shows help with --help flag', () => {

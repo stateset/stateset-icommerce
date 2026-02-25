@@ -312,6 +312,7 @@ export class ChannelOrchestrator {
           allowQueryParamAuth: httpConfig.allowQueryParamAuth === true,
           corsOrigins: httpConfig.corsOrigins,
           allowRemoteAdminEndpoints: httpConfig.allowRemoteAdminEndpoints === true,
+          allowBrowserEvaluate: httpConfig.allowBrowserEvaluate === true,
           sandbox: httpConfig.sandbox || null,
         });
         const addr = await this._httpGateway.start();

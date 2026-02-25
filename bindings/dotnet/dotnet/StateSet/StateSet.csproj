@@ -8,7 +8,7 @@
 
     <!-- Package metadata -->
     <PackageId>StateSet.Embedded</PackageId>
-    <Version>0.7.7</Version>
+    <Version>0.7.8</Version>
     <Authors>StateSet</Authors>
     <Company>StateSet</Company>
     <Description>StateSet Embedded Commerce - The SQLite of Commerce. A zero-dependency, local-first commerce engine for .NET applications.</Description>

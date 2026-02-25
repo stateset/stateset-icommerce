@@ -6,7 +6,7 @@
  * Usage:
  *   stateset-skills list [--category <cat>] [--origin <origin>] [--json] [--output <file>]
  *   stateset-skills search <query> [--json] [--output <file>]
- *   stateset-skills install <name> [--force] [--json] [--output <file>]
+ *   stateset-skills install <name> [--force] [--allow-insecure-downloads] [--json] [--output <file>]
  *   stateset-skills uninstall <name> [--json] [--output <file>]
  *   stateset-skills info <name> [--json] [--output <file>]
  *   stateset-skills categories [--json] [--output <file>]
@@ -32,6 +32,7 @@ const { values: flags, positionals } = parseArgs({
     force: { type: 'boolean', default: false },
     category: { type: 'string', short: 'c' },
     origin: { type: 'string', short: 'o' },
+    'allow-insecure-downloads': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
     version: { type: 'boolean', short: 'v', default: false },
   },
@@ -83,6 +84,12 @@ function writeJson(data) {
     return;
   }
   console.log(payload);
+}
+
+function getMarketplace() {
+  return getMarketplaceClient({
+    allowInsecureDownloads: flags['allow-insecure-downloads'] === true,
+  });
 }
 
 // ============================================================================
@@ -161,7 +168,7 @@ async function cmdInstall() {
     process.exit(1);
   }
 
-  const marketplace = getMarketplaceClient();
+  const marketplace = getMarketplace();
   const result = await marketplace.install(arg, { force: flags.force });
 
   if (flags.json) {
@@ -186,7 +193,7 @@ async function cmdUninstall() {
     process.exit(1);
   }
 
-  const marketplace = getMarketplaceClient();
+  const marketplace = getMarketplace();
   const result = marketplace.uninstall(arg);
 
   if (flags.json) {
@@ -216,7 +223,7 @@ async function cmdInfo() {
 
   if (!skill) {
     // Check marketplace catalog
-    const marketplace = getMarketplaceClient();
+    const marketplace = getMarketplace();
     const entry = marketplace.getCatalogEntry(arg);
     if (entry) {
       if (flags.json) {
@@ -293,7 +300,7 @@ async function cmdCategories() {
 }
 
 async function cmdMarketplace() {
-  const marketplace = getMarketplaceClient();
+  const marketplace = getMarketplace();
   const stats = marketplace.getCatalogStats();
 
   if (flags.json) {
@@ -381,6 +388,8 @@ OPTIONS:
   --output <file>         Write JSON output to file (implies --json)
   --category, -c <cat>    Filter by category
   --origin, -o <origin>   Filter by origin (bundled, installed, workspace)
+  --allow-insecure-downloads
+                           Allow marketplace installs without checksum verification
   --force                 Overwrite on install
   --help, -h              Show this help
   --version, -v           Show version

@@ -10,6 +10,22 @@ import assert from 'node:assert';
 import http from 'node:http';
 import { HttpGateway } from '../../src/channels/http-gateway.js';
 
+const TRANSIENT_REQUEST_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'EAI_AGAIN',
+]);
+const TRANSIENT_GATEWAY_START_ERROR_CODES = new Set([
+  'EADDRINUSE',
+  'EACCES',
+  'EMFILE',
+  'ENFILE',
+  'EAGAIN',
+]);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -20,36 +36,77 @@ import { HttpGateway } from '../../src/channels/http-gateway.js';
  * @param {object} [opts]
  * @returns {Promise<{ status: number, headers: object, body: object|string }>}
  */
-function request(url, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const reqOpts = {
-      hostname: parsed.hostname,
-      port: parsed.port,
-      path: parsed.pathname + parsed.search,
-      method: opts.method || 'GET',
-      headers: opts.headers || {},
-    };
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    const req = http.request(reqOpts, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        const raw = Buffer.concat(chunks).toString('utf-8');
-        let body;
-        try {
-          body = JSON.parse(raw);
-        } catch {
-          body = raw;
-        }
-        resolve({ status: res.statusCode, headers: res.headers, body });
+async function request(url, opts = {}) {
+  const maxAttempts = opts.maxAttempts ?? 3;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await new Promise((resolve, reject) => {
+        const parsed = new URL(url);
+        const reqOpts = {
+          hostname: parsed.hostname,
+          port: parsed.port,
+          path: parsed.pathname + parsed.search,
+          method: opts.method || 'GET',
+          headers: opts.headers || {},
+        };
+
+        const req = http.request(reqOpts, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf-8');
+            let body;
+            try {
+              body = JSON.parse(raw);
+            } catch {
+              body = raw;
+            }
+            resolve({ status: res.statusCode, headers: res.headers, body });
+          });
+        });
+
+        req.on('error', reject);
+        if (opts.body) req.write(opts.body);
+        req.end();
       });
-    });
+    } catch (error) {
+      lastError = error;
+      if (
+        !TRANSIENT_REQUEST_ERROR_CODES.has(error?.code) ||
+        attempt === maxAttempts
+      ) {
+        throw error;
+      }
+      await delay(15 * attempt);
+    }
+  }
 
-    req.on('error', reject);
-    if (opts.body) req.write(opts.body);
-    req.end();
-  });
+  throw lastError;
+}
+
+async function startGateway(gateway, maxAttempts = 5) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await gateway.start();
+    } catch (error) {
+      lastError = error;
+      if (
+        !TRANSIENT_GATEWAY_START_ERROR_CODES.has(error?.code) ||
+        attempt === maxAttempts
+      ) {
+        throw error;
+      }
+      await delay(25 * attempt);
+    }
+  }
+
+  throw lastError;
 }
 
 // ===========================================================================
@@ -63,7 +120,7 @@ describe('HttpGateway (no keys configured)', () => {
 
   before(async () => {
     gw = new HttpGateway({ port: 0, host: '127.0.0.1' });
-    const addr = await gw.start();
+    const addr = await startGateway(gw);
     baseUrl = `http://${addr.host}:${addr.port}`;
   });
 
@@ -154,7 +211,7 @@ describe('HttpGateway (authenticated mode)', () => {
         { key: 'sk-read-test', name: 'reader', level: 'read' },
       ],
     });
-    const addr = await gw.start();
+    const addr = await startGateway(gw);
     baseUrl = `http://${addr.host}:${addr.port}`;
   });
 
@@ -214,7 +271,7 @@ describe('HttpGateway (rate limiting)', () => {
       rateLimitAuth: 5,
       rateLimitWindowMs: 5000,
     });
-    const addr = await gw.start();
+    const addr = await startGateway(gw);
     baseUrl = `http://${addr.host}:${addr.port}`;
   });
 
@@ -253,7 +310,7 @@ describe('HttpGateway (sandbox)', () => {
       apiKeys: [{ key: 'sk-admin-sandbox', name: 'admin', level: 'admin' }],
       sandbox: { browser: true, shell: true },
     });
-    const addr = await gw.start();
+    const addr = await startGateway(gw);
     baseUrl = `http://${addr.host}:${addr.port}`;
   });
 
@@ -281,6 +338,124 @@ describe('HttpGateway (sandbox)', () => {
   it('allows health even with sandbox', async () => {
     const res = await request(`${baseUrl}/health`);
     assert.strictEqual(res.status, 200);
+  });
+});
+
+describe('HttpGateway /browser/evaluate hardening', () => {
+  it('disables /browser/evaluate by default', async () => {
+    const gw = new HttpGateway({
+      port: 0,
+      host: '127.0.0.1',
+      apiKeys: [{ key: 'sk-admin-eval', name: 'admin', level: 'admin' }],
+    });
+    gw.setSubsystems({
+      browser: {
+        async evaluate() {
+          return 2;
+        },
+      },
+    });
+
+    const addr = await startGateway(gw);
+    const baseUrl = `http://${addr.host}:${addr.port}`;
+
+    try {
+      const res = await request(`${baseUrl}/browser/evaluate`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer sk-admin-eval',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ expression: '1+1' }),
+      });
+
+      assert.strictEqual(res.status, 403);
+      assert.ok(res.body.reason.includes('disabled by default'));
+    } finally {
+      await gw.stop();
+    }
+  });
+
+  describe('when allowBrowserEvaluate=true', () => {
+    /** @type {HttpGateway} */
+    let gw;
+    let baseUrl;
+    let evaluateCalls = 0;
+    let lastExpression = null;
+
+    before(async () => {
+      gw = new HttpGateway({
+        port: 0,
+        host: '127.0.0.1',
+        apiKeys: [{ key: 'sk-admin-eval-enabled', name: 'admin', level: 'admin' }],
+        allowBrowserEvaluate: true,
+      });
+      gw.setSubsystems({
+        browser: {
+          async evaluate(expression) {
+            evaluateCalls += 1;
+            lastExpression = expression;
+            return { ok: true, expression };
+          },
+        },
+      });
+      const addr = await startGateway(gw);
+      baseUrl = `http://${addr.host}:${addr.port}`;
+    });
+
+    after(async () => {
+      await gw.stop();
+    });
+
+    it('allows safe read-only expressions', async () => {
+      const res = await request(`${baseUrl}/browser/evaluate`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer sk-admin-eval-enabled',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ expression: 'document.title' }),
+      });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.result.ok, true);
+      assert.strictEqual(lastExpression, 'document.title');
+      assert.ok(evaluateCalls > 0);
+    });
+
+    it('rejects dynamic bypass expressions before browser execution', async () => {
+      const callsBefore = evaluateCalls;
+      const res = await request(`${baseUrl}/browser/evaluate`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer sk-admin-eval-enabled',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ expression: "window[['f','etch'].join('')]('https://attacker')" }),
+      });
+
+      assert.strictEqual(res.status, 400);
+      assert.ok(res.body.error.includes('read-only browser queries'));
+      assert.strictEqual(evaluateCalls, callsBefore);
+    });
+
+    it('rejects template-literal selector expressions', async () => {
+      const callsBefore = evaluateCalls;
+      const res = await request(`${baseUrl}/browser/evaluate`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer sk-admin-eval-enabled',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          expression: 'document.querySelector(`${document.title}`).textContent',
+        }),
+      });
+
+      assert.strictEqual(res.status, 400);
+      assert.ok(res.body.error.includes('read-only browser queries'));
+      assert.strictEqual(evaluateCalls, callsBefore);
+    });
   });
 });
 

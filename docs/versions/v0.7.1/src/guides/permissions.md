@@ -125,7 +125,7 @@ When `browser: true`, these routes return `403 Blocked by sandbox policy`:
 
 | Blocked Route          | Description                |
 |------------------------|----------------------------|
-| `/browser/evaluate`    | Execute JavaScript         |
+| `/browser/evaluate`    | Read-only browser query    |
 | `/browser/navigate`    | Navigate to a URL          |
 | `/browser/click`       | Click an element           |
 | `/browser/type`        | Type into an element       |
@@ -173,6 +173,7 @@ Defaults (from `HTTP_GATEWAY_DEFAULTS` in `src/config.js`):
   port: 8080,
   host: '127.0.0.1',
   apiKeys: [],       // empty = auth disabled
+  allowBrowserEvaluate: false, // default-off; enables read-only /browser/evaluate
   sandbox: null,     // null = no restrictions
 }
 ```
@@ -229,4 +230,15 @@ curl -X POST \
      -d '{"expression":"document.title"}' \
      http://localhost:8080/browser/evaluate
 # {"error":"Blocked by sandbox policy","reason":"Route '/browser/evaluate' is blocked by browser sandbox"}
+```
+
+### Evaluate disabled by default (403)
+
+```bash
+curl -X POST \
+     -H "Authorization: Bearer sk-prod-abc123" \
+     -H "Content-Type: application/json" \
+     -d '{"expression":"document.title"}' \
+     http://localhost:8080/browser/evaluate
+# {"error":"Forbidden","reason":"Route /browser/evaluate is disabled by default. Set httpGateway.allowBrowserEvaluate=true to enable read-only evaluation."}
 ```

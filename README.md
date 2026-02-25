@@ -867,6 +867,9 @@ stateset-skills search "inventory"
 # Install from marketplace
 stateset-skills install commerce-warehouse
 
+# Temporary migration mode for legacy catalogs without checksums
+stateset-skills install commerce-warehouse --allow-insecure-downloads
+
 # Uninstall a skill
 stateset-skills uninstall commerce-warehouse
 
@@ -882,6 +885,8 @@ stateset-skills marketplace
 # Health check all skills
 stateset-skills doctor
 ```
+
+Remote installs are verified by checksum by default. For controlled migrations, you can opt out with `--allow-insecure-downloads` or `STATESET_ALLOW_INSECURE_SKILL_DOWNLOADS=1`.
 
 **Available skills:** accounts-payable, accounts-receivable, analytics, autonomous-engine, autonomous-runbook, backorders, checkout, cost-accounting, credit, currency, customer-service, customers, embedded-sdk, engine-setup, events, fulfillment, general-ledger, inventory, invoices, lots-and-serials, manufacturing, mcp-tools, orders, payments, products, promotions, quality, receiving, returns, shipments, storefront, subscriptions, suppliers, sync, tax, vector-search, warehouse, warranties.
 

@@ -6,17 +6,21 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-## [0.7.7] - 2026-02-25
+## [0.7.8] - 2026-02-25
 
 ### Changed
-- Bumped workspace and cross-language release metadata from `0.7.6` to `0.7.7`.
-- Expanded Rust CI/runtime checks to include `stateset-observability`, `stateset-integration-tests`, and `stateset-core --features metrics`.
-- Updated local `check:rust` coverage to match the broader CI test surface.
+- Bumped workspace and cross-language release metadata from `0.7.7` to `0.7.8`.
+- Updated CLI/runtime version references (`CLI_VERSION`, gateway config/version fallback, scaffold templates, WhatsApp user agent, and update messaging) to `0.7.8`.
+- Updated lockfile and packaging metadata for CLI and language bindings to `0.7.8`.
+- Enabled Swift bindings CI checks on pull requests without requiring the `ci-swift` label.
 
 ### Fixed
-- Reduced HTTP gateway anonymous-mode blast radius by defaulting anonymous identities to `read` instead of `admin`.
-- Replaced SQLite repository `todo!()` placeholders with structured `CommerceError` responses to avoid runtime panics on unimplemented paths.
-- Hardened default deployment settings: removed production JWT placeholder secret, restricted dev API bind host to loopback, and required explicit Grafana credentials.
+- Hardened `/browser/evaluate`: disabled by default and gated expression execution with strict read-only policy validation.
+- Hardened marketplace remote installs with HTTPS/public-host validation, catalog base URL restrictions, checksum verification, and redirect blocking.
+- Fixed MCP structured tool metadata to preserve `sessionId` for direct tool-handler invocations.
+- Fixed scaffold API route generation to preserve leading route slash and emit explicit `status: 500` error responses.
+- Fixed telemetry verbose tool-call logging capture path to preserve secret-redaction assertions in tests.
+- Improved test stability under high-concurrency runs for HTTP gateway and setup wizard suites.
 
 ## [0.7.6] - 2026-02-24
 

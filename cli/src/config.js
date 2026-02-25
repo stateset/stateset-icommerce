@@ -84,7 +84,7 @@ export const DEFAULT_DB_PATH = './store.db';
 // CLI CONFIGURATION
 // =============================================================================
 
-export const CLI_VERSION = '0.7.7';
+export const CLI_VERSION = '0.7.8';
 
 export const CLI_DEFAULTS = {
   dbPath: DEFAULT_DB_PATH,
@@ -213,6 +213,7 @@ export const HTTP_GATEWAY_DEFAULTS = {
   allowQueryParamAuth: false, // insecure: allow ?api_key=... auth
   corsOrigins: ['loopback'], // allow browser requests from localhost/127.0.0.1 origins
   allowRemoteAdminEndpoints: false, // restrict /daemon and /remote-access to loopback by default
+  allowBrowserEvaluate: false, // disabled by default; enable only when read-only evaluate route is required
   sandbox: null, // null = no restrictions
 };
 

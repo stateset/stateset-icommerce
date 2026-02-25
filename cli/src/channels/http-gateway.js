@@ -22,6 +22,7 @@ import {
   getRequiredLevel,
 } from './http-auth.js';
 import { createRateLimiter } from './rate-limiter.js';
+import { validateBrowserExpression } from './browser-evaluate-policy.js';
 
 // ============================================================================
 // Helpers
@@ -39,21 +40,8 @@ const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
 };
 
-const MAX_BROWSER_EXPRESSION_LENGTH = 4_000;
 const MAX_BROWSER_URL_LENGTH = 2_048;
 const ALLOWED_BROWSER_PROTOCOLS = new Set(['http:', 'https:']);
-const BLOCKED_BROWSER_EXPRESSION_PATTERNS = [
-  /\bprocess\b/i,
-  /\bglobalThis\b/i,
-  /\bFunction\b/i,
-  /\bfetch\s*\(/i,
-  /\bXMLHttpRequest\b/,
-  /\bimport\s*\(/i,
-  /\brequire\s*\(/i,
-  /\beval\s*\(/i,
-  /\bdocument\.cookie\b/i,
-  /\bwindow\.location\b/i,
-];
 
 function sanitizeHostHeader(hostHeader) {
   if (typeof hostHeader !== 'string') return 'localhost';
@@ -71,29 +59,6 @@ function safeParseUrl(reqUrl, hostHeader) {
   } catch {
     return null;
   }
-}
-
-function validateBrowserExpression(expression) {
-  if (typeof expression !== 'string') {
-    return 'Missing required field: expression';
-  }
-
-  const trimmed = expression.trim();
-  if (!trimmed) {
-    return 'Missing required field: expression';
-  }
-
-  if (trimmed.length > MAX_BROWSER_EXPRESSION_LENGTH) {
-    return `Expression exceeds maximum length of ${MAX_BROWSER_EXPRESSION_LENGTH} characters`;
-  }
-
-  for (const pattern of BLOCKED_BROWSER_EXPRESSION_PATTERNS) {
-    if (pattern.test(trimmed)) {
-      return 'Expression contains blocked patterns for safety';
-    }
-  }
-
-  return null;
 }
 
 function validateBrowserUrl(value) {
@@ -318,6 +283,7 @@ export class HttpGateway {
    * @param {number} [opts.rateLimitAuth=60]
    * @param {number} [opts.rateLimitUnauth=30]
    * @param {number} [opts.rateLimitWindowMs=60000]
+   * @param {boolean} [opts.allowBrowserEvaluate=false] - Enable read-only /browser/evaluate route
    */
   constructor(opts = {}) {
     this._port = opts.port || 0;
@@ -341,6 +307,7 @@ export class HttpGateway {
       allowQueryParam: this._allowQueryParamAuth,
     });
     this._sandbox = opts.sandbox || null;
+    this._allowBrowserEvaluate = opts.allowBrowserEvaluate === true;
     this._orchestratorStatus = null;
     this._allowRemoteAdminEndpoints = opts.allowRemoteAdminEndpoints === true;
     this._corsOrigins = normalizeCorsOrigins(opts.corsOrigins);
@@ -526,7 +493,7 @@ export class HttpGateway {
           status: 'ok',
           uptime: Date.now() - startTime,
           timestamp: new Date().toISOString(),
-          version: process.env.npm_package_version || '0.7.7',
+          version: process.env.npm_package_version || '0.7.8',
           subsystems: {
             voice: this._subsystems.voice ? 'enabled' : 'disabled',
             browser: this._subsystems.browser ? 'enabled' : 'disabled',
@@ -1106,10 +1073,18 @@ export class HttpGateway {
             reason: 'Route /browser/evaluate requires admin permission',
           });
         }
+        if (!this._allowBrowserEvaluate) {
+          return sendJson(res, 403, {
+            error: 'Forbidden',
+            reason:
+              'Route /browser/evaluate is disabled by default. Set httpGateway.allowBrowserEvaluate=true to enable read-only evaluation.',
+          });
+        }
         const body = await parseBody(req);
         const validation = validateBrowserExpression(body.expression);
         if (validation) return sendJson(res, 400, { error: validation });
-        const result = await this._subsystems.browser.evaluate(body.expression.trim());
+        const expression = body.expression.trim();
+        const result = await this._subsystems.browser.evaluate(expression);
         return sendJson(res, 200, { result });
       }
 

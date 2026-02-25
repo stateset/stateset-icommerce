@@ -481,10 +481,10 @@ export class AgentTelemetry extends EventEmitter {
     const icon = icons[type] || 'ℹ️';
 
     if (this.outputFormat === 'json') {
-      console.info(JSON.stringify({ timestamp, type, message, ...data }));
+      console.log(JSON.stringify({ timestamp, type, message, ...data }));
     } else {
       const dataStr = Object.keys(data).length > 0 ? ` ${JSON.stringify(data)}` : '';
-      console.info(`[${timestamp}] ${icon} ${message}${dataStr}`);
+      console.log(`[${timestamp}] ${icon} ${message}${dataStr}`);
     }
   }
 

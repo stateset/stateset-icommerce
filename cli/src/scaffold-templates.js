@@ -116,7 +116,7 @@ export const COMPONENT_TEMPLATES = {
 export function createPackageJson(name, template, features) {
   const base = {
     name: name.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-    version: '0.7.7',
+    version: '0.7.8',
     private: true,
     scripts: {
       dev: 'next dev',
@@ -126,7 +126,7 @@ export function createPackageJson(name, template, features) {
       seed: 'node scripts/seed.js',
     },
     dependencies: {
-      '@stateset/embedded': '^0.7.7',
+      '@stateset/embedded': '^0.7.8',
       next: '14.0.0',
       react: '^18',
       'react-dom': '^18',
@@ -781,7 +781,9 @@ export function ${customName || hookName}() {
 }
 
 export function generateApiRouteContent(routePath, methods) {
-  const normalizedRoutePath = String(routePath || '').replace(/^\/+|\/+$/g, '');
+  const normalizedRoutePath = `/${String(routePath || '')
+    .trim()
+    .replace(/^\/+|\/+$/g, '')}`;
   const handlers = methods
     .map(
       (method) =>
@@ -856,13 +858,21 @@ const parseBody = async (request: NextRequest) => {
 const methodUnavailable = (method: string) => \`Method \${method} is not supported for this generated route.\`;
 
 const formatError = (error: unknown, fallback: string, status = 500): NextResponse<RouteErrorPayload> =>
-  NextResponse.json(
-    {
-      error: error instanceof Error ? error.message : fallback,
-      details: error instanceof Error ? undefined : error,
-    },
-    { status },
-  );
+  status === 500
+    ? NextResponse.json(
+        {
+          error: error instanceof Error ? error.message : fallback,
+          details: error instanceof Error ? undefined : error,
+        },
+        { status: 500 },
+      )
+    : NextResponse.json(
+        {
+          error: error instanceof Error ? error.message : fallback,
+          details: error instanceof Error ? undefined : error,
+        },
+        { status },
+      );
 
 const routeRequest = async (request: NextRequest, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE') => {
   const commerce = getCommerce();

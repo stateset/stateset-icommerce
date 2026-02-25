@@ -8,6 +8,8 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
+import net from 'net';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +26,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * @property {string[]} tags
  * @property {string} version
  * @property {string} downloadUrl
+ * @property {string} [downloadChecksum]
+ * @property {string} [checksumAlgorithm]
  * @property {boolean} isPublic
  * @property {boolean} hasReferences
  * @property {boolean} hasScripts
@@ -45,6 +49,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_INSTALL_DIR = path.join(os.homedir(), '.stateset', 'skills');
 const DEFAULT_CATALOG_PATH = path.resolve(__dirname, '..', '..', 'skills', 'marketplace.json');
 const DEFAULT_BUNDLED_DIR = path.resolve(__dirname, '..', '..', 'skills');
+const ALLOW_INSECURE_DOWNLOADS_ENV = 'STATESET_ALLOW_INSECURE_SKILL_DOWNLOADS';
 
 // ============================================================================
 // MarketplaceClient
@@ -57,12 +62,16 @@ export class MarketplaceClient {
    * @param {string} [opts.catalogPath] - Local catalog path
    * @param {string} [opts.installDir] - Install directory
    * @param {string} [opts.bundledDir] - Bundled skills directory
+   * @param {boolean} [opts.allowInsecureDownloads=false] - Allow downloads without checksum metadata.
+   *    Can also be enabled with STATESET_ALLOW_INSECURE_SKILL_DOWNLOADS=1.
    */
   constructor(opts = {}) {
     this._catalogUrl = opts.catalogUrl || null;
     this._catalogPath = opts.catalogPath || DEFAULT_CATALOG_PATH;
     this._installDir = opts.installDir || DEFAULT_INSTALL_DIR;
     this._bundledDir = opts.bundledDir || DEFAULT_BUNDLED_DIR;
+    this._allowInsecureDownloads =
+      opts.allowInsecureDownloads === true || envFlagEnabled(ALLOW_INSECURE_DOWNLOADS_ENV);
     this._catalog = null;
   }
 
@@ -226,8 +235,13 @@ export class MarketplaceClient {
 
     // Not bundled — download from remote URL
     if (entry.downloadUrl) {
+      const sourceError = this._validateRemoteDownloadSource(entry);
+      if (sourceError) {
+        return { installed: false, path: '', error: sourceError };
+      }
+
       try {
-        const result = await this._downloadAndInstall(name, entry.downloadUrl, destDir, force);
+        const result = await this._downloadAndInstall(name, entry, destDir, force);
         return result;
       } catch (err) {
         return { installed: false, path: '', error: `Download failed: ${err.message}` };
@@ -304,14 +318,15 @@ export class MarketplaceClient {
    * Supports .zip and .tar.gz packages, or a direct SKILL.md file.
    *
    * @param {string} name
-   * @param {string} url
+   * @param {CatalogEntry} entry
    * @param {string} destDir
    * @param {boolean} force
    * @returns {Promise<{ installed: boolean, path: string, error?: string }>}
    * @private
    */
-  async _downloadAndInstall(name, url, destDir, force) {
-    const res = await fetch(url);
+  async _downloadAndInstall(name, entry, destDir, force) {
+    const url = entry.downloadUrl;
+    const res = await fetch(url, { redirect: 'error' });
     if (!res.ok) {
       return { installed: false, path: '', error: `HTTP ${res.status}: ${res.statusText}` };
     }
@@ -323,63 +338,183 @@ export class MarketplaceClient {
 
     fs.mkdirSync(destDir, { recursive: true });
 
-    const contentType = res.headers.get('content-type') || '';
+    try {
+      const contentType = res.headers.get('content-type') || '';
 
-    if (
-      url.endsWith('.md') ||
-      contentType.includes('text/markdown') ||
-      contentType.includes('text/plain')
-    ) {
-      // Direct SKILL.md download
-      const text = await res.text();
-      fs.writeFileSync(path.join(destDir, 'SKILL.md'), text);
-    } else {
-      // Binary package — save as temp file
-      const tmpFile = path.join(os.tmpdir(), `stateset-skill-${name}-${Date.now()}.bin`);
-      const arrayBuf = await res.arrayBuffer();
-      fs.writeFileSync(tmpFile, Buffer.from(arrayBuf));
-
-      try {
-        // Extract archive — use execFileSync (no shell) for safety
-        const { execFileSync } = await import('child_process');
-        if (url.endsWith('.tar.gz') || url.endsWith('.tgz')) {
-          // --strip-components=1 prevents directory traversal at top level
-          execFileSync('tar', ['-xzf', tmpFile, '-C', destDir, '--strip-components=1'], {
-            stdio: 'pipe',
-            timeout: 30000,
-          });
-        } else {
-          execFileSync('unzip', ['-o', '-q', tmpFile, '-d', destDir], {
-            stdio: 'pipe',
-            timeout: 30000,
-          });
+      if (
+        url.endsWith('.md') ||
+        contentType.includes('text/markdown') ||
+        contentType.includes('text/plain')
+      ) {
+        // Direct SKILL.md download
+        const text = await res.text();
+        const payload = Buffer.from(text, 'utf8');
+        const checksumError = this._verifyDownloadChecksum(entry, payload);
+        if (checksumError) {
+          fs.rmSync(destDir, { recursive: true, force: true });
+          return { installed: false, path: destDir, error: checksumError };
         }
-        // Verify no files escaped destDir (defence against zip path traversal)
-        const resolvedDest = path.resolve(destDir);
-        const { execFileSync: efs2 } = await import('child_process');
-        const listing = efs2('find', [resolvedDest, '-type', 'f'], {
-          encoding: 'utf8',
-          timeout: 5000,
-        });
-        for (const line of listing.split('\n').filter(Boolean)) {
-          if (!path.resolve(line).startsWith(resolvedDest)) {
-            fs.rmSync(resolvedDest, { recursive: true, force: true });
-            throw new Error('Extracted archive contains path traversal — installation aborted');
+        fs.writeFileSync(path.join(destDir, 'SKILL.md'), text);
+      } else {
+        // Binary package — save as temp file
+        const tmpFile = path.join(os.tmpdir(), `stateset-skill-${name}-${Date.now()}.bin`);
+        const arrayBuf = await res.arrayBuffer();
+        const payload = Buffer.from(arrayBuf);
+        const checksumError = this._verifyDownloadChecksum(entry, payload);
+        if (checksumError) {
+          fs.rmSync(destDir, { recursive: true, force: true });
+          return { installed: false, path: destDir, error: checksumError };
+        }
+        fs.writeFileSync(tmpFile, payload);
+
+        try {
+          // Extract archive — use execFileSync (no shell) for safety
+          const { execFileSync } = await import('child_process');
+          if (url.endsWith('.tar.gz') || url.endsWith('.tgz')) {
+            // --strip-components=1 prevents directory traversal at top level
+            execFileSync('tar', ['-xzf', tmpFile, '-C', destDir, '--strip-components=1'], {
+              stdio: 'pipe',
+              timeout: 30000,
+            });
+          } else {
+            execFileSync('unzip', ['-o', '-q', tmpFile, '-d', destDir], {
+              stdio: 'pipe',
+              timeout: 30000,
+            });
           }
+          // Verify no files escaped destDir (defence against zip path traversal)
+          const resolvedDest = path.resolve(destDir);
+          const { execFileSync: efs2 } = await import('child_process');
+          const listing = efs2('find', [resolvedDest, '-type', 'f'], {
+            encoding: 'utf8',
+            timeout: 5000,
+          });
+          for (const line of listing.split('\n').filter(Boolean)) {
+            if (!path.resolve(line).startsWith(resolvedDest)) {
+              fs.rmSync(resolvedDest, { recursive: true, force: true });
+              throw new Error('Extracted archive contains path traversal — installation aborted');
+            }
+          }
+        } finally {
+          fs.unlinkSync(tmpFile);
         }
-      } finally {
-        fs.unlinkSync(tmpFile);
+      }
+
+      // Verify
+      const skillMd = path.join(destDir, 'SKILL.md');
+      if (!fs.existsSync(skillMd)) {
+        fs.rmSync(destDir, { recursive: true, force: true });
+        return { installed: false, path: destDir, error: 'Downloaded package missing SKILL.md' };
+      }
+
+      return { installed: true, path: destDir };
+    } catch (err) {
+      fs.rmSync(destDir, { recursive: true, force: true });
+      return { installed: false, path: destDir, error: `Install failed: ${err.message}` };
+    }
+  }
+
+  /**
+   * Validate remote download source and integrity metadata.
+   *
+   * @param {CatalogEntry} entry
+   * @returns {string|null}
+   * @private
+   */
+  _validateRemoteDownloadSource(entry) {
+    let parsed;
+    try {
+      parsed = new URL(entry.downloadUrl);
+    } catch {
+      return 'Invalid remote skill download URL.';
+    }
+
+    if (parsed.protocol !== 'https:') {
+      return 'Remote skill download URL must use HTTPS.';
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    if (!host || host === 'localhost' || host.endsWith('.localhost') || net.isIP(host) !== 0) {
+      return 'Remote skill download URL must use a public DNS hostname.';
+    }
+
+    const catalog = this.loadLocalCatalog();
+    if (catalog.baseUrl) {
+      try {
+        const baseUrl = new URL(catalog.baseUrl);
+        if (baseUrl.protocol !== 'https:') {
+          return 'Marketplace catalog baseUrl must use HTTPS.';
+        }
+        if (parsed.origin !== baseUrl.origin || !parsed.pathname.startsWith(baseUrl.pathname)) {
+          return 'Remote skill download URL must be within marketplace baseUrl.';
+        }
+      } catch {
+        return 'Marketplace catalog baseUrl is invalid.';
       }
     }
 
-    // Verify
-    const skillMd = path.join(destDir, 'SKILL.md');
-    if (!fs.existsSync(skillMd)) {
-      fs.rmSync(destDir, { recursive: true, force: true });
-      return { installed: false, path: destDir, error: 'Downloaded package missing SKILL.md' };
+    if (!this._allowInsecureDownloads) {
+      if (typeof entry.downloadChecksum !== 'string' || !entry.downloadChecksum.trim()) {
+        return 'Remote skill download requires downloadChecksum metadata.';
+      }
+      const parsedChecksum = parseChecksum(
+        entry.downloadChecksum,
+        entry.checksumAlgorithm || 'sha256',
+      );
+      if (!parsedChecksum) {
+        return 'Invalid downloadChecksum format. Use "<algorithm>:<hex>" or "<hex>".';
+      }
+      const configuredAlgorithm =
+        typeof entry.checksumAlgorithm === 'string'
+          ? entry.checksumAlgorithm.trim().toLowerCase()
+          : '';
+      if (configuredAlgorithm && configuredAlgorithm !== parsedChecksum.algorithm) {
+        return 'downloadChecksum algorithm does not match checksumAlgorithm.';
+      }
     }
 
-    return { installed: true, path: destDir };
+    return null;
+  }
+
+  /**
+   * Verify downloaded payload integrity using catalog checksum.
+   *
+   * @param {CatalogEntry} entry
+   * @param {Buffer} payload
+   * @returns {string|null}
+   * @private
+   */
+  _verifyDownloadChecksum(entry, payload) {
+    if (this._allowInsecureDownloads) return null;
+
+    const parsedChecksum = parseChecksum(
+      entry.downloadChecksum,
+      entry.checksumAlgorithm || 'sha256',
+    );
+    if (!parsedChecksum) {
+      return 'Invalid checksum metadata for remote skill download.';
+    }
+    const configuredAlgorithm =
+      typeof entry.checksumAlgorithm === 'string'
+        ? entry.checksumAlgorithm.trim().toLowerCase()
+        : '';
+    if (configuredAlgorithm && configuredAlgorithm !== parsedChecksum.algorithm) {
+      return 'Checksum algorithm metadata mismatch for remote skill download.';
+    }
+
+    const { algorithm, digest: expectedDigest } = parsedChecksum;
+    let actualDigest;
+    try {
+      actualDigest = crypto.createHash(algorithm).update(payload).digest('hex');
+    } catch (err) {
+      return `Unsupported checksum algorithm: ${algorithm} (${err.message})`;
+    }
+
+    if (!safeCompareHex(actualDigest, expectedDigest)) {
+      return `Checksum mismatch for downloaded skill package (${algorithm}).`;
+    }
+
+    return null;
   }
 
   // --------------------------------------------------------------------------
@@ -517,6 +652,69 @@ function copyDir(src, dest) {
   }
 }
 
+/**
+ * Parse checksum metadata.
+ *
+ * Accepted formats:
+ * - "<hex>" (uses fallback algorithm)
+ * - "<algorithm>:<hex>"
+ *
+ * @param {string} checksum
+ * @param {string} fallbackAlgorithm
+ * @returns {{ algorithm: string, digest: string }|null}
+ */
+function parseChecksum(checksum, fallbackAlgorithm) {
+  if (typeof checksum !== 'string') return null;
+  const trimmed = checksum.trim().toLowerCase();
+  if (!trimmed) return null;
+
+  let algorithm = String(fallbackAlgorithm || 'sha256')
+    .trim()
+    .toLowerCase();
+  let digest = trimmed;
+
+  const parts = trimmed.split(':');
+  if (parts.length === 2) {
+    algorithm = parts[0].trim();
+    digest = parts[1].trim();
+  } else if (parts.length > 2) {
+    return null;
+  }
+
+  if (!algorithm || !/^[a-z0-9-]+$/.test(algorithm)) return null;
+  if (!/^[a-f0-9]+$/.test(digest) || digest.length % 2 !== 0) return null;
+
+  return { algorithm, digest };
+}
+
+/**
+ * Constant-time hex digest comparison.
+ *
+ * @param {string} left
+ * @param {string} right
+ * @returns {boolean}
+ */
+function safeCompareHex(left, right) {
+  if (left.length !== right.length) return false;
+  const leftBuf = Buffer.from(left, 'hex');
+  const rightBuf = Buffer.from(right, 'hex');
+  if (leftBuf.length !== rightBuf.length) return false;
+  return crypto.timingSafeEqual(leftBuf, rightBuf);
+}
+
+/**
+ * Parse an environment flag.
+ *
+ * @param {string} key
+ * @returns {boolean}
+ */
+function envFlagEnabled(key) {
+  const raw = process.env[key];
+  if (typeof raw !== 'string') return false;
+  const value = raw.trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
 // ============================================================================
 // Singleton
 // ============================================================================
@@ -526,11 +724,13 @@ let _instance = null;
 /**
  * Get the shared MarketplaceClient singleton.
  *
+ * @param {Object} [opts]
+ * @param {boolean} [opts.allowInsecureDownloads=false]
  * @returns {MarketplaceClient}
  */
-export function getMarketplaceClient() {
+export function getMarketplaceClient(opts = {}) {
   if (!_instance) {
-    _instance = new MarketplaceClient();
+    _instance = new MarketplaceClient(opts);
   }
   return _instance;
 }

@@ -3166,13 +3166,21 @@ export function createStatesetMcpServer({
       let policy = null;
       let permission = null;
       let charge = null;
+      const sessionIdFromArgs =
+        args &&
+        typeof args === 'object' &&
+        !Array.isArray(args) &&
+        typeof args.sessionId === 'string'
+          ? args.sessionId
+          : null;
+      const effectiveSessionId = extra?.sessionId || sessionIdFromArgs || null;
       const logEvent = async (status, payload = {}) => {
         await addAgenticReplayEvent({
           eventId: randomUUID(),
           tool: name,
           status,
           requestId: extra?.requestId || null,
-          sessionId: extra?.sessionId || null,
+          sessionId: effectiveSessionId,
           policyDomain: policyDomain || inferPolicyDomain(name),
           occurredAt: new Date().toISOString(),
           elapsedMs: Date.now() - startedAt,
@@ -3193,7 +3201,7 @@ export function createStatesetMcpServer({
         tool: name,
         args,
         requestId: extra?.requestId,
-        sessionId: extra?.sessionId,
+        sessionId: effectiveSessionId,
       };
 
       try {
@@ -3367,7 +3375,7 @@ export function createStatesetMcpServer({
             params: nextArgs,
             result,
             requestId: extra?.requestId,
-            sessionId: extra?.sessionId,
+            sessionId: effectiveSessionId,
           });
         }
         await logEvent('success', {
@@ -3402,7 +3410,7 @@ export function createStatesetMcpServer({
             params: nextArgs,
             error: error.message,
             requestId: extra?.requestId,
-            sessionId: extra?.sessionId,
+            sessionId: effectiveSessionId,
           });
         }
         await logEvent('error', {

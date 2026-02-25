@@ -8,7 +8,8 @@
  * Requires: GEMINI_API_KEY environment variable
  */
 
-import { ModelProvider, DEFAULT_MAX_TOKENS } from './base.js';
+import { ModelProvider } from './base.js';
+import { DEFAULT_MAX_TOKENS } from './base.js';
 import { PROVIDERS } from '../config.js';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
