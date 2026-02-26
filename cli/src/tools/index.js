@@ -41,6 +41,7 @@ const TOOL_MODULES = {
   suppliers: () => import('./suppliers.js').then((m) => m.default),
   invoices: () => import('./invoices.js').then((m) => m.default),
   warranties: () => import('./warranties.js').then((m) => m.default),
+  connectors: () => import('./connectors.js').then((m) => m.default),
 };
 
 /**
@@ -206,6 +207,7 @@ export const AGENT_TOOL_CATEGORIES = {
     'suppliers',
     'invoices',
     'warranties',
+    'connectors',
     'vector',
     'a2a',
     'agent-cards',

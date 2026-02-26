@@ -13,6 +13,7 @@ function createMockCommerce() {
     products: [],
     orders: [],
     inventory: [],
+    shipments: [],
   };
 
   return {
@@ -56,6 +57,14 @@ function createMockCommerce() {
         if (idx >= 0) store.inventory[idx].quantity = data.quantity;
       },
     },
+    shipments: {
+      create: async (data) => {
+        const id = `ship-${store.shipments.length + 1}`;
+        const record = { id, ...data };
+        store.shipments.push(record);
+        return record;
+      },
+    },
     _store: store,
   };
 }
@@ -81,15 +90,17 @@ function createMockIdMapStore() {
 // ---------------------------------------------------------------------------
 
 describe('getSupportedTopics', () => {
-  it('returns all 8 supported topics', () => {
+  it('returns all supported topics including fulfillments', () => {
     const topics = getSupportedTopics();
-    assert.equal(topics.length, 8);
+    assert.equal(topics.length, 10);
     assert.ok(topics.includes('customers/create'));
     assert.ok(topics.includes('customers/update'));
     assert.ok(topics.includes('products/create'));
     assert.ok(topics.includes('products/update'));
     assert.ok(topics.includes('orders/create'));
     assert.ok(topics.includes('orders/updated'));
+    assert.ok(topics.includes('fulfillments/create'));
+    assert.ok(topics.includes('fulfillments/update'));
     assert.ok(topics.includes('orders/cancelled'));
     assert.ok(topics.includes('inventory_levels/update'));
   });
@@ -282,6 +293,48 @@ describe('webhook: orders/create', () => {
     const result = await handlers['orders/create'](payload);
     assert.equal(result.action, 'created');
     assert.equal(commerce._store.orders[0].customerId, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fulfillments/create and fulfillments/update
+// ---------------------------------------------------------------------------
+
+describe('webhook: fulfillments/*', () => {
+  let commerce, idMapStore, handlers;
+
+  beforeEach(() => {
+    commerce = createMockCommerce();
+    idMapStore = createMockIdMapStore();
+    handlers = createShopifyWebhookHandlers(commerce, idMapStore);
+  });
+
+  it('creates a fulfillment shipment record', async () => {
+    idMapStore.store('shopify', 'orders', '5001', 'ord-1');
+    const result = await handlers['fulfillments/create']({
+      id: 7001,
+      order_id: 5001,
+      status: 'success',
+      tracking_number: 'TRACK-1',
+      tracking_company: 'FedEx',
+    });
+
+    assert.equal(result.action, 'created');
+    assert.equal(result.externalId, '7001');
+    assert.equal(commerce._store.shipments.length, 1);
+    assert.equal(commerce._store.shipments[0].orderId, 'ord-1');
+  });
+
+  it('updates existing fulfillment mapping', async () => {
+    idMapStore.store('shopify', 'fulfillments', '7002', 'ship-4');
+    const result = await handlers['fulfillments/update']({
+      id: 7002,
+      order_id: 5002,
+      status: 'cancelled',
+    });
+
+    assert.equal(result.action, 'updated');
+    assert.equal(result.statesetId, 'ship-4');
   });
 });
 

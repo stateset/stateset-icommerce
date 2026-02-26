@@ -453,6 +453,21 @@ describe('WebhookSourceTemplates', () => {
     assert.ok(WebhookSourceTemplates.shippo);
   });
 
+  it('has carrier hub template', () => {
+    assert.ok(WebhookSourceTemplates.carrierHub);
+    assert.equal(WebhookSourceTemplates.carrierHub.path, '/webhooks/carrier-hub');
+  });
+
+  it('has avalara template', () => {
+    assert.ok(WebhookSourceTemplates.avalara);
+    assert.equal(WebhookSourceTemplates.avalara.path, '/webhooks/avalara');
+  });
+
+  it('has taxjar template', () => {
+    assert.ok(WebhookSourceTemplates.taxjar);
+    assert.equal(WebhookSourceTemplates.taxjar.path, '/webhooks/taxjar');
+  });
+
   it('has custom template', () => {
     assert.ok(WebhookSourceTemplates.custom);
   });
@@ -468,11 +483,31 @@ describe('WebhookHandlerTemplates', () => {
     assert.ok(WebhookHandlerTemplates.stripePaymentFailed);
   });
 
+  it('has stripePaymentCanceled', () => {
+    assert.ok(WebhookHandlerTemplates.stripePaymentCanceled);
+    assert.ok(WebhookHandlerTemplates.stripePaymentCanceled.eventTypes.includes('payment_intent.canceled'));
+  });
+
   it('has shopifyOrderCreated', () => {
     assert.ok(WebhookHandlerTemplates.shopifyOrderCreated);
   });
 
   it('has shippoTrackingUpdate', () => {
     assert.ok(WebhookHandlerTemplates.shippoTrackingUpdate);
+  });
+
+  it('has carrierHubTrackingEvent', () => {
+    assert.ok(WebhookHandlerTemplates.carrierHubTrackingEvent);
+    assert.ok(WebhookHandlerTemplates.carrierHubTrackingEvent.eventTypes.includes('shipment.delivered'));
+  });
+
+  it('has avalaraTransactionCommitted', () => {
+    assert.ok(WebhookHandlerTemplates.avalaraTransactionCommitted);
+    assert.ok(WebhookHandlerTemplates.avalaraTransactionCommitted.eventTypes.includes('transaction.committed'));
+  });
+
+  it('has taxProviderTransactionVoided', () => {
+    assert.ok(WebhookHandlerTemplates.taxProviderTransactionVoided);
+    assert.ok(WebhookHandlerTemplates.taxProviderTransactionVoided.eventTypes.includes('transaction.voided'));
   });
 });

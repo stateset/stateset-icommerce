@@ -140,6 +140,7 @@ async function* __runQueryWithCleanArgv(generatorFactory) {
  * @param {number} options.maxTurns - Maximum conversation turns
  * @param {string} options.resumeSessionId - Session ID to resume
  * @param {string} options.agent - Specific agent to use (optional, auto-routes if not specified)
+ * @param {string} options.slaLevel - Optional routing SLA: standard|expedited|critical
  * @param {Function} options.onToolCall - Callback for tool invocations
  * @param {Function} options.onMessage - Callback for assistant messages
  * @param {boolean} options.verbose - Enable verbose telemetry output
@@ -188,6 +189,7 @@ export async function runAgentLoop({
   maxTurns = 10,
   resumeSessionId,
   agent,
+  slaLevel = null,
   onToolCall,
   onMessage,
   verbose = false,
@@ -260,6 +262,7 @@ export async function runAgentLoop({
   let effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
   let effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
   let effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+  let effectiveSlaLevel = slaLevel ?? resolvedSettings.agent?.slaLevel ?? null;
 
   const treasuryConfig = treasury
     ? { ...treasury }
@@ -333,6 +336,9 @@ export async function runAgentLoop({
     if ((thinkLevel === null || thinkLevel === undefined) && sessionMeta.thinkLevel) {
       effectiveThinkLevel = sessionMeta.thinkLevel;
     }
+    if ((effectiveSlaLevel === null || effectiveSlaLevel === undefined) && sessionMeta.slaLevel) {
+      effectiveSlaLevel = sessionMeta.slaLevel;
+    }
     if (!agent && sessionMeta.agent) agent = sessionMeta.agent;
   }
 
@@ -351,6 +357,7 @@ export async function runAgentLoop({
     const hookResult = await hooks.run('before_agent_start', {
       request: effectiveRequest,
       agent,
+      slaLevel: effectiveSlaLevel,
       model: effectiveModel,
       provider: effectiveProvider,
       thinkLevel: effectiveThinkLevel,
@@ -364,6 +371,7 @@ export async function runAgentLoop({
     if (hookResult?.model) effectiveModel = hookResult.model;
     if (hookResult?.provider) effectiveProvider = hookResult.provider;
     if (hookResult?.thinkLevel) effectiveThinkLevel = hookResult.thinkLevel;
+    if (hookResult?.slaLevel !== undefined) effectiveSlaLevel = hookResult.slaLevel;
     if (hookResult?.systemPrompt) {
       systemPromptOverride = hookResult.systemPrompt;
     } else if (hookResult?.systemPromptAppend && AGENTS[agent]?.systemPrompt) {
@@ -395,7 +403,7 @@ export async function runAgentLoop({
     });
 
   // Emit initial lifecycle events
-  emitEvent(onEvent, { type: 'agent_start' });
+  emitEvent(onEvent, { type: 'agent_start', slaLevel: effectiveSlaLevel });
   emitEvent(onEvent, { type: 'turn_start' });
   const userEventMessage = { role: 'user', content: redactEventText(effectiveRequest) };
   emitEvent(onEvent, { type: 'message_start', message: userEventMessage });
@@ -616,7 +624,9 @@ export async function runAgentLoop({
   };
 
   // Determine which agent to use
-  const routingResult = routeToAgentWithConfidence(effectiveRequest);
+  const routingResult = routeToAgentWithConfidence(effectiveRequest, {
+    slaLevel: effectiveSlaLevel,
+  });
   let agentName = agent || routingResult.primary.agent;
   if (!agent && routingResult.primary.level === 'default' && resolvedSettings.agent?.default) {
     agentName = resolvedSettings.agent.default;
@@ -957,6 +967,7 @@ export async function runAgentLoop({
             request: effectiveRequest,
             response: providerResponse,
             agent: agentName,
+            slaLevel: effectiveSlaLevel,
             model: effectiveModel,
             provider: effectiveProvider,
             toolResults: [],
@@ -992,6 +1003,7 @@ export async function runAgentLoop({
           toolResults: [],
           sessionId: null,
           agent: agentName,
+          slaLevel: effectiveSlaLevel,
           provider: effectiveProvider,
           model: effectiveModel,
           cost: providerResult.cost || null,
@@ -1009,6 +1021,7 @@ export async function runAgentLoop({
           toolResults: [],
           sessionId: null,
           agent: agentName,
+          slaLevel: effectiveSlaLevel,
           routing: routingResult,
           provider: effectiveProvider,
           cost: providerResult.cost || null,
@@ -1393,6 +1406,7 @@ export async function runAgentLoop({
           provider: effectiveProvider,
           model: usedModel || effectiveModel,
           thinkLevel: effectiveThinkLevel,
+          slaLevel: effectiveSlaLevel,
           agent: agentName,
           lastRequest: storedRequest,
           lastResponse: storedResponse,
@@ -1410,6 +1424,7 @@ export async function runAgentLoop({
         request: effectiveRequest,
         response: responseForUser,
         agent: agentName,
+        slaLevel: effectiveSlaLevel,
         model: usedModel || effectiveModel,
         provider: effectiveProvider,
         toolResults,
@@ -1432,6 +1447,7 @@ export async function runAgentLoop({
       toolResults: redactEventValue(toolResults),
       sessionId,
       agent: agentName,
+      slaLevel: effectiveSlaLevel,
       provider: effectiveProvider,
       model: usedModel || effectiveModel,
       cost: totalCost,
@@ -1446,6 +1462,7 @@ export async function runAgentLoop({
       toolResults,
       sessionId,
       agent: agentName,
+      slaLevel: effectiveSlaLevel,
       routing: routingResult,
       telemetry: telem.getSummary(),
       traceId: telem.traceId,
@@ -1512,6 +1529,7 @@ export async function* runAgentStream({
   maxTurns = 10,
   resumeSessionId,
   agent,
+  slaLevel = null,
   enableSync = null,
   guardrails = null,
   onConfirmRequired = null,
@@ -1552,6 +1570,7 @@ export async function* runAgentStream({
   let effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
   let effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
   let effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+  let effectiveSlaLevel = slaLevel ?? resolvedSettings.agent?.slaLevel ?? null;
 
   const useSessionStore = resolvedSettings.sessionStore?.enabled !== false;
   let sessionStoreInstance = sessionStore || null;
@@ -1582,6 +1601,9 @@ export async function* runAgentStream({
     if ((thinkLevel === null || thinkLevel === undefined) && sessionMeta.thinkLevel) {
       effectiveThinkLevel = sessionMeta.thinkLevel;
     }
+    if ((effectiveSlaLevel === null || effectiveSlaLevel === undefined) && sessionMeta.slaLevel) {
+      effectiveSlaLevel = sessionMeta.slaLevel;
+    }
     if (!agent && sessionMeta.agent) agent = sessionMeta.agent;
   }
 
@@ -1599,6 +1621,7 @@ export async function* runAgentStream({
     const hookResult = await hooks.run('before_agent_start', {
       request: effectiveRequest,
       agent,
+      slaLevel: effectiveSlaLevel,
       model: effectiveModel,
       provider: effectiveProvider,
       thinkLevel: effectiveThinkLevel,
@@ -1611,6 +1634,7 @@ export async function* runAgentStream({
     if (hookResult?.model) effectiveModel = hookResult.model;
     if (hookResult?.provider) effectiveProvider = hookResult.provider;
     if (hookResult?.thinkLevel) effectiveThinkLevel = hookResult.thinkLevel;
+    if (hookResult?.slaLevel !== undefined) effectiveSlaLevel = hookResult.slaLevel;
   }
 
   const resolvedAbortController = normalizeAbortController({ abortController, signal });
@@ -1737,7 +1761,9 @@ export async function* runAgentStream({
   });
 
   // Determine which agent to use
-  const routingResult = routeToAgentWithConfidence(effectiveRequest);
+  const routingResult = routeToAgentWithConfidence(effectiveRequest, {
+    slaLevel: effectiveSlaLevel,
+  });
   let agentName = agent || routingResult.primary.agent;
   if (!agent && routingResult.primary.level === 'default' && resolvedSettings.agent?.default) {
     agentName = resolvedSettings.agent.default;
@@ -1889,6 +1915,7 @@ export async function* runAgentStream({
           provider: effectiveProvider,
           model: effectiveModel,
           thinkLevel: effectiveThinkLevel,
+          slaLevel: effectiveSlaLevel,
           agent: agentName,
           lastRequest: storedRequest,
           lastResponse: storedResponse,
@@ -1906,6 +1933,7 @@ export async function* runAgentStream({
         request: effectiveRequest,
         response: lastResponse,
         agent: agentName,
+        slaLevel: effectiveSlaLevel,
         model: effectiveModel,
         provider: effectiveProvider,
         toolResults: [],
@@ -1920,6 +1948,7 @@ export async function* runAgentStream({
       toolResults: [],
       sessionId: streamSessionId,
       agent: agentName,
+      slaLevel: effectiveSlaLevel,
       provider: effectiveProvider,
       model: effectiveModel,
       cost: null,
@@ -1948,6 +1977,7 @@ export function createAgentStreamSession(options = {}) {
     allowApply = false,
     maxTurns = 10,
     agent,
+    slaLevel = null,
     enableSync = null,
     guardrails = null,
     onConfirmRequired = null,
@@ -1983,6 +2013,7 @@ export function createAgentStreamSession(options = {}) {
   const effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
   const effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
   const effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+  const effectiveSlaLevel = slaLevel ?? resolvedSettings.agent?.slaLevel ?? null;
 
   if (pluginsEnabled) {
     ensureHarnessPluginsLoaded({ verbose: pluginsVerbose }).catch((err) => {
@@ -2012,7 +2043,9 @@ export function createAgentStreamSession(options = {}) {
     }
   }
 
-  const routingResult = routeToAgentWithConfidence('');
+  const routingResult = routeToAgentWithConfidence('', {
+    slaLevel: effectiveSlaLevel,
+  });
   const agentName =
     agent || resolvedSettings.agent?.default || routingResult.primary.agent || 'customer-service';
   const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
@@ -2110,7 +2143,7 @@ export function createAgentStreamSession(options = {}) {
       assistantText = '';
       if (!agentStarted) {
         agentStarted = true;
-        emitEvent(onEvent, { type: 'agent_start' });
+        emitEvent(onEvent, { type: 'agent_start', slaLevel: effectiveSlaLevel });
       }
       emitEvent(onEvent, { type: 'turn_start' });
       const userEventMessage = { role: 'user', content: redactEventText(next) };
@@ -2247,6 +2280,7 @@ export function createAgentStreamSession(options = {}) {
             provider: effectiveProvider,
             model: effectiveModel,
             thinkLevel: effectiveThinkLevel,
+            slaLevel: effectiveSlaLevel,
             agent: agentName,
             lastRequest: null,
             lastResponse: storedResponse,
@@ -2262,6 +2296,7 @@ export function createAgentStreamSession(options = {}) {
         toolResults: [],
         sessionId,
         agent: agentName,
+        slaLevel: effectiveSlaLevel,
         provider: effectiveProvider,
         model: effectiveModel,
         cost: null,

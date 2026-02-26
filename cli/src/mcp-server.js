@@ -6,7 +6,7 @@
  */
 
 import { createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'path';
 import { z } from 'zod';
@@ -15,6 +15,7 @@ import { A2AStore } from './a2a/store.js';
 import { PolicyEngine } from './policies/engine.js';
 import { createMcpEventStreamer } from './mcp-event-streamer.js';
 import { ToolDiscoveryEngine } from './mcp-tool-discovery.js';
+import { routeToAgentWithConfidence } from './agent-router.js';
 
 // Domain tool modules
 import { customerTools } from './tools/customers.js';
@@ -52,10 +53,13 @@ import { reviewTools } from './tools/reviews.js';
 import { wishlistTools } from './tools/wishlists.js';
 import { loyaltyTools } from './tools/loyalty.js';
 import { fraudTools } from './tools/fraud.js';
+import { connectorTools } from './tools/connectors.js';
 
 let toolDiscoveryEngine = null;
 
 const AGENTIC_TOOL_RESULT_SCHEMA_VERSION = '1.0.0';
+const AGENTIC_POLICY_DECISION_BUNDLE_VERSION = '2026-03-01';
+const AGENTIC_SLA_LEVELS = ['standard', 'expedited', 'critical'];
 
 /**
  * All domain tool definitions, collected from modules.
@@ -91,6 +95,10 @@ const AGENTIC_RUNTIME_TOOLS = [
           policyDomain: z.string().optional().describe('Optional override policy domain'),
         }),
       ),
+      slaLevel: z
+        .enum(AGENTIC_SLA_LEVELS)
+        .optional()
+        .describe('Optional SLA priority for routing-aware planning'),
       costBudget: z
         .record(
           z.string().describe('Currency key (tokenSymbol or chainId:tokenSymbol)'),
@@ -104,7 +112,70 @@ const AGENTIC_RUNTIME_TOOLS = [
     handler: async ({ params, simulateAgenticPlan }) => {
       return simulateAgenticPlan({
         steps: params?.steps || [],
+        slaLevel: params?.slaLevel || null,
         costBudget: params?.costBudget,
+      });
+    },
+  },
+  {
+    name: 'agentic_simulate_mutation',
+    description:
+      'Run deterministic dry-run simulation for a mutating tool with policy, permission, rollback, and replay metadata.',
+    inputSchema: {
+      tool: z.string().min(1).describe('Mutating tool name without server prefix'),
+      params: z.record(z.string(), z.any()).default({}).describe('Tool parameters'),
+      policyDomain: z.string().optional().describe('Optional override policy domain'),
+      requestId: z.string().optional().describe('Optional correlation id'),
+      sessionId: z.string().optional().describe('Optional correlation session id'),
+      includeHooks: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Include before/after hook execution in simulation'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, simulateMutationToolCall }) => {
+      return simulateMutationToolCall({
+        tool: params?.tool,
+        params: params?.params || {},
+        policyDomain: params?.policyDomain || null,
+        requestId: params?.requestId || null,
+        sessionId: params?.sessionId || null,
+        includeHooks: params?.includeHooks ?? false,
+      });
+    },
+  },
+  {
+    name: 'agentic_replay_mutation',
+    description:
+      'Replay a previously logged mutating tool call from the deterministic replay log, with dry-run by default.',
+    inputSchema: {
+      eventId: z.string().optional().describe('Replay a specific event id'),
+      requestId: z.string().optional().describe('Replay the latest mutation for this request id'),
+      tool: z.string().optional().describe('Replay the latest mutation for this tool'),
+      dryRun: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Dry-run by default. Set false to execute if --apply is enabled'),
+      includeHooks: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Include before/after hook execution during replay'),
+      sessionId: z.string().optional().describe('Optional correlation session id'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, replayMutationToolCall }) => {
+      return replayMutationToolCall({
+        eventId: params?.eventId || null,
+        requestId: params?.requestId || null,
+        tool: params?.tool || null,
+        dryRun: params?.dryRun ?? true,
+        includeHooks: params?.includeHooks ?? false,
+        sessionId: params?.sessionId || null,
       });
     },
   },
@@ -114,6 +185,7 @@ const AGENTIC_RUNTIME_TOOLS = [
     inputSchema: {
       limit: z.number().optional().default(20).describe('Max events to return'),
       tool: z.string().optional().describe('Filter by tool name'),
+      eventId: z.string().optional().describe('Filter by replay event id'),
       requestId: z.string().optional().describe('Filter by request/session id'),
       sessionId: z.string().optional().describe('Filter by MCP session id'),
       planSignature: z.string().optional().describe('Filter by plan signature'),
@@ -131,6 +203,7 @@ const AGENTIC_RUNTIME_TOOLS = [
           'rollback_failed',
           'dry_run_success',
           'dry_run_blocked',
+          'invalid',
         ])
         .optional(),
     },
@@ -140,6 +213,7 @@ const AGENTIC_RUNTIME_TOOLS = [
       return getAgenticReplayLog({
         limit: params?.limit,
         tool: params?.tool,
+        eventId: params?.eventId,
         requestId: params?.requestId,
         sessionId: params?.sessionId,
         planSignature: params?.planSignature,
@@ -271,6 +345,10 @@ const AGENTIC_RUNTIME_TOOLS = [
         .default(true)
         .describe('Attempt best-effort rollback using compensation hints'),
       requestId: z.string().optional().describe('Optional correlation id'),
+      slaLevel: z
+        .enum(AGENTIC_SLA_LEVELS)
+        .optional()
+        .describe('Optional SLA priority for routing-aware execution'),
       costBudget: z
         .record(
           z.string().describe('Currency key (tokenSymbol or chainId:tokenSymbol)'),
@@ -289,6 +367,7 @@ const AGENTIC_RUNTIME_TOOLS = [
         rollbackOnFailure: params?.rollbackOnFailure ?? true,
         requestId: params?.requestId,
         sessionId: params?.sessionId,
+        slaLevel: params?.slaLevel || null,
         costBudget: params?.costBudget,
       });
     },
@@ -404,6 +483,7 @@ const ALL_TOOL_DEFS = [
   ...wishlistTools,
   ...loyaltyTools,
   ...fraudTools,
+  ...connectorTools,
   ...AGENTIC_RUNTIME_TOOLS,
 ];
 
@@ -639,6 +719,12 @@ const compactReplayValue = (value, depth = 4, seen = new Set()) => {
 const MAX_PLAN_STEPS = 200;
 const AGENTIC_PLAN_PARAM_TEMPLATE = /^\{\{\s*([^}]+)\s*\}\}$/;
 
+const normalizeSlaLevel = (value) => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return AGENTIC_SLA_LEVELS.includes(normalized) ? normalized : null;
+};
+
 const getByPath = (value, pathSegments) => {
   let current = value;
   for (const segment of pathSegments) {
@@ -674,7 +760,48 @@ const resolveAgenticPlanPath = (context, rawPath) => {
     return getByPath(context.byTool?.[pathParts[1]], pathParts.slice(2));
   }
 
+  if (pathParts[0] === 'sla') {
+    return getByPath(context.sla, pathParts.slice(1));
+  }
+
+  if (pathParts[0] === 'slaLevel') {
+    return context.sla?.level;
+  }
+
   return undefined;
+};
+
+const buildPlanStepRouting = ({ tool, params, slaLevel }) => {
+  const normalizedSlaLevel = normalizeSlaLevel(slaLevel);
+  const routeIntent = `${String(tool || '').replaceAll('_', ' ')} ${stableStringify(compactReplayValue(params || {}))}`;
+  const routing = routeToAgentWithConfidence(routeIntent, {
+    slaLevel: normalizedSlaLevel || undefined,
+  });
+  return {
+    slaLevel: routing?.routingContext?.slaLevel || null,
+    primary: routing?.primary
+      ? {
+          agent: routing.primary.agent,
+          score: routing.primary.score,
+          confidence: routing.primary.confidence,
+          level: routing.primary.level,
+        }
+      : {
+          agent: 'customer-service',
+          score: 0,
+          confidence: 0,
+          level: 'default',
+        },
+    alternatives: Array.isArray(routing?.alternatives)
+      ? routing.alternatives.map((entry) => ({
+          agent: entry.agent,
+          score: entry.score,
+          confidence: entry.confidence,
+          level: entry.level,
+        }))
+      : [],
+    ambiguous: Boolean(routing?.ambiguous),
+  };
 };
 
 const resolveAgenticPlanValue = (value, context, location = '$') => {
@@ -829,6 +956,184 @@ const createCostSummary = (mode) => ({
 
 const replayEventHash = (value) => sha256(stableStringify(compactReplayValue(value)));
 
+const extractIdempotencyKeyFromParams = (params = {}) => {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
+  const candidates = [
+    'idempotencyKey',
+    'idempotency_key',
+    'idempotencyToken',
+    'requestId',
+    'request_id',
+    'externalId',
+    'external_id',
+  ];
+  for (const key of candidates) {
+    const value = params[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+
+const normalizePolicyAction = (action) => {
+  if (!action) return null;
+  if (typeof action?.toJSON === 'function') {
+    try {
+      return action.toJSON();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof action !== 'object' || Array.isArray(action)) return null;
+  return action;
+};
+
+const normalizePolicyExplanation = (explanation) => {
+  if (!explanation) return null;
+  if (typeof explanation?.toJSON === 'function') {
+    try {
+      return explanation.toJSON();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof explanation !== 'object' || Array.isArray(explanation)) return null;
+  return explanation;
+};
+
+const buildRollbackContract = (toolName) => {
+  const compensationTools = AGENTIC_COMPENSATION_HINTS[toolName] || [];
+  const compensationContracts = compensationTools.map((tool) => ({
+    tool,
+    params: AGENTIC_COMPENSATION_PARAM_HINTS[tool] || ['id'],
+  }));
+
+  const contract = {
+    strategy: compensationContracts.length > 0 ? 'best_effort_compensation' : 'none',
+    sourceTool: toolName,
+    compensation: compensationContracts,
+    reversible: compensationContracts.length > 0,
+  };
+
+  return {
+    ...contract,
+    contractHash: replayEventHash(contract),
+  };
+};
+
+const buildApprovalStagesFromActions = (actions = []) => {
+  const stages = [];
+  for (const rawAction of actions) {
+    const action = normalizePolicyAction(rawAction);
+    if (!action) continue;
+    const approval = action.approval || action?.metadata?.approval || null;
+    const requiresApproval = Boolean(action?.metadata?.requiresApproval) || Boolean(approval);
+    if (!requiresApproval) continue;
+
+    if (Array.isArray(approval?.stages) && approval.stages.length > 0) {
+      for (const stage of approval.stages) {
+        if (!stage || typeof stage !== 'object') continue;
+        stages.push({
+          level: Number.isFinite(Number(stage.level)) ? Number(stage.level) : stages.length + 1,
+          name: stage.name || `stage-${stages.length + 1}`,
+          requiredApprovals: Number(stage.requiredApprovals || 1),
+          approvers: Array.isArray(stage.approvers) ? stage.approvers : [],
+          timeout: stage.timeout || null,
+          timeoutAction: stage.timeoutAction || null,
+          source: 'policy_action',
+        });
+      }
+      continue;
+    }
+
+    stages.push({
+      level: Number.isFinite(Number(approval?.level)) ? Number(approval.level) : stages.length + 1,
+      name: approval?.name || action?.metadata?.approvalTier || 'approval-required',
+      requiredApprovals: Number(approval?.requiredApprovals || 1),
+      approvers: Array.isArray(approval?.approvers) ? approval.approvers : [],
+      timeout: approval?.timeout || null,
+      timeoutAction: approval?.timeoutAction || null,
+      source: 'policy_action',
+    });
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const stage of stages) {
+    const key = `${stage.level}:${stage.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(stage);
+  }
+  return deduped.sort((a, b) => a.level - b.level);
+};
+
+const signAuditArtifact = (payload) => {
+  const canonical = stableStringify(payload);
+  const payloadHash = sha256(canonical);
+  const signingKey =
+    process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY || process.env.STATESET_AUDIT_SIGNING_KEY || '';
+  const keyId = process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY_ID || 'stateset-default';
+
+  if (signingKey) {
+    return {
+      payloadHash,
+      signature: createHmac('sha256', signingKey).update(canonical).digest('hex'),
+      algorithm: 'hmac-sha256',
+      keyId,
+      signed: true,
+    };
+  }
+
+  return {
+    payloadHash,
+    signature: sha256(`unsigned:${payloadHash}`),
+    algorithm: 'sha256',
+    keyId: 'unsigned-deterministic',
+    signed: false,
+  };
+};
+
+const buildDeterministicMutationManifest = ({
+  toolName,
+  params = {},
+  policy = null,
+  permission = null,
+  runtimeMeta = null,
+  phase = 'execute',
+} = {}) => {
+  if (!runtimeMeta || runtimeMeta.sideEffect === 'read' || runtimeMeta.permission === 'unknown') {
+    return null;
+  }
+
+  const paramsHash = replayEventHash(params || {});
+  const policyHash = replayEventHash(policy || {});
+  const permissionHash = replayEventHash(permission || {});
+  const idempotencyKey =
+    extractIdempotencyKeyFromParams(params) ||
+    (runtimeMeta.idempotent ? `ik_${toolName}_${paramsHash.slice(0, 16)}` : null);
+  const rollback = buildRollbackContract(toolName);
+  const core = {
+    version: '1.0.0',
+    tool: toolName,
+    phase,
+    sideEffect: runtimeMeta.sideEffect,
+    policyDomain: runtimeMeta.policyDomain || null,
+    idempotent: Boolean(runtimeMeta.idempotent),
+    idempotencyKey,
+    paramsHash,
+    policyHash,
+    permissionHash,
+    rollbackContractHash: rollback.contractHash,
+    compensationTools: runtimeMeta.compensations || [],
+  };
+
+  return {
+    ...core,
+    deterministicSignature: replayEventHash(core),
+    rollback,
+  };
+};
+
 const TOOL_DOMAIN_BY_TOOL_NAME = (() => {
   const entries = [
     ['customers', customerTools],
@@ -857,6 +1162,7 @@ const TOOL_DOMAIN_BY_TOOL_NAME = (() => {
     ['invoices', invoiceTools],
     ['warranties', warrantyTools],
     ['vector', vectorTools],
+    ['connectors', connectorTools],
   ];
 
   const map = {};
@@ -1246,10 +1552,24 @@ export function createStatesetMcpServer({
 
   const addAgenticReplayEvent = async (event) => {
     if (!event || typeof event !== 'object') return;
+    const paramsHash = event.paramsHash || replayEventHash(event.params || {});
+    const resultHash = event.resultHash || replayEventHash(event.result || {});
+    const signaturePayload = {
+      tool: event.tool || null,
+      status: event.status || null,
+      requestId: event.requestId || null,
+      sessionId: event.sessionId || null,
+      occurredAt: event.occurredAt || null,
+      policyDomain: event.policyDomain || null,
+      paramsHash,
+      resultHash,
+      source: event.source || null,
+    };
     const sanitized = {
       ...event,
-      paramsHash: event.paramsHash || replayEventHash(event.params || {}),
-      resultHash: event.resultHash || replayEventHash(event.result || {}),
+      paramsHash,
+      resultHash,
+      eventSignature: event.eventSignature || signAuditArtifact(signaturePayload).signature,
     };
     agenticReplayRingBuffer.push(sanitized);
     if (agenticReplayRingBuffer.length > AGENTIC_REPLAY_BUFFER_SIZE) {
@@ -1262,6 +1582,7 @@ export function createStatesetMcpServer({
   const listAgenticReplayEvents = async (options = {}) => {
     const limit = Math.max(1, Math.min(AGENTIC_REPLAY_BUFFER_SIZE, Number(options.limit) || 20));
     const targetTool = options?.tool || null;
+    const targetEventId = options?.eventId || null;
     const requestId = options?.requestId || null;
     const sessionId = options?.sessionId || null;
     const status = options?.status || null;
@@ -1270,6 +1591,7 @@ export function createStatesetMcpServer({
 
     const matches = (event) => {
       if (targetTool && event?.tool !== targetTool) return false;
+      if (targetEventId && event?.eventId !== targetEventId) return false;
       if (requestId && event?.requestId !== requestId) return false;
       if (sessionId && event?.sessionId !== sessionId) return false;
       if (status && event?.status !== status) return false;
@@ -1341,6 +1663,7 @@ export function createStatesetMcpServer({
       filters: {
         limit,
         tool: targetTool || null,
+        eventId: targetEventId,
         requestId,
         sessionId,
         planSignature: targetPlanSignature,
@@ -1433,6 +1756,60 @@ export function createStatesetMcpServer({
     }
   };
 
+  const buildPolicyDecisionBundle = ({
+    toolName,
+    domain,
+    inputParams = {},
+    outputParams = {},
+    actions = [],
+    explanations = [],
+    allowed = true,
+    reason = null,
+  }) => {
+    const runtimeMeta = getToolRuntimeMeta(toolName);
+    const normalizedActions = actions
+      .map((action) => normalizePolicyAction(action))
+      .filter(Boolean);
+    const normalizedExplanations = explanations
+      .map((explanation) => normalizePolicyExplanation(explanation))
+      .filter(Boolean);
+    const approvalStages = buildApprovalStagesFromActions(normalizedActions);
+    const rollbackContract = buildRollbackContract(toolName);
+
+    const core = {
+      version: AGENTIC_POLICY_DECISION_BUNDLE_VERSION,
+      engine: 'stateset-icommerce',
+      tool: toolName,
+      domain: domain || inferPolicyDomain(toolName),
+      decision: allowed ? 'allow' : 'deny',
+      reason: reason || null,
+      policyMode: allowApply ? 'apply' : 'preview',
+      runtime: {
+        sideEffect: runtimeMeta.sideEffect,
+        idempotent: runtimeMeta.idempotent,
+        compensations: runtimeMeta.compensations,
+      },
+      actionTypes: normalizedActions.map((action) => action.type).filter(Boolean),
+      approval: {
+        required: approvalStages.length > 0,
+        stages: approvalStages,
+      },
+      rollback: rollbackContract,
+      inputParamsHash: replayEventHash(inputParams || {}),
+      outputParamsHash: replayEventHash(outputParams || inputParams || {}),
+      explanationsHash: replayEventHash(normalizedExplanations),
+    };
+    const bundleId = replayEventHash(core);
+    const auditArtifact = signAuditArtifact({ bundleId, ...core });
+
+    return {
+      ...core,
+      bundleId,
+      createdAt: new Date().toISOString(),
+      auditArtifact,
+    };
+  };
+
   const getAgenticRuntimeContract = async ({ tool, includeLegacyDefaults = false } = {}) => {
     const normalizedTools = await Promise.all(
       ALL_TOOL_DEFS.filter((candidate) => !tool || candidate?.name === tool)
@@ -1472,6 +1849,7 @@ export function createStatesetMcpServer({
           'policy',
           'permission',
           'charge',
+          'mutation',
           'timing',
         ],
       },
@@ -1491,7 +1869,8 @@ export function createStatesetMcpServer({
     return contract;
   };
 
-  const simulateAgenticPlan = async ({ steps, costBudget }) => {
+  const simulateAgenticPlan = async ({ steps, slaLevel = null, costBudget }) => {
+    const normalizedSlaLevel = normalizeSlaLevel(slaLevel);
     const costBudgetLimits = normalizeCostBudget(costBudget);
     let budgetExceeded = false;
     const budgetViolations = [];
@@ -1516,6 +1895,7 @@ export function createStatesetMcpServer({
         engine: 'stateset-icommerce',
         tool: 'agentic_plan',
         executable: false,
+        slaLevel: normalizedSlaLevel,
         totalSteps: normalizedSteps.length,
         failedSteps: 1,
         costSummary: null,
@@ -1559,6 +1939,7 @@ export function createStatesetMcpServer({
       steps: [],
       latest: null,
       byTool: {},
+      sla: { level: normalizedSlaLevel },
     };
 
     for (const step of normalizedSteps) {
@@ -1575,6 +1956,11 @@ export function createStatesetMcpServer({
         policyDomain: step.policyDomain,
         params: compactReplayValue(effectiveParams),
       };
+      const stepRouting = buildPlanStepRouting({
+        tool: step.tool,
+        params: effectiveParams,
+        slaLevel: normalizedSlaLevel,
+      });
       resolvedPlanBlueprint.push(stepTemplate);
       const stepSignature = sha256(stableStringify(stepTemplate));
       if (!step.tool) {
@@ -1583,6 +1969,7 @@ export function createStatesetMcpServer({
           tool: step.tool,
           status: 'invalid',
           error: 'Step.tool is required',
+          routing: stepRouting,
           policy: null,
           permission: null,
           treasury: null,
@@ -1593,6 +1980,7 @@ export function createStatesetMcpServer({
         outcomes.push(missing);
         executionContext.steps[step.index] = {
           ...stepTemplate,
+          routing: stepRouting,
           status: missing.status,
           result: null,
           error: missing.error,
@@ -1607,6 +1995,7 @@ export function createStatesetMcpServer({
           tool: step.tool,
           status: 'invalid',
           error: `Unresolved plan parameter reference(s): ${resolvedParamsResult.unresolved.join(', ')}`,
+          routing: stepRouting,
           policy: null,
           permission: null,
           treasury: null,
@@ -1624,6 +2013,7 @@ export function createStatesetMcpServer({
         outcomes.push(unresolvedResult);
         executionContext.steps[step.index] = {
           ...stepTemplate,
+          routing: stepRouting,
           status: unresolvedResult.status,
           result: null,
           error: unresolvedResult.error,
@@ -1640,6 +2030,7 @@ export function createStatesetMcpServer({
           tool: step.tool,
           status: 'invalid',
           error: `Unknown tool '${step.tool}'`,
+          routing: stepRouting,
           policy: null,
           permission: null,
           treasury: null,
@@ -1652,6 +2043,7 @@ export function createStatesetMcpServer({
         outcomes.push(unknown);
         executionContext.steps[step.index] = {
           ...stepTemplate,
+          routing: stepRouting,
           status: unknown.status,
           result: null,
           error: unknown.error,
@@ -1750,10 +2142,12 @@ export function createStatesetMcpServer({
         index: step.index,
         tool: step.tool,
         status,
+        routing: stepRouting,
         policy: {
           allowed: policy.allowed,
           domain: policy.domain || inferPolicyDomain(step.tool),
           reason: policy.reason || null,
+          decisionBundle: policy.policyDecisionBundle || null,
         },
         permission: {
           allowed: permission.allowed,
@@ -1785,6 +2179,14 @@ export function createStatesetMcpServer({
           compensations: meta.compensations,
           idempotent: meta.idempotent,
         },
+        mutationManifest: buildDeterministicMutationManifest({
+          toolName: step.tool,
+          params: effectiveParams || {},
+          policy,
+          permission,
+          runtimeMeta: meta,
+          phase: 'simulate',
+        }),
         stepSignature,
         simulation: true,
         error: budgetError || null,
@@ -1799,6 +2201,7 @@ export function createStatesetMcpServer({
       outcomes.push(outcome);
       executionContext.steps[step.index] = {
         ...stepTemplate,
+        routing: stepRouting,
         status,
         result: compactReplayValue({ status: outcome.status, ...outcome.treasury }),
         error:
@@ -1811,7 +2214,7 @@ export function createStatesetMcpServer({
     const planSignature = replayEventHash(
       stableStringify({
         steps: resolvedPlanBlueprint,
-        options: { mode: 'simulate', costBudget: costBudgetLimits },
+        options: { mode: 'simulate', slaLevel: normalizedSlaLevel, costBudget: costBudgetLimits },
       }),
     );
 
@@ -1824,6 +2227,7 @@ export function createStatesetMcpServer({
       failedSteps: outcomes.filter((entry) => entry.status !== 'success').length,
       budgetExceeded,
       budgetViolations,
+      slaLevel: normalizedSlaLevel,
       costBudget: costBudgetLimits,
       costSummary,
       outcomes,
@@ -1874,6 +2278,21 @@ export function createStatesetMcpServer({
     let policy = null;
     let permission = null;
     let charge = null;
+    const buildStepMutationManifest = (
+      paramsValue = nextArgs,
+      policyValue = policy,
+      permissionValue = permission,
+      phase = dryRun ? 'dry_run' : 'execute',
+    ) => {
+      return buildDeterministicMutationManifest({
+        toolName: resolvedToolName,
+        params: paramsValue || {},
+        policy: policyValue || null,
+        permission: permissionValue || null,
+        runtimeMeta: baseMeta,
+        phase,
+      });
+    };
 
     try {
       if (includeHooks && hookRunner?.hasHooks?.('before_tool_call')) {
@@ -1906,6 +2325,7 @@ export function createStatesetMcpServer({
             paramsHash: replayEventHash(nextArgs),
             resultHash: null,
             simulation: false,
+            mutationManifest: buildStepMutationManifest(nextArgs, null, null, 'blocked'),
             notes: {
               hook: {
                 allowed: hookResult?.allowed,
@@ -1934,6 +2354,7 @@ export function createStatesetMcpServer({
             domain: policy.domain,
             reason: policy.reason || null,
             actions: policy.actions || [],
+            decisionBundle: policy.policyDecisionBundle || null,
           },
           permission: null,
           charge: null,
@@ -1948,6 +2369,7 @@ export function createStatesetMcpServer({
             idempotent: baseMeta.idempotent,
           },
           simulation: dryRun,
+          mutationManifest: buildStepMutationManifest(nextArgs, policy, null, 'policy_block'),
           error: policy.reason || 'Tool execution blocked by policy',
         };
       }
@@ -1963,6 +2385,7 @@ export function createStatesetMcpServer({
             allowed: policy.allowed,
             domain: policy.domain,
             actions: policy.actions || [],
+            decisionBundle: policy.policyDecisionBundle || null,
           },
           permission: {
             allowed: permission.allowed,
@@ -1981,6 +2404,7 @@ export function createStatesetMcpServer({
             idempotent: baseMeta.idempotent,
           },
           simulation: dryRun,
+          mutationManifest: buildStepMutationManifest(nextArgs, policy, permission, payload.status),
           error: permission.reason || 'Permission denied',
           wouldDo: permission.wouldDo || null,
         };
@@ -2005,6 +2429,7 @@ export function createStatesetMcpServer({
             allowed: policy.allowed,
             domain: policy.domain,
             actions: policy.actions || [],
+            decisionBundle: policy.policyDecisionBundle || null,
           },
           permission: {
             allowed: permission.allowed,
@@ -2027,6 +2452,12 @@ export function createStatesetMcpServer({
             idempotent: baseMeta.idempotent,
           },
           simulation: dryRun,
+          mutationManifest: buildStepMutationManifest(
+            nextArgs,
+            policy,
+            permission,
+            dryRun ? 'dry_run_blocked' : 'treasury_block',
+          ),
           error: charge.reason || 'Treasury charge blocked',
         };
       }
@@ -2041,6 +2472,7 @@ export function createStatesetMcpServer({
             allowed: policy.allowed,
             domain: policy.domain,
             actions: policy.actions || [],
+            decisionBundle: policy.policyDecisionBundle || null,
           },
           permission: {
             allowed: permission.allowed,
@@ -2067,6 +2499,12 @@ export function createStatesetMcpServer({
             idempotent: baseMeta.idempotent,
           },
           simulation: true,
+          mutationManifest: buildStepMutationManifest(
+            nextArgs,
+            policy,
+            permission,
+            'dry_run_success',
+          ),
           requestId,
         };
       }
@@ -2110,6 +2548,7 @@ export function createStatesetMcpServer({
           allowed: policy.allowed,
           domain: policy.domain,
           actions: policy.actions || [],
+          decisionBundle: policy.policyDecisionBundle || null,
         },
         permission: {
           allowed: permission.allowed,
@@ -2132,6 +2571,7 @@ export function createStatesetMcpServer({
           idempotent: baseMeta.idempotent,
         },
         simulation: false,
+        mutationManifest: buildStepMutationManifest(nextArgs, policy, permission, finalStatus),
         resultSuccess: !failed,
         error: failure,
         isRollback: Boolean(isRollback),
@@ -2157,6 +2597,7 @@ export function createStatesetMcpServer({
               allowed: policy.allowed,
               domain: policy.domain,
               actions: policy.actions || [],
+              decisionBundle: policy.policyDecisionBundle || null,
             }
           : null,
         permission: permission
@@ -2184,10 +2625,232 @@ export function createStatesetMcpServer({
           idempotent: baseMeta.idempotent,
         },
         simulation: false,
+        mutationManifest: buildStepMutationManifest(nextArgs, policy, permission, 'error'),
         error: error.message,
         isRollback: Boolean(isRollback),
       };
     }
+  };
+
+  const simulateMutationToolCall = async ({
+    tool,
+    params = {},
+    policyDomain = null,
+    requestId = null,
+    sessionId = null,
+    includeHooks = false,
+  }) => {
+    const targetTool = normalizeToolName(tool);
+    const runtime = getToolRuntimeMeta(targetTool);
+    if (!targetTool) {
+      return {
+        success: false,
+        error: 'tool is required',
+      };
+    }
+    if (runtime.permission === 'unknown') {
+      return {
+        success: false,
+        error: `Unknown tool '${targetTool}'`,
+      };
+    }
+    if (runtime.sideEffect !== 'write') {
+      return {
+        success: false,
+        error: `Tool '${targetTool}' is read-only. Use agentic_plan for read tool simulation.`,
+      };
+    }
+
+    const simulationRequestId = requestId || randomUUID();
+    const simulationSessionId = sessionId || simulationRequestId;
+    const outcome = await executeToolStepInPlan({
+      toolName: targetTool,
+      params,
+      policyDomain: policyDomain || inferPolicyDomain(targetTool),
+      requestId: simulationRequestId,
+      sessionId: simulationSessionId,
+      dryRun: true,
+      stepIndex: 0,
+      includeHooks,
+    });
+
+    const replayContract = {
+      generatedAt: new Date().toISOString(),
+      source: 'agentic_simulate_mutation',
+      targetTool,
+      policyDomain: policyDomain || inferPolicyDomain(targetTool),
+      requestId: simulationRequestId,
+      sessionId: simulationSessionId,
+      runtime,
+      simulation: outcome,
+      simulationHash: replayEventHash(outcome),
+      deterministicSignature: replayEventHash({
+        tool: targetTool,
+        params: compactReplayValue(params || {}),
+        status: outcome.status,
+        paramsHash: outcome.paramsHash,
+      }),
+    };
+
+    await addAgenticReplayEvent({
+      eventId: randomUUID(),
+      tool: 'agentic_simulate_mutation',
+      status: outcome.status,
+      requestId: simulationRequestId,
+      sessionId: simulationSessionId,
+      policyDomain: policyDomain || inferPolicyDomain(targetTool),
+      occurredAt: new Date().toISOString(),
+      elapsedMs: outcome.elapsedMs || 0,
+      params: compactReplayValue({
+        tool: targetTool,
+        params,
+        includeHooks,
+      }),
+      paramsHash: replayEventHash({ tool: targetTool, params }),
+      result: compactReplayValue(replayContract),
+      resultHash: replayEventHash(replayContract),
+      policy: compactReplayValue(outcome.policy || null),
+      permission: compactReplayValue(outcome.permission || null),
+      charge: compactReplayValue(outcome.charge || null),
+      error: outcome.error || null,
+      notes: {
+        simulation: true,
+        targetTool,
+      },
+      source: 'agentic_simulate_mutation',
+      agentic: true,
+    });
+
+    return {
+      success: true,
+      generatedAt: replayContract.generatedAt,
+      engine: 'stateset-icommerce',
+      tool: 'agentic_simulate_mutation',
+      requestId: simulationRequestId,
+      sessionId: simulationSessionId,
+      targetTool,
+      outcome,
+      replayContract,
+    };
+  };
+
+  const replayMutationToolCall = async ({
+    eventId = null,
+    requestId = null,
+    tool = null,
+    dryRun = true,
+    includeHooks = false,
+    sessionId = null,
+  }) => {
+    const replayEvents = await listAgenticReplayEvents({
+      limit: 200,
+      eventId,
+      requestId,
+      tool: tool ? normalizeToolName(tool) : null,
+    });
+    const sourceEvent = (replayEvents.events || []).find((event) => {
+      if (!event?.tool || event.tool.startsWith('agentic_')) return false;
+      const runtime = getToolRuntimeMeta(event.tool);
+      if (runtime.permission === 'unknown' || runtime.sideEffect !== 'write') return false;
+      return event.params && typeof event.params === 'object';
+    });
+
+    if (!sourceEvent) {
+      return {
+        success: false,
+        error: 'No replayable mutation event found for the provided filters.',
+        filters: {
+          eventId,
+          requestId,
+          tool: tool || null,
+        },
+      };
+    }
+
+    const replayRequestId = randomUUID();
+    const replaySessionId = sessionId || replayRequestId;
+    const replayOutcome = await executeToolStepInPlan({
+      toolName: sourceEvent.tool,
+      params: sourceEvent.params || {},
+      policyDomain: sourceEvent.policyDomain || inferPolicyDomain(sourceEvent.tool),
+      requestId: replayRequestId,
+      sessionId: replaySessionId,
+      dryRun: dryRun !== false,
+      stepIndex: 0,
+      includeHooks,
+    });
+
+    const originalParamsHash =
+      sourceEvent.paramsHash || replayEventHash(compactReplayValue(sourceEvent.params || {}));
+    const deterministic = {
+      paramsMatch: originalParamsHash === replayOutcome.paramsHash,
+      resultHashMatch:
+        typeof sourceEvent.resultHash === 'string'
+          ? sourceEvent.resultHash === replayOutcome.resultHash
+          : null,
+      originalParamsHash,
+      replayParamsHash: replayOutcome.paramsHash,
+      originalResultHash: sourceEvent.resultHash || null,
+      replayResultHash: replayOutcome.resultHash || null,
+    };
+
+    await addAgenticReplayEvent({
+      eventId: randomUUID(),
+      tool: 'agentic_replay_mutation',
+      status: replayOutcome.status,
+      requestId: replayRequestId,
+      sessionId: replaySessionId,
+      policyDomain: sourceEvent.policyDomain || inferPolicyDomain(sourceEvent.tool),
+      occurredAt: new Date().toISOString(),
+      elapsedMs: replayOutcome.elapsedMs || 0,
+      params: compactReplayValue({
+        sourceEventId: sourceEvent.eventId || null,
+        sourceTool: sourceEvent.tool,
+        dryRun: dryRun !== false,
+      }),
+      paramsHash: replayEventHash({
+        sourceEventId: sourceEvent.eventId || null,
+        sourceTool: sourceEvent.tool,
+        dryRun: dryRun !== false,
+      }),
+      result: compactReplayValue({
+        replayOutcome,
+        deterministic,
+      }),
+      resultHash: replayEventHash({
+        replayOutcome,
+        deterministic,
+      }),
+      policy: compactReplayValue(replayOutcome.policy || null),
+      permission: compactReplayValue(replayOutcome.permission || null),
+      charge: compactReplayValue(replayOutcome.charge || null),
+      error: replayOutcome.error || null,
+      notes: {
+        phase: 'replay',
+        sourceEventId: sourceEvent.eventId || null,
+        sourceRequestId: sourceEvent.requestId || null,
+      },
+      source: 'agentic_replay_mutation',
+      agentic: true,
+    });
+
+    return {
+      success: true,
+      generatedAt: new Date().toISOString(),
+      engine: 'stateset-icommerce',
+      tool: 'agentic_replay_mutation',
+      requestId: replayRequestId,
+      sessionId: replaySessionId,
+      sourceEvent: {
+        eventId: sourceEvent.eventId || null,
+        requestId: sourceEvent.requestId || null,
+        tool: sourceEvent.tool,
+        occurredAt: sourceEvent.occurredAt || null,
+        status: sourceEvent.status || null,
+      },
+      replay: replayOutcome,
+      deterministic,
+    };
   };
 
   const executeAgenticPlan = async ({
@@ -2197,8 +2860,10 @@ export function createStatesetMcpServer({
     rollbackOnFailure = true,
     requestId = null,
     sessionId = null,
+    slaLevel = null,
     costBudget = null,
   }) => {
+    const normalizedSlaLevel = normalizeSlaLevel(slaLevel);
     const costBudgetLimits = normalizeCostBudget(costBudget);
     const normalizedSteps = (Array.isArray(steps) ? steps : []).map((step, index) => {
       const toolName = typeof step?.tool === 'string' ? step.tool : '';
@@ -2226,6 +2891,7 @@ export function createStatesetMcpServer({
         dryRun,
         stopOnFailure,
         rollbackOnFailure,
+        slaLevel: normalizedSlaLevel,
         totalSteps: normalizedSteps.length,
         completedSteps: 0,
         failedSteps: 1,
@@ -2277,6 +2943,7 @@ export function createStatesetMcpServer({
       steps: [],
       latest: null,
       byTool: {},
+      sla: { level: normalizedSlaLevel },
     };
 
     for (const step of normalizedSteps) {
@@ -2297,6 +2964,11 @@ export function createStatesetMcpServer({
         policyDomain: step.policyDomain,
         params: compactReplayValue(effectiveParams),
       };
+      const stepRouting = buildPlanStepRouting({
+        tool: step.tool,
+        params: effectiveParams,
+        slaLevel: normalizedSlaLevel,
+      });
       resolvedPlanBlueprint.push(stepTemplate);
       const stepSignature = replayEventHash(stableStringify(stepTemplate));
       const resolvedPlanSignature = replayEventHash(
@@ -2306,6 +2978,7 @@ export function createStatesetMcpServer({
             dryRun,
             stopOnFailure,
             rollbackOnFailure,
+            slaLevel: normalizedSlaLevel,
             costBudget: costBudgetLimits,
           },
         }),
@@ -2358,6 +3031,7 @@ export function createStatesetMcpServer({
           index: step.index,
           tool: step.tool,
           status: 'invalid',
+          routing: stepRouting,
           elapsedMs: 0,
           policy: null,
           permission: null,
@@ -2388,6 +3062,7 @@ export function createStatesetMcpServer({
           index: step.index,
           tool: step.tool,
           status: 'treasury_block',
+          routing: stepRouting,
           elapsedMs: 0,
           policy: null,
           permission: null,
@@ -2434,6 +3109,7 @@ export function createStatesetMcpServer({
         });
       }
 
+      outcome.routing = outcome.routing || stepRouting;
       outcome.stepSignature = stepSignature;
       if (outcome?.charge?.rule) {
         addCostSummaryEntry(costSummary, {
@@ -2461,6 +3137,7 @@ export function createStatesetMcpServer({
         tool: step.tool,
         policyDomain: step.policyDomain,
         params: compactReplayValue(effectiveParams),
+        routing: stepRouting,
         status: outcome.status,
         result: compactReplayValue(outcome.result),
         error: outcome.error || null,
@@ -2497,10 +3174,13 @@ export function createStatesetMcpServer({
           dryRun,
           stopOnFailure,
           rollbackOnFailure,
+          slaLevel: normalizedSlaLevel,
           executedBy: 'agentic_execute_plan',
           index: step.index,
           sourceStep: step.tool,
           stepSignature,
+          routing: outcome.routing || null,
+          mutationManifest: outcome?.mutationManifest || null,
         },
         source: 'agentic_execute_plan',
         agentic: true,
@@ -2533,6 +3213,7 @@ export function createStatesetMcpServer({
           dryRun,
           stopOnFailure,
           rollbackOnFailure,
+          slaLevel: normalizedSlaLevel,
           costBudget: costBudgetLimits,
         },
       }),
@@ -2656,6 +3337,7 @@ export function createStatesetMcpServer({
           notes: {
             phase: 'rollback',
             compensated,
+            slaLevel: normalizedSlaLevel,
             index: completed.step.index,
             source: completed.step.tool,
           },
@@ -2693,6 +3375,7 @@ export function createStatesetMcpServer({
         dryRun,
         stopOnFailure,
         rollbackOnFailure,
+        slaLevel: normalizedSlaLevel,
         costBudget: costBudgetLimits,
         totalSteps: normalizedSteps.length,
         completedSteps,
@@ -2702,6 +3385,7 @@ export function createStatesetMcpServer({
         dryRun,
         stopOnFailure,
         rollbackOnFailure,
+        slaLevel: normalizedSlaLevel,
         costBudget: costBudgetLimits,
         totalSteps: normalizedSteps.length,
         completedSteps,
@@ -2715,6 +3399,7 @@ export function createStatesetMcpServer({
         rollback: rollback
           ? { attempted: rollback.attempted, fullyReverted: rollback.fullyReverted }
           : null,
+        slaLevel: normalizedSlaLevel,
         budgetExceeded,
         costBudget: costBudgetLimits,
         costSummary: {
@@ -2728,6 +3413,7 @@ export function createStatesetMcpServer({
         finalStatus,
         stepStatuses: stepResults.map((entry) => entry.status),
         executionSignature,
+        slaLevel: normalizedSlaLevel,
         costBudget: costBudgetLimits,
         budgetExceeded,
         costSummary: {
@@ -2745,6 +3431,7 @@ export function createStatesetMcpServer({
         final: true,
         planSignature,
         executionSignature,
+        slaLevel: normalizedSlaLevel,
         costSummary: {
           mode: costSummary.mode,
           totalEntries: costSummary.totalEntries,
@@ -2770,6 +3457,7 @@ export function createStatesetMcpServer({
       dryRun,
       stopOnFailure,
       rollbackOnFailure,
+      slaLevel: normalizedSlaLevel,
       totalSteps: normalizedSteps.length,
       completedSteps,
       failedSteps,
@@ -2786,7 +3474,23 @@ export function createStatesetMcpServer({
   };
 
   const evaluatePolicy = async (toolName, params, extra, policyDomain = null) => {
-    if (!policyEngineInstance) return { allowed: true, params };
+    if (!policyEngineInstance) {
+      const domain = policyDomain || inferPolicyDomain(toolName);
+      return {
+        allowed: true,
+        params,
+        domain,
+        policyDecisionBundle: buildPolicyDecisionBundle({
+          toolName,
+          domain,
+          inputParams: params,
+          outputParams: params,
+          actions: [],
+          explanations: [],
+          allowed: true,
+        }),
+      };
+    }
 
     await policyLoad;
 
@@ -2811,7 +3515,20 @@ export function createStatesetMcpServer({
           error: error.message,
         });
       }
-      return { allowed: true, params };
+      return {
+        allowed: true,
+        params,
+        domain,
+        policyDecisionBundle: buildPolicyDecisionBundle({
+          toolName,
+          domain,
+          inputParams: params,
+          outputParams: params,
+          actions: [],
+          explanations: [],
+          allowed: true,
+        }),
+      };
     }
 
     const actions = Array.isArray(result?.actions) ? result.actions : [];
@@ -2862,6 +3579,22 @@ export function createStatesetMcpServer({
     }
 
     const explanations = result?.explanations || [];
+    const policyDecisionBundle = buildPolicyDecisionBundle({
+      toolName,
+      domain,
+      inputParams: params,
+      outputParams: transformedParams,
+      actions,
+      explanations,
+      allowed: !result?.shouldDeny,
+      reason: result?.shouldDeny
+        ? explanations
+            .filter((e) => (e?.actionType || e?.type || '') === 'deny')
+            .map((e) => e?.reason)
+            .filter(Boolean)
+            .join('; ')
+        : null,
+    });
 
     if (result?.shouldDeny) {
       const denyExplanations = explanations
@@ -2890,6 +3623,7 @@ export function createStatesetMcpServer({
         actions,
         domain,
         evaluation: result,
+        policyDecisionBundle,
       };
     }
 
@@ -2901,6 +3635,7 @@ export function createStatesetMcpServer({
       actions,
       domain,
       evaluation: result,
+      policyDecisionBundle,
     };
   };
 
@@ -3084,6 +3819,7 @@ export function createStatesetMcpServer({
       policy: compactReplayValue(toolMeta.policy || null),
       permission: compactReplayValue(toolMeta.permission || null),
       charge: compactReplayValue(toolMeta.charge || null),
+      mutation: compactReplayValue(toolMeta.mutationManifest || null),
       timing: {
         startedAt: new Date(startedAt).toISOString(),
         completedAt: new Date().toISOString(),
@@ -3166,6 +3902,7 @@ export function createStatesetMcpServer({
       let policy = null;
       let permission = null;
       let charge = null;
+      const runtimeMeta = getToolRuntimeMeta(name);
       const sessionIdFromArgs =
         args &&
         typeof args === 'object' &&
@@ -3174,7 +3911,32 @@ export function createStatesetMcpServer({
           ? args.sessionId
           : null;
       const effectiveSessionId = extra?.sessionId || sessionIdFromArgs || null;
+      const buildMutationManifest = (
+        paramsValue = nextArgs,
+        policyValue = policy,
+        permissionValue = permission,
+        phase = 'execute',
+      ) => {
+        if (runtimeMeta.sideEffect !== 'write') return null;
+        return buildDeterministicMutationManifest({
+          toolName: name,
+          params: paramsValue || {},
+          policy: policyValue || null,
+          permission: permissionValue || null,
+          runtimeMeta,
+          phase,
+        });
+      };
       const logEvent = async (status, payload = {}) => {
+        const mutationManifest =
+          payload?.mutationManifest !== undefined
+            ? payload.mutationManifest
+            : buildMutationManifest(
+                payload?.params || nextArgs,
+                payload?.policy || policy,
+                payload?.permission || permission,
+                status,
+              );
         await addAgenticReplayEvent({
           eventId: randomUUID(),
           tool: name,
@@ -3192,7 +3954,10 @@ export function createStatesetMcpServer({
           permission: compactReplayValue(payload?.permission || null),
           charge: compactReplayValue(payload?.charge || null),
           error: payload?.error || null,
-          notes: compactReplayValue(payload?.notes || null),
+          notes: compactReplayValue({
+            ...(payload?.notes || {}),
+            mutationManifest,
+          }),
           source: 'mcp_server',
           agentic: true,
         });
@@ -3240,6 +4005,7 @@ export function createStatesetMcpServer({
                 policy,
                 permission,
                 charge,
+                mutationManifest: buildMutationManifest(nextArgs, policy, permission, 'blocked'),
                 name,
                 meta: {
                   hook: {
@@ -3266,6 +4032,7 @@ export function createStatesetMcpServer({
               explanations: policy.explanations || [],
               transformAudit: policy.transformAudit || [],
               evaluation: policy.evaluation || null,
+              decisionBundle: policy.policyDecisionBundle || null,
             },
           };
           await logEvent('policy_block', {
@@ -3284,6 +4051,7 @@ export function createStatesetMcpServer({
               policy,
               permission,
               charge,
+              mutationManifest: buildMutationManifest(nextArgs, policy, permission, 'policy_block'),
               name,
               meta: {
                 policy: payload.policy,
@@ -3330,6 +4098,12 @@ export function createStatesetMcpServer({
               policy,
               permission,
               charge,
+              mutationManifest: buildMutationManifest(
+                nextArgs,
+                policy,
+                permission,
+                permission.preview ? 'preview' : 'permission_block',
+              ),
               name,
             },
             true,
@@ -3361,6 +4135,12 @@ export function createStatesetMcpServer({
               policy,
               permission,
               charge,
+              mutationManifest: buildMutationManifest(
+                nextArgs,
+                policy,
+                permission,
+                'treasury_block',
+              ),
               name,
             },
             true,
@@ -3387,6 +4167,7 @@ export function createStatesetMcpServer({
             allowed: policy.allowed,
             domain: policy.domain,
             actions: policy.actions || [],
+            decisionBundle: policy.policyDecisionBundle || null,
           },
         });
         const maybeStructured = attachStructuredToolMetadataToResponse(
@@ -3399,6 +4180,7 @@ export function createStatesetMcpServer({
             policy,
             permission,
             charge,
+            mutationManifest: buildMutationManifest(nextArgs, policy, permission, 'success'),
             name,
           },
         );
@@ -3417,11 +4199,15 @@ export function createStatesetMcpServer({
           params: nextArgs,
           permission,
           charge,
-          policy: {
-            allowed: policy.allowed,
-            domain: policy.domain,
-            actions: policy.actions || [],
-          },
+          policy: policy
+            ? {
+                allowed: policy.allowed,
+                domain: policy.domain,
+                actions: policy.actions || [],
+                decisionBundle: policy.policyDecisionBundle || null,
+              }
+            : null,
+          mutationManifest: buildMutationManifest(nextArgs, policy, permission, 'error'),
           error: error.message,
         });
         throw error;
@@ -3449,6 +4235,8 @@ export function createStatesetMcpServer({
     getAgenticRuntimeContract,
     executeAgenticPlan,
     simulateAgenticPlan,
+    simulateMutationToolCall,
+    replayMutationToolCall,
     getAgenticReplayLog: listAgenticReplayEvents,
   };
 

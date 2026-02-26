@@ -225,11 +225,14 @@ export function mapOrderToStateSet(shopifyOrder, context = {}) {
  */
 export function mapInventoryToStateSet(shopifyInventory) {
   const inv = shopifyInventory;
+  const fallbackSku =
+    inv.sku ||
+    (inv.inventory_item_id || inv.id ? `SHOPIFY-INV-${inv.inventory_item_id || inv.id}` : '');
   return {
     entityType: 'inventory',
     externalId: String(inv.inventory_item_id || inv.id),
     data: {
-      sku: inv.sku || '',
+      sku: fallbackSku,
       quantity: inv.available !== null && inv.available !== undefined ? inv.available : 0,
       metadata: {
         shopifyInventoryItemId: String(inv.inventory_item_id || inv.id),
@@ -237,6 +240,60 @@ export function mapInventoryToStateSet(shopifyInventory) {
       },
     },
     raw: inv,
+  };
+}
+
+/**
+ * Map a Shopify fulfillment to a StateSet shipment-compatible payload.
+ * @param {Object} shopifyFulfillment
+ * @param {Object} [context] - { idMap, platform } for resolving order references
+ * @returns {import('../base-adapter.js').MappedRecord}
+ */
+export function mapFulfillmentToStateSet(shopifyFulfillment, context = {}) {
+  const fulfillment = shopifyFulfillment || {};
+  const trackingNumber =
+    fulfillment.tracking_number ||
+    (Array.isArray(fulfillment.tracking_numbers) ? fulfillment.tracking_numbers[0] : null) ||
+    null;
+  const sourceOrderId =
+    fulfillment.order_id !== null && fulfillment.order_id !== undefined
+      ? String(fulfillment.order_id)
+      : null;
+
+  let orderId = null;
+  if (sourceOrderId && context.idMap) {
+    const orderMapping = context.idMap.lookup(
+      context.platform || 'shopify',
+      'orders',
+      sourceOrderId,
+    );
+    orderId = orderMapping?.statesetId || null;
+  }
+
+  const statusRaw = String(fulfillment.status || '').toLowerCase();
+  let status = 'pending';
+  if (statusRaw === 'success') status = 'shipped';
+  if (statusRaw === 'cancelled') status = 'cancelled';
+
+  return {
+    entityType: 'fulfillments',
+    externalId: String(fulfillment.id),
+    data: {
+      orderId,
+      carrier:
+        fulfillment.tracking_company ||
+        fulfillment.shipment_status ||
+        fulfillment.service ||
+        'shopify',
+      trackingNumber,
+      status,
+      metadata: {
+        shopifyFulfillmentId: String(fulfillment.id),
+        shopifyOrderId: sourceOrderId,
+        shopifyStatus: fulfillment.status || null,
+      },
+    },
+    raw: fulfillment,
   };
 }
 
@@ -280,6 +337,18 @@ export function mapProductFromStateSet(statesetProduct) {
   };
 }
 
+/**
+ * Map a StateSet shipment back to Shopify-like fulfillment format.
+ */
+export function mapFulfillmentFromStateSet(statesetShipment) {
+  const shipment = statesetShipment || {};
+  return {
+    tracking_number: shipment.trackingNumber || shipment.tracking_number || null,
+    tracking_company: shipment.carrier || shipment.tracking_company || null,
+    status: shipment.status || 'pending',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch by entity type
 // ---------------------------------------------------------------------------
@@ -297,6 +366,8 @@ export function mapToStateSet(entityType, record, context = {}) {
       return mapOrderToStateSet(record, context);
     case 'inventory':
       return mapInventoryToStateSet(record);
+    case 'fulfillments':
+      return mapFulfillmentToStateSet(record, context);
     default:
       throw new Error(`Unknown entity type: ${entityType}`);
   }
@@ -311,6 +382,8 @@ export function mapFromStateSet(entityType, record) {
       return mapCustomerFromStateSet(record);
     case 'products':
       return mapProductFromStateSet(record);
+    case 'fulfillments':
+      return mapFulfillmentFromStateSet(record);
     default:
       return record;
   }

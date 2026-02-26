@@ -271,6 +271,14 @@ export class DataImporter extends EventEmitter {
         const item = await this.commerce.inventory.create(data);
         return item.id || item.inventory_id || data.sku;
       }
+      case 'fulfillments':
+      case 'shipments': {
+        if (!this.commerce.shipments?.create) {
+          throw new Error('Commerce shipments.create() is required to import fulfillments');
+        }
+        const shipment = await this.commerce.shipments.create(data);
+        return shipment.id || shipment.shipment_id || data.trackingNumber || data.tracking_number;
+      }
       default:
         throw new Error(`Unknown entity type: ${entityType}`);
     }

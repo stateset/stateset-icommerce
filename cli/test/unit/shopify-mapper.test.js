@@ -18,9 +18,11 @@ import {
   mapProductToStateSet,
   mapOrderToStateSet,
   mapInventoryToStateSet,
+  mapFulfillmentToStateSet,
   mapToStateSet,
   mapCustomerFromStateSet,
   mapProductFromStateSet,
+  mapFulfillmentFromStateSet,
 } from '../../src/adapters/shopify/mapper.js';
 
 import { createRequire } from 'node:module';
@@ -418,6 +420,12 @@ describe('mapInventoryToStateSet', () => {
     assert.equal(result.data.quantity, 0);
   });
 
+  it('uses deterministic fallback SKU when sku is missing', () => {
+    const inv = { inventory_item_id: 9999, available: 3 };
+    const result = mapInventoryToStateSet(inv);
+    assert.equal(result.data.sku, 'SHOPIFY-INV-9999');
+  });
+
   it('metadata includes shopifyInventoryItemId', () => {
     const inv = { inventory_item_id: 4004, sku: 'THING-RED', available: 10, location_id: 200 };
     const result = mapInventoryToStateSet(inv);
@@ -427,7 +435,51 @@ describe('mapInventoryToStateSet', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 9. mapToStateSet dispatch
+// 9. mapFulfillmentToStateSet
+// ---------------------------------------------------------------------------
+
+describe('mapFulfillmentToStateSet', () => {
+  it('maps fulfillment payload into shipment-compatible format', () => {
+    const fulfillment = {
+      id: 7001,
+      order_id: 5001,
+      status: 'success',
+      tracking_number: 'TRACK123',
+      tracking_company: 'FedEx',
+    };
+
+    const result = mapFulfillmentToStateSet(fulfillment);
+    assert.equal(result.entityType, 'fulfillments');
+    assert.equal(result.externalId, '7001');
+    assert.equal(result.data.status, 'shipped');
+    assert.equal(result.data.trackingNumber, 'TRACK123');
+    assert.equal(result.data.carrier, 'FedEx');
+    assert.equal(result.data.metadata.shopifyOrderId, '5001');
+  });
+
+  it('resolves orderId via idMap context when available', () => {
+    const fulfillment = { id: 7002, order_id: 5002, status: 'open' };
+    const idMap = {
+      lookup: (platform, entityType, externalId) => {
+        if (platform === 'shopify' && entityType === 'orders' && externalId === '5002') {
+          return { statesetId: 'ord-ss-1' };
+        }
+        return null;
+      },
+    };
+    const result = mapFulfillmentToStateSet(fulfillment, { idMap, platform: 'shopify' });
+    assert.equal(result.data.orderId, 'ord-ss-1');
+  });
+
+  it('maps fulfillment status cancelled to cancelled', () => {
+    const fulfillment = { id: 7003, status: 'cancelled' };
+    const result = mapFulfillmentToStateSet(fulfillment);
+    assert.equal(result.data.status, 'cancelled');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. mapToStateSet dispatch
 // ---------------------------------------------------------------------------
 
 describe('mapToStateSet dispatch', () => {
@@ -456,6 +508,13 @@ describe('mapToStateSet dispatch', () => {
     assert.equal(result.data.sku, 'WIDGET-SM');
   });
 
+  it('dispatches "fulfillments" to mapFulfillmentToStateSet', () => {
+    const fulfillment = { id: 7001, status: 'success' };
+    const result = mapToStateSet('fulfillments', fulfillment);
+    assert.equal(result.entityType, 'fulfillments');
+    assert.equal(result.data.status, 'shipped');
+  });
+
   it('throws for unknown entity type', () => {
     assert.throws(
       () => mapToStateSet('widgets', {}),
@@ -465,7 +524,7 @@ describe('mapToStateSet dispatch', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 10. mapCustomerFromStateSet (reverse mapper)
+// 11. mapCustomerFromStateSet (reverse mapper)
 // ---------------------------------------------------------------------------
 
 describe('mapCustomerFromStateSet', () => {
@@ -492,7 +551,7 @@ describe('mapCustomerFromStateSet', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 11. mapProductFromStateSet (reverse mapper)
+// 12. mapProductFromStateSet (reverse mapper)
 // ---------------------------------------------------------------------------
 
 describe('mapProductFromStateSet', () => {
@@ -528,5 +587,23 @@ describe('mapProductFromStateSet', () => {
     assert.equal(shopify.variants[0].price, '19.99');
     assert.equal(shopify.variants[0].compare_at_price, '24.99');
     assert.equal(shopify.variants[1].compare_at_price, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13. mapFulfillmentFromStateSet (reverse mapper)
+// ---------------------------------------------------------------------------
+
+describe('mapFulfillmentFromStateSet', () => {
+  it('maps shipment fields back to Shopify-like fulfillment payload', () => {
+    const shipment = {
+      trackingNumber: 'TRACK-500',
+      carrier: 'UPS',
+      status: 'shipped',
+    };
+    const result = mapFulfillmentFromStateSet(shipment);
+    assert.equal(result.tracking_number, 'TRACK-500');
+    assert.equal(result.tracking_company, 'UPS');
+    assert.equal(result.status, 'shipped');
   });
 });

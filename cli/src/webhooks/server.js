@@ -732,6 +732,39 @@ export const WebhookSourceTemplates = {
     eventTypeField: 'event',
   },
 
+  carrierHub: {
+    name: 'Carrier Hub',
+    description: 'Unified carrier (UPS/FedEx/USPS) shipping webhooks',
+    path: '/webhooks/carrier-hub',
+    signatureHeader: 'x-carrier-signature',
+    signatureAlgorithm: 'sha256',
+    signaturePrefix: '',
+    eventTypeField: 'event_type',
+    payloadField: 'data',
+  },
+
+  avalara: {
+    name: 'Avalara',
+    description: 'Avalara tax calculation webhooks',
+    path: '/webhooks/avalara',
+    signatureHeader: 'x-avalara-signature',
+    signatureAlgorithm: 'sha256',
+    signaturePrefix: '',
+    eventTypeField: 'eventType',
+    payloadField: 'payload',
+  },
+
+  taxjar: {
+    name: 'TaxJar',
+    description: 'TaxJar tax transaction webhooks',
+    path: '/webhooks/taxjar',
+    signatureHeader: 'x-taxjar-signature',
+    signatureAlgorithm: 'sha256',
+    signaturePrefix: '',
+    eventTypeField: 'event',
+    payloadField: 'data',
+  },
+
   custom: {
     name: 'Custom',
     description: 'Custom webhook endpoint',
@@ -765,6 +798,15 @@ export const WebhookHandlerTemplates = {
     },
   },
 
+  stripePaymentCanceled: {
+    name: 'Stripe Payment Canceled',
+    eventTypes: ['payment_intent.canceled'],
+    action: {
+      agent: 'payments',
+      request: 'Reconcile canceled payment intent {id} and trigger recovery outreach',
+    },
+  },
+
   stripeSubscriptionUpdated: {
     name: 'Stripe Subscription Updated',
     eventTypes: ['customer.subscription.updated', 'customer.subscription.deleted'],
@@ -789,6 +831,39 @@ export const WebhookHandlerTemplates = {
     action: {
       agent: 'shipments',
       request: 'Update tracking for {tracking_number}: status is {tracking_status.status}',
+    },
+  },
+
+  carrierHubTrackingEvent: {
+    name: 'Carrier Hub Tracking Event',
+    eventTypes: [
+      'shipment.in_transit',
+      'shipment.out_for_delivery',
+      'shipment.delivered',
+      'shipment.exception',
+    ],
+    action: {
+      agent: 'shipments',
+      request:
+        'Reconcile shipping label {label_id} for tracking {tracking_number} with status {status}',
+    },
+  },
+
+  avalaraTransactionCommitted: {
+    name: 'Avalara Transaction Committed',
+    eventTypes: ['transaction.committed', 'tax.committed'],
+    action: {
+      agent: 'tax',
+      request: 'Reconcile tax transaction commit for quote {quote_id} reference {reference}',
+    },
+  },
+
+  taxProviderTransactionVoided: {
+    name: 'Tax Provider Transaction Voided',
+    eventTypes: ['transaction.voided', 'tax.voided'],
+    action: {
+      agent: 'tax',
+      request: 'Reconcile tax transaction void for transaction {transaction_id} reason {reason}',
     },
   },
 };

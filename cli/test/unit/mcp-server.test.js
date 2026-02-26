@@ -16,7 +16,11 @@ describe('mcp-server', () => {
   beforeEach(() => {
     // Create a minimal mock commerce instance
     mockCommerce = {
-      customers: { list: async () => [], get: async () => null },
+      customers: {
+        list: async () => [],
+        get: async () => null,
+        create: async (data) => ({ id: 'cust-1', ...data }),
+      },
       orders: { list: async () => [], get: async () => null },
       products: { list: async () => [], get: async () => null },
       inventory: { getStock: async () => null },
@@ -311,6 +315,7 @@ describe('mcp-server', () => {
       assert.equal(payload.agenticToolResultSchema.envelope, 'mcp_tool_result');
       assert.equal(Array.isArray(payload.agenticToolResultSchema.metadata), true);
       assert.equal(payload.agenticToolResultSchema.metadata.includes('schemaVersion'), true);
+      assert.equal(payload.agenticToolResultSchema.metadata.includes('mutation'), true);
     });
   });
 
@@ -431,6 +436,107 @@ describe('mcp-server', () => {
 
       assert.equal(payload.success, false);
       assert.equal(payload.error, 'MCP event stream service is unavailable');
+    });
+  });
+
+  describe('Agentic mutation simulation and replay tools', () => {
+    it('agentic_simulate_mutation returns deterministic dry-run metadata', async () => {
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        allowApply: true,
+      });
+      const tool = server.instance._registeredTools.agentic_simulate_mutation;
+      const res = await tool.handler({
+        tool: 'create_customer',
+        params: {
+          email: 'simulate@example.com',
+          firstName: 'Sim',
+          lastName: 'User',
+        },
+      });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload.success, true);
+      assert.equal(payload.targetTool, 'create_customer');
+      assert.equal(payload.outcome.status, 'dry_run_success');
+      assert.ok(payload.outcome.mutationManifest);
+      assert.ok(payload.outcome.policy?.decisionBundle?.auditArtifact?.signature);
+    });
+
+    it('agentic_replay_mutation replays latest write event in dry-run mode', async () => {
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        allowApply: true,
+      });
+
+      const createCustomer = server.instance._registeredTools.create_customer;
+      await createCustomer.handler({
+        email: 'replay@example.com',
+        firstName: 'Replay',
+        lastName: 'User',
+      });
+
+      const replayTool = server.instance._registeredTools.agentic_replay_mutation;
+      const replayRes = await replayTool.handler({
+        tool: 'create_customer',
+        dryRun: true,
+      });
+      const payload = JSON.parse(replayRes.content[0].text);
+
+      assert.equal(payload.success, true);
+      assert.equal(payload.sourceEvent.tool, 'create_customer');
+      assert.ok(payload.replay);
+      assert.equal(typeof payload.deterministic.paramsMatch, 'boolean');
+    });
+  });
+
+  describe('Agentic plan SLA integration', () => {
+    it('agentic_plan includes SLA-aware routing metadata', async () => {
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        allowApply: true,
+      });
+      const tool = server.instance._registeredTools.agentic_plan;
+      const res = await tool.handler({
+        steps: [{ tool: 'list_orders', params: {} }],
+        slaLevel: 'critical',
+      });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload.slaLevel, 'critical');
+      assert.equal(Array.isArray(payload.outcomes), true);
+      assert.equal(payload.outcomes[0].routing.slaLevel, 'critical');
+      assert.equal(payload.outcomes[0].routing.primary.agent, 'orders');
+    });
+
+    it('agentic_execute_plan resolves SLA template references and exposes routing metadata', async () => {
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        allowApply: true,
+      });
+      const tool = server.instance._registeredTools.agentic_execute_plan;
+      const res = await tool.handler({
+        steps: [
+          {
+            tool: 'create_customer',
+            params: {
+              email: 'sla-template@example.com',
+              firstName: '{{ slaLevel }}',
+              lastName: 'User',
+            },
+          },
+        ],
+        dryRun: true,
+        slaLevel: 'expedited',
+      });
+      const payload = JSON.parse(res.content[0].text);
+
+      assert.equal(payload.slaLevel, 'expedited');
+      assert.equal(payload.finalStatus, 'dry_run');
+      assert.equal(payload.steps[0].status, 'dry_run_success');
+      assert.equal(payload.steps[0].params.firstName, 'expedited');
+      assert.equal(payload.steps[0].routing.slaLevel, 'expedited');
+      assert.equal(typeof payload.steps[0].routing.primary.agent, 'string');
     });
   });
 
@@ -562,6 +668,8 @@ describe('mcp-server', () => {
       assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_unsubscribe_events'));
       assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_list_event_subscriptions'));
       assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_get_event_history'));
+      assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_simulate_mutation'));
+      assert.ok(TOOL_NAMES.includes('mcp__stateset-commerce__agentic_replay_mutation'));
     });
   });
 });

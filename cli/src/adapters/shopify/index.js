@@ -14,6 +14,7 @@ import {
   mapToStateSet,
   mapFromStateSet,
   mapCustomerToStateSet,
+  mapFulfillmentToStateSet,
   mapProductToStateSet,
   mapOrderToStateSet,
 } from './mapper.js';
@@ -96,6 +97,8 @@ export class ShopifyAdapter extends BasePlatformAdapter {
       'products/update': mapProductToStateSet,
       'orders/create': (p) => mapOrderToStateSet(p),
       'orders/updated': (p) => mapOrderToStateSet(p),
+      'fulfillments/create': (p) => mapFulfillmentToStateSet(p),
+      'fulfillments/update': (p) => mapFulfillmentToStateSet(p),
     };
 
     const mapper = mappers[eventType];
@@ -117,6 +120,22 @@ export class ShopifyAdapter extends BasePlatformAdapter {
     return createShopifyWebhookHandlers(commerce, idMapStore);
   }
 
+  /**
+   * Get the list of entity types this adapter supports.
+   * @returns {string[]}
+   */
+  getSupportedEntities() {
+    return ['customers', 'products', 'inventory', 'orders', 'fulfillments'];
+  }
+
+  /**
+   * Ensure dependencies are imported before order-linked data.
+   * @returns {string[]}
+   */
+  getImportOrder() {
+    return ['customers', 'products', 'inventory', 'orders', 'fulfillments'];
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
@@ -128,10 +147,51 @@ export class ShopifyAdapter extends BasePlatformAdapter {
         return (opts) => this.client.getCustomers(opts);
       case 'products':
         return (opts) => this.client.getProducts(opts);
+      case 'inventory':
+        return (opts) => this._fetchInventoryBatches(opts);
       case 'orders':
         return (opts) => this.client.getOrders(opts);
+      case 'fulfillments':
+        return (opts) => this._fetchFulfillmentBatches(opts);
       default:
         throw new Error(`Unsupported entity type for API fetch: ${entityType}`);
+    }
+  }
+
+  /** @private */
+  async *_fetchInventoryBatches(options = {}) {
+    const explicitLocationId = options.locationId || options.location_id || null;
+    const locationIds = [];
+    if (explicitLocationId) {
+      locationIds.push(explicitLocationId);
+    } else if (typeof this.client.getLocations === 'function') {
+      const locations = await this.client.getLocations();
+      if (Array.isArray(locations)) {
+        for (const location of locations) {
+          if (location?.id !== null && location?.id !== undefined) {
+            locationIds.push(String(location.id));
+          }
+        }
+      }
+    }
+
+    if (locationIds.length === 0) {
+      throw new Error(
+        'Shopify inventory import requires locationId (or available store locations).',
+      );
+    }
+
+    for (const locationId of locationIds) {
+      for await (const records of this.client.getInventoryLevels(locationId, options)) {
+        yield records;
+      }
+    }
+  }
+
+  /** @private */
+  async *_fetchFulfillmentBatches(options = {}) {
+    for await (const records of this.client.getFulfillments(options)) {
+      yield records;
     }
   }
 
@@ -187,6 +247,8 @@ export {
   mapProductToStateSet,
   mapOrderToStateSet,
   mapInventoryToStateSet,
+  mapFulfillmentToStateSet,
+  mapFulfillmentFromStateSet,
   stripHtml,
   mapCustomerStatus,
   mapFinancialStatus,

@@ -591,6 +591,43 @@ describe('agent-router', () => {
       });
     });
 
+    describe('SLA-aware routing', () => {
+      it('should boost critical-path agents for critical SLA requests', () => {
+        const baseline = routeToAgentWithConfidence('inventory order');
+        const critical = routeToAgentWithConfidence('inventory order', {
+          slaLevel: 'critical',
+        });
+
+        assert.strictEqual(baseline.primary.agent, 'inventory');
+        assert.strictEqual(critical.primary.agent, 'orders');
+        assert.ok(critical.allScores.orders.score > baseline.allScores.orders.score);
+        assert.ok(critical.allScores.orders.slaBoost > 0);
+        assert.strictEqual(critical.routingContext.slaLevel, 'critical');
+      });
+
+      it('should ignore invalid SLA levels', () => {
+        const baseline = routeToAgentWithConfidence('inventory order');
+        const invalidSla = routeToAgentWithConfidence('inventory order', {
+          slaLevel: 'gold',
+        });
+
+        assert.strictEqual(invalidSla.primary.agent, baseline.primary.agent);
+        assert.strictEqual(invalidSla.allScores.orders.score, baseline.allScores.orders.score);
+        assert.strictEqual(invalidSla.routingContext.slaLevel, null);
+      });
+
+      it('should not apply SLA boosts without keyword matches', () => {
+        const baseline = routeToAgentWithConfidence('hello there');
+        const critical = routeToAgentWithConfidence('hello there', {
+          slaLevel: 'critical',
+        });
+
+        assert.strictEqual(critical.primary.agent, baseline.primary.agent);
+        assert.strictEqual(critical.allScores.orders.slaBoost, 0);
+        assert.strictEqual(critical.allScores.shipments.slaBoost, 0);
+      });
+    });
+
     describe('response structure', () => {
       it('should return complete result object', () => {
         const result = routeToAgentWithConfidence('test request');

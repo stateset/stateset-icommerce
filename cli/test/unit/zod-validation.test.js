@@ -173,6 +173,41 @@ describe('Zod validation constraints', () => {
       const schema = getSchema(tools, 'create_refund');
       expectFail(schema, { paymentId: 'abc', amount: 10, reason: 'x'.repeat(501) });
     });
+
+    it('create_payment_intent rejects zero amount', async () => {
+      const schema = getSchema(tools, 'create_payment_intent');
+      expectFail(schema, { amount: 0 });
+    });
+
+    it('refund_payment_intent rejects negative amount', async () => {
+      const schema = getSchema(tools, 'refund_payment_intent');
+      expectFail(schema, { intentId: 'pi_1', amount: -1 });
+    });
+
+    it('list_payment_intents rejects non-integer limit', async () => {
+      const schema = getSchema(tools, 'list_payment_intents');
+      expectFail(schema, { limit: 10.5 });
+    });
+
+    it('list_payment_settlements rejects limit > 500', async () => {
+      const schema = getSchema(tools, 'list_payment_settlements');
+      expectFail(schema, { limit: 600 });
+    });
+
+    it('create_payment_settlement_batch rejects empty intentIds entries', async () => {
+      const schema = getSchema(tools, 'create_payment_settlement_batch');
+      expectFail(schema, { intentIds: [''] });
+    });
+
+    it('reconcile_payment_provider rejects non-boolean includeBalanced', async () => {
+      const schema = getSchema(tools, 'reconcile_payment_provider');
+      expectFail(schema, { includeBalanced: 'yes' });
+    });
+
+    it('ingest_payment_provider_webhook requires eventType', async () => {
+      const schema = getSchema(tools, 'ingest_payment_provider_webhook');
+      expectFail(schema, { providerId: 'stripe' });
+    });
   });
 
   describe('carts', () => {
@@ -452,6 +487,164 @@ describe('Zod validation constraints', () => {
       expectFail(schema, {
         items: [{ id: 'i1', unitPrice: 0, quantity: 1 }],
         shippingAddress: { country: 'US' },
+      });
+    });
+
+    it('calculate_tax_quote rejects empty items', async () => {
+      const schema = getSchema(tools, 'calculate_tax_quote');
+      expectFail(schema, {
+        items: [],
+        shippingAddress: { country: 'US' },
+      });
+    });
+
+    it('validate_tax_jurisdiction_compliance rejects non-boolean strictCompliance', async () => {
+      const schema = getSchema(tools, 'validate_tax_jurisdiction_compliance');
+      expectFail(schema, {
+        items: [{ id: 'i1', unitPrice: 10, quantity: 1 }],
+        shippingAddress: { country: 'US' },
+        strictCompliance: 'yes',
+      });
+    });
+
+    it('calculate_tax_quote_with_failover rejects empty fallback provider IDs', async () => {
+      const schema = getSchema(tools, 'calculate_tax_quote_with_failover');
+      expectFail(schema, {
+        items: [{ id: 'i1', unitPrice: 10, quantity: 1 }],
+        shippingAddress: { country: 'US', state: 'CA', postalCode: '94105' },
+        fallbackProviderIds: [''],
+      });
+    });
+
+    it('list_tax_transactions rejects limit above 500', async () => {
+      const schema = getSchema(tools, 'list_tax_transactions');
+      expectFail(schema, { limit: 501 });
+    });
+
+    it('ingest_tax_provider_webhook requires eventType', async () => {
+      const schema = getSchema(tools, 'ingest_tax_provider_webhook');
+      expectFail(schema, { providerId: 'avalara' });
+    });
+  });
+
+  describe('connectors', () => {
+    let tools;
+    it('loads connector tools', async () => {
+      const mod = await import('../../src/tools/connectors.js');
+      tools = mod.connectorTools;
+    });
+
+    it('publish_wasm_connector rejects invalid runtime kind', async () => {
+      const schema = getSchema(tools, 'publish_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        version: '1.0.0',
+        wasmPath: '/tmp/math.wasm',
+        runtimeKind: 'invalid-runtime',
+      });
+    });
+
+    it('install_wasm_connector rejects short connector id', async () => {
+      const schema = getSchema(tools, 'install_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'a',
+      });
+    });
+
+    it('install_wasm_connector rejects non-boolean verifyStrict', async () => {
+      const schema = getSchema(tools, 'install_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        verifyStrict: 'yes',
+      });
+    });
+
+    it('install_wasm_connector rejects non-boolean requireCertified', async () => {
+      const schema = getSchema(tools, 'install_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        requireCertified: 'true',
+      });
+    });
+
+    it('install_wasm_connector rejects minSafetyScore above 100', async () => {
+      const schema = getSchema(tools, 'install_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        minSafetyScore: 101,
+      });
+    });
+
+    it('assess_wasm_connector_safety rejects short connector id', async () => {
+      const schema = getSchema(tools, 'assess_wasm_connector_safety');
+      expectFail(schema, {
+        connectorId: 'a',
+      });
+    });
+
+    it('certify_wasm_connector rejects unsupported status', async () => {
+      const schema = getSchema(tools, 'certify_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        status: 'active',
+      });
+    });
+
+    it('certify_wasm_connector rejects minSafetyScore above 100', async () => {
+      const schema = getSchema(tools, 'certify_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        minSafetyScore: 200,
+      });
+    });
+
+    it('sign_wasm_connector_attestation rejects short connector id', async () => {
+      const schema = getSchema(tools, 'sign_wasm_connector_attestation');
+      expectFail(schema, {
+        connectorId: 'a',
+      });
+    });
+
+    it('verify_wasm_connector_attestation rejects short connector id', async () => {
+      const schema = getSchema(tools, 'verify_wasm_connector_attestation');
+      expectFail(schema, {
+        connectorId: 'a',
+      });
+    });
+
+    it('execute_wasm_connector rejects timeout below lower bound', async () => {
+      const schema = getSchema(tools, 'execute_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        action: 'add',
+        timeoutMs: 20,
+      });
+    });
+
+    it('execute_wasm_connector rejects non-boolean verifyStrict', async () => {
+      const schema = getSchema(tools, 'execute_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        action: 'add',
+        verifyStrict: 'true',
+      });
+    });
+
+    it('execute_wasm_connector rejects non-boolean requireCertified', async () => {
+      const schema = getSchema(tools, 'execute_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        action: 'add',
+        requireCertified: 'yes',
+      });
+    });
+
+    it('execute_wasm_connector rejects minSafetyScore above 100', async () => {
+      const schema = getSchema(tools, 'execute_wasm_connector');
+      expectFail(schema, {
+        connectorId: 'math',
+        action: 'add',
+        minSafetyScore: 101,
       });
     });
   });

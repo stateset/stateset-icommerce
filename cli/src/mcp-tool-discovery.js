@@ -93,6 +93,18 @@ export class ToolDiscoveryEngine {
         'create_payment',
         'complete_payment',
         'create_refund',
+        'list_payment_providers',
+        'create_payment_intent',
+        'get_payment_intent',
+        'list_payment_intents',
+        'list_payment_settlements',
+        'list_payment_settlement_batches',
+        'reconcile_payment_provider',
+        'create_payment_settlement_batch',
+        'capture_payment_intent',
+        'cancel_payment_intent',
+        'refund_payment_intent',
+        'ingest_payment_provider_webhook',
       ],
       stablecoin_payments: [
         'get_agent_wallet',
@@ -110,7 +122,62 @@ export class ToolDiscoveryEngine {
       ],
       manage_subscriptions: ['list_subscriptions', 'create_subscription', 'cancel_subscription'],
       apply_promotions: ['list_promotions', 'validate_coupon', 'apply_cart_promotions'],
-      calculate_taxes: ['get_tax_rate', 'list_tax_rates', 'calculate_tax', 'calculate_cart_tax'],
+      calculate_taxes: [
+        'get_tax_rate',
+        'list_tax_rates',
+        'calculate_tax',
+        'calculate_cart_tax',
+        'list_tax_providers',
+        'validate_tax_jurisdiction_compliance',
+        'calculate_tax_quote',
+        'calculate_tax_quote_with_failover',
+        'get_tax_quote',
+        'commit_tax_transaction',
+        'get_tax_transaction',
+        'list_tax_transactions',
+        'void_tax_transaction',
+        'ingest_tax_provider_webhook',
+      ],
+      manage_fulfillment_exceptions: [
+        'track_shipping_label',
+        'list_shipping_labels',
+        'quote_shipping_rates',
+        'create_shipping_label',
+        'void_shipping_label',
+        'ingest_shipping_provider_webhook',
+        'handle_fulfillment_exception',
+      ],
+      reconcile_provider_webhooks: [
+        'ingest_payment_provider_webhook',
+        'ingest_shipping_provider_webhook',
+        'ingest_tax_provider_webhook',
+      ],
+      reconcile_payment_settlements: [
+        'list_payment_intents',
+        'list_payment_settlements',
+        'list_payment_settlement_batches',
+        'reconcile_payment_provider',
+        'create_payment_settlement_batch',
+      ],
+      manage_wasm_connectors: [
+        'list_connector_marketplace',
+        'assess_wasm_connector_safety',
+        'verify_wasm_connector_attestation',
+        'certify_wasm_connector',
+        'publish_wasm_connector',
+        'sign_wasm_connector_attestation',
+        'install_wasm_connector',
+        'uninstall_wasm_connector',
+        'list_installed_connectors',
+        'get_installed_connector',
+      ],
+      execute_wasm_connectors: [
+        'list_installed_connectors',
+        'get_installed_connector',
+        'assess_wasm_connector_safety',
+        'verify_wasm_connector_attestation',
+        'execute_wasm_connector',
+      ],
       semantic_search_products: ['vector_search_products'],
       semantic_search_customers: ['vector_search_customers'],
       semantic_search_orders: ['vector_search_orders'],
@@ -146,8 +213,12 @@ export class ToolDiscoveryEngine {
         'reserve_inventory', // Step 3: Reserve items
         'confirm_reservation', // Step 4: Deduct stock
         'update_order_status', // Step 5: Mark as processing
-        'ship_order', // Step 6: Ship with tracking
-        'send_order_confirmation', // Step 7: Notify customer
+        'ship_order', // Step 6: Legacy shipment transition
+        'quote_shipping_rates', // Step 7: Request provider rates
+        'create_shipping_label', // Step 8: Generate label
+        'track_shipping_label', // Step 9: Monitor handoff
+        'handle_fulfillment_exception', // Step 10: Auto-resolve disruptions
+        'send_order_confirmation', // Step 11: Notify customer
       ],
       return_process: [
         'get_order', // Step 1: Get order details

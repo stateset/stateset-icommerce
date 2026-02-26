@@ -102,6 +102,8 @@ describe('ToolDiscoveryEngine.discoverToolsByIntent', () => {
     const tools = engine.discoverToolsByIntent('handle_payments');
     assert.ok(tools.includes('create_payment'));
     assert.ok(tools.includes('create_refund'));
+    assert.ok(tools.includes('create_payment_settlement_batch'));
+    assert.ok(tools.includes('reconcile_payment_provider'));
   });
 
   it('returns stablecoin toolchain for stablecoin_payments intent', () => {
@@ -116,6 +118,49 @@ describe('ToolDiscoveryEngine.discoverToolsByIntent', () => {
     assert.ok(tools.includes('x402_create_payment_intent'));
     assert.ok(tools.includes('x402_settle_intent_onchain'));
     assert.ok(tools.includes('x402_record_incoming_settlement'));
+  });
+
+  it('returns provider webhook reconciliation tools', () => {
+    const tools = engine.discoverToolsByIntent('reconcile_provider_webhooks');
+    assert.ok(tools.includes('ingest_payment_provider_webhook'));
+    assert.ok(tools.includes('ingest_shipping_provider_webhook'));
+    assert.ok(tools.includes('ingest_tax_provider_webhook'));
+  });
+
+  it('returns payment settlement reconciliation tools', () => {
+    const tools = engine.discoverToolsByIntent('reconcile_payment_settlements');
+    assert.ok(tools.includes('list_payment_settlements'));
+    assert.ok(tools.includes('list_payment_settlement_batches'));
+    assert.ok(tools.includes('reconcile_payment_provider'));
+    assert.ok(tools.includes('create_payment_settlement_batch'));
+  });
+
+  it('returns tax failover and compliance tools for calculate_taxes intent', () => {
+    const tools = engine.discoverToolsByIntent('calculate_taxes');
+    assert.ok(tools.includes('validate_tax_jurisdiction_compliance'));
+    assert.ok(tools.includes('calculate_tax_quote_with_failover'));
+  });
+
+  it('returns marketplace lifecycle tools for manage_wasm_connectors intent', () => {
+    const tools = engine.discoverToolsByIntent('manage_wasm_connectors');
+    assert.ok(tools.includes('list_connector_marketplace'));
+    assert.ok(tools.includes('assess_wasm_connector_safety'));
+    assert.ok(tools.includes('verify_wasm_connector_attestation'));
+    assert.ok(tools.includes('certify_wasm_connector'));
+    assert.ok(tools.includes('publish_wasm_connector'));
+    assert.ok(tools.includes('sign_wasm_connector_attestation'));
+    assert.ok(tools.includes('install_wasm_connector'));
+    assert.ok(tools.includes('uninstall_wasm_connector'));
+    assert.ok(tools.includes('list_installed_connectors'));
+    assert.ok(tools.includes('get_installed_connector'));
+  });
+
+  it('returns execution tools for execute_wasm_connectors intent', () => {
+    const tools = engine.discoverToolsByIntent('execute_wasm_connectors');
+    assert.ok(tools.includes('list_installed_connectors'));
+    assert.ok(tools.includes('assess_wasm_connector_safety'));
+    assert.ok(tools.includes('verify_wasm_connector_attestation'));
+    assert.ok(tools.includes('execute_wasm_connector'));
   });
 });
 

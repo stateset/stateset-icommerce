@@ -3,6 +3,19 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
+import {
+  calculateTaxQuote,
+  calculateTaxQuoteWithFailover,
+  commitTaxTransaction,
+  evaluateTaxJurisdictionCompliance,
+  getTaxQuote,
+  getTaxTransaction,
+  ingestTaxProviderWebhook,
+  listTaxProviders,
+  listTaxTransactions,
+  voidTaxTransaction,
+} from './providers/tax.js';
 
 const US_STATE_TAX_INFO = {
   CA: {
@@ -434,6 +447,390 @@ export const taxTools = [
             taxAmount: item.taxAmount,
             total: item.total,
           })) || [],
+      };
+    },
+  },
+  {
+    name: 'list_tax_providers',
+    description: 'List tax providers and capabilities for quote, commit, and void workflows.',
+    inputSchema: {
+      capability: z
+        .string()
+        .optional()
+        .describe('Optional capability filter (e.g., quote, commit, exemptions)'),
+      countryCode: z.string().optional().describe('Optional country code filter'),
+      mode: z
+        .enum(['sandbox', 'shadow', 'production'])
+        .optional()
+        .describe('Optional provider mode filter'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const providers = listTaxProviders({
+        capability: params.capability,
+        countryCode: params.countryCode,
+        mode: params.mode,
+      });
+      return {
+        success: true,
+        count: providers.length,
+        providers,
+      };
+    },
+  },
+  {
+    name: 'validate_tax_jurisdiction_compliance',
+    description:
+      'Validate jurisdiction readiness for tax calculation (country/state/postal requirements and category checks).',
+    inputSchema: {
+      items: z
+        .array(
+          z.object({
+            id: z.string().optional().describe('Line item identifier'),
+            unitPrice: z.number().positive().describe('Unit price per item'),
+            quantity: z.number().int().positive().describe('Quantity'),
+            taxCategory: z
+              .string()
+              .optional()
+              .default('standard')
+              .describe('Tax category: standard, reduced, exempt, digital, food, medical'),
+          }),
+        )
+        .min(1)
+        .describe('Line items'),
+      shippingAddress: z
+        .object({
+          country: z.string().min(1).describe('Country code'),
+          state: z.string().optional().describe('State/province code'),
+          city: z.string().optional().describe('City'),
+          postalCode: z.string().optional().describe('Postal/ZIP code'),
+        })
+        .describe('Shipping address'),
+      currency: z.string().max(10).optional().describe('Currency code (default: USD)'),
+      strictCompliance: z
+        .boolean()
+        .optional()
+        .describe('Treat missing required jurisdiction fields as errors'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const compliance = evaluateTaxJurisdictionCompliance({
+        shippingAddress: params.shippingAddress,
+        lineItems: params.items,
+        currency: params.currency || 'USD',
+        strict: params.strictCompliance ?? true,
+      });
+      return {
+        success: true,
+        compliance,
+      };
+    },
+  },
+  {
+    name: 'calculate_tax_quote',
+    description:
+      'Calculate a provider-backed tax quote with deterministic replay-safe output and optional idempotency key.',
+    inputSchema: {
+      providerId: z.string().optional().describe('Tax provider ID (default: deterministic-mock)'),
+      items: z
+        .array(
+          z.object({
+            id: z.string().optional().describe('Line item identifier'),
+            unitPrice: z.number().positive().describe('Unit price per item'),
+            quantity: z.number().int().positive().describe('Quantity'),
+            taxCategory: z
+              .string()
+              .optional()
+              .default('standard')
+              .describe('Tax category: standard, reduced, exempt, digital, food, medical'),
+          }),
+        )
+        .min(1)
+        .describe('Line items'),
+      shippingAddress: z
+        .object({
+          country: z.string().min(1).describe('Country code'),
+          state: z.string().optional().describe('State/province code'),
+          city: z.string().optional().describe('City'),
+          postalCode: z.string().optional().describe('Postal/ZIP code'),
+        })
+        .describe('Shipping address'),
+      shippingAmount: z.number().min(0).optional().describe('Shipping amount'),
+      customerId: z.string().optional().describe('Customer ID'),
+      orderId: z.string().optional().describe('Order ID'),
+      currency: z.string().max(10).optional().describe('Currency code (default: USD)'),
+      taxExempt: z.boolean().optional().describe('Force customer exemption for this quote'),
+      metadata: z.record(z.string(), z.any()).optional().describe('Additional metadata'),
+      idempotencyKey: z
+        .string()
+        .max(255)
+        .optional()
+        .describe('Idempotency key for deterministic retries'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const result = calculateTaxQuote({
+        providerId: params.providerId,
+        lineItems: params.items,
+        shippingAddress: params.shippingAddress,
+        shippingAmount: params.shippingAmount || 0,
+        customerId: params.customerId,
+        orderId: params.orderId,
+        currency: params.currency || 'USD',
+        taxExempt: Boolean(params.taxExempt),
+        metadata: params.metadata || {},
+        idempotencyKey: params.idempotencyKey,
+      });
+
+      return {
+        success: true,
+        provider: result.provider,
+        quote: result.quote,
+        idempotent: result.idempotent,
+      };
+    },
+  },
+  {
+    name: 'calculate_tax_quote_with_failover',
+    description:
+      'Calculate a tax quote with jurisdiction compliance validation and provider failover routing.',
+    inputSchema: {
+      providerId: z.string().optional().describe('Primary tax provider ID'),
+      fallbackProviderIds: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('Ordered fallback provider IDs'),
+      allowDeterministicFallback: z
+        .boolean()
+        .optional()
+        .describe('Allow deterministic mock fallback when all providers fail'),
+      strictCompliance: z
+        .boolean()
+        .optional()
+        .describe('Require strict jurisdiction completeness checks'),
+      items: z
+        .array(
+          z.object({
+            id: z.string().optional().describe('Line item identifier'),
+            unitPrice: z.number().positive().describe('Unit price per item'),
+            quantity: z.number().int().positive().describe('Quantity'),
+            taxCategory: z
+              .string()
+              .optional()
+              .default('standard')
+              .describe('Tax category: standard, reduced, exempt, digital, food, medical'),
+          }),
+        )
+        .min(1)
+        .describe('Line items'),
+      shippingAddress: z
+        .object({
+          country: z.string().min(1).describe('Country code'),
+          state: z.string().optional().describe('State/province code'),
+          city: z.string().optional().describe('City'),
+          postalCode: z.string().optional().describe('Postal/ZIP code'),
+        })
+        .describe('Shipping address'),
+      shippingAmount: z.number().min(0).optional().describe('Shipping amount'),
+      customerId: z.string().optional().describe('Customer ID'),
+      orderId: z.string().optional().describe('Order ID'),
+      currency: z.string().max(10).optional().describe('Currency code (default: USD)'),
+      taxExempt: z.boolean().optional().describe('Force customer exemption for this quote'),
+      metadata: z.record(z.string(), z.any()).optional().describe('Additional metadata'),
+      idempotencyKey: z
+        .string()
+        .max(255)
+        .optional()
+        .describe('Idempotency key for deterministic retries'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const result = calculateTaxQuoteWithFailover({
+        providerId: params.providerId,
+        fallbackProviderIds: params.fallbackProviderIds || [],
+        allowDeterministicFallback: params.allowDeterministicFallback ?? true,
+        strictCompliance: params.strictCompliance ?? true,
+        lineItems: params.items,
+        shippingAddress: params.shippingAddress,
+        shippingAmount: params.shippingAmount || 0,
+        customerId: params.customerId,
+        orderId: params.orderId,
+        currency: params.currency || 'USD',
+        taxExempt: Boolean(params.taxExempt),
+        metadata: params.metadata || {},
+        idempotencyKey: params.idempotencyKey,
+      });
+
+      return {
+        success: true,
+        provider: result.provider,
+        quote: result.quote,
+        idempotent: result.idempotent,
+        failover: result.failover,
+      };
+    },
+  },
+  {
+    name: 'get_tax_quote',
+    description: 'Get a provider-backed tax quote by ID.',
+    inputSchema: {
+      quoteId: z.string().min(1).describe('Tax quote ID'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const quote = getTaxQuote(params.quoteId);
+      if (!quote) {
+        return { success: false, error: 'Tax quote not found' };
+      }
+      return {
+        success: true,
+        quote,
+      };
+    },
+  },
+  {
+    name: 'commit_tax_transaction',
+    description: 'Commit a previously calculated tax quote into a provider transaction record.',
+    inputSchema: {
+      quoteId: z.string().min(1).describe('Tax quote ID'),
+      providerId: z.string().optional().describe('Provider ID override'),
+      transactionReference: z.string().optional().describe('External transaction reference'),
+      idempotencyKey: z.string().max(255).optional().describe('Idempotency key for safe retries'),
+    },
+    permission: 'write',
+    handler: async ({ params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Commit tax transaction', params);
+      }
+
+      if (!getTaxQuote(params.quoteId)) {
+        return { success: false, error: 'Tax quote not found' };
+      }
+
+      const result = commitTaxTransaction({
+        quoteId: params.quoteId,
+        providerId: params.providerId,
+        transactionReference: params.transactionReference,
+        idempotencyKey: params.idempotencyKey,
+      });
+
+      return {
+        success: true,
+        message: result.idempotent
+          ? 'Tax transaction reused via idempotency'
+          : 'Tax transaction committed',
+        quote: result.quote,
+        transaction: result.transaction,
+        idempotent: result.idempotent,
+      };
+    },
+  },
+  {
+    name: 'get_tax_transaction',
+    description: 'Get a provider-backed tax transaction by ID.',
+    inputSchema: {
+      transactionId: z.string().min(1).describe('Tax transaction ID'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const transaction = getTaxTransaction(params.transactionId);
+      if (!transaction) {
+        return { success: false, error: 'Tax transaction not found' };
+      }
+      return {
+        success: true,
+        transaction,
+      };
+    },
+  },
+  {
+    name: 'list_tax_transactions',
+    description: 'List provider-backed tax transactions with optional filtering.',
+    inputSchema: {
+      providerId: z.string().optional().describe('Filter by provider ID'),
+      status: z.string().optional().describe('Filter by transaction status'),
+      quoteId: z.string().optional().describe('Filter by quote ID'),
+      reference: z.string().optional().describe('Filter by external reference'),
+      limit: z.number().int().min(1).max(500).optional().describe('Maximum transactions to return'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const transactions = listTaxTransactions({
+        providerId: params.providerId,
+        status: params.status,
+        quoteId: params.quoteId,
+        reference: params.reference,
+        limit: params.limit,
+      });
+      return {
+        success: true,
+        count: transactions.length,
+        transactions,
+      };
+    },
+  },
+  {
+    name: 'void_tax_transaction',
+    description: 'Void a committed tax transaction with optional reason.',
+    inputSchema: {
+      transactionId: z.string().min(1).describe('Tax transaction ID'),
+      reason: z.string().max(500).optional().describe('Void reason'),
+      idempotencyKey: z.string().max(255).optional().describe('Idempotency key for safe retries'),
+    },
+    permission: 'delete',
+    handler: async ({ params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Void tax transaction', params);
+      }
+
+      const result = voidTaxTransaction({
+        transactionId: params.transactionId,
+        reason: params.reason,
+        idempotencyKey: params.idempotencyKey,
+      });
+
+      return {
+        success: true,
+        message: result.idempotent ? 'Tax transaction already voided' : 'Tax transaction voided',
+        quote: result.quote,
+        transaction: result.transaction,
+        idempotent: result.idempotent,
+      };
+    },
+  },
+  {
+    name: 'ingest_tax_provider_webhook',
+    description:
+      'Ingest a tax provider webhook event and reconcile quote/transaction state in shadow or production mode.',
+    inputSchema: {
+      providerId: z.string().optional().describe('Provider ID (default: deterministic-mock)'),
+      eventType: z.string().min(1).describe('Webhook event type'),
+      eventId: z
+        .string()
+        .optional()
+        .describe('Optional provider event ID for idempotent ingestion'),
+      payload: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe('Webhook payload object from provider'),
+    },
+    permission: 'write',
+    handler: async ({ params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Ingest tax provider webhook', params);
+      }
+
+      const result = ingestTaxProviderWebhook({
+        providerId: params.providerId,
+        eventType: params.eventType,
+        eventId: params.eventId,
+        payload: params.payload || {},
+      });
+
+      return {
+        success: true,
+        message: result.applied ? 'Tax webhook ingested' : 'Tax webhook processed with no mutation',
+        webhook: result,
       };
     },
   },

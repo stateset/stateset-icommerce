@@ -402,22 +402,59 @@ const NEGATIVE_KEYWORDS = {
 };
 
 /**
+ * SLA-aware score boosts by agent.
+ * Boosts are applied only when the request already matched at least one keyword
+ * for that agent, preventing SLA-only routing without intent evidence.
+ */
+const SLA_AGENT_SCORE_BOOSTS = {
+  standard: {},
+  expedited: {
+    orders: 2,
+    shipments: 2,
+    inventory: 1,
+    payments: 1,
+    returns: 1,
+  },
+  critical: {
+    orders: 4,
+    shipments: 4,
+    payments: 3,
+    inventory: 2,
+    returns: 2,
+    checkout: 1,
+  },
+};
+
+function normalizeSlaLevel(slaLevel) {
+  if (typeof slaLevel !== 'string') return null;
+  const normalized = slaLevel.trim().toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(SLA_AGENT_SCORE_BOOSTS, normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+/**
  * Determine which agent is best suited for a request
  * @param {string} request - User's request
+ * @param {{ slaLevel?: string }} [options] - Optional routing options
  * @returns {string} - Agent name
  */
-export function routeToAgent(request) {
-  const result = routeToAgentWithConfidence(request);
+export function routeToAgent(request, options = {}) {
+  const result = routeToAgentWithConfidence(request, options);
   return result.primary.agent;
 }
 
 /**
  * Determine which agent is best suited with confidence scoring
  * @param {string} request - User's request
+ * @param {{ slaLevel?: string }} [options] - Optional routing options
  * @returns {object} - { primary: { agent, score, confidence, level }, alternatives: [...], ambiguous: boolean }
  */
-export function routeToAgentWithConfidence(request) {
-  const lower = request.toLowerCase();
+export function routeToAgentWithConfidence(request, options = {}) {
+  const lower = (typeof request === 'string' ? request : '').toLowerCase();
+  const normalizedSlaLevel = normalizeSlaLevel(options?.slaLevel);
+  const slaBoosts = normalizedSlaLevel ? SLA_AGENT_SCORE_BOOSTS[normalizedSlaLevel] : null;
 
   // Score each agent based on weighted keyword matches
   const scores = {};
@@ -445,11 +482,17 @@ export function routeToAgentWithConfidence(request) {
       }
     }
 
+    let slaBoost = 0;
+    if (slaBoosts && matchedKeywords.length > 0) {
+      slaBoost = slaBoosts[agent] || 0;
+      weightedScore += slaBoost;
+    }
+
     // Ensure score doesn't go negative
     weightedScore = Math.max(0, weightedScore);
 
     // Calculate confidence as percentage of max possible score
-    const confidence = agentMaxScore > 0 ? weightedScore / agentMaxScore : 0;
+    const confidence = agentMaxScore > 0 ? Math.min(1, weightedScore / agentMaxScore) : 0;
 
     // Determine confidence level
     let level = 'none';
@@ -467,6 +510,7 @@ export function routeToAgentWithConfidence(request) {
       confidence,
       level,
       matchedKeywords,
+      slaBoost,
       maxPossibleScore: agentMaxScore,
     };
 
@@ -517,5 +561,8 @@ export function routeToAgentWithConfidence(request) {
     ambiguous,
     allScores: scores,
     thresholds: ROUTING_THRESHOLDS,
+    routingContext: {
+      slaLevel: normalizedSlaLevel,
+    },
   };
 }

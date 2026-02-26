@@ -53,3 +53,8 @@ registerAdapter('shopify', async (config) => {
   const { ShopifyAdapter } = await import('./shopify/index.js');
   return new ShopifyAdapter(config);
 });
+
+registerAdapter('shopify-shadow', async (config) => {
+  const { ShopifyShadowAdapter } = await import('./shopify-shadow/index.js');
+  return new ShopifyShadowAdapter(config);
+});

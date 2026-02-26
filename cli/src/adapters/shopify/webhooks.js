@@ -7,6 +7,7 @@
 
 import {
   mapCustomerToStateSet,
+  mapFulfillmentToStateSet,
   mapProductToStateSet,
   mapOrderToStateSet,
   mapInventoryToStateSet,
@@ -99,6 +100,45 @@ export function createShopifyWebhookHandlers(commerce, idMapStore) {
       return createOrSkip('orders', mapped, (data) => commerce.orders.create(data));
     },
 
+    'fulfillments/create': async (payload) => {
+      const mapped = mapFulfillmentToStateSet(payload, { idMap: idMapStore, platform });
+      if (!commerce.shipments?.create) {
+        return {
+          action: 'skipped',
+          externalId: mapped.externalId,
+          reason: 'Shipments create handler is unavailable',
+        };
+      }
+      return createOrSkip('fulfillments', mapped, (data) => commerce.shipments.create(data));
+    },
+
+    'fulfillments/update': async (payload) => {
+      const mapped = mapFulfillmentToStateSet(payload, { idMap: idMapStore, platform });
+      const existing = idMapStore.lookup(platform, 'fulfillments', mapped.externalId);
+      if (existing) {
+        idMapStore.store(
+          platform,
+          'fulfillments',
+          mapped.externalId,
+          existing.statesetId,
+          mapped.raw,
+        );
+        return {
+          action: 'updated',
+          externalId: mapped.externalId,
+          statesetId: existing.statesetId,
+        };
+      }
+      if (!commerce.shipments?.create) {
+        return {
+          action: 'skipped',
+          externalId: mapped.externalId,
+          reason: 'Shipments create handler is unavailable',
+        };
+      }
+      return createOrSkip('fulfillments', mapped, (data) => commerce.shipments.create(data));
+    },
+
     'orders/cancelled': async (payload) => {
       const externalId = String(payload.id);
       const existing = idMapStore.lookup(platform, 'orders', externalId);
@@ -146,6 +186,8 @@ export function getSupportedTopics() {
     'products/update',
     'orders/create',
     'orders/updated',
+    'fulfillments/create',
+    'fulfillments/update',
     'orders/cancelled',
     'inventory_levels/update',
   ];

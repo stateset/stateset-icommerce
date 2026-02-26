@@ -115,4 +115,35 @@ describe('runAgentLoop (non-Claude) enhancements', () => {
 
     cleanupDb(dbPath);
   });
+
+  it('applies slaLevel routing hints when selecting an agent', async () => {
+    const baselineDbPath = newDbPath();
+    const criticalDbPath = newDbPath();
+
+    const baseline = await runAgentLoop({
+      request: 'inventory order',
+      provider: 'mock',
+      model: 'mock-model',
+      dbPath: baselineDbPath,
+      enableSync: false,
+      enableMemory: false,
+    });
+
+    const critical = await runAgentLoop({
+      request: 'inventory order',
+      provider: 'mock',
+      model: 'mock-model',
+      dbPath: criticalDbPath,
+      enableSync: false,
+      enableMemory: false,
+      slaLevel: 'critical',
+    });
+
+    assert.strictEqual(baseline.routing.primary.agent, 'inventory');
+    assert.strictEqual(critical.routing.primary.agent, 'orders');
+    assert.strictEqual(critical.slaLevel, 'critical');
+
+    cleanupDb(baselineDbPath);
+    cleanupDb(criticalDbPath);
+  });
 });

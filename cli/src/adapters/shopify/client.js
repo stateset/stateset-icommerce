@@ -188,6 +188,27 @@ export class ShopifyClient {
   }
 
   /**
+   * Fetch fulfillments.
+   * @param {Object} [options]
+   * @returns {AsyncGenerator<Object[]>}
+   */
+  async *getFulfillments(options = {}) {
+    yield* this.fetchPaginated('/fulfillments.json', 'fulfillments', {
+      status: 'any',
+      ...options,
+    });
+  }
+
+  /**
+   * Fetch shop locations.
+   * @returns {Promise<Object[]>}
+   */
+  async getLocations() {
+    const { data } = await this.get('/locations.json');
+    return data?.locations || [];
+  }
+
+  /**
    * Fetch inventory levels for a location.
    * @param {string} locationId
    * @param {Object} [options]

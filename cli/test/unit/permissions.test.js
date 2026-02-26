@@ -58,6 +58,57 @@ describe('permissions', () => {
       assert.strictEqual(TOOL_PERMISSIONS.cancel_order, 'delete');
     });
 
+    it('should include provider-backed payment intent permissions', () => {
+      assert.strictEqual(TOOL_PERMISSIONS.list_payment_providers, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.create_payment_intent, 'write');
+      assert.strictEqual(TOOL_PERMISSIONS.get_payment_intent, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.list_payment_intents, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.list_payment_settlements, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.list_payment_settlement_batches, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.reconcile_payment_provider, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.create_payment_settlement_batch, 'write');
+      assert.strictEqual(TOOL_PERMISSIONS.capture_payment_intent, 'write');
+      assert.strictEqual(TOOL_PERMISSIONS.cancel_payment_intent, 'delete');
+      assert.strictEqual(TOOL_PERMISSIONS.refund_payment_intent, 'write');
+      assert.strictEqual(TOOL_PERMISSIONS.ingest_payment_provider_webhook, 'write');
+    });
+
+    it('should include provider-backed shipping and tax permissions', () => {
+      assert.strictEqual(TOOL_PERMISSIONS.list_shipping_providers, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.quote_shipping_rates, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.create_shipping_label, 'write');
+      assert.strictEqual(TOOL_PERMISSIONS.void_shipping_label, 'delete');
+      assert.strictEqual(TOOL_PERMISSIONS.track_shipping_label, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.list_shipping_labels, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.ingest_shipping_provider_webhook, 'write');
+      assert.strictEqual(TOOL_PERMISSIONS.handle_fulfillment_exception, 'write');
+
+      assert.strictEqual(TOOL_PERMISSIONS.list_tax_providers, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.validate_tax_jurisdiction_compliance, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.calculate_tax_quote, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.calculate_tax_quote_with_failover, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.get_tax_quote, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.commit_tax_transaction, 'write');
+      assert.strictEqual(TOOL_PERMISSIONS.get_tax_transaction, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.list_tax_transactions, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.void_tax_transaction, 'delete');
+      assert.strictEqual(TOOL_PERMISSIONS.ingest_tax_provider_webhook, 'write');
+    });
+
+    it('should include wasm connector ecosystem permissions', () => {
+      assert.strictEqual(TOOL_PERMISSIONS.list_connector_marketplace, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.publish_wasm_connector, 'admin');
+      assert.strictEqual(TOOL_PERMISSIONS.install_wasm_connector, 'write');
+      assert.strictEqual(TOOL_PERMISSIONS.assess_wasm_connector_safety, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.certify_wasm_connector, 'admin');
+      assert.strictEqual(TOOL_PERMISSIONS.sign_wasm_connector_attestation, 'admin');
+      assert.strictEqual(TOOL_PERMISSIONS.verify_wasm_connector_attestation, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.uninstall_wasm_connector, 'delete');
+      assert.strictEqual(TOOL_PERMISSIONS.list_installed_connectors, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.get_installed_connector, 'read');
+      assert.strictEqual(TOOL_PERMISSIONS.execute_wasm_connector, 'write');
+    });
+
     it('should treat x402 on-chain settlement as a write operation', () => {
       assert.strictEqual(TOOL_PERMISSIONS.x402_settle_intent_onchain, 'write');
     });
@@ -260,6 +311,25 @@ describe('permissions', () => {
 
     it('default guardrails require approval for x402 end-to-end execution', () => {
       assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('x402_execute_agent_payment'));
+    });
+
+    it('default guardrails require approval for payment intent capture and cancellation', () => {
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('create_payment_settlement_batch'));
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('capture_payment_intent'));
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('cancel_payment_intent'));
+    });
+
+    it('default guardrails require approval for fulfillment exception workflow execution', () => {
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('handle_fulfillment_exception'));
+    });
+
+    it('default guardrails require approval for connector publish/install/certify/sign/uninstall/execute', () => {
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('publish_wasm_connector'));
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('install_wasm_connector'));
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('certify_wasm_connector'));
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('sign_wasm_connector_attestation'));
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('uninstall_wasm_connector'));
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('execute_wasm_connector'));
     });
   });
 

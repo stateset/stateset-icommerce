@@ -8,15 +8,16 @@ import { importTools } from '../../src/tools/import.js';
 // ---------------------------------------------------------------------------
 
 describe('importTools — module exports', () => {
-  it('exports an array of 6 tools', () => {
+  it('exports an array of 7 tools', () => {
     assert.ok(Array.isArray(importTools));
-    assert.equal(importTools.length, 6);
+    assert.equal(importTools.length, 7);
   });
 
   it('exports expected tool names', () => {
     const names = importTools.map((t) => t.name);
     assert.deepStrictEqual(names, [
       'import_shopify_data',
+      'import_shopify_shadow_data',
       'import_status',
       'list_id_mappings',
       'import_csv',
@@ -38,6 +39,15 @@ describe('importTools — schema shapes', () => {
     assert.ok(tool.inputSchema.source);
     assert.equal(tool.permission, 'write');
     assert.ok(tool.description.includes('Shopify'));
+  });
+
+  it('import_shopify_shadow_data has shadow mode fields', () => {
+    const tool = byName['import_shopify_shadow_data'];
+    assert.ok(tool.inputSchema.source);
+    assert.ok(tool.inputSchema.entities);
+    assert.ok(tool.inputSchema.applyWrites);
+    assert.equal(tool.permission, 'write');
+    assert.ok(tool.description.includes('shadow mode'));
   });
 
   it('import_status has empty inputSchema', () => {
@@ -84,6 +94,17 @@ describe('importTools — apply guard', () => {
     const result = await byName['import_shopify_data'].handler({
       commerce: {},
       params: { source: 'api', entities: ['customers'] },
+      allowApply: false,
+    });
+    assert.ok(result.error.includes('--apply'));
+    assert.ok(result.hint);
+    assert.ok(result.wouldDo);
+  });
+
+  it('import_shopify_shadow_data enforces --apply when applyWrites=true', async () => {
+    const result = await byName['import_shopify_shadow_data'].handler({
+      commerce: {},
+      params: { source: 'api', entities: ['customers'], applyWrites: true },
       allowApply: false,
     });
     assert.ok(result.error.includes('--apply'));
@@ -145,6 +166,17 @@ describe('importTools — error handling', () => {
       allowApply: true,
     });
     assert.equal(result.success, false);
+    assert.ok(result.error);
+  });
+
+  it('import_shopify_shadow_data catches module errors gracefully', async () => {
+    const result = await byName['import_shopify_shadow_data'].handler({
+      commerce: {},
+      params: { source: 'api', entities: ['customers'], applyWrites: false },
+      allowApply: true,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.shadowMode, true);
     assert.ok(result.error);
   });
 
