@@ -156,17 +156,12 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
-    fn update_account_balance(
-        &self,
+    fn update_account_balance_with_conn(
+        conn: &rusqlite::Connection,
         account_id: Uuid,
         debit: Decimal,
         credit: Decimal,
     ) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
         // Get account to determine normal balance
         let account: GlAccount = conn
             .query_row(
@@ -190,6 +185,7 @@ impl SqliteGeneralLedgerRepository {
 
         Ok(())
     }
+
 }
 
 impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
@@ -626,7 +622,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // ========================================================================
 
     fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
@@ -652,8 +648,22 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
         let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
         let is_balanced = total_debits == total_credits;
+        let lines_are_valid = input
+            .lines
+            .iter()
+            .all(|l| (l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO));
 
-        conn.execute(
+        if !lines_are_valid {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Each journal line must have either a positive debit or a positive credit"
+                    .to_string(),
+            ));
+        }
+
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        tx.execute(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id,
              entry_type, source, source_document_type, source_document_id, description,
              total_debits, total_credits, is_balanced, status, created_at, updated_at)
@@ -682,11 +692,19 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         for (line_num, line) in input.lines.iter().enumerate() {
             let line_id = Uuid::new_v4();
 
-            // Get account info
-            let account =
-                self.get_account(line.account_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+            // Get account info in the same transaction
+            let account: GlAccount = tx
+                .query_row(
+                    "SELECT id, account_number, name, description, account_type, account_sub_type,
+                            parent_account_id, is_header, is_posting, normal_balance, currency,
+                            status, current_balance, created_at, updated_at
+                     FROM gl_accounts WHERE id = ?1",
+                    params![line.account_id.to_string()],
+                    Self::map_account_row,
+                )
+                .map_err(map_db_error)?;
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number,
                  account_id, account_number, account_name, description, debit_amount,
                  credit_amount, currency, reference_type, reference_id, created_at)
@@ -709,6 +727,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             )
             .map_err(map_db_error)?;
         }
+
+        tx.commit().map_err(map_db_error)?;
 
         // Auto-post if requested
         if input.auto_post.unwrap_or(false) && is_balanced {
@@ -845,22 +865,29 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             ));
         }
 
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
+        let tx = conn.transaction().map_err(map_db_error)?;
 
-        // Update entry status
-        conn.execute(
+        // Update account balances first, then mark the journal posted in one transaction.
+        for line in &entry.lines {
+            Self::update_account_balance_with_conn(
+                &tx,
+                line.account_id,
+                line.debit_amount,
+                line.credit_amount,
+            )?;
+        }
+
+        tx.execute(
             "UPDATE gl_journal_entries SET status = 'posted', posted_at = ?1, posted_by = ?2 WHERE id = ?3",
             params![now.to_rfc3339(), posted_by, id.to_string()],
         ).map_err(map_db_error)?;
 
-        // Update account balances
-        for line in &entry.lines {
-            self.update_account_balance(line.account_id, line.debit_amount, line.credit_amount)?;
-        }
+        tx.commit().map_err(map_db_error)?;
 
         self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
@@ -874,22 +901,30 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             ));
         }
 
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
 
         // Reverse account balances
         for line in &entry.lines {
-            self.update_account_balance(line.account_id, line.credit_amount, line.debit_amount)?;
+            Self::update_account_balance_with_conn(
+                &tx,
+                line.account_id,
+                line.credit_amount,
+                line.debit_amount,
+            )?;
         }
 
         // Update entry status
-        conn.execute(
+        tx.execute(
             "UPDATE gl_journal_entries SET status = 'voided' WHERE id = ?1",
             params![id.to_string()],
         )
         .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
 
         self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }

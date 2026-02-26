@@ -10,6 +10,7 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use stateset_core::{
@@ -223,9 +224,7 @@ impl SqliteAccountsPayableRepository {
         })
     }
 
-    fn recalculate_bill(&self, bill_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-
+    fn recalculate_bill_with_conn(conn: &rusqlite::Connection, bill_id: Uuid) -> Result<()> {
         let bill_id_param = bill_id.to_string();
         let mut stmt = conn
             .prepare("SELECT amount, tax_amount FROM ap_bill_items WHERE bill_id = ?1")
@@ -245,7 +244,11 @@ impl SqliteAccountsPayableRepository {
         let payment_params: [&dyn rusqlite::ToSql; 1] = [&bill_id_param];
         let paid = sum_decimal_query(
             &conn,
-            "SELECT amount FROM ap_payment_allocations WHERE bill_id = ?1",
+            "SELECT a.amount
+             FROM ap_payment_allocations a
+             JOIN ap_payments p ON p.id = a.payment_id
+             WHERE a.bill_id = ?1
+               AND p.status NOT IN ('voided', 'failed')",
             &payment_params,
             "ap_payment_allocations",
             "amount",
@@ -258,6 +261,11 @@ impl SqliteAccountsPayableRepository {
         ).map_err(map_db_error)?;
 
         Ok(())
+    }
+
+    fn recalculate_bill(&self, bill_id: Uuid) -> Result<()> {
+        let conn = self.conn()?;
+        Self::recalculate_bill_with_conn(&conn, bill_id)
     }
 }
 
@@ -570,12 +578,79 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     }
 
     fn create_payment(&self, input: CreateBillPayment) -> Result<BillPayment> {
-        let conn = self.conn()?;
+        if input.amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Payment amount must be greater than zero".into(),
+            ));
+        }
+        if input.allocations.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "At least one payment allocation is required".into(),
+            ));
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
         let id = Uuid::new_v4();
         let payment_number = generate_ap_payment_number();
 
-        conn.execute(
+        let mut allocation_total = Decimal::ZERO;
+        let mut allocation_by_bill: HashMap<Uuid, Decimal> = HashMap::new();
+        for alloc in &input.allocations {
+            if alloc.amount <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Allocation amount must be greater than zero".into(),
+                ));
+            }
+            allocation_total += alloc.amount;
+            *allocation_by_bill.entry(alloc.bill_id).or_insert(Decimal::ZERO) += alloc.amount;
+        }
+
+        if allocation_total != input.amount {
+            return Err(CommerceError::ValidationError(
+                "Payment amount must equal allocation total".into(),
+            ));
+        }
+
+        for (bill_id, allocated_amount) in &allocation_by_bill {
+            let (supplier_id, status, amount_due): (String, String, String) = tx
+                .query_row(
+                    "SELECT supplier_id, status, amount_due FROM ap_bills WHERE id = ?1",
+                    params![bill_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(map_db_error)?;
+
+            let parsed_supplier_id = parse_uuid(&supplier_id, "bill", "supplier_id")?;
+            if parsed_supplier_id != input.supplier_id {
+                return Err(CommerceError::ValidationError(
+                    "Allocation bill supplier does not match payment supplier".into(),
+                ));
+            }
+
+            let bill_status: BillStatus = status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid bill status '{}' while creating payment: {}",
+                    status, e
+                ))
+            })?;
+            if !matches!(bill_status, BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue)
+            {
+                return Err(CommerceError::ValidationError(
+                    "Bill is not in a payable status".into(),
+                ));
+            }
+
+            let amount_due = parse_decimal_strict(&amount_due, "bill", "amount_due")?;
+            if *allocated_amount > amount_due {
+                return Err(CommerceError::ValidationError(
+                    "Allocation amount exceeds bill amount due".into(),
+                ));
+            }
+        }
+
+        tx.execute(
             "INSERT INTO ap_payments (id, payment_number, supplier_id, payment_date, payment_method, amount, currency, reference_number, bank_account, check_number, memo, status, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
             params![
@@ -596,9 +671,9 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         ).map_err(map_db_error)?;
 
         // Create allocations
-        for alloc in input.allocations {
+        for alloc in &input.allocations {
             let alloc_id = Uuid::new_v4();
-            conn.execute(
+            tx.execute(
                 "INSERT INTO ap_payment_allocations (id, payment_id, bill_id, amount, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
@@ -612,9 +687,15 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .map_err(map_db_error)?;
 
             // Update bill amount_paid and status
-            self.recalculate_bill(alloc.bill_id)?;
+            Self::recalculate_bill_with_conn(&tx, alloc.bill_id)?;
 
-            let bill = self.get_bill(alloc.bill_id)?.ok_or(CommerceError::NotFound)?;
+            let bill = tx
+                .query_row(
+                    "SELECT * FROM ap_bills WHERE id = ?1",
+                    params![alloc.bill_id.to_string()],
+                    Self::row_to_bill,
+                )
+                .map_err(map_db_error)?;
             let new_status = if bill.amount_due <= Decimal::ZERO {
                 BillStatus::Paid
             } else if bill.amount_paid > Decimal::ZERO {
@@ -623,12 +704,14 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 bill.status
             };
 
-            conn.execute(
+            tx.execute(
                 "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
                 params![new_status.to_string(), alloc.bill_id.to_string()],
             )
             .map_err(map_db_error)?;
         }
+
+        tx.commit().map_err(map_db_error)?;
 
         self.get_payment(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create payment".into()))
@@ -694,26 +777,67 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     }
 
     fn void_payment(&self, id: Uuid) -> Result<BillPayment> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
 
-        // Get allocations and reverse them
-        let allocations = self.get_payment_allocations(id)?;
-        for alloc in allocations {
-            self.recalculate_bill(alloc.bill_id)?;
-        }
+        let allocations: Vec<PaymentAllocation> = {
+            let mut stmt = tx
+                .prepare("SELECT id, payment_id, bill_id, amount, created_at FROM ap_payment_allocations WHERE payment_id = ?1")
+                .map_err(map_db_error)?;
+            let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+            let mut values = Vec::new();
+            while let Some(row) = rows.next().map_err(map_db_error)? {
+                values.push(PaymentAllocation {
+                    id: parse_uuid(&row.get::<_, String>(0).map_err(map_db_error)?, "payment_allocation", "id")?,
+                    payment_id: parse_uuid(&row.get::<_, String>(1).map_err(map_db_error)?, "payment_allocation", "payment_id")?,
+                    bill_id: parse_uuid(&row.get::<_, String>(2).map_err(map_db_error)?, "payment_allocation", "bill_id")?,
+                    amount: parse_decimal_strict(&row.get::<_, String>(3).map_err(map_db_error)?, "payment_allocation", "amount")?,
+                    created_at: parse_datetime(&row.get::<_, String>(4).map_err(map_db_error)?, "payment_allocation", "created_at")?,
+                });
+            }
+            values
+        };
 
-        conn.execute(
+        tx.execute(
             "UPDATE ap_payments SET status = ?1 WHERE id = ?2",
             params![PaymentStatusAP::Voided.to_string(), id.to_string()],
         )
         .map_err(map_db_error)?;
 
-        // Delete allocations
-        conn.execute(
+        tx.execute(
             "DELETE FROM ap_payment_allocations WHERE payment_id = ?1",
             params![id.to_string()],
         )
         .map_err(map_db_error)?;
+
+        for alloc in allocations {
+            Self::recalculate_bill_with_conn(&tx, alloc.bill_id)?;
+
+            let bill = tx
+                .query_row(
+                    "SELECT * FROM ap_bills WHERE id = ?1",
+                    params![alloc.bill_id.to_string()],
+                    Self::row_to_bill,
+                )
+                .map_err(map_db_error)?;
+            let new_status = if bill.amount_due <= Decimal::ZERO {
+                BillStatus::Paid
+            } else if bill.amount_paid > Decimal::ZERO {
+                BillStatus::PartiallyPaid
+            } else if bill.status == BillStatus::Overdue {
+                BillStatus::Overdue
+            } else {
+                BillStatus::Approved
+            };
+
+            tx.execute(
+                "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
+                params![new_status.to_string(), bill.id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
+
+        tx.commit().map_err(map_db_error)?;
 
         self.get_payment(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to void payment".into()))

@@ -5,6 +5,7 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
+use std::collections::HashMap;
 use stateset_core::{
     AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem,
     BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem,
@@ -296,7 +297,11 @@ impl PgAccountsPayableRepository {
         let total = subtotal + tax_amount;
 
         let (amount_paid,): (Decimal,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(amount), 0) FROM ap_payment_allocations WHERE bill_id = $1",
+            "SELECT COALESCE(SUM(a.amount), 0)
+             FROM ap_payment_allocations a
+             JOIN ap_payments p ON p.id = a.payment_id
+             WHERE a.bill_id = $1
+               AND p.status NOT IN ('voided', 'failed')",
         )
         .bind(bill_id)
         .fetch_one(&self.pool)
@@ -315,6 +320,54 @@ impl PgAccountsPayableRepository {
         .bind(amount_due)
         .bind(bill_id)
         .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    async fn recalculate_bill_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        bill_id: Uuid,
+    ) -> Result<()> {
+        let (subtotal, tax_amount): (Decimal, Decimal) = sqlx::query_as(
+            "SELECT COALESCE(SUM(amount), 0), COALESCE(SUM(tax_amount), 0)
+             FROM ap_bill_items
+             WHERE bill_id = $1",
+        )
+        .bind(bill_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let total = subtotal + tax_amount;
+
+        let (amount_paid,): (Decimal,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(a.amount), 0)
+             FROM ap_payment_allocations a
+             JOIN ap_payments p ON p.id = a.payment_id
+             WHERE a.bill_id = $1
+               AND p.status NOT IN ('voided', 'failed')",
+        )
+        .bind(bill_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let amount_due = total - amount_paid;
+
+        sqlx::query(
+            "UPDATE ap_bills
+             SET subtotal = $1, tax_amount = $2, total_amount = $3, amount_paid = $4, amount_due = $5
+             WHERE id = $6",
+        )
+        .bind(subtotal)
+        .bind(tax_amount)
+        .bind(total)
+        .bind(amount_paid)
+        .bind(amount_due)
+        .bind(bill_id)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -662,11 +715,74 @@ impl PgAccountsPayableRepository {
             allocations,
         } = input;
 
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Payment amount must be greater than zero".to_string(),
+            ));
+        }
+        if allocations.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "At least one payment allocation is required".to_string(),
+            ));
+        }
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
         let id = Uuid::new_v4();
         let payment_number = generate_ap_payment_number();
         let payment_date = to_date(payment_date.unwrap_or(now));
+
+        let mut allocation_total = Decimal::ZERO;
+        let mut allocations_by_bill: HashMap<Uuid, Decimal> = HashMap::new();
+        for alloc in &allocations {
+            if alloc.amount <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Allocation amount must be greater than zero".to_string(),
+                ));
+            }
+            allocation_total += alloc.amount;
+            *allocations_by_bill.entry(alloc.bill_id).or_insert(Decimal::ZERO) += alloc.amount;
+        }
+        if allocation_total != amount {
+            return Err(CommerceError::ValidationError(
+                "Payment amount must equal allocation total".to_string(),
+            ));
+        }
+
+        for (bill_id, allocated_amount) in &allocations_by_bill {
+            let bill = sqlx::query_as::<_, BillRow>(
+                "SELECT * FROM ap_bills WHERE id = $1 FOR UPDATE",
+            )
+            .bind(*bill_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+
+            if bill.supplier_id != supplier_id {
+                return Err(CommerceError::ValidationError(
+                    "Allocation bill supplier does not match payment supplier".to_string(),
+                ));
+            }
+
+            let bill_status: BillStatus = bill.status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid bill status '{}' while creating payment: {}",
+                    bill.status, e
+                ))
+            })?;
+            if !matches!(bill_status, BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue)
+            {
+                return Err(CommerceError::ValidationError(
+                    "Bill is not in a payable status".to_string(),
+                ));
+            }
+            if *allocated_amount > bill.amount_due {
+                return Err(CommerceError::ValidationError(
+                    "Allocation amount exceeds bill amount due".to_string(),
+                ));
+            }
+        }
 
         sqlx::query(
             r#"
@@ -708,27 +824,37 @@ impl PgAccountsPayableRepository {
             .map_err(map_db_error)?;
         }
 
-        tx.commit().await.map_err(map_db_error)?;
+        for alloc in &allocations {
+            Self::recalculate_bill_tx(&mut tx, alloc.bill_id).await?;
 
-        for alloc in allocations {
-            self.recalculate_bill(alloc.bill_id).await?;
-
-            let bill = self.get_bill_async(alloc.bill_id).await?.ok_or(CommerceError::NotFound)?;
+            let bill = sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1")
+                .bind(alloc.bill_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            let existing_status: BillStatus = bill.status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid bill status '{}' while creating payment: {}",
+                    bill.status, e
+                ))
+            })?;
             let new_status = if bill.amount_due <= Decimal::ZERO {
                 BillStatus::Paid
             } else if bill.amount_paid > Decimal::ZERO {
                 BillStatus::PartiallyPaid
             } else {
-                bill.status
+                existing_status
             };
 
             sqlx::query("UPDATE ap_bills SET status = $1 WHERE id = $2")
                 .bind(new_status.to_string())
                 .bind(alloc.bill_id)
-                .execute(&self.pool)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_payment_async(id)
             .await?
@@ -794,12 +920,62 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn void_payment_async(&self, id: Uuid) -> Result<BillPayment> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let allocations = sqlx::query_as::<_, PaymentAllocationRow>(
+            "SELECT * FROM ap_payment_allocations WHERE payment_id = $1",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
         sqlx::query("UPDATE ap_payments SET status = $1 WHERE id = $2")
             .bind(PaymentStatusAP::Voided.to_string())
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        sqlx::query("DELETE FROM ap_payment_allocations WHERE payment_id = $1")
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        for alloc in allocations {
+            Self::recalculate_bill_tx(&mut tx, alloc.bill_id).await?;
+
+            let bill = sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1")
+                .bind(alloc.bill_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            let existing_status: BillStatus = bill.status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid bill status '{}' while voiding payment: {}",
+                    bill.status, e
+                ))
+            })?;
+            let new_status = if bill.amount_due <= Decimal::ZERO {
+                BillStatus::Paid
+            } else if bill.amount_paid > Decimal::ZERO {
+                BillStatus::PartiallyPaid
+            } else if existing_status == BillStatus::Overdue {
+                BillStatus::Overdue
+            } else {
+                BillStatus::Approved
+            };
+
+            sqlx::query("UPDATE ap_bills SET status = $1 WHERE id = $2")
+                .bind(new_status.to_string())
+                .bind(alloc.bill_id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_payment_async(id)
             .await?

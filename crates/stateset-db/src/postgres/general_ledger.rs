@@ -331,27 +331,26 @@ impl PgGeneralLedgerRepository {
         debit: Decimal,
         credit: Decimal,
     ) -> Result<()> {
-        let row = sqlx::query_as::<_, AccountRow>(
-            "SELECT id, account_number, name, description, account_type, account_sub_type,
-                    parent_account_id, is_header, is_posting, normal_balance, currency, status,
-                    current_balance, created_at, updated_at
-             FROM gl_accounts WHERE id = $1",
+        let updated = sqlx::query(
+            "UPDATE gl_accounts
+             SET current_balance = current_balance + (
+                CASE
+                    WHEN normal_balance = 'debit' THEN $1 - $2
+                    ELSE $2 - $1
+                END
+             )
+             WHERE id = $3",
         )
-        .bind(account_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let account = Self::row_to_account(row)?;
-        let balance_change = account.balance_effect(debit, credit);
-        let new_balance = account.current_balance + balance_change;
-
-        sqlx::query("UPDATE gl_accounts SET current_balance = $1 WHERE id = $2")
-            .bind(new_balance)
+            .bind(debit)
+            .bind(credit)
             .bind(account_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        if updated.rows_affected() == 0 {
+            return Err(CommerceError::NotFound);
+        }
 
         Ok(())
     }
@@ -720,6 +719,18 @@ impl PgGeneralLedgerRepository {
         let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
         let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
         let is_balanced = total_debits == total_credits;
+        let lines_are_valid = input
+            .lines
+            .iter()
+            .all(|l| (l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO));
+
+        if !lines_are_valid {
+            return Err(CommerceError::ValidationError(
+                "Each journal line must have either a positive debit or a positive credit"
+                    .to_string(),
+            ));
+        }
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 

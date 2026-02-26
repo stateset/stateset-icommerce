@@ -36,8 +36,8 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     ApAgingSummary, BatchResult, Bill, BillFilter, BillItem, BillPayment, BillPaymentFilter,
-    CreateBill, CreateBillItem, CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentRun,
-    PaymentRunFilter, Result, SupplierApSummary, UpdateBill,
+    BillStatus, CreateBill, CreateBillItem, CreateBillPayment, CreatePaymentRun,
+    PaymentAllocation, PaymentRun, PaymentRunFilter, Result, SupplierApSummary, UpdateBill,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -323,6 +323,34 @@ impl AccountsPayable {
             .get_bill(bill_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
+        if input.amount <= Decimal::ZERO {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Payment amount must be greater than zero".to_string(),
+            ));
+        }
+
+        if !matches!(bill.status, BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue)
+        {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Bill is not in a payable status".to_string(),
+            ));
+        }
+
+        if input.amount > bill.amount_due {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Payment amount exceeds bill amount due".to_string(),
+            ));
+        }
+
+        let mut fallback_bill = bill.clone();
+        fallback_bill.amount_paid += input.amount;
+        fallback_bill.amount_due -= input.amount;
+        fallback_bill.status = if fallback_bill.amount_due <= Decimal::ZERO {
+            BillStatus::Paid
+        } else {
+            BillStatus::PartiallyPaid
+        };
+
         // Create a payment for this bill
         let payment_input = CreateBillPayment {
             supplier_id: bill.supplier_id,
@@ -342,8 +370,8 @@ impl AccountsPayable {
 
         self.db.accounts_payable().create_payment(payment_input)?;
 
-        // Return the updated bill
-        self.db.accounts_payable().get_bill(bill_id)?.ok_or(stateset_core::CommerceError::NotFound)
+        // Return the updated bill; fallback to a deterministic in-memory update if re-read fails.
+        Ok(self.db.accounts_payable().get_bill(bill_id)?.unwrap_or(fallback_bill))
     }
 
     // ========================================================================

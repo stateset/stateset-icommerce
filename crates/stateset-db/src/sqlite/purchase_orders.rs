@@ -828,9 +828,51 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         })?;
 
         for item in items.items {
+            if item.quantity_received <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Received quantity must be greater than zero".to_string(),
+                ));
+            }
+
+            let (ordered_str, received_str): (String, String) = tx
+                .query_row(
+                    "SELECT quantity_ordered, quantity_received
+                     FROM purchase_order_items
+                     WHERE id = ?1 AND purchase_order_id = ?2",
+                    params![item.item_id.to_string(), id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(map_db_error)?;
+
+            let ordered = parse_decimal_with_context(
+                &ordered_str,
+                "purchase_order_item",
+                "quantity_ordered",
+            )?;
+            let received = parse_decimal_with_context(
+                &received_str,
+                "purchase_order_item",
+                "quantity_received",
+            )?;
+            let new_received = received + item.quantity_received;
+
+            if new_received > ordered {
+                return Err(CommerceError::ValidationError(format!(
+                    "Receiving {} would exceed ordered quantity {} for item {}",
+                    new_received, ordered, item.item_id
+                )));
+            }
+
             tx.execute(
-                "UPDATE purchase_order_items SET quantity_received = quantity_received + ?, updated_at = ? WHERE id = ?",
-                params![item.quantity_received.to_string(), now.to_rfc3339(), item.item_id.to_string()],
+                "UPDATE purchase_order_items
+                 SET quantity_received = ?, updated_at = ?
+                 WHERE id = ? AND purchase_order_id = ?",
+                params![
+                    new_received.to_string(),
+                    now.to_rfc3339(),
+                    item.item_id.to_string(),
+                    id.to_string()
+                ],
             ).map_err(map_db_error)?;
         }
 

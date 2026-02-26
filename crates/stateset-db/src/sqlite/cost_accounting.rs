@@ -267,6 +267,57 @@ impl SqliteCostAccountingRepository {
             )?,
         })
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_cost_transaction_with_conn(
+        conn: &rusqlite::Connection,
+        sku: &str,
+        transaction_type: CostTransactionType,
+        quantity: Decimal,
+        unit_cost: Decimal,
+        layer_id: Option<Uuid>,
+        reference_type: Option<&str>,
+        reference_id: Option<Uuid>,
+        notes: Option<&str>,
+    ) -> Result<CostTransaction> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let total_cost = quantity * unit_cost;
+
+        conn.execute(
+            "INSERT INTO cost_transactions (id, sku, transaction_type, quantity, unit_cost,
+                total_cost, layer_id, reference_type, reference_id, notes, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                id.to_string(),
+                sku,
+                transaction_type.to_string(),
+                quantity.to_string(),
+                unit_cost.to_string(),
+                total_cost.to_string(),
+                layer_id.map(|id| id.to_string()),
+                reference_type,
+                reference_id.map(|id| id.to_string()),
+                notes,
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        Ok(CostTransaction {
+            id,
+            sku: sku.to_string(),
+            transaction_type,
+            quantity,
+            unit_cost,
+            total_cost,
+            layer_id,
+            reference_type: reference_type.map(String::from),
+            reference_id,
+            notes: notes.map(String::from),
+            created_at: now,
+        })
+    }
 }
 
 impl CostAccountingRepository for SqliteCostAccountingRepository {
@@ -575,16 +626,27 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn issue_fifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
 
-        // Get layers in FIFO order (oldest first)
-        let layers = self.list_cost_layers(CostLayerFilter {
-            sku: Some(input.sku.clone()),
-            has_remaining: Some(true),
-            ..Default::default()
-        })?;
+        // Get layers in FIFO order (oldest first) from the same transaction snapshot.
+        let layers: Vec<CostLayer> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, sku, layer_date, quantity, remaining_quantity, unit_cost, total_cost,
+                            source_type, source_id, lot_id, location_id, created_at
+                     FROM cost_layers
+                     WHERE sku = ? AND CAST(remaining_quantity AS REAL) > 0
+                     ORDER BY layer_date ASC",
+                )
+                .map_err(map_db_error)?;
+            let rows = stmt
+                .query_map([&input.sku], |row| self.row_to_cost_layer(row))
+                .map_err(map_db_error)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)?
+        };
 
         for layer in layers {
             if remaining <= Decimal::ZERO {
@@ -595,14 +657,15 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             let new_remaining = layer.remaining_quantity - consume_qty;
 
             // Update layer
-            conn.execute(
+            tx.execute(
                 "UPDATE cost_layers SET remaining_quantity = ? WHERE id = ?",
                 [&new_remaining.to_string(), &layer.id.to_string()],
             )
             .map_err(map_db_error)?;
 
             // Record transaction
-            let tx = self.record_cost_transaction(
+            let tx_record = Self::record_cost_transaction_with_conn(
+                &tx,
                 &input.sku,
                 CostTransactionType::Issue,
                 consume_qty,
@@ -612,26 +675,44 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                 input.reference_id,
                 input.notes.as_deref(),
             )?;
-            transactions.push(tx);
+            transactions.push(tx_record);
 
             remaining -= consume_qty;
         }
 
+        if remaining > Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient remaining cost layers for sku {} (short by {})",
+                input.sku, remaining
+            )));
+        }
+
+        tx.commit().map_err(map_db_error)?;
         Ok(transactions)
     }
 
     fn issue_lifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let mut remaining = input.quantity;
         let mut transactions = Vec::new();
 
-        // Get layers in LIFO order (newest first)
-        let mut layers = self.list_cost_layers(CostLayerFilter {
-            sku: Some(input.sku.clone()),
-            has_remaining: Some(true),
-            ..Default::default()
-        })?;
-        layers.reverse();
+        // Get layers in LIFO order (newest first) from the same transaction snapshot.
+        let layers: Vec<CostLayer> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, sku, layer_date, quantity, remaining_quantity, unit_cost, total_cost,
+                            source_type, source_id, lot_id, location_id, created_at
+                     FROM cost_layers
+                     WHERE sku = ? AND CAST(remaining_quantity AS REAL) > 0
+                     ORDER BY layer_date DESC",
+                )
+                .map_err(map_db_error)?;
+            let rows = stmt
+                .query_map([&input.sku], |row| self.row_to_cost_layer(row))
+                .map_err(map_db_error)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)?
+        };
 
         for layer in layers {
             if remaining <= Decimal::ZERO {
@@ -642,14 +723,15 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             let new_remaining = layer.remaining_quantity - consume_qty;
 
             // Update layer
-            conn.execute(
+            tx.execute(
                 "UPDATE cost_layers SET remaining_quantity = ? WHERE id = ?",
                 [&new_remaining.to_string(), &layer.id.to_string()],
             )
             .map_err(map_db_error)?;
 
             // Record transaction
-            let tx = self.record_cost_transaction(
+            let tx_record = Self::record_cost_transaction_with_conn(
+                &tx,
                 &input.sku,
                 CostTransactionType::Issue,
                 consume_qty,
@@ -659,11 +741,19 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                 input.reference_id,
                 input.notes.as_deref(),
             )?;
-            transactions.push(tx);
+            transactions.push(tx_record);
 
             remaining -= consume_qty;
         }
 
+        if remaining > Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient remaining cost layers for sku {} (short by {})",
+                input.sku, remaining
+            )));
+        }
+
+        tx.commit().map_err(map_db_error)?;
         Ok(transactions)
     }
 
@@ -694,43 +784,17 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         notes: Option<&str>,
     ) -> Result<CostTransaction> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        let total_cost = quantity * unit_cost;
-
-        conn.execute(
-            "INSERT INTO cost_transactions (id, sku, transaction_type, quantity, unit_cost,
-                total_cost, layer_id, reference_type, reference_id, notes, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                id.to_string(),
-                sku,
-                transaction_type.to_string(),
-                quantity.to_string(),
-                unit_cost.to_string(),
-                total_cost.to_string(),
-                layer_id.map(|id| id.to_string()),
-                reference_type,
-                reference_id.map(|id| id.to_string()),
-                notes,
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        Ok(CostTransaction {
-            id,
-            sku: sku.to_string(),
+        Self::record_cost_transaction_with_conn(
+            &conn,
+            sku,
             transaction_type,
             quantity,
             unit_cost,
-            total_cost,
             layer_id,
-            reference_type: reference_type.map(String::from),
+            reference_type,
             reference_id,
-            notes: notes.map(String::from),
-            created_at: now,
-        })
+            notes,
+        )
     }
 
     fn list_cost_transactions(

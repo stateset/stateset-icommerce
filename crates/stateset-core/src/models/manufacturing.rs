@@ -205,7 +205,8 @@ impl WorkOrder {
     /// Generate a work order number based on timestamp
     pub fn generate_work_order_number() -> String {
         let now = Utc::now();
-        format!("WO-{}", now.format("%Y%m%d%H%M%S"))
+        let suffix = Uuid::new_v4().simple().to_string();
+        format!("WO-{}-{}", now.format("%Y%m%d%H%M%S%3f"), &suffix[..8])
     }
 
     /// Check if work order can be started
@@ -214,8 +215,11 @@ impl WorkOrder {
     }
 
     /// Check if work order can be completed
-    pub const fn can_complete(&self) -> bool {
+    pub fn can_complete(&self) -> bool {
         matches!(self.status, WorkOrderStatus::InProgress)
+            && self.quantity_to_build > Decimal::ZERO
+            && self.quantity_completed >= Decimal::ZERO
+            && self.quantity_completed <= self.quantity_to_build
     }
 
     /// Calculate completion percentage
@@ -223,7 +227,8 @@ impl WorkOrder {
         if self.quantity_to_build.is_zero() {
             Decimal::ZERO
         } else {
-            (self.quantity_completed / self.quantity_to_build) * Decimal::from(100)
+            let value = (self.quantity_completed / self.quantity_to_build) * Decimal::from(100);
+            value.clamp(Decimal::ZERO, Decimal::from(100))
         }
     }
 
@@ -529,12 +534,12 @@ pub struct WorkOrderMaterial {
 impl WorkOrderMaterial {
     /// Get remaining reserved quantity (reserved but not consumed)
     pub fn remaining_reserved(&self) -> Decimal {
-        self.reserved_quantity - self.consumed_quantity
+        (self.reserved_quantity - self.consumed_quantity).max(Decimal::ZERO)
     }
 
     /// Check if fully consumed
     pub fn is_fully_consumed(&self) -> bool {
-        self.consumed_quantity >= self.reserved_quantity
+        self.consumed_quantity == self.reserved_quantity
     }
 }
 

@@ -761,27 +761,70 @@ impl PgPurchaseOrderRepository {
         items: ReceivePurchaseOrderItems,
     ) -> Result<PurchaseOrder> {
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        for item in items.items {
-            sqlx::query("UPDATE purchase_order_items SET quantity_received = quantity_received + $1, updated_at = $2 WHERE id = $3")
-                .bind(item.quantity_received)
-                .bind(now)
+        for item in &items.items {
+            if item.quantity_received <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Received quantity must be greater than zero".to_string(),
+                ));
+            }
+
+            let result = sqlx::query(
+                "UPDATE purchase_order_items
+                 SET quantity_received = quantity_received + $1, updated_at = $2
+                 WHERE id = $3
+                   AND purchase_order_id = $4
+                   AND quantity_received + $1 <= quantity_ordered",
+            )
+            .bind(item.quantity_received)
+            .bind(now)
+            .bind(item.item_id)
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            if result.rows_affected() == 0 {
+                let exists: Option<bool> = sqlx::query_scalar(
+                    "SELECT TRUE FROM purchase_order_items WHERE id = $1 AND purchase_order_id = $2",
+                )
                 .bind(item.item_id)
-                .execute(&self.pool)
+                .bind(id)
+                .fetch_optional(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
+
+                if exists.is_none() {
+                    return Err(CommerceError::NotFound);
+                }
+
+                return Err(CommerceError::ValidationError(format!(
+                    "Receiving quantity would exceed ordered quantity for item {}",
+                    item.item_id
+                )));
+            }
         }
 
-        // Check receipt status
-        let items = self.load_items_async(id).await?;
-        let all_received = items.iter().all(|i| i.quantity_received >= i.quantity_ordered);
-        let any_received = items.iter().any(|i| i.quantity_received > Decimal::ZERO);
+        // Check receipt status using the same transaction snapshot.
+        let item_rows: Vec<(Decimal, Decimal)> = sqlx::query_as(
+            "SELECT quantity_ordered, quantity_received FROM purchase_order_items WHERE purchase_order_id = $1",
+        )
+        .bind(id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let all_received = !item_rows.is_empty()
+            && item_rows.iter().all(|(ordered, received)| received >= ordered);
+        let any_received = item_rows.iter().any(|(_, received)| *received > Decimal::ZERO);
 
         let new_status = if all_received {
             PurchaseOrderStatus::Received
         } else if any_received {
             PurchaseOrderStatus::PartiallyReceived
         } else {
+            tx.commit().await.map_err(map_db_error)?;
             return self.get_async(id).await?.ok_or(CommerceError::NotFound);
         };
 
@@ -792,9 +835,11 @@ impl PgPurchaseOrderRepository {
             .bind(delivered_date)
             .bind(now)
             .bind(id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }

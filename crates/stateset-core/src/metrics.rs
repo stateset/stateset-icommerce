@@ -137,6 +137,7 @@ fn register_int_gauge_resilient(name: &str, help: &str) -> Option<IntGauge> {
 
 /// Timer that records operation duration when dropped
 #[must_use]
+#[derive(Debug)]
 pub struct OperationTimer {
     operation: &'static str,
     labels: Vec<String>,
@@ -355,5 +356,14 @@ mod tests {
         let labels =
             LabelsBuilder::new().add("domain", "orders").add("operation", "create").build();
         assert_eq!(labels.len(), 2);
+    }
+
+    #[test]
+    fn test_domain_from_labels() {
+        let labels = vec!["foo:bar".to_string(), "domain:orders".to_string()];
+        assert_eq!(domain_from_labels(&labels), "orders");
+
+        let labels = vec!["domain:".to_string()];
+        assert_eq!(domain_from_labels(&labels), "unknown");
     }
 }

@@ -11,7 +11,7 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{OptionalExtension, params, params_from_iter, types::Value};
 use rust_decimal::Decimal;
 use stateset_core::{
     AccountsReceivableRepository, ApplyCreditMemo, ApplyPaymentToInvoices, ArAgingFilter,
@@ -219,12 +219,10 @@ impl SqliteAccountsReceivableRepository {
         parse_uuid_row(&customer_id, "invoice", "customer_id").map_err(map_db_error)
     }
 
-    fn recalculate_invoice(&self, invoice_id: InvoiceId) -> Result<()> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
+    fn recalculate_invoice_with_conn(
+        conn: &rusqlite::Connection,
+        invoice_id: InvoiceId,
+    ) -> Result<()> {
         // Sum all payment applications
         let paid: String = conn.query_row(
             "SELECT COALESCE(SUM(applied_amount), '0') FROM ar_payment_applications WHERE invoice_id = ?1",
@@ -276,6 +274,14 @@ impl SqliteAccountsReceivableRepository {
         .map_err(map_db_error)?;
 
         Ok(())
+    }
+
+    fn recalculate_invoice(&self, invoice_id: InvoiceId) -> Result<()> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        Self::recalculate_invoice_with_conn(&conn, invoice_id)
     }
 }
 
@@ -638,28 +644,39 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             "SELECT id, invoice_id, customer_id, activity_type, activity_date, dunning_letter_type, notes, contact_method, contact_result, promise_to_pay_date, promise_to_pay_amount, performed_by, created_at
              FROM ar_collection_activities WHERE 1=1"
         );
+        let mut params_vec: Vec<Value> = Vec::new();
 
         if let Some(inv_id) = &filter.invoice_id {
-            sql.push_str(&format!(" AND invoice_id = '{}'", inv_id));
+            sql.push_str(" AND invoice_id = ?");
+            params_vec.push(Value::Text(inv_id.to_string()));
         }
         if let Some(cust_id) = &filter.customer_id {
-            sql.push_str(&format!(" AND customer_id = '{}'", cust_id));
+            sql.push_str(" AND customer_id = ?");
+            params_vec.push(Value::Text(cust_id.to_string()));
         }
         if let Some(atype) = &filter.activity_type {
-            sql.push_str(&format!(" AND activity_type = '{}'", atype));
+            sql.push_str(" AND activity_type = ?");
+            params_vec.push(Value::Text(atype.to_string()));
         }
 
         sql.push_str(" ORDER BY activity_date DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(" LIMIT ?");
+            params_vec.push(Value::Integer(i64::from(limit)));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(" OFFSET ?");
+            params_vec.push(Value::Integer(i64::from(offset)));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map([], Self::map_collection_activity_row).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(
+                params_from_iter(params_vec),
+                Self::map_collection_activity_row,
+            )
+            .map_err(map_db_error)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
@@ -914,12 +931,15 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             "SELECT id, write_off_number, invoice_id, customer_id, amount, reason, notes, write_off_date, approved_by, approved_at, reversed_at, gl_journal_entry_id, created_at
              FROM ar_write_offs WHERE 1=1"
         );
+        let mut params_vec: Vec<Value> = Vec::new();
 
         if let Some(cust_id) = &filter.customer_id {
-            sql.push_str(&format!(" AND customer_id = '{}'", cust_id));
+            sql.push_str(" AND customer_id = ?");
+            params_vec.push(Value::Text(cust_id.to_string()));
         }
         if let Some(inv_id) = &filter.invoice_id {
-            sql.push_str(&format!(" AND invoice_id = '{}'", inv_id));
+            sql.push_str(" AND invoice_id = ?");
+            params_vec.push(Value::Text(inv_id.to_string()));
         }
         if !filter.include_reversed.unwrap_or(false) {
             sql.push_str(" AND reversed_at IS NULL");
@@ -928,11 +948,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         sql.push_str(" ORDER BY write_off_date DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(" LIMIT ?");
+            params_vec.push(Value::Integer(i64::from(limit)));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map([], Self::map_write_off_row).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_vec), Self::map_write_off_row)
+            .map_err(map_db_error)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
@@ -1066,12 +1089,15 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             "SELECT id, credit_memo_number, customer_id, original_invoice_id, reason, amount, applied_amount, unapplied_amount, status, notes, issue_date, gl_journal_entry_id, created_at, updated_at
              FROM ar_credit_memos WHERE 1=1"
         );
+        let mut params_vec: Vec<Value> = Vec::new();
 
         if let Some(cust_id) = &filter.customer_id {
-            sql.push_str(&format!(" AND customer_id = '{}'", cust_id));
+            sql.push_str(" AND customer_id = ?");
+            params_vec.push(Value::Text(cust_id.to_string()));
         }
         if let Some(status) = &filter.status {
-            sql.push_str(&format!(" AND status = '{}'", status));
+            sql.push_str(" AND status = ?");
+            params_vec.push(Value::Text(status.to_string()));
         }
         if filter.has_unapplied.unwrap_or(false) {
             sql.push_str(" AND CAST(unapplied_amount AS REAL) > 0");
@@ -1080,16 +1106,25 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         sql.push_str(" ORDER BY issue_date DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(" LIMIT ?");
+            params_vec.push(Value::Integer(i64::from(limit)));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map([], Self::map_credit_memo_row).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_vec), Self::map_credit_memo_row)
+            .map_err(map_db_error)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }
 
     fn apply_credit_memo(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {
-        let conn = self
+        if input.amount <= Decimal::ZERO {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Credit memo application amount must be greater than zero".into(),
+            ));
+        }
+
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
@@ -1110,11 +1145,33 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             ));
         }
 
+        let invoice_customer_id = self.get_invoice_customer_id(input.invoice_id.into())?;
+        if invoice_customer_id != cm.customer_id {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Credit memo and invoice customer must match".into(),
+            ));
+        }
+
+        let balance_due: String = conn
+            .query_row(
+                "SELECT balance_due FROM invoices WHERE id = ?1",
+                params![input.invoice_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+        let balance_due = parse_decimal_safe(&balance_due, "invoice", "balance_due")?;
+        if input.amount > balance_due {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Credit amount exceeds invoice balance due".into(),
+            ));
+        }
+
         let now = Utc::now();
         let app_id = Uuid::new_v4();
+        let tx = conn.transaction().map_err(map_db_error)?;
 
         // Create application record
-        conn.execute(
+        tx.execute(
             "INSERT INTO ar_credit_memo_applications (id, credit_memo_id, invoice_id, applied_amount, applied_date, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -1136,7 +1193,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             CreditMemoStatus::PartiallyApplied
         };
 
-        conn.execute(
+        tx.execute(
             "UPDATE ar_credit_memos SET applied_amount = ?1, unapplied_amount = ?2, status = ?3 WHERE id = ?4",
             params![
                 new_applied.to_string(),
@@ -1147,7 +1204,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         ).map_err(map_db_error)?;
 
         // Recalculate invoice
-        self.recalculate_invoice(input.invoice_id.into())?;
+        Self::recalculate_invoice_with_conn(&tx, input.invoice_id.into())?;
+        tx.commit().map_err(map_db_error)?;
 
         Ok(CreditMemo {
             applied_amount: new_applied,
@@ -1193,18 +1251,55 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         &self,
         input: ApplyPaymentToInvoices,
     ) -> Result<Vec<ArPaymentApplication>> {
-        let conn = self
+        if input.applications.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
         let mut applications = Vec::new();
+        let mut expected_customer_id: Option<Uuid> = None;
 
-        for app in input.applications {
+        for app in &input.applications {
+            if app.amount <= Decimal::ZERO {
+                return Err(stateset_core::CommerceError::ValidationError(
+                    "Payment application amount must be greater than zero".into(),
+                ));
+            }
+
+            let invoice_customer_id = self.get_invoice_customer_id(app.invoice_id.into())?;
+            if let Some(expected) = expected_customer_id {
+                if expected != invoice_customer_id {
+                    return Err(stateset_core::CommerceError::ValidationError(
+                        "All invoice applications for a payment must belong to the same customer"
+                            .into(),
+                    ));
+                }
+            } else {
+                expected_customer_id = Some(invoice_customer_id);
+            }
+
+            let balance_due: String = tx
+                .query_row(
+                    "SELECT balance_due FROM invoices WHERE id = ?1",
+                    params![app.invoice_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+            let balance_due = parse_decimal_safe(&balance_due, "invoice", "balance_due")?;
+            if app.amount > balance_due {
+                return Err(stateset_core::CommerceError::ValidationError(
+                    "Payment application amount exceeds invoice balance due".into(),
+                ));
+            }
+
             let app_id = Uuid::new_v4();
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO ar_payment_applications (id, payment_id, invoice_id, applied_amount, applied_date, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
@@ -1218,7 +1313,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             ).map_err(map_db_error)?;
 
             // Recalculate invoice
-            self.recalculate_invoice(app.invoice_id.into())?;
+            Self::recalculate_invoice_with_conn(&tx, app.invoice_id.into())?;
 
             applications.push(ArPaymentApplication {
                 id: app_id,
@@ -1230,6 +1325,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             });
         }
 
+        tx.commit().map_err(map_db_error)?;
         Ok(applications)
     }
 

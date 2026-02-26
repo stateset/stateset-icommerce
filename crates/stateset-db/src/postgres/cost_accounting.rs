@@ -669,7 +669,8 @@ impl PgCostAccountingRepository {
             "SELECT id, sku, layer_date, quantity, remaining_quantity, unit_cost, total_cost,
                     source_type, source_id, lot_id, location_id, created_at
              FROM cost_layers WHERE sku = $1 AND remaining_quantity > 0
-             ORDER BY layer_date ASC",
+             ORDER BY layer_date ASC
+             FOR UPDATE",
         )
         .bind(&input.sku)
         .fetch_all(tx.as_mut())
@@ -708,6 +709,13 @@ impl PgCostAccountingRepository {
             remaining -= consume_qty;
         }
 
+        if remaining > Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient remaining cost layers for sku {} (short by {})",
+                input.sku, remaining
+            )));
+        }
+
         tx.commit().await.map_err(map_db_error)?;
         Ok(transactions)
     }
@@ -721,7 +729,8 @@ impl PgCostAccountingRepository {
             "SELECT id, sku, layer_date, quantity, remaining_quantity, unit_cost, total_cost,
                     source_type, source_id, lot_id, location_id, created_at
              FROM cost_layers WHERE sku = $1 AND remaining_quantity > 0
-             ORDER BY layer_date DESC",
+             ORDER BY layer_date DESC
+             FOR UPDATE",
         )
         .bind(&input.sku)
         .fetch_all(tx.as_mut())
@@ -758,6 +767,13 @@ impl PgCostAccountingRepository {
             transactions.push(tx_record);
 
             remaining -= consume_qty;
+        }
+
+        if remaining > Decimal::ZERO {
+            return Err(CommerceError::ValidationError(format!(
+                "Insufficient remaining cost layers for sku {} (short by {})",
+                input.sku, remaining
+            )));
         }
 
         tx.commit().await.map_err(map_db_error)?;

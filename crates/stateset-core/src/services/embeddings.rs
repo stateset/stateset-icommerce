@@ -56,6 +56,26 @@ pub struct EmbeddingResult {
 }
 
 impl EmbeddingService {
+    fn openai_error_from_body_result<E: std::fmt::Display>(
+        status: reqwest::StatusCode,
+        body_result: std::result::Result<String, E>,
+    ) -> CommerceError {
+        match body_result {
+            Ok(body) if body.trim().is_empty() => CommerceError::ExternalServiceError(format!(
+                "OpenAI API error ({}) with empty response body",
+                status
+            )),
+            Ok(body) => CommerceError::ExternalServiceError(format!(
+                "OpenAI API error ({}): {}",
+                status, body
+            )),
+            Err(err) => CommerceError::ExternalServiceError(format!(
+                "OpenAI API error ({}); failed to read error body: {}",
+                status, err
+            )),
+        }
+    }
+
     fn build_client(
         timeout_secs: u64,
     ) -> std::result::Result<reqwest::blocking::Client, reqwest::Error> {
@@ -130,11 +150,7 @@ impl EmbeddingService {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().unwrap_or_default();
-            return Err(CommerceError::ExternalServiceError(format!(
-                "OpenAI API error ({}): {}",
-                status, body
-            )));
+            return Err(Self::openai_error_from_body_result(status, response.text()));
         }
 
         let result: OpenAIEmbeddingResponse = response.json().map_err(|e| {
@@ -263,5 +279,37 @@ mod tests {
         assert!(text.contains("Test Product"));
         assert!(text.contains("A great product"));
         assert!(text.contains("test-product"));
+    }
+
+    #[test]
+    fn test_openai_error_from_body_result_with_body() {
+        let err = EmbeddingService::openai_error_from_body_result::<&str>(
+            reqwest::StatusCode::BAD_REQUEST,
+            Ok("{\"error\":\"bad request\"}".to_string()),
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("OpenAI API error (400 Bad Request)"));
+        assert!(msg.contains("bad request"));
+    }
+
+    #[test]
+    fn test_openai_error_from_body_result_with_empty_body() {
+        let err = EmbeddingService::openai_error_from_body_result::<&str>(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            Ok(String::new()),
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("OpenAI API error (429 Too Many Requests) with empty response body"));
+    }
+
+    #[test]
+    fn test_openai_error_from_body_result_when_body_read_fails() {
+        let err = EmbeddingService::openai_error_from_body_result(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            Err("body read failed"),
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("OpenAI API error (500 Internal Server Error)"));
+        assert!(msg.contains("failed to read error body: body read failed"));
     }
 }

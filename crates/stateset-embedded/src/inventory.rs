@@ -86,16 +86,20 @@ impl Inventory {
         &self,
         reservation_id: Uuid,
         event: fn(InventoryReservation, String) -> CommerceEvent,
-    ) {
-        let reservation = match self.db.inventory().get_reservation(reservation_id) {
-            Ok(Some(reservation)) => reservation,
-            _ => return,
-        };
-        let sku = match self.db.inventory().get_item(reservation.item_id) {
-            Ok(Some(item)) => item.sku,
-            _ => return,
-        };
+    ) -> Result<()> {
+        let reservation = self
+            .db
+            .inventory()
+            .get_reservation(reservation_id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
+        let sku = self
+            .db
+            .inventory()
+            .get_item(reservation.item_id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?
+            .sku;
         self.emit(event(reservation, sku));
+        Ok(())
     }
 
     /// Create a new inventory item (SKU).
@@ -270,6 +274,22 @@ impl Inventory {
                 reference_id: reservation.reference_id.clone(),
                 timestamp: reservation.created_at,
             });
+
+            if let Some(balance) =
+                self.db.inventory().get_balance(reservation.item_id, reservation.location_id)?
+            {
+                if let Some(reorder_point) = balance.reorder_point {
+                    if balance.quantity_available < reorder_point {
+                        self.emit(CommerceEvent::LowStockAlert {
+                            sku: sku.to_string(),
+                            location_id: reservation.location_id,
+                            current_quantity: balance.quantity_available,
+                            reorder_point,
+                            timestamp: reservation.created_at,
+                        });
+                    }
+                }
+            }
         }
         Ok(reservation)
     }
@@ -286,7 +306,7 @@ impl Inventory {
                     quantity: reservation.quantity,
                     timestamp: Utc::now(),
                 }
-            });
+            })?;
         }
         Ok(())
     }
@@ -303,7 +323,7 @@ impl Inventory {
                     quantity: reservation.quantity,
                     timestamp: Utc::now(),
                 }
-            });
+            })?;
         }
         Ok(())
     }
@@ -334,10 +354,16 @@ impl Inventory {
 
     /// Check if a SKU has sufficient available quantity.
     pub fn has_stock(&self, sku: &str, quantity: Decimal) -> Result<bool> {
+        if quantity < Decimal::ZERO {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Quantity to check must be non-negative".to_string(),
+            ));
+        }
+
         if let Some(stock) = self.get_stock(sku)? {
             Ok(stock.total_available >= quantity)
         } else {
-            Ok(false)
+            Err(stateset_core::CommerceError::NotFound)
         }
     }
 }

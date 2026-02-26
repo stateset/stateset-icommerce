@@ -589,32 +589,46 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     }
 
     fn complete(&self, id: Uuid, quantity_completed: Decimal) -> Result<WorkOrder> {
-        // Get existing work order first (releases connection after)
-        let existing = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        let now = Utc::now();
+        if quantity_completed <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Completed quantity must be greater than zero".to_string(),
+            ));
+        }
 
-        let new_quantity = existing.quantity_completed + quantity_completed;
-        let status = if new_quantity >= existing.quantity_to_build {
-            "completed"
-        } else {
-            "partially_completed"
-        };
+        let now = Utc::now();
 
         // Do the update in a scoped block
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            conn.execute(
-                "UPDATE manufacturing_work_orders SET status = ?, quantity_completed = ?, actual_end = ?, updated_at = ? WHERE id = ?",
+            let rows_affected = conn
+                .execute(
+                    "UPDATE manufacturing_work_orders
+                 SET quantity_completed = quantity_completed + ?,
+                     status = CASE
+                         WHEN quantity_completed + ? >= quantity_to_build THEN 'completed'
+                         ELSE 'partially_completed'
+                     END,
+                     actual_end = CASE
+                         WHEN quantity_completed + ? >= quantity_to_build THEN ?
+                         ELSE actual_end
+                     END,
+                     updated_at = ?
+                 WHERE id = ?",
                 rusqlite::params![
-                    status,
-                    new_quantity.to_string(),
+                    quantity_completed.to_string(),
+                    quantity_completed.to_string(),
+                    quantity_completed.to_string(),
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
             )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            if rows_affected == 0 {
+                return Err(CommerceError::NotFound);
+            }
         } // Connection released here
 
         // Fetch and return the updated work order
@@ -1141,24 +1155,8 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let placeholders = build_in_clause(ids.len());
-        let params = uuid_params(&ids);
-        let param_refs = params_refs(&params);
 
-        // Delete tasks first (foreign key constraint)
-        let sql = format!(
-            "DELETE FROM manufacturing_work_order_tasks WHERE work_order_id IN ({})",
-            placeholders
-        );
-        tx.execute(&sql, param_refs.as_slice()).map_err(map_db_error)?;
-
-        // Delete materials (foreign key constraint)
-        let sql = format!(
-            "DELETE FROM manufacturing_work_order_materials WHERE work_order_id IN ({})",
-            placeholders
-        );
-        tx.execute(&sql, param_refs.as_slice()).map_err(map_db_error)?;
-
-        // Delete work orders (using soft delete - mark as cancelled)
+        // Soft-delete semantics must match single-item delete.
         let now = Utc::now().to_rfc3339();
         let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
         all_params.extend(uuid_params(&ids));

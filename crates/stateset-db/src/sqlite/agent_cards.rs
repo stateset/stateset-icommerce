@@ -2,7 +2,7 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
-    parse_enum_row, parse_uuid_row, uuid_params,
+    parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_row, uuid_params,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -52,14 +52,12 @@ impl SqliteAgentCardRepository {
         let supported_assets_json: String = row.get("supported_assets")?;
         let a2a_skills_json: Option<String> = row.get("a2a_skills")?;
 
-        // Parse JSON arrays
         let supported_networks: Vec<X402Network> =
-            serde_json::from_str(&supported_networks_json).unwrap_or_default();
+            parse_json_row(&supported_networks_json, "agent_card", "supported_networks")?;
         let supported_assets: Vec<X402Asset> =
-            serde_json::from_str(&supported_assets_json).unwrap_or_default();
-        let a2a_skills: Vec<A2ASkill> = a2a_skills_json
-            .map(|s| serde_json::from_str(&s).unwrap_or_default())
-            .unwrap_or_default();
+            parse_json_row(&supported_assets_json, "agent_card", "supported_assets")?;
+        let a2a_skills: Vec<A2ASkill> =
+            parse_json_opt_row(a2a_skills_json, "agent_card", "a2a_skills")?.unwrap_or_default();
 
         Ok(AgentCard {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "agent_card", "id")?,
@@ -579,5 +577,99 @@ impl AgentCardRepository for SqliteAgentCardRepository {
             results.push(row.map_err(map_db_error)?);
         }
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn map_agent_card_from_inline_row(
+        conn: &rusqlite::Connection,
+        supported_networks: &str,
+        supported_assets: &str,
+        a2a_skills: Option<&str>,
+    ) -> rusqlite::Result<AgentCard> {
+        conn.query_row(
+            "SELECT
+                ?1 AS id,
+                ?2 AS name,
+                ?3 AS description,
+                ?4 AS wallet_address,
+                ?5 AS public_key,
+                ?6 AS supported_networks,
+                ?7 AS supported_assets,
+                ?8 AS a2a_skills,
+                ?9 AS trust_level,
+                ?10 AS verified_at,
+                ?11 AS verification_method,
+                ?12 AS endpoint_url,
+                ?13 AS endpoint_protocol,
+                ?14 AS merchant_id,
+                ?15 AS merchant_name,
+                ?16 AS business_category,
+                ?17 AS max_transaction_amount,
+                ?18 AS daily_volume_limit,
+                ?19 AS requires_kyc,
+                ?20 AS active,
+                ?21 AS suspended_at,
+                ?22 AS suspension_reason,
+                ?23 AS metadata,
+                ?24 AS created_at,
+                ?25 AS updated_at",
+            rusqlite::params![
+                "550e8400-e29b-41d4-a716-446655440000",
+                "Agent",
+                Option::<String>::None,
+                "wallet",
+                "public-key",
+                supported_networks,
+                supported_assets,
+                a2a_skills,
+                "standard",
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<i64>::None,
+                Option::<i64>::None,
+                0i32,
+                1i32,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ],
+            SqliteAgentCardRepository::row_to_agent_card,
+        )
+    }
+
+    #[test]
+    fn row_to_agent_card_parses_json_arrays() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory sqlite should open");
+        let card = map_agent_card_from_inline_row(
+            &conn,
+            r#"["set_chain"]"#,
+            r#"["usdc"]"#,
+            Some(r#"["sell"]"#),
+        )
+        .expect("valid JSON arrays should parse");
+
+        assert_eq!(card.supported_networks, vec![X402Network::SetChain]);
+        assert_eq!(card.supported_assets, vec![X402Asset::Usdc]);
+        assert_eq!(card.a2a_skills, vec![A2ASkill::Sell]);
+    }
+
+    #[test]
+    fn row_to_agent_card_rejects_invalid_json() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory sqlite should open");
+        let err = map_agent_card_from_inline_row(&conn, r#"["set_chain"]"#, "not-json", None)
+            .expect_err("invalid JSON should fail row mapping");
+
+        assert!(err.to_string().contains("agent_card.supported_assets"));
     }
 }

@@ -458,7 +458,8 @@ impl GlAccount {
 
     /// Calculates the balance effect of a debit/credit
     pub fn balance_effect(&self, debit: Decimal, credit: Decimal) -> Decimal {
-        match self.normal_balance {
+        // Keep behavior consistent with account type, even if persisted normal_balance drifts.
+        match self.account_type.normal_balance() {
             BalanceSide::Debit => debit - credit,
             BalanceSide::Credit => credit - debit,
         }
@@ -535,7 +536,19 @@ impl JournalEntry {
 
     /// Returns true if entry can be posted
     pub fn can_post(&self) -> bool {
-        self.status == JournalEntryStatus::Draft && self.is_balanced && !self.lines.is_empty()
+        if self.status != JournalEntryStatus::Draft || self.lines.is_empty() {
+            return false;
+        }
+
+        if !self.lines.iter().all(JournalEntryLine::is_valid) {
+            return false;
+        }
+
+        let calculated_debits: Decimal = self.lines.iter().map(|l| l.debit_amount).sum();
+        let calculated_credits: Decimal = self.lines.iter().map(|l| l.credit_amount).sum();
+        self.total_debits == calculated_debits
+            && self.total_credits == calculated_credits
+            && calculated_debits == calculated_credits
     }
 
     /// Returns true if entry can be voided
@@ -847,8 +860,9 @@ pub struct JournalEntryFilter {
 
 /// Generate a journal entry number using a timestamp
 pub fn generate_journal_entry_number() -> String {
-    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
-    format!("JE-{}", timestamp)
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S%3f").to_string();
+    let suffix = Uuid::new_v4().simple().to_string();
+    format!("JE-{}-{}", timestamp, &suffix[..8])
 }
 
 /// Generate a period name in YYYY-MM format

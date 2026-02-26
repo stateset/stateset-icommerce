@@ -436,6 +436,55 @@ impl PgAccountsReceivableRepository {
         Ok(())
     }
 
+    async fn recalculate_invoice_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        invoice_id: Uuid,
+    ) -> Result<()> {
+        let paid: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(applied_amount), 0) FROM ar_payment_applications WHERE invoice_id = $1",
+        )
+        .bind(invoice_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let credits: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(applied_amount), 0) FROM ar_credit_memo_applications WHERE invoice_id = $1",
+        )
+        .bind(invoice_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let total_applied = paid + credits;
+
+        let total: Decimal = sqlx::query_scalar("SELECT total FROM invoices WHERE id = $1")
+            .bind(invoice_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        let balance_due = total - total_applied;
+        let status = if balance_due <= Decimal::ZERO {
+            "paid"
+        } else if total_applied > Decimal::ZERO {
+            "partially_paid"
+        } else {
+            "sent"
+        };
+
+        sqlx::query("UPDATE invoices SET amount_paid = $1, balance_due = $2, status = $3 WHERE id = $4")
+            .bind(total_applied)
+            .bind(balance_due)
+            .bind(status)
+            .bind(invoice_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
     pub async fn get_aging_summary_async(&self) -> Result<ArAgingSummary> {
         let (current, days_1_30, days_31_60, days_61_90, days_over_90): (
             Decimal,
@@ -1057,17 +1106,52 @@ impl PgAccountsReceivableRepository {
     }
 
     pub async fn apply_credit_memo_async(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {
-        let cm = self
-            .get_credit_memo_async(input.credit_memo_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        if input.amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Credit memo application amount must be greater than zero".into(),
+            ));
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let cm_row = sqlx::query_as::<_, CreditMemoRow>(
+            "SELECT * FROM ar_credit_memos WHERE id = $1 FOR UPDATE",
+        )
+        .bind(input.credit_memo_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        let cm = Self::row_to_credit_memo(cm_row)?;
 
         if !cm.can_apply() {
             return Err(CommerceError::ValidationError("Credit memo cannot be applied".into()));
         }
 
+        let invoice_customer_id: Uuid =
+            sqlx::query_scalar("SELECT customer_id FROM invoices WHERE id = $1")
+                .bind(input.invoice_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if invoice_customer_id != cm.customer_id {
+            return Err(CommerceError::ValidationError(
+                "Credit memo and invoice customer must match".into(),
+            ));
+        }
+
         if input.amount > cm.unapplied_amount {
             return Err(CommerceError::ValidationError("Amount exceeds unapplied balance".into()));
+        }
+
+        let balance_due: Decimal = sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1")
+            .bind(input.invoice_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        if input.amount > balance_due {
+            return Err(CommerceError::ValidationError(
+                "Credit amount exceeds invoice balance due".into(),
+            ));
         }
 
         let now = Utc::now();
@@ -1084,7 +1168,7 @@ impl PgAccountsReceivableRepository {
         .bind(input.amount)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1104,11 +1188,12 @@ impl PgAccountsReceivableRepository {
         .bind(new_unapplied)
         .bind(new_status.to_string())
         .bind(input.credit_memo_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.recalculate_invoice_async(input.invoice_id).await?;
+        Self::recalculate_invoice_tx(&mut tx, input.invoice_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(CreditMemo {
             applied_amount: new_applied,
@@ -1150,10 +1235,50 @@ impl PgAccountsReceivableRepository {
         &self,
         input: ApplyPaymentToInvoices,
     ) -> Result<Vec<ArPaymentApplication>> {
+        if input.applications.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
         let mut applications = Vec::new();
+        let mut expected_customer_id: Option<Uuid> = None;
 
         for app in input.applications {
+            if app.amount <= Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Payment application amount must be greater than zero".into(),
+                ));
+            }
+
+            let invoice_customer_id: Uuid =
+                sqlx::query_scalar("SELECT customer_id FROM invoices WHERE id = $1")
+                    .bind(app.invoice_id)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            if let Some(expected) = expected_customer_id {
+                if expected != invoice_customer_id {
+                    return Err(CommerceError::ValidationError(
+                        "All invoice applications for a payment must belong to the same customer"
+                            .into(),
+                    ));
+                }
+            } else {
+                expected_customer_id = Some(invoice_customer_id);
+            }
+
+            let balance_due: Decimal = sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1")
+                .bind(app.invoice_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            if app.amount > balance_due {
+                return Err(CommerceError::ValidationError(
+                    "Payment application amount exceeds invoice balance due".into(),
+                ));
+            }
+
             let app_id = Uuid::new_v4();
 
             sqlx::query(
@@ -1167,11 +1292,11 @@ impl PgAccountsReceivableRepository {
             .bind(app.amount)
             .bind(now)
             .bind(now)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-            self.recalculate_invoice_async(app.invoice_id).await?;
+            Self::recalculate_invoice_tx(&mut tx, app.invoice_id).await?;
 
             applications.push(ArPaymentApplication {
                 id: app_id,
@@ -1183,6 +1308,7 @@ impl PgAccountsReceivableRepository {
             });
         }
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(applications)
     }
 

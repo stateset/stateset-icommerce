@@ -477,25 +477,38 @@ impl PgWorkOrderRepository {
 
     /// Complete work order (async)
     pub async fn complete_async(&self, id: Uuid, quantity_completed: Decimal) -> Result<WorkOrder> {
-        let existing = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        if quantity_completed <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Completed quantity must be greater than zero".to_string(),
+            ));
+        }
+
         let now = Utc::now();
+        let result = sqlx::query(
+            "UPDATE manufacturing_work_orders
+             SET quantity_completed = quantity_completed + $1,
+                 status = CASE
+                    WHEN quantity_completed + $1 >= quantity_to_build THEN 'completed'
+                    ELSE 'partially_completed'
+                 END,
+                 actual_end = CASE
+                    WHEN quantity_completed + $1 >= quantity_to_build THEN $2
+                    ELSE actual_end
+                 END,
+                 updated_at = $3
+             WHERE id = $4",
+        )
+        .bind(quantity_completed)
+        .bind(now)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
-        let new_quantity = existing.quantity_completed + quantity_completed;
-        let status = if new_quantity >= existing.quantity_to_build {
-            "completed"
-        } else {
-            "partially_completed"
-        };
-
-        sqlx::query("UPDATE manufacturing_work_orders SET status = $1, quantity_completed = $2, actual_end = $3, updated_at = $4 WHERE id = $5")
-            .bind(status)
-            .bind(new_quantity)
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::NotFound);
+        }
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1030,24 +1043,19 @@ impl PgWorkOrderRepository {
     /// Delete multiple work orders in a batch atomically (async)
     pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
         validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
 
-        // Delete materials first (foreign key constraint)
-        sqlx::query("DELETE FROM manufacturing_work_order_materials WHERE work_order_id = ANY($1)")
-            .bind(&ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        // Delete tasks (foreign key constraint)
-        sqlx::query("DELETE FROM manufacturing_work_order_tasks WHERE work_order_id = ANY($1)")
-            .bind(&ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        // Delete work orders
-        sqlx::query("DELETE FROM manufacturing_work_orders WHERE id = ANY($1)")
+        // Match single-delete semantics: soft-cancel work orders atomically.
+        sqlx::query(
+            "UPDATE manufacturing_work_orders
+             SET status = 'cancelled', updated_at = $1
+             WHERE id = ANY($2)",
+        )
+            .bind(now)
             .bind(&ids)
             .execute(tx.as_mut())
             .await
