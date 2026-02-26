@@ -5,7 +5,6 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
-use std::collections::HashMap;
 use stateset_core::{
     AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem,
     BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem,
@@ -14,6 +13,7 @@ use stateset_core::{
     generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
     validate_batch_size,
 };
+use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -750,14 +750,13 @@ impl PgAccountsPayableRepository {
         }
 
         for (bill_id, allocated_amount) in &allocations_by_bill {
-            let bill = sqlx::query_as::<_, BillRow>(
-                "SELECT * FROM ap_bills WHERE id = $1 FOR UPDATE",
-            )
-            .bind(*bill_id)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::NotFound)?;
+            let bill =
+                sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1 FOR UPDATE")
+                    .bind(*bill_id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or(CommerceError::NotFound)?;
 
             if bill.supplier_id != supplier_id {
                 return Err(CommerceError::ValidationError(
@@ -771,8 +770,10 @@ impl PgAccountsPayableRepository {
                     bill.status, e
                 ))
             })?;
-            if !matches!(bill_status, BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue)
-            {
+            if !matches!(
+                bill_status,
+                BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue
+            ) {
                 return Err(CommerceError::ValidationError(
                     "Bill is not in a payable status".to_string(),
                 ));

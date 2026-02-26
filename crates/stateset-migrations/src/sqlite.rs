@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{MigrationError, Result};
@@ -78,19 +78,34 @@ impl SqliteMigrator {
              ORDER BY version"
         ))?;
 
-        let records = stmt
+        let rows = stmt
             .query_map([], |row| {
                 let version: u32 = row.get(0)?;
                 let name: String = row.get(1)?;
                 let applied_at_str: String = row.get(2)?;
                 let checksum: String = row.get(3)?;
                 let execution_time_ms: u64 = row.get(4)?;
-
-                let applied_at = parse_datetime(&applied_at_str);
-
-                Ok(MigrationRecord { version, name, applied_at, checksum, execution_time_ms })
+                Ok((version, name, applied_at_str, checksum, execution_time_ms))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut records = Vec::with_capacity(rows.len());
+        for (version, name, applied_at_str, checksum, execution_time_ms) in rows {
+            let applied_at = parse_datetime(&applied_at_str).map_err(|err| {
+                MigrationError::InvalidMigration {
+                    reason: format!(
+                        "invalid applied_at timestamp for migration v{version} '{name}': {err}",
+                    ),
+                }
+            })?;
+            records.push(MigrationRecord {
+                version,
+                name,
+                applied_at,
+                checksum,
+                execution_time_ms,
+            });
+        }
 
         Ok(records)
     }
@@ -270,11 +285,9 @@ impl SqliteMigrator {
     }
 }
 
-/// Parse a datetime string in RFC 3339 format, falling back to a default time.
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap())
+/// Parse a datetime string in RFC 3339 format.
+fn parse_datetime(s: &str) -> std::result::Result<DateTime<Utc>, chrono::ParseError> {
+    DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc))
 }
 
 #[cfg(test)]
@@ -585,14 +598,31 @@ mod tests {
 
     #[test]
     fn parse_datetime_valid_rfc3339() {
-        let dt = parse_datetime("2024-01-15T10:30:00+00:00");
+        let dt = parse_datetime("2024-01-15T10:30:00+00:00").unwrap();
         assert_eq!(dt.year(), 2024);
     }
 
     #[test]
-    fn parse_datetime_invalid_falls_back() {
-        let dt = parse_datetime("not-a-date");
-        assert_eq!(dt.year(), 2000);
+    fn parse_datetime_invalid_returns_error() {
+        assert!(parse_datetime("not-a-date").is_err());
+    }
+
+    #[test]
+    fn status_fails_on_invalid_applied_timestamp() {
+        let conn = memory_conn();
+        SqliteMigrator::ensure_migrations_table(&conn).unwrap();
+        conn.execute(
+            &format!(
+                "INSERT INTO {MIGRATIONS_TABLE} (version, name, applied_at, checksum, execution_time_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)"
+            ),
+            rusqlite::params![1u32, "bad_time", "not-a-date", "checksum", 0u64],
+        )
+        .unwrap();
+
+        let migrator = SqliteMigrator::new(MigrationRegistry::new());
+        let err = migrator.status(&conn).unwrap_err();
+        assert!(matches!(err, MigrationError::InvalidMigration { .. }));
     }
 
     #[test]

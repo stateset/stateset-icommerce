@@ -672,10 +672,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
-            .query_map(
-                params_from_iter(params_vec),
-                Self::map_collection_activity_row,
-            )
+            .query_map(params_from_iter(params_vec), Self::map_collection_activity_row)
             .map_err(map_db_error)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
     }

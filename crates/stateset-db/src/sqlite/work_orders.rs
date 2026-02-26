@@ -615,15 +615,15 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                      END,
                      updated_at = ?
                  WHERE id = ?",
-                rusqlite::params![
-                    quantity_completed.to_string(),
-                    quantity_completed.to_string(),
-                    quantity_completed.to_string(),
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                    id.to_string(),
-                ],
-            )
+                    rusqlite::params![
+                        quantity_completed.to_string(),
+                        quantity_completed.to_string(),
+                        quantity_completed.to_string(),
+                        now.to_rfc3339(),
+                        now.to_rfc3339(),
+                        id.to_string(),
+                    ],
+                )
                 .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             if rows_affected == 0 {

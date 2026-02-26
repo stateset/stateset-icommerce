@@ -635,8 +635,10 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     status, e
                 ))
             })?;
-            if !matches!(bill_status, BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue)
-            {
+            if !matches!(
+                bill_status,
+                BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue
+            ) {
                 return Err(CommerceError::ValidationError(
                     "Bill is not in a payable status".into(),
                 ));
@@ -788,11 +790,31 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             let mut values = Vec::new();
             while let Some(row) = rows.next().map_err(map_db_error)? {
                 values.push(PaymentAllocation {
-                    id: parse_uuid(&row.get::<_, String>(0).map_err(map_db_error)?, "payment_allocation", "id")?,
-                    payment_id: parse_uuid(&row.get::<_, String>(1).map_err(map_db_error)?, "payment_allocation", "payment_id")?,
-                    bill_id: parse_uuid(&row.get::<_, String>(2).map_err(map_db_error)?, "payment_allocation", "bill_id")?,
-                    amount: parse_decimal_strict(&row.get::<_, String>(3).map_err(map_db_error)?, "payment_allocation", "amount")?,
-                    created_at: parse_datetime(&row.get::<_, String>(4).map_err(map_db_error)?, "payment_allocation", "created_at")?,
+                    id: parse_uuid(
+                        &row.get::<_, String>(0).map_err(map_db_error)?,
+                        "payment_allocation",
+                        "id",
+                    )?,
+                    payment_id: parse_uuid(
+                        &row.get::<_, String>(1).map_err(map_db_error)?,
+                        "payment_allocation",
+                        "payment_id",
+                    )?,
+                    bill_id: parse_uuid(
+                        &row.get::<_, String>(2).map_err(map_db_error)?,
+                        "payment_allocation",
+                        "bill_id",
+                    )?,
+                    amount: parse_decimal_strict(
+                        &row.get::<_, String>(3).map_err(map_db_error)?,
+                        "payment_allocation",
+                        "amount",
+                    )?,
+                    created_at: parse_datetime(
+                        &row.get::<_, String>(4).map_err(map_db_error)?,
+                        "payment_allocation",
+                        "created_at",
+                    )?,
                 });
             }
             values

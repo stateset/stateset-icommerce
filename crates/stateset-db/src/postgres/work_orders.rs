@@ -1055,11 +1055,11 @@ impl PgWorkOrderRepository {
              SET status = 'cancelled', updated_at = $1
              WHERE id = ANY($2)",
         )
-            .bind(now)
-            .bind(&ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        .bind(now)
+        .bind(&ids)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         tx.commit().await.map_err(map_db_error)?;
         Ok(())

@@ -36,8 +36,8 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     ApAgingSummary, BatchResult, Bill, BillFilter, BillItem, BillPayment, BillPaymentFilter,
-    BillStatus, CreateBill, CreateBillItem, CreateBillPayment, CreatePaymentRun,
-    PaymentAllocation, PaymentRun, PaymentRunFilter, Result, SupplierApSummary, UpdateBill,
+    BillStatus, CreateBill, CreateBillItem, CreateBillPayment, CreatePaymentRun, PaymentAllocation,
+    PaymentRun, PaymentRunFilter, Result, SupplierApSummary, UpdateBill,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -329,8 +329,10 @@ impl AccountsPayable {
             ));
         }
 
-        if !matches!(bill.status, BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue)
-        {
+        if !matches!(
+            bill.status,
+            BillStatus::Approved | BillStatus::PartiallyPaid | BillStatus::Overdue
+        ) {
             return Err(stateset_core::CommerceError::ValidationError(
                 "Bill is not in a payable status".to_string(),
             ));

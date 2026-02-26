@@ -873,7 +873,8 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                     item.item_id.to_string(),
                     id.to_string()
                 ],
-            ).map_err(map_db_error)?;
+            )
+            .map_err(map_db_error)?;
         }
 
         // Check if fully or partially received

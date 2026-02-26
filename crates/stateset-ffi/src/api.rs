@@ -16,7 +16,9 @@
 //!
 //! e.g. `stateset_order_create`, `stateset_customer_get`.
 
+use std::collections::HashMap;
 use std::os::raw::c_char;
+use std::sync::{Condvar, Mutex, OnceLock};
 
 use stateset_embedded::Commerce;
 
@@ -33,6 +35,89 @@ use crate::types::{FfiCustomer, FfiInventoryLevel, FfiOrder, FfiProduct, FfiUuid
 /// Created by [`stateset_init`] and destroyed by [`stateset_destroy`].
 /// All domain operations require a valid handle.
 pub type CommerceHandle = *mut Commerce;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct HandleState {
+    in_flight: usize,
+    destroying: bool,
+}
+
+type HandleRegistry = HashMap<usize, HandleState>;
+
+static HANDLE_REGISTRY: OnceLock<(Mutex<HandleRegistry>, Condvar)> = OnceLock::new();
+
+fn handle_registry() -> &'static (Mutex<HandleRegistry>, Condvar) {
+    HANDLE_REGISTRY.get_or_init(|| (Mutex::new(HandleRegistry::new()), Condvar::new()))
+}
+
+fn with_handle_registry<T>(f: impl FnOnce(&mut HandleRegistry) -> T) -> T {
+    let (mutex, _) = handle_registry();
+    let mut handles = match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    f(&mut handles)
+}
+
+fn register_handle(handle: CommerceHandle) {
+    with_handle_registry(|handles| {
+        handles.insert(handle as usize, HandleState::default());
+    });
+}
+
+struct EngineLease {
+    handle: CommerceHandle,
+}
+
+impl EngineLease {
+    #[allow(unsafe_code)]
+    fn engine(&self) -> &Commerce {
+        // SAFETY: The handle is registered and held by this lease until drop.
+        unsafe { &*self.handle }
+    }
+}
+
+impl Drop for EngineLease {
+    fn drop(&mut self) {
+        let key = self.handle as usize;
+        let (mutex, cvar) = handle_registry();
+        let mut handles = match mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(state) = handles.get_mut(&key) {
+            if state.in_flight > 0 {
+                state.in_flight -= 1;
+            }
+            if state.destroying && state.in_flight == 0 {
+                cvar.notify_all();
+            }
+        }
+    }
+}
+
+fn begin_engine_use(engine: CommerceHandle) -> Result<EngineLease, FfiErrorCode> {
+    if engine.is_null() {
+        set_last_error("null engine handle");
+        return Err(FfiErrorCode::NullPointer);
+    }
+
+    let key = engine as usize;
+    let found = with_handle_registry(|handles| match handles.get_mut(&key) {
+        Some(state) if !state.destroying => {
+            state.in_flight += 1;
+            true
+        }
+        _ => false,
+    });
+
+    if !found {
+        set_last_error("invalid or stale engine handle");
+        return Err(FfiErrorCode::InvalidArgument);
+    }
+
+    Ok(EngineLease { handle: engine })
+}
 
 // ---------------------------------------------------------------------------
 // Safe helpers (tested without unsafe)
@@ -171,13 +256,8 @@ pub(crate) fn adjust_inventory_safe(
 /// `engine` must be a valid, non-null pointer to a `Commerce` instance
 /// created by [`stateset_init`].
 #[allow(unsafe_code)]
-unsafe fn deref_engine<'a>(engine: CommerceHandle) -> Result<&'a Commerce, FfiErrorCode> {
-    if engine.is_null() {
-        set_last_error("null engine handle");
-        return Err(FfiErrorCode::NullPointer);
-    }
-    // SAFETY: caller guarantees the pointer is valid.
-    Ok(unsafe { &*engine })
+unsafe fn deref_engine(engine: CommerceHandle) -> Result<EngineLease, FfiErrorCode> {
+    begin_engine_use(engine)
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +285,11 @@ pub unsafe extern "C" fn stateset_init(db_path: *const c_char) -> FfiResult<Comm
     };
 
     match init_engine(path) {
-        Ok(boxed) => FfiResult { code: FfiErrorCode::Ok, value: Box::into_raw(boxed) },
+        Ok(boxed) => {
+            let handle = Box::into_raw(boxed);
+            register_handle(handle);
+            FfiResult { code: FfiErrorCode::Ok, value: handle }
+        }
         Err(code) => FfiResult { code, value: std::ptr::null_mut() },
     }
 }
@@ -221,9 +305,39 @@ pub unsafe extern "C" fn stateset_init(db_path: *const c_char) -> FfiResult<Comm
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn stateset_destroy(engine: CommerceHandle) {
+    clear_last_error();
     if !engine.is_null() {
-        // SAFETY: caller guarantees the pointer was returned by stateset_init
-        // (i.e. Box::into_raw).
+        let key = engine as usize;
+        let (mutex, cvar) = handle_registry();
+        let mut handles = match mutex.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        let Some(state) = handles.get_mut(&key) else {
+            set_last_error("invalid or stale engine handle");
+            return;
+        };
+        state.destroying = true;
+
+        loop {
+            let Some(state) = handles.get(&key) else {
+                return;
+            };
+            if state.in_flight == 0 {
+                break;
+            }
+            handles = match cvar.wait(handles) {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+        }
+
+        handles.remove(&key);
+        drop(handles);
+
+        // SAFETY: handle is registered, no in-flight users remain, and the
+        // pointer originated from Box::into_raw in stateset_init.
         unsafe {
             drop(Box::from_raw(engine));
         }
@@ -247,10 +361,11 @@ pub unsafe extern "C" fn stateset_order_get(
 ) -> FfiResult<FfiOrder> {
     clear_last_error();
 
-    let eng = match unsafe { deref_engine(engine) } {
-        Ok(e) => e,
+    let lease = match unsafe { deref_engine(engine) } {
+        Ok(lease) => lease,
         Err(code) => return FfiResult::err(code),
     };
+    let eng = lease.engine();
 
     match get_order_safe(eng, id) {
         Ok(order) => FfiResult::ok(order),
@@ -281,10 +396,11 @@ pub unsafe extern "C" fn stateset_customer_create(
 ) -> FfiResult<FfiCustomer> {
     clear_last_error();
 
-    let eng = match unsafe { deref_engine(engine) } {
-        Ok(e) => e,
+    let lease = match unsafe { deref_engine(engine) } {
+        Ok(lease) => lease,
         Err(code) => return FfiResult::err(code),
     };
+    let eng = lease.engine();
 
     let email_str = match unsafe { c_string_to_rust(email) } {
         Ok(s) => s,
@@ -320,10 +436,11 @@ pub unsafe extern "C" fn stateset_customer_get(
 ) -> FfiResult<FfiCustomer> {
     clear_last_error();
 
-    let eng = match unsafe { deref_engine(engine) } {
-        Ok(e) => e,
+    let lease = match unsafe { deref_engine(engine) } {
+        Ok(lease) => lease,
         Err(code) => return FfiResult::err(code),
     };
+    let eng = lease.engine();
 
     match get_customer_safe(eng, id) {
         Ok(customer) => FfiResult::ok(customer),
@@ -350,10 +467,11 @@ pub unsafe extern "C" fn stateset_product_create(
 ) -> FfiResult<FfiProduct> {
     clear_last_error();
 
-    let eng = match unsafe { deref_engine(engine) } {
-        Ok(e) => e,
+    let lease = match unsafe { deref_engine(engine) } {
+        Ok(lease) => lease,
         Err(code) => return FfiResult::err(code),
     };
+    let eng = lease.engine();
 
     let name_str = match unsafe { c_string_to_rust(name) } {
         Ok(s) => s,
@@ -381,10 +499,11 @@ pub unsafe extern "C" fn stateset_product_get(
 ) -> FfiResult<FfiProduct> {
     clear_last_error();
 
-    let eng = match unsafe { deref_engine(engine) } {
-        Ok(e) => e,
+    let lease = match unsafe { deref_engine(engine) } {
+        Ok(lease) => lease,
         Err(code) => return FfiResult::err(code),
     };
+    let eng = lease.engine();
 
     match get_product_safe(eng, id) {
         Ok(product) => FfiResult::ok(product),
@@ -409,10 +528,11 @@ pub unsafe extern "C" fn stateset_inventory_get(
 ) -> FfiResult<FfiInventoryLevel> {
     clear_last_error();
 
-    let eng = match unsafe { deref_engine(engine) } {
-        Ok(e) => e,
+    let lease = match unsafe { deref_engine(engine) } {
+        Ok(lease) => lease,
         Err(code) => return FfiResult::err(code),
     };
+    let eng = lease.engine();
 
     let sku_str = match unsafe { c_string_to_rust(sku) } {
         Ok(s) => s,
@@ -441,10 +561,11 @@ pub unsafe extern "C" fn stateset_inventory_adjust(
 ) -> FfiResult<FfiInventoryLevel> {
     clear_last_error();
 
-    let eng = match unsafe { deref_engine(engine) } {
-        Ok(e) => e,
+    let lease = match unsafe { deref_engine(engine) } {
+        Ok(lease) => lease,
         Err(code) => return FfiResult::err(code),
     };
+    let eng = lease.engine();
 
     let sku_str = match unsafe { c_string_to_rust(sku) } {
         Ok(s) => s,
@@ -696,5 +817,27 @@ mod tests {
         crate::types::product::stateset_product_free(create_result.value);
         crate::types::product::stateset_product_free(get_result.value);
         unsafe { stateset_destroy(init.value) };
+    }
+
+    #[test]
+    fn stale_handle_after_destroy_is_rejected() {
+        let path = CString::new(":memory:").unwrap();
+        let init = unsafe { stateset_init(path.as_ptr()) };
+        assert_eq!(init.code, FfiErrorCode::Ok);
+        let handle = init.value;
+
+        unsafe { stateset_destroy(handle) };
+        let result = unsafe { stateset_order_get(handle, FfiUuid::NIL) };
+        assert_eq!(result.code, FfiErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn destroy_invalid_handle_sets_error() {
+        crate::error::clear_last_error();
+        let bogus = std::ptr::dangling_mut::<Commerce>();
+        unsafe { stateset_destroy(bogus) };
+
+        let err = crate::error::last_error_as_str();
+        assert!(err.as_deref().is_some_and(|msg| msg.contains("invalid or stale engine handle")));
     }
 }

@@ -42,6 +42,20 @@ fn bearer_token_from_header(value: &str) -> Option<&str> {
     if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() { Some(token) } else { None }
 }
 
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+
+    let mut diff = 0u8;
+    for (&left, &right) in a_bytes.iter().zip(b_bytes.iter()) {
+        diff |= left ^ right;
+    }
+    diff == 0
+}
+
 async fn require_bearer_auth(
     State(token): State<BearerAuthToken>,
     request: Request<Body>,
@@ -58,7 +72,7 @@ async fn require_bearer_auth(
         .and_then(bearer_token_from_header);
 
     match provided {
-        Some(provided) if provided == token.0.as_ref() => next.run(request).await,
+        Some(provided) if constant_time_eq(provided, token.0.as_ref()) => next.run(request).await,
         _ => HttpError::Unauthorized("missing or invalid bearer token".to_string()).into_response(),
     }
 }
@@ -178,6 +192,14 @@ mod tests {
     fn apply_middleware_request_id_only() {
         let router = Router::new();
         let _router = apply_middleware(router, false, true, None);
+    }
+
+    #[test]
+    fn constant_time_eq_behaves_like_string_equality() {
+        assert!(constant_time_eq("secret", "secret"));
+        assert!(!constant_time_eq("secret", "secreu"));
+        assert!(!constant_time_eq("secret", "secret1"));
+        assert!(!constant_time_eq("", "a"));
     }
 
     #[tokio::test]

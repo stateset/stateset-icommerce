@@ -4,8 +4,21 @@
 
 use ::hmac::{Hmac, Mac};
 use sha2::Sha256;
+use thiserror::Error;
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// Error type for webhook HMAC operations.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum WebhookHmacError {
+    /// Failed to initialize HMAC with the provided secret.
+    #[error("failed to initialize HMAC key")]
+    InvalidKey,
+}
+
+fn new_hmac(secret: &[u8]) -> Result<HmacSha256, WebhookHmacError> {
+    HmacSha256::new_from_slice(secret).map_err(|_| WebhookHmacError::InvalidKey)
+}
 
 /// Sign a webhook payload with HMAC-SHA256.
 ///
@@ -19,11 +32,22 @@ type HmacSha256 = Hmac<Sha256>;
 /// let sig = sign_webhook(b"my-secret", b"hello world");
 /// assert_eq!(sig.len(), 64); // 32 bytes hex-encoded
 /// ```
+///
+/// Returns an empty string if HMAC initialization fails.
 #[must_use]
 pub fn sign_webhook(secret: &[u8], payload: &[u8]) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
+    try_sign_webhook(secret, payload).unwrap_or_default()
+}
+
+/// Fallible variant of [`sign_webhook`].
+///
+/// # Errors
+///
+/// Returns [`WebhookHmacError::InvalidKey`] if HMAC initialization fails.
+pub fn try_sign_webhook(secret: &[u8], payload: &[u8]) -> Result<String, WebhookHmacError> {
+    let mut mac = new_hmac(secret)?;
     mac.update(payload);
-    hex::encode(mac.finalize().into_bytes())
+    Ok(hex::encode(mac.finalize().into_bytes()))
 }
 
 /// Verify a webhook payload against an HMAC-SHA256 signature.
@@ -41,16 +65,29 @@ pub fn sign_webhook(secret: &[u8], payload: &[u8]) -> String {
 /// ```
 #[must_use]
 pub fn verify_webhook(secret: &[u8], payload: &[u8], signature: &str) -> bool {
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
+    try_verify_webhook(secret, payload, signature).unwrap_or(false)
+}
+
+/// Fallible variant of [`verify_webhook`].
+///
+/// # Errors
+///
+/// Returns [`WebhookHmacError::InvalidKey`] if HMAC initialization fails.
+pub fn try_verify_webhook(
+    secret: &[u8],
+    payload: &[u8],
+    signature: &str,
+) -> Result<bool, WebhookHmacError> {
+    let mut mac = new_hmac(secret)?;
     mac.update(payload);
 
     // Decode the provided hex signature
     let Ok(sig_bytes) = hex::decode(signature) else {
-        return false;
+        return Ok(false);
     };
 
     // Use the `verify_slice` method for constant-time comparison
-    mac.verify_slice(&sig_bytes).is_ok()
+    Ok(mac.verify_slice(&sig_bytes).is_ok())
 }
 
 #[cfg(test)]
@@ -145,5 +182,11 @@ mod tests {
         // HMAC-SHA256("key", "The quick brown fox jumps over the lazy dog")
         let sig = sign_webhook(b"key", b"The quick brown fox jumps over the lazy dog");
         assert_eq!(sig, "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8");
+    }
+
+    #[test]
+    fn try_sign_and_verify_success() {
+        let sig = try_sign_webhook(b"secret", b"payload").unwrap();
+        assert!(try_verify_webhook(b"secret", b"payload", &sig).unwrap());
     }
 }

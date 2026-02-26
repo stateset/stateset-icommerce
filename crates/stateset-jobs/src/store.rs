@@ -67,16 +67,23 @@ impl InMemoryJobStore {
         Self { inner: Arc::new(Mutex::new(HashMap::new())) }
     }
 
+    fn lock_map_unpoisoned(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, JobInstance>> {
+        match self.inner.lock() {
+            Ok(map) => map,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     /// Returns the total number of stored jobs.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.inner.lock().expect("lock poisoned").len()
+        self.lock_map_unpoisoned().len()
     }
 
     /// Returns `true` if the store is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.inner.lock().expect("lock poisoned").is_empty()
+        self.lock_map_unpoisoned().is_empty()
     }
 }
 

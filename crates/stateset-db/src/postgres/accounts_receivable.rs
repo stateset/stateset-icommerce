@@ -473,14 +473,16 @@ impl PgAccountsReceivableRepository {
             "sent"
         };
 
-        sqlx::query("UPDATE invoices SET amount_paid = $1, balance_due = $2, status = $3 WHERE id = $4")
-            .bind(total_applied)
-            .bind(balance_due)
-            .bind(status)
-            .bind(invoice_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE invoices SET amount_paid = $1, balance_due = $2, status = $3 WHERE id = $4",
+        )
+        .bind(total_applied)
+        .bind(balance_due)
+        .bind(status)
+        .bind(invoice_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -1143,11 +1145,12 @@ impl PgAccountsReceivableRepository {
             return Err(CommerceError::ValidationError("Amount exceeds unapplied balance".into()));
         }
 
-        let balance_due: Decimal = sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1")
-            .bind(input.invoice_id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let balance_due: Decimal =
+            sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1")
+                .bind(input.invoice_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         if input.amount > balance_due {
             return Err(CommerceError::ValidationError(
                 "Credit amount exceeds invoice balance due".into(),
@@ -1268,11 +1271,12 @@ impl PgAccountsReceivableRepository {
                 expected_customer_id = Some(invoice_customer_id);
             }
 
-            let balance_due: Decimal = sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1")
-                .bind(app.invoice_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+            let balance_due: Decimal =
+                sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1")
+                    .bind(app.invoice_id)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
             if app.amount > balance_due {
                 return Err(CommerceError::ValidationError(
                     "Payment application amount exceeds invoice balance due".into(),

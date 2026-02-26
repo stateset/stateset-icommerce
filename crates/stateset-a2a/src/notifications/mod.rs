@@ -5,5 +5,7 @@
 pub mod hmac;
 pub mod ssrf;
 
-pub use self::hmac::{sign_webhook, verify_webhook};
+pub use self::hmac::{
+    WebhookHmacError, sign_webhook, try_sign_webhook, try_verify_webhook, verify_webhook,
+};
 pub use ssrf::validate_url;

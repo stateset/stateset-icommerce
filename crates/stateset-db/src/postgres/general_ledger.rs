@@ -341,12 +341,12 @@ impl PgGeneralLedgerRepository {
              )
              WHERE id = $3",
         )
-            .bind(debit)
-            .bind(credit)
-            .bind(account_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        .bind(debit)
+        .bind(credit)
+        .bind(account_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         if updated.rows_affected() == 0 {
             return Err(CommerceError::NotFound);
@@ -719,11 +719,10 @@ impl PgGeneralLedgerRepository {
         let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
         let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
         let is_balanced = total_debits == total_credits;
-        let lines_are_valid = input
-            .lines
-            .iter()
-            .all(|l| (l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
-                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO));
+        let lines_are_valid = input.lines.iter().all(|l| {
+            (l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO)
+        });
 
         if !lines_are_valid {
             return Err(CommerceError::ValidationError(

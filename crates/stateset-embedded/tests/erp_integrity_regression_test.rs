@@ -30,10 +30,7 @@ fn pay_bill_rejects_overpayment() {
         })
         .expect("create bill");
 
-    let approved = commerce
-        .accounts_payable()
-        .approve_bill(bill.id)
-        .expect("approve bill");
+    let approved = commerce.accounts_payable().approve_bill(bill.id).expect("approve bill");
 
     let err = commerce
         .accounts_payable()
@@ -47,10 +44,7 @@ fn pay_bill_rejects_overpayment() {
         )
         .expect_err("overpayment must fail");
 
-    assert!(matches!(
-        err,
-        stateset_embedded::CommerceError::ValidationError(_)
-    ));
+    assert!(matches!(err, stateset_embedded::CommerceError::ValidationError(_)));
 }
 
 #[test]
@@ -96,18 +90,10 @@ fn purchase_order_receive_rejects_cross_order_item() {
         })
         .expect("create po 2");
 
-    let po_one = commerce
-        .purchase_orders()
-        .submit(po_one.id.into())
-        .expect("submit po 1");
-    let po_one = commerce
-        .purchase_orders()
-        .approve(po_one.id.into(), "tester")
-        .expect("approve po 1");
-    let po_one = commerce
-        .purchase_orders()
-        .send(po_one.id.into())
-        .expect("send po 1");
+    let po_one = commerce.purchase_orders().submit(po_one.id.into()).expect("submit po 1");
+    let po_one =
+        commerce.purchase_orders().approve(po_one.id.into(), "tester").expect("approve po 1");
+    let po_one = commerce.purchase_orders().send(po_one.id.into()).expect("send po 1");
 
     let err = commerce
         .purchase_orders()
@@ -155,10 +141,7 @@ fn issue_fifo_rolls_back_when_quantity_exceeds_layers() {
         })
         .expect_err("issuing more than available must fail");
 
-    assert!(matches!(
-        err,
-        stateset_embedded::CommerceError::ValidationError(_)
-    ));
+    assert!(matches!(err, stateset_embedded::CommerceError::ValidationError(_)));
 
     let remaining = commerce
         .cost_accounting()
@@ -175,10 +158,7 @@ fn has_stock_rejects_negative_and_unknown_sku() {
         .inventory()
         .has_stock("MISSING-SKU", dec!(-1))
         .expect_err("negative stock check must fail");
-    assert!(matches!(
-        neg_err,
-        stateset_embedded::CommerceError::ValidationError(_)
-    ));
+    assert!(matches!(neg_err, stateset_embedded::CommerceError::ValidationError(_)));
 
     let missing_err = commerce
         .inventory()
