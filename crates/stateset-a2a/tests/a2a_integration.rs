@@ -146,6 +146,20 @@ fn pct_split_rejects_percentages_not_summing_to_100() {
     assert!(matches!(err, A2AError::PercentageSumMismatch { .. }));
 }
 
+#[test]
+fn pct_split_rejects_negative_platform_fee() {
+    let recipients = vec![pct_recipient("0xA", dec!(50)), pct_recipient("0xB", dec!(50))];
+    let err = calculate_percentage_split(dec!(100), dec!(-0.1), &recipients).unwrap_err();
+    assert!(matches!(err, A2AError::Validation(_)));
+}
+
+#[test]
+fn pct_split_rejects_negative_recipient_percent() {
+    let recipients = vec![pct_recipient("0xA", dec!(101)), pct_recipient("0xB", dec!(-1))];
+    let err = calculate_percentage_split(dec!(100), dec!(0), &recipients).unwrap_err();
+    assert!(matches!(err, A2AError::Validation(_)));
+}
+
 // ===========================================================================
 // 2. FIXED SPLIT CALCULATIONS
 // ===========================================================================
@@ -186,6 +200,20 @@ fn fixed_split_error_when_amounts_under_total() {
     // Sum = 50, total = 100 => mismatch
     let err = calculate_fixed_split(dec!(100), dec!(0), &recipients).unwrap_err();
     assert!(matches!(err, A2AError::FixedSumMismatch { .. }));
+}
+
+#[test]
+fn fixed_split_rejects_negative_amount() {
+    let recipients = vec![fixed_recipient("0xA", dec!(120)), fixed_recipient("0xB", dec!(-20))];
+    let err = calculate_fixed_split(dec!(100), dec!(0), &recipients).unwrap_err();
+    assert!(matches!(err, A2AError::Validation(_)));
+}
+
+#[test]
+fn fixed_split_rejects_platform_fee_above_100_pct() {
+    let recipients = vec![fixed_recipient("0xA", dec!(60)), fixed_recipient("0xB", dec!(40))];
+    let err = calculate_fixed_split(dec!(100), dec!(100.1), &recipients).unwrap_err();
+    assert!(matches!(err, A2AError::Validation(_)));
 }
 
 // ===========================================================================
@@ -603,7 +631,13 @@ fn ssrf_rejects_url_without_scheme() {
 
 #[test]
 fn ssrf_allows_public_ip() {
-    assert!(validate_url("https://203.0.113.1/hook").is_ok());
+    assert!(validate_url("https://8.8.8.8/hook").is_ok());
+}
+
+#[test]
+fn ssrf_blocks_reserved_documentation_ip() {
+    let err = validate_url("https://203.0.113.1/hook").unwrap_err();
+    assert!(matches!(err, A2AError::SsrfBlocked(_)));
 }
 
 #[test]

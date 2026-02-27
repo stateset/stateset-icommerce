@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -98,7 +98,8 @@ impl SyncEvent {
     /// Compute the SHA-256 hash of a JSON payload, hex-encoded.
     #[must_use]
     pub fn compute_hash(payload: &Value) -> String {
-        let bytes = serde_json::to_vec(payload).unwrap_or_default();
+        let canonical = canonicalize_json(payload);
+        let bytes = serde_json::to_vec(&canonical).unwrap_or_default();
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         hex::encode(hasher.finalize())
@@ -131,6 +132,25 @@ impl Ord for SyncEvent {
             .cmp(&other.sequence)
             .then_with(|| self.timestamp.cmp(&other.timestamp))
             .then_with(|| self.id.cmp(&other.id))
+    }
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_unstable();
+
+            let mut canonical = Map::with_capacity(map.len());
+            for key in keys {
+                if let Some(inner) = map.get(key) {
+                    canonical.insert(key.clone(), canonicalize_json(inner));
+                }
+            }
+            Value::Object(canonical)
+        }
+        Value::Array(values) => Value::Array(values.iter().map(canonicalize_json).collect()),
+        _ => value.clone(),
     }
 }
 
@@ -234,5 +254,12 @@ mod tests {
         let h1 = SyncEvent::compute_hash(&payload);
         let h2 = SyncEvent::compute_hash(&payload);
         assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn compute_hash_is_canonical_for_object_key_order() {
+        let p1 = json!({"a": 1, "b": 2, "c": {"x": 1, "y": 2}});
+        let p2 = json!({"c": {"y": 2, "x": 1}, "b": 2, "a": 1});
+        assert_eq!(SyncEvent::compute_hash(&p1), SyncEvent::compute_hash(&p2));
     }
 }

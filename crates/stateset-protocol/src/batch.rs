@@ -2,7 +2,7 @@
 //!
 //! A [`SyncBatch`] groups multiple [`EventEnvelope`]s into a single unit for
 //! synchronization between nodes. It includes a Merkle root computed from
-//! the payload hashes of all contained events, plus optional signatures
+//! per-leaf integrity hashes of all contained events, plus optional signatures
 //! and inclusion proofs.
 //!
 //! # Example
@@ -30,6 +30,20 @@ use crate::envelope::EventEnvelope;
 use crate::error::{ProtocolError, Result};
 use crate::merkle;
 
+/// Merkle leaf-hash algorithm used by a [`SyncBatch`].
+///
+/// - `payload_hash_v1`: legacy mode that hashes only envelope payload hashes.
+/// - `envelope_hash_v2`: secure mode that binds full envelope integrity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MerkleLeafHashMode {
+    /// Legacy mode for compatibility with previously emitted batches.
+    #[default]
+    PayloadHashV1,
+    /// Secure mode that hashes full envelope integrity leaves.
+    EnvelopeHashV2,
+}
+
 /// A batch of events for synchronization between nodes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,8 +54,11 @@ pub struct SyncBatch {
     pub source_node_id: String,
     /// The events in this batch.
     pub leaves: Vec<EventEnvelope>,
-    /// Merkle root computed from the payload hashes of all leaves.
+    /// Merkle root computed from leaf hashes determined by `merkle_leaf_hash_mode`.
     pub merkle_root: [u8; 32],
+    /// Which leaf-hash algorithm this batch uses.
+    #[serde(default)]
+    pub merkle_leaf_hash_mode: MerkleLeafHashMode,
     /// Cryptographic signatures over the batch.
     pub signatures: Vec<BatchSignature>,
     /// Merkle inclusion proofs for individual leaves.
@@ -55,7 +72,7 @@ pub struct SyncBatch {
 impl SyncBatch {
     /// Create a new batch from a set of event envelopes.
     ///
-    /// Automatically computes the Merkle root from the payload hashes.
+    /// Automatically computes the Merkle root from secure envelope leaf hashes.
     ///
     /// ```rust
     /// use stateset_protocol::{EventEnvelope, SyncBatch};
@@ -73,7 +90,8 @@ impl SyncBatch {
     /// ```
     #[must_use]
     pub fn new(source_node_id: &str, leaves: Vec<EventEnvelope>) -> Self {
-        let leaf_hashes: Vec<[u8; 32]> = leaves.iter().map(|e| e.payload_hash).collect();
+        let merkle_leaf_hash_mode = MerkleLeafHashMode::EnvelopeHashV2;
+        let leaf_hashes = Self::leaf_hashes_with_mode(&leaves, merkle_leaf_hash_mode);
         let merkle_root = merkle::compute_merkle_root(&leaf_hashes);
 
         Self {
@@ -81,6 +99,7 @@ impl SyncBatch {
             source_node_id: source_node_id.to_owned(),
             leaves,
             merkle_root,
+            merkle_leaf_hash_mode,
             signatures: Vec::new(),
             proofs: Vec::new(),
             protocol_version: 1,
@@ -88,7 +107,7 @@ impl SyncBatch {
         }
     }
 
-    /// Verify that the Merkle root matches the payload hashes of the leaves.
+    /// Verify that the Merkle root matches the expected leaf hashes.
     ///
     /// ```rust
     /// use stateset_protocol::{EventEnvelope, SyncBatch};
@@ -102,9 +121,22 @@ impl SyncBatch {
     /// ```
     #[must_use]
     pub fn verify_merkle_root(&self) -> bool {
-        let leaf_hashes: Vec<[u8; 32]> = self.leaves.iter().map(|e| e.payload_hash).collect();
+        let leaf_hashes = self.leaf_hashes();
         let computed = merkle::compute_merkle_root(&leaf_hashes);
         computed == self.merkle_root
+    }
+
+    fn leaf_hashes(&self) -> Vec<[u8; 32]> {
+        Self::leaf_hashes_with_mode(&self.leaves, self.merkle_leaf_hash_mode)
+    }
+
+    fn leaf_hashes_with_mode(leaves: &[EventEnvelope], mode: MerkleLeafHashMode) -> Vec<[u8; 32]> {
+        match mode {
+            MerkleLeafHashMode::PayloadHashV1 => leaves.iter().map(|e| e.payload_hash).collect(),
+            MerkleLeafHashMode::EnvelopeHashV2 => {
+                leaves.iter().map(EventEnvelope::merkle_leaf_hash).collect()
+            }
+        }
     }
 
     /// Validate the entire batch: non-empty, valid envelopes, and correct root.
@@ -250,8 +282,9 @@ mod tests {
         assert_eq!(batch.protocol_version, 1);
         assert!(batch.signatures.is_empty());
         assert!(batch.proofs.is_empty());
-        // Single leaf => merkle root = leaf hash
-        assert_eq!(batch.merkle_root, env.payload_hash);
+        assert_eq!(batch.merkle_leaf_hash_mode, MerkleLeafHashMode::EnvelopeHashV2);
+        // Single leaf => merkle root = leaf hash for configured mode
+        assert_eq!(batch.merkle_root, env.merkle_leaf_hash());
     }
 
     #[test]
@@ -286,6 +319,26 @@ mod tests {
         let mut batch = SyncBatch::new("node", envs);
         batch.merkle_root = [0xFF; 32];
         assert!(!batch.verify_merkle_root());
+    }
+
+    #[test]
+    fn verify_root_detects_metadata_tampering_under_v2() {
+        let envs = vec![make_envelope("1", b"data")];
+        let mut batch = SyncBatch::new("node", envs);
+        batch.leaves[0].event_type = "tampered.event".to_string();
+        assert!(!batch.verify_merkle_root());
+    }
+
+    #[test]
+    fn verify_root_legacy_payload_hash_mode_compatible() {
+        let envs = vec![make_envelope("1", b"data")];
+        let mut batch = SyncBatch::new("node", envs);
+        batch.merkle_leaf_hash_mode = MerkleLeafHashMode::PayloadHashV1;
+        let legacy_leaf_hashes: Vec<[u8; 32]> =
+            batch.leaves.iter().map(|e| e.payload_hash).collect();
+        batch.merkle_root = merkle::compute_merkle_root(&legacy_leaf_hashes);
+        assert!(batch.verify_merkle_root());
+        assert!(batch.validate().is_ok());
     }
 
     #[test]
@@ -360,7 +413,7 @@ mod tests {
         let mut batch = SyncBatch::new("node", envs);
         assert!(batch.proofs.is_empty());
 
-        let leaf_hashes: Vec<[u8; 32]> = batch.leaves.iter().map(|e| e.payload_hash).collect();
+        let leaf_hashes = batch.leaf_hashes();
         let proof = merkle::compute_merkle_proof(&leaf_hashes, 0).unwrap();
         batch.add_proof(proof);
         assert_eq!(batch.proofs.len(), 1);
@@ -459,7 +512,17 @@ mod tests {
         assert_eq!(deserialized.batch_id, batch.batch_id);
         assert_eq!(deserialized.source_node_id, batch.source_node_id);
         assert_eq!(deserialized.merkle_root, batch.merkle_root);
+        assert_eq!(deserialized.merkle_leaf_hash_mode, batch.merkle_leaf_hash_mode);
         assert_eq!(deserialized.leaves.len(), batch.leaves.len());
+    }
+
+    #[test]
+    fn sync_batch_deserialize_without_leaf_mode_defaults_to_legacy() {
+        let batch = SyncBatch::new("node", vec![make_envelope("1", b"d")]);
+        let mut as_value = serde_json::to_value(&batch).unwrap();
+        as_value.as_object_mut().unwrap().remove("merkle_leaf_hash_mode");
+        let deserialized: SyncBatch = serde_json::from_value(as_value).unwrap();
+        assert_eq!(deserialized.merkle_leaf_hash_mode, MerkleLeafHashMode::PayloadHashV1);
     }
 
     #[test]

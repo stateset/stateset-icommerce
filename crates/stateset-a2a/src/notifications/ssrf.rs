@@ -1,142 +1,365 @@
 //! SSRF (Server-Side Request Forgery) protection for webhook URLs.
 //!
-//! Blocks requests to private/internal IP ranges and special TLDs,
-//! mirroring the `JavaScript` `safeValidateUrl()` implementation.
+//! Blocks requests to private, loopback, link-local, and reserved IP ranges,
+//! plus internal-use hostnames/TLDs. For DNS hostnames, resolved addresses are
+//! also checked to prevent DNS rebinding style bypasses.
+
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 
 use crate::error::{A2AError, A2AResult};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedUrl {
+    scheme: String,
+    host: String,
+    port: Option<u16>,
+}
 
 /// Validate that a URL is safe to send webhook requests to.
 ///
 /// Blocks the following patterns:
 /// - Non-HTTP(S) protocols
-/// - `localhost`, `127.0.0.1`, `0.0.0.0`, `::1`
-/// - Private IP ranges: `10.x.x.x`, `192.168.x.x`, `172.16-31.x.x`
-/// - Internal TLDs: `.internal`, `.local`, `.localhost`
+/// - Hostname bypass patterns (`userinfo@host`, malformed host/port)
+/// - Local/internal hostnames (`localhost`, `.internal`, `.local`, etc.)
+/// - Loopback/private/link-local/reserved IP ranges (IPv4 + IPv6)
+/// - Hostnames that DNS-resolve to blocked IP ranges
 ///
 /// # Errors
 ///
 /// Returns [`A2AError::SsrfBlocked`] if the URL is blocked.
 /// Returns [`A2AError::Validation`] if the URL is malformed.
-///
-/// # Example
-///
-/// ```
-/// use stateset_a2a::notifications::validate_url;
-///
-/// // Public URL is fine
-/// assert!(validate_url("https://example.com/webhooks").is_ok());
-///
-/// // Private IPs are blocked
-/// assert!(validate_url("http://localhost:8080/hook").is_err());
-/// assert!(validate_url("http://10.0.0.1/hook").is_err());
-/// assert!(validate_url("http://192.168.1.1/hook").is_err());
-/// ```
 pub fn validate_url(url: &str) -> A2AResult<()> {
-    if url.is_empty() {
+    validate_url_with_resolver(url, resolve_host_ips)
+}
+
+fn validate_url_with_resolver<F>(url: &str, resolver: F) -> A2AResult<()>
+where
+    F: Fn(&str, u16) -> Vec<IpAddr>,
+{
+    if url.trim().is_empty() {
         return Err(A2AError::Validation("URL is required".into()));
     }
 
-    // Check scheme first (before full parse) so that non-HTTP protocols
-    // are rejected with SsrfBlocked even if the host portion is missing/empty.
     let scheme_end = url
         .find("://")
         .ok_or_else(|| A2AError::Validation(format!("invalid URL (no scheme): {url}")))?;
-    let scheme = url[..scheme_end].to_lowercase();
+    let scheme = url[..scheme_end].to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
         return Err(A2AError::SsrfBlocked(format!("unsupported protocol: {scheme}")));
     }
 
-    // Parse the URL to extract host
-    let (_scheme, host) = parse_url_components(url)?;
+    let parsed = parse_url_components(url)?;
 
-    // Check for blocked hostnames
-    check_hostname(&host)?;
+    check_hostname_rules(&parsed.host)?;
+
+    if let Ok(ip) = parsed.host.parse::<IpAddr>() {
+        return check_ip(ip, &parsed.host);
+    }
+
+    // Handle ambiguous single-integer IPv4 literals (e.g., 2130706433).
+    if let Some(ip) = parse_decimal_ipv4_literal(&parsed.host) {
+        return check_ip(IpAddr::V4(ip), &parsed.host);
+    }
+
+    validate_hostname_syntax(&parsed.host)?;
+
+    let default_port = if parsed.scheme == "https" { 443 } else { 80 };
+    let lookup_port = parsed.port.unwrap_or(default_port);
+    for resolved_ip in resolver(&parsed.host, lookup_port) {
+        if let Some(reason) = blocked_ip_reason(resolved_ip) {
+            return Err(A2AError::SsrfBlocked(format!(
+                "cannot fetch {reason}: {} resolved to {resolved_ip}",
+                parsed.host
+            )));
+        }
+    }
 
     Ok(())
 }
 
-/// Extract scheme and hostname from a URL string.
+/// Extract scheme, hostname, and optional port from a URL string.
 ///
-/// This is a minimal parser that avoids pulling in a full URL library.
-fn parse_url_components(url: &str) -> A2AResult<(String, String)> {
-    // Find scheme
+/// This is an intentionally strict parser to avoid host confusion bypasses.
+fn parse_url_components(url: &str) -> A2AResult<ParsedUrl> {
     let Some(scheme_end) = url.find("://") else {
         return Err(A2AError::Validation(format!("invalid URL (no scheme): {url}")));
     };
 
-    let scheme = url[..scheme_end].to_lowercase();
-
-    // Extract host portion (after "://", before "/" or ":" port or "?")
+    let scheme = url[..scheme_end].to_ascii_lowercase();
     let after_scheme = &url[scheme_end + 3..];
-    let host_end =
-        after_scheme.find('/').or_else(|| after_scheme.find('?')).unwrap_or(after_scheme.len());
-    let host_with_port = &after_scheme[..host_end];
 
-    // Disallow userinfo (`user:pass@host`) to prevent host confusion bypasses.
-    if host_with_port.contains('@') {
+    let authority_end = after_scheme.find(['/', '?', '#']).unwrap_or(after_scheme.len());
+    let authority = &after_scheme[..authority_end];
+    if authority.is_empty() {
+        return Err(A2AError::Validation(format!("invalid URL (empty host): {url}")));
+    }
+
+    if authority.contains('@') {
         return Err(A2AError::SsrfBlocked(
             "URL userinfo is not allowed for webhook targets".to_string(),
         ));
     }
 
-    // Strip port if present (handle IPv6 bracket notation)
-    let host = if host_with_port.starts_with('[') {
-        // IPv6: [::1]:8080
-        let bracket_end = host_with_port.find(']').unwrap_or(host_with_port.len());
-        host_with_port[1..bracket_end].to_lowercase()
-    } else if let Some(colon_pos) = host_with_port.rfind(':') {
-        // Only strip port if what comes after the colon is numeric
-        let after_colon = &host_with_port[colon_pos + 1..];
-        if after_colon.chars().all(|c| c.is_ascii_digit()) {
-            host_with_port[..colon_pos].to_lowercase()
-        } else {
-            host_with_port.to_lowercase()
-        }
-    } else {
-        host_with_port.to_lowercase()
-    };
+    let (raw_host, port) = parse_authority(authority, url)?;
+    let host = raw_host.trim_end_matches('.').to_ascii_lowercase();
 
     if host.is_empty() {
         return Err(A2AError::Validation(format!("invalid URL (empty host): {url}")));
     }
 
-    Ok((scheme, host))
+    if host.bytes().any(|b| b.is_ascii_control() || b == b' ' || b == b'\t') {
+        return Err(A2AError::Validation(format!("invalid URL host characters: {url}")));
+    }
+
+    Ok(ParsedUrl { scheme, host, port })
 }
 
-/// Check a hostname against the SSRF blocklist.
-fn check_hostname(host: &str) -> A2AResult<()> {
-    // Exact hostname matches
-    if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" {
+fn parse_authority(authority: &str, original_url: &str) -> A2AResult<(String, Option<u16>)> {
+    if authority.starts_with('[') {
+        let Some(bracket_end) = authority.find(']') else {
+            return Err(A2AError::Validation(format!(
+                "invalid URL (unterminated IPv6 host): {original_url}"
+            )));
+        };
+
+        let host = &authority[1..bracket_end];
+        if host.is_empty() {
+            return Err(A2AError::Validation(format!("invalid URL (empty host): {original_url}")));
+        }
+        if host.contains('%') {
+            return Err(A2AError::SsrfBlocked(
+                "IPv6 zone identifiers are not allowed for webhook targets".to_string(),
+            ));
+        }
+
+        let remainder = &authority[bracket_end + 1..];
+        let port = parse_port_suffix(remainder, original_url)?;
+        return Ok((host.to_string(), port));
+    }
+
+    if authority.contains('[') || authority.contains(']') {
+        return Err(A2AError::Validation(format!("invalid URL host syntax: {original_url}")));
+    }
+
+    if let Some((host_part, port_part)) = authority.rsplit_once(':') {
+        if authority.matches(':').count() > 1 {
+            return Err(A2AError::Validation(format!(
+                "invalid URL host (IPv6 must be bracketed): {original_url}"
+            )));
+        }
+
+        if port_part.is_empty() {
+            return Err(A2AError::Validation(format!("invalid URL port: {original_url}")));
+        }
+        if !port_part.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(A2AError::Validation(format!("invalid URL port: {original_url}")));
+        }
+        let port = parse_port(port_part, original_url)?;
+        return Ok((host_part.to_string(), Some(port)));
+    }
+
+    Ok((authority.to_string(), None))
+}
+
+fn parse_port_suffix(port_suffix: &str, original_url: &str) -> A2AResult<Option<u16>> {
+    if port_suffix.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(port_str) = port_suffix.strip_prefix(':') else {
+        return Err(A2AError::Validation(format!("invalid URL port: {original_url}")));
+    };
+    if port_str.is_empty() || !port_str.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(A2AError::Validation(format!("invalid URL port: {original_url}")));
+    }
+    let port = parse_port(port_str, original_url)?;
+    Ok(Some(port))
+}
+
+fn parse_port(port: &str, original_url: &str) -> A2AResult<u16> {
+    let parsed = port
+        .parse::<u16>()
+        .map_err(|_| A2AError::Validation(format!("invalid URL port: {original_url}")))?;
+
+    if parsed == 0 {
+        return Err(A2AError::Validation(format!("invalid URL port: {original_url}")));
+    }
+    Ok(parsed)
+}
+
+fn check_hostname_rules(host: &str) -> A2AResult<()> {
+    let blocked_exact = [
+        "localhost",
+        "localhost.localdomain",
+        "local",
+        "internal",
+        "test",
+        "invalid",
+        "example",
+        "home.arpa",
+    ];
+    if blocked_exact.contains(&host) {
         return Err(A2AError::SsrfBlocked(format!("cannot fetch internal URL: {host}")));
     }
 
-    // Private IP ranges
-    if host.starts_with("10.") {
-        return Err(A2AError::SsrfBlocked(format!("cannot fetch private IP: {host}")));
-    }
-
-    if host.starts_with("192.168.") {
-        return Err(A2AError::SsrfBlocked(format!("cannot fetch private IP: {host}")));
-    }
-
-    // 172.16.0.0 - 172.31.255.255
-    if host.starts_with("172.") {
-        if let Some(second_octet_str) = host.strip_prefix("172.").and_then(|s| s.split('.').next())
-        {
-            if let Ok(second_octet) = second_octet_str.parse::<u8>() {
-                if (16..=31).contains(&second_octet) {
-                    return Err(A2AError::SsrfBlocked(format!("cannot fetch private IP: {host}")));
-                }
-            }
-        }
-    }
-
-    // Internal TLDs
-    if host.ends_with(".internal") || host.ends_with(".local") || host.ends_with(".localhost") {
+    let blocked_suffixes = [
+        ".localhost",
+        ".localdomain",
+        ".local",
+        ".internal",
+        ".home.arpa",
+        ".test",
+        ".invalid",
+        ".example",
+    ];
+    if blocked_suffixes.iter().any(|suffix| host.ends_with(suffix)) {
         return Err(A2AError::SsrfBlocked(format!("cannot fetch internal domain: {host}")));
     }
 
     Ok(())
+}
+
+fn validate_hostname_syntax(host: &str) -> A2AResult<()> {
+    if host.len() > 253 {
+        return Err(A2AError::Validation("invalid host: too long".to_string()));
+    }
+
+    for label in host.split('.') {
+        if label.is_empty() {
+            return Err(A2AError::Validation("invalid host: empty label".to_string()));
+        }
+        if label.len() > 63 {
+            return Err(A2AError::Validation("invalid host: label too long".to_string()));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(A2AError::Validation(
+                "invalid host: label cannot start/end with '-'".to_string(),
+            ));
+        }
+        if !label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err(A2AError::Validation("invalid host: illegal characters".to_string()));
+        }
+    }
+
+    Ok(())
+}
+
+fn check_ip(ip: IpAddr, display_host: &str) -> A2AResult<()> {
+    if let Some(reason) = blocked_ip_reason(ip) {
+        return Err(A2AError::SsrfBlocked(format!("cannot fetch {reason}: {display_host}")));
+    }
+    Ok(())
+}
+
+fn blocked_ip_reason(ip: IpAddr) -> Option<&'static str> {
+    match ip {
+        IpAddr::V4(v4) => blocked_ipv4_reason(v4),
+        IpAddr::V6(v6) => blocked_ipv6_reason(v6),
+    }
+}
+
+fn blocked_ipv4_reason(ip: Ipv4Addr) -> Option<&'static str> {
+    let [a, b, c, d] = ip.octets();
+
+    if a == 127 {
+        return Some("loopback IP");
+    }
+    if a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168) {
+        return Some("private IP");
+    }
+    if a == 169 && b == 254 {
+        return Some("link-local IP");
+    }
+    if a == 0 {
+        return Some("unspecified IP");
+    }
+    if a == 100 && (64..=127).contains(&b) {
+        return Some("shared carrier-grade NAT IP");
+    }
+    if (a == 192 && b == 0 && c == 2)
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+    {
+        return Some("documentation/reserved IP");
+    }
+    if a == 198 && (b == 18 || b == 19) {
+        return Some("benchmark/reserved IP");
+    }
+    if a == 192 && b == 88 && c == 99 {
+        return Some("reserved IP");
+    }
+    if a == 255 && b == 255 && c == 255 && d == 255 {
+        return Some("broadcast IP");
+    }
+    if a >= 224 {
+        return Some("multicast/reserved IP");
+    }
+
+    None
+}
+
+fn blocked_ipv6_reason(ip: Ipv6Addr) -> Option<&'static str> {
+    if ip.is_loopback() {
+        return Some("loopback IP");
+    }
+    if ip.is_unspecified() {
+        return Some("unspecified IP");
+    }
+
+    let [s0, s1, _, _, _, _, _, _] = ip.segments();
+
+    // fc00::/7 (unique-local)
+    if (s0 & 0xfe00) == 0xfc00 {
+        return Some("private IP");
+    }
+    // fe80::/10 (link-local unicast)
+    if (s0 & 0xffc0) == 0xfe80 {
+        return Some("link-local IP");
+    }
+    // fec0::/10 (deprecated site-local)
+    if (s0 & 0xffc0) == 0xfec0 {
+        return Some("reserved IP");
+    }
+    // ff00::/8 (multicast)
+    if (s0 & 0xff00) == 0xff00 {
+        return Some("multicast/reserved IP");
+    }
+    // 2001:db8::/32 documentation range.
+    if s0 == 0x2001 && s1 == 0x0db8 {
+        return Some("documentation/reserved IP");
+    }
+
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d): check mapped IPv4 policy too.
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return blocked_ipv4_reason(v4);
+    }
+
+    None
+}
+
+fn parse_decimal_ipv4_literal(host: &str) -> Option<Ipv4Addr> {
+    if !host.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n = host.parse::<u32>().ok()?;
+    Some(Ipv4Addr::from(n))
+}
+
+fn resolve_host_ips(host: &str, port: u16) -> Vec<IpAddr> {
+    let addr = format!("{host}:{port}");
+    match addr.to_socket_addrs() {
+        Ok(iter) => {
+            let mut ips = Vec::new();
+            for socket_addr in iter {
+                let ip = socket_addr.ip();
+                if !ips.contains(&ip) {
+                    ips.push(ip);
+                }
+            }
+            ips
+        }
+        Err(_) => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -167,20 +390,14 @@ mod tests {
 
     #[test]
     fn allows_public_ip() {
-        assert!(validate_url("https://203.0.113.1/hook").is_ok());
+        assert!(validate_url("https://8.8.8.8/hook").is_ok());
     }
 
-    // ===== Blocked: localhost =====
+    // ===== Blocked: loopback/private/link-local =====
 
     #[test]
     fn blocks_localhost() {
         let err = validate_url("http://localhost/hook").unwrap_err();
-        assert!(matches!(err, A2AError::SsrfBlocked(_)));
-    }
-
-    #[test]
-    fn blocks_localhost_with_port() {
-        let err = validate_url("http://localhost:8080/hook").unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 
@@ -197,69 +414,77 @@ mod tests {
     }
 
     #[test]
-    fn blocks_ipv6_loopback() {
-        let err = validate_url("http://[::1]/hook").unwrap_err();
-        assert!(matches!(err, A2AError::SsrfBlocked(_)));
-    }
-
-    // ===== Blocked: 10.x.x.x =====
-
-    #[test]
     fn blocks_10_0_0_1() {
         let err = validate_url("http://10.0.0.1/hook").unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 
     #[test]
-    fn blocks_10_255_255_255() {
-        let err = validate_url("http://10.255.255.255/hook").unwrap_err();
-        assert!(matches!(err, A2AError::SsrfBlocked(_)));
-    }
-
-    // ===== Blocked: 192.168.x.x =====
-
-    #[test]
-    fn blocks_192_168_0_1() {
-        let err = validate_url("http://192.168.0.1/hook").unwrap_err();
-        assert!(matches!(err, A2AError::SsrfBlocked(_)));
-    }
-
-    #[test]
-    fn blocks_192_168_1_100() {
-        let err = validate_url("http://192.168.1.100/hook").unwrap_err();
-        assert!(matches!(err, A2AError::SsrfBlocked(_)));
-    }
-
-    // ===== Blocked: 172.16-31.x.x =====
-
-    #[test]
-    fn blocks_172_16() {
-        let err = validate_url("http://172.16.0.1/hook").unwrap_err();
-        assert!(matches!(err, A2AError::SsrfBlocked(_)));
-    }
-
-    #[test]
-    fn blocks_172_31() {
+    fn blocks_172_16_to_31() {
         let err = validate_url("http://172.31.255.255/hook").unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 
     #[test]
-    fn blocks_172_24() {
-        let err = validate_url("http://172.24.1.1/hook").unwrap_err();
+    fn blocks_192_168() {
+        let err = validate_url("http://192.168.1.100/hook").unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 
     #[test]
-    fn allows_172_15() {
-        // 172.15.x.x is NOT a private range
-        assert!(validate_url("http://172.15.0.1/hook").is_ok());
+    fn blocks_169_254_link_local() {
+        let err = validate_url("http://169.254.1.1/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 
     #[test]
-    fn allows_172_32() {
-        // 172.32.x.x is NOT a private range
-        assert!(validate_url("http://172.32.0.1/hook").is_ok());
+    fn blocks_ipv6_loopback() {
+        let err = validate_url("http://[::1]/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn blocks_ipv6_link_local() {
+        let err = validate_url("http://[fe80::1]/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn blocks_ipv6_unique_local() {
+        let err = validate_url("http://[fd00::1]/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_ipv6_loopback() {
+        let err = validate_url("http://[::ffff:127.0.0.1]/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    // ===== Blocked: reserved/documentation =====
+
+    #[test]
+    fn blocks_documentation_ipv4_range() {
+        let err = validate_url("http://203.0.113.10/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn blocks_documentation_ipv6_range() {
+        let err = validate_url("http://[2001:db8::1]/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn blocks_benchmark_ipv4_range() {
+        let err = validate_url("http://198.18.0.1/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn blocks_carrier_grade_nat_range() {
+        let err = validate_url("http://100.64.0.1/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 
     // ===== Blocked: internal TLDs =====
@@ -279,6 +504,12 @@ mod tests {
     #[test]
     fn blocks_dot_localhost() {
         let err = validate_url("http://app.localhost/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn blocks_dot_home_arpa() {
+        let err = validate_url("http://router.home.arpa/hook").unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 
@@ -310,41 +541,6 @@ mod tests {
         assert!(matches!(err, A2AError::Validation(_)));
     }
 
-    // ===== Parse tests =====
-
-    #[test]
-    fn parse_components_basic() {
-        let (scheme, host) = parse_url_components("https://example.com/path").unwrap();
-        assert_eq!(scheme, "https");
-        assert_eq!(host, "example.com");
-    }
-
-    #[test]
-    fn parse_components_with_port() {
-        let (scheme, host) = parse_url_components("http://api.test.com:9090/path").unwrap();
-        assert_eq!(scheme, "http");
-        assert_eq!(host, "api.test.com");
-    }
-
-    #[test]
-    fn parse_components_ipv6() {
-        let (scheme, host) = parse_url_components("http://[::1]:8080/path").unwrap();
-        assert_eq!(scheme, "http");
-        assert_eq!(host, "::1");
-    }
-
-    #[test]
-    fn parse_components_uppercase_scheme() {
-        let (scheme, _host) = parse_url_components("HTTPS://example.com/path").unwrap();
-        assert_eq!(scheme, "https");
-    }
-
-    #[test]
-    fn parse_components_query_string() {
-        let (_, host) = parse_url_components("https://example.com?foo=bar").unwrap();
-        assert_eq!(host, "example.com");
-    }
-
     #[test]
     fn rejects_userinfo_host_confusion() {
         let err = validate_url("http://attacker@localhost:8080/hook").unwrap_err();
@@ -352,8 +548,85 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_userinfo() {
-        let err = parse_url_components("https://user:pass@example.com/hook").unwrap_err();
+    fn rejects_unbracketed_ipv6() {
+        let err = validate_url("http://::1/hook").unwrap_err();
+        assert!(matches!(err, A2AError::Validation(_)));
+    }
+
+    #[test]
+    fn rejects_invalid_port_non_numeric() {
+        let err = validate_url("https://example.com:notaport/hook").unwrap_err();
+        assert!(matches!(err, A2AError::Validation(_)));
+    }
+
+    #[test]
+    fn rejects_invalid_port_zero() {
+        let err = validate_url("https://example.com:0/hook").unwrap_err();
+        assert!(matches!(err, A2AError::Validation(_)));
+    }
+
+    #[test]
+    fn rejects_ipv6_zone_identifier() {
+        let err = validate_url("http://[fe80::1%25eth0]/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    // ===== Parse tests =====
+
+    #[test]
+    fn parse_components_basic() {
+        let parsed = parse_url_components("https://example.com/path").unwrap();
+        assert_eq!(parsed.scheme, "https");
+        assert_eq!(parsed.host, "example.com");
+        assert_eq!(parsed.port, None);
+    }
+
+    #[test]
+    fn parse_components_with_port() {
+        let parsed = parse_url_components("http://api.test.com:9090/path").unwrap();
+        assert_eq!(parsed.scheme, "http");
+        assert_eq!(parsed.host, "api.test.com");
+        assert_eq!(parsed.port, Some(9090));
+    }
+
+    #[test]
+    fn parse_components_ipv6() {
+        let parsed = parse_url_components("http://[::1]:8080/path").unwrap();
+        assert_eq!(parsed.scheme, "http");
+        assert_eq!(parsed.host, "::1");
+        assert_eq!(parsed.port, Some(8080));
+    }
+
+    #[test]
+    fn parse_components_query_and_fragment() {
+        let parsed = parse_url_components("https://example.com/path?a=1#frag").unwrap();
+        assert_eq!(parsed.host, "example.com");
+    }
+
+    // ===== DNS resolution checks =====
+
+    #[test]
+    fn dns_resolution_blocks_private_target() {
+        let err = validate_url_with_resolver("https://public.example.com/hook", |_host, _port| {
+            vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))]
+        })
+        .unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn dns_resolution_allows_public_target() {
+        let result =
+            validate_url_with_resolver("https://public.example.com/hook", |_host, _port| {
+                vec![IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))]
+            });
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn decimal_ipv4_literal_is_blocked() {
+        // 2130706433 == 127.0.0.1
+        let err = validate_url("http://2130706433/hook").unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 }

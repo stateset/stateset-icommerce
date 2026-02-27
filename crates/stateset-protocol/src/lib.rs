@@ -60,7 +60,7 @@ pub mod error;
 pub mod merkle;
 
 // Re-export primary types at crate root for convenience.
-pub use batch::{BatchSignature, MerkleProof, SignatureAlgorithm, SyncBatch};
+pub use batch::{BatchSignature, MerkleLeafHashMode, MerkleProof, SignatureAlgorithm, SyncBatch};
 pub use canonical::{ProtocolVersion, SchemaVersion};
 pub use envelope::{EventEnvelope, EventEnvelopeBuilder, PayloadCodec};
 pub use error::ProtocolError;

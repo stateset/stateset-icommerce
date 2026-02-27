@@ -30,7 +30,7 @@ use uuid::Uuid;
 use crate::error::{ProtocolError, Result};
 
 /// The codec used to encode the event payload bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PayloadCodec {
@@ -158,6 +158,32 @@ impl EventEnvelope {
         hasher.update(payload);
         hasher.finalize().into()
     }
+
+    /// Compute the Merkle leaf hash that binds full envelope integrity.
+    ///
+    /// This hash covers event metadata, payload hash, payload bytes, codec, and
+    /// protocol/schema versions. Any envelope mutation changes the leaf hash.
+    #[must_use]
+    pub fn merkle_leaf_hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(b"stateset:event-envelope-leaf:v2");
+        hasher.update([0x00]);
+        hasher.update(self.id.as_bytes());
+        hasher.update(self.sequence.to_be_bytes());
+        hasher.update(self.timestamp.timestamp().to_be_bytes());
+        hasher.update(self.timestamp.timestamp_subsec_nanos().to_be_bytes());
+        update_optional_uuid(&mut hasher, self.correlation_id);
+        update_optional_uuid(&mut hasher, self.causation_id);
+        update_len_prefixed(&mut hasher, self.event_type.as_bytes());
+        update_len_prefixed(&mut hasher, self.entity_type.as_bytes());
+        update_len_prefixed(&mut hasher, self.entity_id.as_bytes());
+        hasher.update(self.payload_hash);
+        hasher.update([payload_codec_tag(self.payload_codec)]);
+        hasher.update(self.protocol_version.to_be_bytes());
+        hasher.update(self.schema_version.to_be_bytes());
+        update_len_prefixed(&mut hasher, &self.payload);
+        hasher.finalize().into()
+    }
 }
 
 impl PartialOrd for EventEnvelope {
@@ -168,7 +194,43 @@ impl PartialOrd for EventEnvelope {
 
 impl Ord for EventEnvelope {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.sequence.cmp(&other.sequence).then_with(|| self.timestamp.cmp(&other.timestamp))
+        self.sequence
+            .cmp(&other.sequence)
+            .then_with(|| self.timestamp.cmp(&other.timestamp))
+            .then_with(|| self.id.cmp(&other.id))
+            .then_with(|| self.correlation_id.cmp(&other.correlation_id))
+            .then_with(|| self.causation_id.cmp(&other.causation_id))
+            .then_with(|| self.event_type.cmp(&other.event_type))
+            .then_with(|| self.entity_type.cmp(&other.entity_type))
+            .then_with(|| self.entity_id.cmp(&other.entity_id))
+            .then_with(|| self.payload_hash.cmp(&other.payload_hash))
+            .then_with(|| self.payload_codec.cmp(&other.payload_codec))
+            .then_with(|| self.payload.cmp(&other.payload))
+            .then_with(|| self.protocol_version.cmp(&other.protocol_version))
+            .then_with(|| self.schema_version.cmp(&other.schema_version))
+    }
+}
+
+fn update_len_prefixed(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+}
+
+fn update_optional_uuid(hasher: &mut Sha256, value: Option<Uuid>) {
+    match value {
+        Some(id) => {
+            hasher.update([1]);
+            hasher.update(id.as_bytes());
+        }
+        None => hasher.update([0]),
+    }
+}
+
+const fn payload_codec_tag(codec: PayloadCodec) -> u8 {
+    match codec {
+        PayloadCodec::Json => 1,
+        PayloadCodec::Cbor => 2,
+        PayloadCodec::MessagePack => 3,
     }
 }
 
@@ -565,6 +627,26 @@ mod tests {
         assert_eq!(h.len(), 32);
     }
 
+    #[test]
+    fn merkle_leaf_hash_deterministic() {
+        let env = sample_envelope();
+        let h1 = env.merkle_leaf_hash();
+        let h2 = env.merkle_leaf_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn merkle_leaf_hash_changes_when_metadata_changes() {
+        let mut env1 = sample_envelope();
+        let mut env2 = env1.clone();
+        env2.event_type = "order.cancelled".to_string();
+        assert_ne!(env1.merkle_leaf_hash(), env2.merkle_leaf_hash());
+
+        env1.payload = b"{\"total\":1}".to_vec();
+        env1.payload_hash = EventEnvelope::compute_payload_hash(&env1.payload);
+        assert_ne!(env1.merkle_leaf_hash(), env2.merkle_leaf_hash());
+    }
+
     // --- Serde round-trip tests ---
 
     #[test]
@@ -641,6 +723,16 @@ mod tests {
         e2.id = id;
         // Same sequence+timestamp => Equal ordering
         assert_eq!(e1.cmp(&e2), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn ordering_tiebreakers_keep_cmp_consistent_with_eq() {
+        let e1 = sample_envelope();
+        let mut e2 = e1.clone();
+        e2.payload = br#"{"different":true}"#.to_vec();
+        e2.payload_hash = EventEnvelope::compute_payload_hash(&e2.payload);
+        assert_ne!(e1, e2);
+        assert_ne!(e1.cmp(&e2), std::cmp::Ordering::Equal);
     }
 
     #[test]

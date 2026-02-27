@@ -32,4 +32,4 @@ pub use error::SyncError;
 pub use event::SyncEvent;
 pub use outbox::Outbox;
 pub use state::{SyncState, SyncStatus};
-pub use transport::{NullTransport, PullResult, PushResult, Transport};
+pub use transport::{NullTransport, PullPage, PullResult, PushResult, Transport};

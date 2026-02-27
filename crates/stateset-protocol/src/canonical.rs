@@ -47,7 +47,10 @@ pub fn canonical_json(value: &serde_json::Value) -> Result<String> {
 
 /// Compute a domain-separated SHA-256 hash.
 ///
-/// The hash is computed as: `SHA256(domain_bytes || data)`.
+/// The hash is computed as:
+/// `SHA256("stateset-domain-hash-v1" || 0x00 || len(domain) || 0x1F || domain || 0x1E || len(data) || 0x1D || data)`.
+///
+/// This length-prefix + delimiter framing avoids concatenation ambiguity.
 ///
 /// # Example
 ///
@@ -61,7 +64,14 @@ pub fn canonical_json(value: &serde_json::Value) -> Result<String> {
 #[must_use]
 pub fn domain_hash(domain: &str, data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
+    hasher.update(b"stateset-domain-hash-v1");
+    hasher.update([0x00]);
+    hasher.update((domain.len() as u64).to_be_bytes());
+    hasher.update([0x1F]);
     hasher.update(domain.as_bytes());
+    hasher.update([0x1E]);
+    hasher.update((data.len() as u64).to_be_bytes());
+    hasher.update([0x1D]);
     hasher.update(data);
     hasher.finalize().into()
 }
@@ -262,6 +272,14 @@ mod tests {
     fn domain_hash_empty_domain() {
         let h = domain_hash("", b"data");
         assert_eq!(h.len(), 32);
+    }
+
+    #[test]
+    fn domain_hash_not_ambiguous_under_concatenation() {
+        // Previously ambiguous under naive `domain || data` framing.
+        let h1 = domain_hash("ab", b"c");
+        let h2 = domain_hash("a", b"bc");
+        assert_ne!(h1, h2);
     }
 
     // --- ProtocolVersion tests ---

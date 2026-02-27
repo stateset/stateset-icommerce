@@ -9,7 +9,7 @@ use crate::error::SyncError;
 use crate::event::SyncEvent;
 use crate::outbox::Outbox;
 use crate::state::{SyncState, SyncStatus};
-use crate::transport::{PullResult, PushResult, Transport};
+use crate::transport::{PullPage, PullResult, PushResult, Transport, derive_next_cursor};
 
 /// Safety stop for paginated pull loops in `full_sync`.
 const MAX_PULL_PAGES: usize = 10_000;
@@ -44,6 +44,7 @@ pub struct SyncEngine {
     outbox: Outbox,
     buffer: EventBuffer,
     resolver: ConflictResolver,
+    next_pull_cursor: Option<u64>,
     initialized: bool,
 }
 
@@ -58,6 +59,7 @@ impl SyncEngine {
             outbox: Outbox::with_default_capacity(),
             buffer: EventBuffer::new(buffer_capacity),
             resolver: ConflictResolver::default(),
+            next_pull_cursor: None,
             initialized: true,
         }
     }
@@ -72,6 +74,7 @@ impl SyncEngine {
             outbox: Outbox::with_default_capacity(),
             buffer: EventBuffer::new(buffer_capacity),
             resolver: ConflictResolver::new(strategy),
+            next_pull_cursor: None,
             initialized: true,
         }
     }
@@ -128,10 +131,20 @@ impl SyncEngine {
     ///
     /// Returns [`SyncError::Transport`] if the transport operation fails.
     pub async fn pull(&mut self, transport: &dyn Transport) -> Result<PullResult, SyncError> {
-        let since = self.state.remote_head;
-        let limit = self.config.batch_size;
+        let since = self.next_pull_cursor.unwrap_or(self.state.remote_head);
+        let (result, next_cursor) = self.pull_since(transport, since).await?;
+        self.next_pull_cursor = next_cursor;
+        Ok(result)
+    }
 
-        let result = transport.pull_events(since, limit).await?;
+    async fn pull_since(
+        &mut self,
+        transport: &dyn Transport,
+        since: u64,
+    ) -> Result<(PullResult, Option<u64>), SyncError> {
+        let limit = self.config.batch_size;
+        let PullPage { result, next_cursor: transport_next_cursor } =
+            transport.pull_events_page(since, limit).await?;
 
         // Detect and resolve conflicts between pending outbox events and pulled events
         let pending: Vec<SyncEvent> =
@@ -182,7 +195,39 @@ impl SyncEngine {
         self.state.remote_head = result.remote_head;
         self.state.last_pull = Some(Utc::now());
 
-        Ok(result)
+        let next_cursor = Self::resolve_next_cursor(
+            since,
+            &result.events,
+            result.has_more,
+            transport_next_cursor,
+        )?;
+
+        Ok((result, next_cursor))
+    }
+
+    fn resolve_next_cursor(
+        since: u64,
+        events: &[SyncEvent],
+        has_more: bool,
+        transport_next_cursor: Option<u64>,
+    ) -> Result<Option<u64>, SyncError> {
+        if !has_more {
+            return Ok(None);
+        }
+
+        let next_cursor = transport_next_cursor.or_else(|| derive_next_cursor(since, events));
+        let Some(next_cursor) = next_cursor else {
+            return Err(SyncError::Transport(
+                "pull pagination stalled: has_more=true but no advancing cursor available"
+                    .to_string(),
+            ));
+        };
+        if next_cursor <= since {
+            return Err(SyncError::Transport(format!(
+                "pull pagination cursor did not advance (since={since}, next_cursor={next_cursor})"
+            )));
+        }
+        Ok(Some(next_cursor))
     }
 
     /// Get the current sync status.
@@ -245,7 +290,9 @@ impl SyncEngine {
         transport: &dyn Transport,
     ) -> Result<(PushResult, PullResult), SyncError> {
         let push_result = self.push(transport).await?;
-        let mut pull_result = self.pull(transport).await?;
+        let mut since = self.next_pull_cursor.unwrap_or(self.state.remote_head);
+        let (mut pull_result, next_cursor) = self.pull_since(transport, since).await?;
+        self.next_pull_cursor = next_cursor;
         let mut pull_pages = 1;
 
         while pull_result.has_more {
@@ -255,13 +302,22 @@ impl SyncEngine {
                 ));
             }
 
-            let next_page = self.pull(transport).await?;
+            since = self.next_pull_cursor.ok_or_else(|| {
+                SyncError::Transport(
+                    "pull pagination stalled: has_more=true but no continuation cursor".to_string(),
+                )
+            })?;
+
+            let (next_page, page_cursor) = self.pull_since(transport, since).await?;
+            self.next_pull_cursor = page_cursor;
+
             pull_result.events.extend(next_page.events);
             pull_result.remote_head = next_page.remote_head;
             pull_result.has_more = next_page.has_more;
             pull_pages += 1;
         }
 
+        self.next_pull_cursor = None;
         Ok((push_result, pull_result))
     }
 }
@@ -272,6 +328,7 @@ mod tests {
     use crate::transport::NullTransport;
     use serde_json::json;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn make_config() -> SyncConfig {
@@ -628,6 +685,7 @@ mod tests {
         #[derive(Debug)]
         struct PagingTransport {
             pulls: Arc<AtomicU64>,
+            since_args: Arc<Mutex<Vec<u64>>>,
         }
 
         #[async_trait::async_trait]
@@ -638,9 +696,10 @@ mod tests {
 
             async fn pull_events(
                 &self,
-                _since: u64,
+                since: u64,
                 _limit: usize,
             ) -> Result<PullResult, SyncError> {
+                self.since_args.lock().unwrap().push(since);
                 let call = self.pulls.fetch_add(1, Ordering::SeqCst);
                 if call == 0 {
                     Ok(PullResult {
@@ -648,7 +707,8 @@ mod tests {
                             SyncEvent::new("order.updated", "order", "ORD-1", json!({}))
                                 .with_sequence(1),
                         ],
-                        remote_head: 1,
+                        // Simulate remote_head as global head watermark, not page cursor.
+                        remote_head: 999,
                         has_more: true,
                     })
                 } else {
@@ -657,22 +717,61 @@ mod tests {
                             SyncEvent::new("order.updated", "order", "ORD-2", json!({}))
                                 .with_sequence(2),
                         ],
-                        remote_head: 2,
+                        remote_head: 999,
                         has_more: false,
                     })
                 }
             }
         }
 
-        let transport = PagingTransport { pulls: Arc::new(AtomicU64::new(0)) };
+        let since_args = Arc::new(Mutex::new(Vec::new()));
+        let transport = PagingTransport {
+            pulls: Arc::new(AtomicU64::new(0)),
+            since_args: Arc::clone(&since_args),
+        };
         let mut engine = SyncEngine::new(make_config());
         let (_push_result, pull_result) = engine.full_sync(&transport).await.unwrap();
 
         assert_eq!(pull_result.events.len(), 2);
         assert!(!pull_result.has_more);
         assert_eq!(engine.buffered_count(), 2);
-        assert_eq!(engine.state().remote_head, 2);
+        assert_eq!(engine.state().remote_head, 999);
         assert_eq!(transport.pulls.load(Ordering::SeqCst), 2);
+        assert_eq!(&*since_args.lock().unwrap(), &[0, 1]);
+    }
+
+    #[tokio::test]
+    async fn pull_errors_when_has_more_but_cursor_cannot_advance() {
+        #[derive(Debug)]
+        struct StalledPagingTransport;
+
+        #[async_trait::async_trait]
+        impl Transport for StalledPagingTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult { accepted: events.len(), remote_head: 0 })
+            }
+
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                // has_more=true but no event sequence progress, so default cursor
+                // derivation cannot safely continue.
+                Ok(PullResult {
+                    events: vec![
+                        SyncEvent::new("order.updated", "order", "ORD-1", json!({}))
+                            .with_sequence(0),
+                    ],
+                    remote_head: 100,
+                    has_more: true,
+                })
+            }
+        }
+
+        let mut engine = SyncEngine::new(make_config());
+        let err = engine.pull(&StalledPagingTransport).await.unwrap_err();
+        assert!(matches!(err, SyncError::Transport(_)));
     }
 
     #[test]
