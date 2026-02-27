@@ -376,13 +376,14 @@ impl PgCartRepository {
     }
 
     async fn update_cart_totals_async(&self, cart_id: Uuid) -> Result<()> {
-        // Calculate subtotal from items
-        let subtotal: Decimal =
-            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
-                .bind(cart_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+        // Calculate subtotal from pre-tax line amounts to avoid double-counting tax.
+        let subtotal: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
+        )
+        .bind(cart_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         // Get current tax, shipping, and discount
         let row: (Decimal, Decimal, Decimal) = sqlx::query_as(
@@ -546,12 +547,13 @@ impl PgCartRepository {
         }
 
         // Update totals
-        let subtotal: Decimal =
-            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+        let subtotal: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
+        )
+        .bind(id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         sqlx::query("UPDATE carts SET subtotal = $1, grand_total = $2 WHERE id = $3")
             .bind(subtotal)
@@ -811,12 +813,13 @@ impl PgCartRepository {
         let result = self.add_item_internal(&mut tx, cart_id, item).await?;
 
         // Update cart totals
-        let subtotal: Decimal =
-            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
-                .bind(cart_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+        let subtotal: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
+        )
+        .bind(cart_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         let (tax, shipping, discount): (Decimal, Decimal, Decimal) = sqlx::query_as(
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
@@ -918,12 +921,13 @@ impl PgCartRepository {
             .map_err(map_db_error)?;
 
         // Update cart totals
-        let subtotal: Decimal =
-            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
-                .bind(cart_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+        let subtotal: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
+        )
+        .bind(cart_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         let (cart_tax, shipping, discount_cart): (Decimal, Decimal, Decimal) = sqlx::query_as(
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
@@ -975,12 +979,13 @@ impl PgCartRepository {
             .map_err(map_db_error)?;
 
         // Update cart totals
-        let subtotal: Decimal =
-            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
-                .bind(cart_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+        let subtotal: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM((quantity * unit_price) - discount_amount), 0) FROM cart_items WHERE cart_id = $1",
+        )
+        .bind(cart_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         let (tax, shipping, discount): (Decimal, Decimal, Decimal) = sqlx::query_as(
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",

@@ -50,7 +50,7 @@ impl JobStatus {
             }
             Self::Retrying => &[Self::Running, Self::Cancelled, Self::Failed],
             Self::Failed => &[Self::Retrying],
-            Self::TimedOut => &[Self::Retrying],
+            Self::TimedOut => &[Self::Retrying, Self::Failed],
             Self::Completed | Self::Cancelled => &[],
         }
     }
@@ -256,6 +256,8 @@ impl JobInstance {
         self.transition_to(JobStatus::Retrying)?;
         self.attempt += 1;
         self.next_run_at = Some(next_run);
+        self.completed_at = None;
+        self.started_at = None;
         Ok(())
     }
 
@@ -387,6 +389,7 @@ mod tests {
     fn timed_out_allows_retry() {
         assert!(!JobStatus::TimedOut.is_terminal());
         assert!(JobStatus::TimedOut.validate_transition(JobStatus::Retrying).is_ok());
+        assert!(JobStatus::TimedOut.validate_transition(JobStatus::Failed).is_ok());
     }
 
     #[test]
@@ -487,11 +490,13 @@ mod tests {
     fn mark_retrying_increments_attempt() {
         let mut inst = JobInstance::new("test");
         inst.mark_running().unwrap();
+        inst.mark_timed_out().unwrap();
         let next = Utc::now() + chrono::Duration::seconds(5);
         inst.mark_retrying(next).unwrap();
         assert_eq!(inst.status, JobStatus::Retrying);
         assert_eq!(inst.attempt, 1);
         assert_eq!(inst.next_run_at, Some(next));
+        assert!(inst.completed_at.is_none());
     }
 
     #[test]

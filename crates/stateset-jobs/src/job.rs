@@ -4,6 +4,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+use chrono::{DateTime, Datelike, Timelike, Utc};
+
 use crate::context::JobContext;
 use crate::error::JobError;
 use crate::state::JobOutput;
@@ -39,6 +41,20 @@ impl Schedule {
                 Err(JobError::InvalidSchedule("interval must be > 0".to_owned()))
             }
             _ => Ok(()),
+        }
+    }
+
+    /// Compute the next run time strictly after `from`.
+    #[must_use]
+    pub fn next_run_after(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        match self {
+            Self::Once | Self::OnEvent(_) => None,
+            Self::Interval(duration) => {
+                let delta = chrono::Duration::from_std(*duration)
+                    .unwrap_or_else(|_| chrono::Duration::minutes(1));
+                Some(from + delta)
+            }
+            Self::Cron(expr) => next_cron_occurrence(expr, from),
         }
     }
 }
@@ -119,6 +135,60 @@ fn validate_cron_token(token: &str, label: &str, min: u32, max: u32) -> Result<(
     }
 
     Ok(())
+}
+
+fn next_cron_occurrence(expr: &str, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let parts: Vec<&str> = expr.split_whitespace().collect();
+    if parts.len() != 5 {
+        return None;
+    }
+
+    let mut candidate = (from + chrono::Duration::minutes(1)).with_second(0)?.with_nanosecond(0)?;
+
+    // Bound search to five years of minute ticks.
+    const MAX_SEARCH_MINUTES: i64 = 5 * 366 * 24 * 60;
+    for _ in 0..MAX_SEARCH_MINUTES {
+        if cron_matches(&parts, candidate) {
+            return Some(candidate);
+        }
+        candidate = candidate + chrono::Duration::minutes(1);
+    }
+
+    None
+}
+
+fn cron_matches(parts: &[&str], dt: DateTime<Utc>) -> bool {
+    cron_field_matches(parts[0], dt.minute())
+        && cron_field_matches(parts[1], dt.hour())
+        && cron_field_matches(parts[2], dt.day())
+        && cron_field_matches(parts[3], dt.month())
+        && cron_field_matches(parts[4], dt.weekday().num_days_from_sunday())
+}
+
+fn cron_field_matches(field: &str, value: u32) -> bool {
+    if field == "*" {
+        return true;
+    }
+
+    field.split(',').any(|token| cron_token_matches(token.trim(), value))
+}
+
+fn cron_token_matches(token: &str, value: u32) -> bool {
+    if let Some(step_str) = token.strip_prefix("*/") {
+        if let Ok(step) = step_str.parse::<u32>() {
+            return step != 0 && value % step == 0;
+        }
+        return false;
+    }
+
+    if let Some((start, end)) = token.split_once('-') {
+        if let (Ok(start), Ok(end)) = (start.parse::<u32>(), end.parse::<u32>()) {
+            return start <= value && value <= end;
+        }
+        return false;
+    }
+
+    token.parse::<u32>() == Ok(value)
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +359,7 @@ impl std::fmt::Debug for dyn JobHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     // -----------------------------------------------------------------------
     // Schedule validation
@@ -407,6 +478,27 @@ mod tests {
     #[test]
     fn schedule_cron_empty_string() {
         assert!(Schedule::Cron(String::new()).validate().is_err());
+    }
+
+    #[test]
+    fn interval_next_run_after() {
+        let from = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let next = Schedule::Interval(Duration::from_secs(90)).next_run_after(from);
+        assert_eq!(next, Some(Utc.with_ymd_and_hms(2026, 1, 1, 12, 1, 30).unwrap()));
+    }
+
+    #[test]
+    fn cron_next_run_after_every_five_minutes() {
+        let from = Utc.with_ymd_and_hms(2026, 1, 1, 12, 2, 34).unwrap();
+        let next = Schedule::Cron("*/5 * * * *".into()).next_run_after(from);
+        assert_eq!(next, Some(Utc.with_ymd_and_hms(2026, 1, 1, 12, 5, 0).unwrap()));
+    }
+
+    #[test]
+    fn cron_next_run_after_exact_boundary_skips_current_minute() {
+        let from = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let next = Schedule::Cron("0 * * * *".into()).next_run_after(from);
+        assert_eq!(next, Some(Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap()));
     }
 
     // -----------------------------------------------------------------------

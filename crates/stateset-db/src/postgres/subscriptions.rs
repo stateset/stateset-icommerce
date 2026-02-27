@@ -142,8 +142,31 @@ struct EventRow {
 }
 
 impl PgSubscriptionRepository {
+    const MAX_SUBSCRIPTION_NUMBER_RETRIES: usize = 8;
+
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    fn is_subscription_number_unique_violation(err: &sqlx::Error) -> bool {
+        let sqlx::Error::Database(db_err) = err else {
+            return false;
+        };
+
+        if db_err.code().as_deref() != Some("23505") {
+            return false;
+        }
+
+        if let Some(constraint) = db_err.constraint() {
+            let lower = constraint.to_ascii_lowercase();
+            if lower == "subscriptions_subscription_number_key"
+                || lower.contains("subscription_number")
+            {
+                return true;
+            }
+        }
+
+        db_err.message().to_ascii_lowercase().contains("subscription_number")
     }
 
     fn row_to_plan(row: PlanRow) -> Result<SubscriptionPlan> {
@@ -839,8 +862,6 @@ impl PgSubscriptionRepository {
             return Err(CommerceError::ValidationError("Plan is not active".into()));
         }
 
-        let id = SubscriptionId::new();
-        let subscription_number = generate_subscription_number();
         let now = input.start_date.unwrap_or_else(Utc::now);
 
         let interval_days = if plan.billing_interval == BillingInterval::Custom {
@@ -903,95 +924,116 @@ impl PgSubscriptionRepository {
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut created_subscription_id = None;
+        for attempt in 0..Self::MAX_SUBSCRIPTION_NUMBER_RETRIES {
+            let id = SubscriptionId::new();
+            let subscription_number = generate_subscription_number();
+            let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO subscriptions (
-                id, subscription_number, customer_id, plan_id, plan_name, status,
-                billing_interval, custom_interval_days, price, currency, payment_method_id,
-                started_at, current_period_start, current_period_end, next_billing_date, trial_ends_at,
-                billing_cycle_count, failed_payment_attempts,
-                shipping_address, billing_address,
-                discount_percent, discount_amount, coupon_code,
-                metadata, created_at, updated_at
-            ) VALUES (
-                $1,$2,$3,$4,$5,$6,
-                $7,$8,$9,$10,$11,
-                $12,$13,$14,$15,$16,
-                0,0,
-                $17,$18,
-                $19,$20,$21,
-                $22,$23,$24
+            let insert_result = sqlx::query(
+                r#"
+                INSERT INTO subscriptions (
+                    id, subscription_number, customer_id, plan_id, plan_name, status,
+                    billing_interval, custom_interval_days, price, currency, payment_method_id,
+                    started_at, current_period_start, current_period_end, next_billing_date, trial_ends_at,
+                    billing_cycle_count, failed_payment_attempts,
+                    shipping_address, billing_address,
+                    discount_percent, discount_amount, coupon_code,
+                    metadata, created_at, updated_at
+                ) VALUES (
+                    $1,$2,$3,$4,$5,$6,
+                    $7,$8,$9,$10,$11,
+                    $12,$13,$14,$15,$16,
+                    0,0,
+                    $17,$18,
+                    $19,$20,$21,
+                    $22,$23,$24
+                )
+                "#,
             )
-            "#,
-        )
-        .bind(id.into_uuid())
-        .bind(subscription_number)
-        .bind(input.customer_id.into_uuid())
-        .bind(input.plan_id)
-        .bind(&plan.name)
-        .bind(subscription_status_str(status))
-        .bind(plan.billing_interval.to_string())
-        .bind(plan.custom_interval_days)
-        .bind(price)
-        .bind(plan.currency.clone())
-        .bind(input.payment_method_id)
-        .bind(now)
-        .bind(now)
-        .bind(current_period_end)
-        .bind(next_billing_date)
-        .bind(trial_ends_at)
-        .bind(shipping_address)
-        .bind(billing_address)
-        .bind(plan.discount_percent)
-        .bind(plan.discount_amount)
-        .bind(input.coupon_code)
-        .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
-        .bind(now)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+            .bind(id.into_uuid())
+            .bind(subscription_number)
+            .bind(input.customer_id.into_uuid())
+            .bind(input.plan_id)
+            .bind(&plan.name)
+            .bind(subscription_status_str(status))
+            .bind(plan.billing_interval.to_string())
+            .bind(plan.custom_interval_days)
+            .bind(price)
+            .bind(plan.currency.clone())
+            .bind(input.payment_method_id.clone())
+            .bind(now)
+            .bind(now)
+            .bind(current_period_end)
+            .bind(next_billing_date.clone())
+            .bind(trial_ends_at.clone())
+            .bind(shipping_address.clone())
+            .bind(billing_address.clone())
+            .bind(plan.discount_percent)
+            .bind(plan.discount_amount)
+            .bind(input.coupon_code.clone())
+            .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
+            .bind(now)
+            .bind(now)
+            .execute(tx.as_mut())
+            .await;
 
-        for item in items_to_create {
-            self.create_subscription_item_async(&mut tx, id, item, &plan).await?;
-        }
+            if let Err(err) = insert_result {
+                if Self::is_subscription_number_unique_violation(&err)
+                    && attempt + 1 < Self::MAX_SUBSCRIPTION_NUMBER_RETRIES
+                {
+                    continue;
+                }
+                return Err(map_db_error(err));
+            }
 
-        self.record_event_tx(
-            &mut tx,
-            id,
-            SubscriptionEventType::Created,
-            "Subscription created",
-            None,
-            None,
-        )
-        .await?;
+            for item in items_to_create.clone() {
+                self.create_subscription_item_async(&mut tx, id, item, &plan).await?;
+            }
 
-        if let Some(trial_end) = trial_ends_at {
-            let desc = format!("Trial started, ends on {}", trial_end.format("%Y-%m-%d"));
             self.record_event_tx(
                 &mut tx,
                 id,
-                SubscriptionEventType::TrialStarted,
-                &desc,
+                SubscriptionEventType::Created,
+                "Subscription created",
                 None,
                 None,
             )
             .await?;
-        } else {
-            self.record_event_tx(
-                &mut tx,
-                id,
-                SubscriptionEventType::Activated,
-                "Subscription activated",
-                None,
-                None,
-            )
-            .await?;
+
+            if let Some(trial_end) = trial_ends_at.as_ref() {
+                let desc = format!("Trial started, ends on {}", trial_end.format("%Y-%m-%d"));
+                self.record_event_tx(
+                    &mut tx,
+                    id,
+                    SubscriptionEventType::TrialStarted,
+                    &desc,
+                    None,
+                    None,
+                )
+                .await?;
+            } else {
+                self.record_event_tx(
+                    &mut tx,
+                    id,
+                    SubscriptionEventType::Activated,
+                    "Subscription activated",
+                    None,
+                    None,
+                )
+                .await?;
+            }
+
+            tx.commit().await.map_err(map_db_error)?;
+            created_subscription_id = Some(id);
+            break;
         }
 
-        tx.commit().await.map_err(map_db_error)?;
+        let id = created_subscription_id.ok_or_else(|| {
+            CommerceError::Conflict(
+                "unable to allocate unique subscription number after retries".to_string(),
+            )
+        })?;
 
         self.get_subscription_async(id).await?.ok_or_else(|| {
             CommerceError::DatabaseError("Failed to retrieve created subscription".into())
@@ -1693,5 +1735,63 @@ fn event_type_str(event_type: SubscriptionEventType) -> &'static str {
         SubscriptionEventType::DiscountRemoved => "discount_removed",
         SubscriptionEventType::Refunded => "refunded",
         _ => "created",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PgSubscriptionRepository;
+    use sqlx::error::{DatabaseError, ErrorKind};
+    use std::borrow::Cow;
+    use std::fmt::{self, Display, Formatter};
+
+    #[derive(Debug)]
+    struct MockDbError {
+        code: Option<String>,
+        message: String,
+    }
+
+    impl Display for MockDbError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.message)
+        }
+    }
+
+    impl std::error::Error for MockDbError {}
+
+    impl DatabaseError for MockDbError {
+        fn message(&self) -> &str {
+            &self.message
+        }
+
+        fn code(&self) -> Option<Cow<'_, str>> {
+            self.code.as_ref().map(|code| Cow::Owned(code.clone()))
+        }
+
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
+    }
+
+    #[test]
+    fn detects_subscription_number_unique_violation() {
+        let err = sqlx::Error::Database(Box::new(MockDbError {
+            code: Some("23505".to_string()),
+            message: "duplicate key value violates unique constraint \"subscriptions_subscription_number_key\" Detail: Key (subscription_number)=(SUB-1) already exists.".to_string(),
+        }));
+
+        assert!(PgSubscriptionRepository::is_subscription_number_unique_violation(&err));
     }
 }

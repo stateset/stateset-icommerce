@@ -27,8 +27,24 @@ pub struct SqliteSubscriptionRepository {
 }
 
 impl SqliteSubscriptionRepository {
+    const MAX_SUBSCRIPTION_NUMBER_RETRIES: usize = 8;
+
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
+    }
+
+    fn is_subscription_number_unique_violation(err: &rusqlite::Error) -> bool {
+        match err {
+            rusqlite::Error::SqliteFailure(_, message) => message
+                .as_deref()
+                .map(|msg| {
+                    msg.contains("UNIQUE constraint failed: subscriptions.subscription_number")
+                })
+                .unwrap_or(false),
+            _ => err
+                .to_string()
+                .contains("UNIQUE constraint failed: subscriptions.subscription_number"),
+        }
     }
 
     // ========================================================================
@@ -382,8 +398,6 @@ impl SqliteSubscriptionRepository {
             return Err(stateset_core::CommerceError::ValidationError("Plan is not active".into()));
         }
 
-        let id = SubscriptionId::new();
-        let subscription_number = generate_subscription_number();
         let now = input.start_date.unwrap_or_else(Utc::now);
 
         // Calculate period end and trial
@@ -435,7 +449,11 @@ impl SqliteSubscriptionRepository {
                     .collect()
             };
 
-        {
+        let mut created_subscription_id = None;
+        for attempt in 0..Self::MAX_SUBSCRIPTION_NUMBER_RETRIES {
+            let id = SubscriptionId::new();
+            let subscription_number = generate_subscription_number();
+
             let mut conn = self.pool.get().map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
             })?;
@@ -443,7 +461,7 @@ impl SqliteSubscriptionRepository {
                 stateset_core::CommerceError::DatabaseError(format!("Transaction error: {}", e))
             })?;
 
-            tx.execute(
+            let insert_result = tx.execute(
                 "INSERT INTO subscriptions (
                     id, subscription_number, customer_id, plan_id, plan_name, status,
                     billing_interval, custom_interval_days, price, currency, payment_method_id,
@@ -466,34 +484,48 @@ impl SqliteSubscriptionRepository {
                     subscription_number,
                     input.customer_id.to_string(),
                     input.plan_id.to_string(),
-                    plan.name,
+                    plan.name.clone(),
                     format!("{}", status),
                     format!("{}", plan.billing_interval),
                     plan.custom_interval_days,
                     price.to_string(),
-                    plan.currency,
-                    input.payment_method_id,
+                    plan.currency.clone(),
+                    input.payment_method_id.clone(),
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                     current_period_end.to_rfc3339(),
-                    next_billing_date.map(|d| d.to_rfc3339()),
-                    trial_ends_at.map(|d| d.to_rfc3339()),
-                    input.shipping_address.as_ref()
+                    next_billing_date.as_ref().map(|d| d.to_rfc3339()),
+                    trial_ends_at.as_ref().map(|d| d.to_rfc3339()),
+                    input.shipping_address
+                        .as_ref()
                         .map(|a| serde_json::to_string(a).unwrap_or_default()),
-                    input.billing_address.as_ref()
+                    input.billing_address
+                        .as_ref()
                         .map(|a| serde_json::to_string(a).unwrap_or_default()),
                     plan.discount_percent.map(|d| d.to_string()),
                     plan.discount_amount.map(|d| d.to_string()),
-                    input.coupon_code,
-                    input.metadata.as_ref()
+                    input.coupon_code.clone(),
+                    input.metadata
+                        .as_ref()
                         .map(|m| serde_json::to_string(m).unwrap_or_default()),
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            )
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+            );
 
-            for item in items_to_create {
+            if let Err(err) = insert_result {
+                if Self::is_subscription_number_unique_violation(&err)
+                    && attempt + 1 < Self::MAX_SUBSCRIPTION_NUMBER_RETRIES
+                {
+                    continue;
+                }
+                return Err(stateset_core::CommerceError::DatabaseError(format!(
+                    "Insert error: {}",
+                    err
+                )));
+            }
+
+            for item in items_to_create.clone() {
                 self.create_subscription_item_with_conn(&tx, id, item, &plan)?;
             }
 
@@ -506,7 +538,7 @@ impl SqliteSubscriptionRepository {
                 None,
             )?;
 
-            if let Some(trial_end) = trial_ends_at {
+            if let Some(trial_end) = trial_ends_at.as_ref() {
                 self.record_event_with_conn(
                     &tx,
                     id,
@@ -529,7 +561,15 @@ impl SqliteSubscriptionRepository {
             tx.commit().map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Commit error: {}", e))
             })?;
+            created_subscription_id = Some(id);
+            break;
         }
+
+        let id = created_subscription_id.ok_or_else(|| {
+            stateset_core::CommerceError::Conflict(
+                "unable to allocate unique subscription number after retries".to_string(),
+            )
+        })?;
 
         // Create the initial billing cycle for the subscription
         self.create_billing_cycle(CreateBillingCycle {
@@ -1680,5 +1720,22 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         subscription_id: SubscriptionId,
     ) -> Result<Vec<SubscriptionEvent>> {
         Self::get_subscription_events(self, subscription_id, None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SqliteSubscriptionRepository;
+
+    #[test]
+    fn detects_subscription_number_unique_violation() {
+        let err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: 2067,
+            },
+            Some("UNIQUE constraint failed: subscriptions.subscription_number".to_string()),
+        );
+        assert!(SqliteSubscriptionRepository::is_subscription_number_unique_violation(&err));
     }
 }

@@ -484,31 +484,35 @@ impl PgWorkOrderRepository {
         }
 
         let now = Utc::now();
-        let result = sqlx::query(
-            "UPDATE manufacturing_work_orders
-             SET quantity_completed = quantity_completed + $1,
-                 status = CASE
-                    WHEN quantity_completed + $1 >= quantity_to_build THEN 'completed'
-                    ELSE 'partially_completed'
-                 END,
-                 actual_end = CASE
-                    WHEN quantity_completed + $1 >= quantity_to_build THEN $2
-                    ELSE actual_end
-                 END,
-                 updated_at = $3
-             WHERE id = $4",
+        let existing: (Decimal, Decimal, Option<DateTime<Utc>>) = sqlx::query_as(
+            "SELECT quantity_completed, quantity_to_build, actual_end
+             FROM manufacturing_work_orders
+             WHERE id = $1",
         )
-        .bind(quantity_completed)
-        .bind(now)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+
+        let new_quantity_completed = existing.0 + quantity_completed;
+        let is_complete = new_quantity_completed >= existing.1;
+        let new_status = if is_complete { "completed" } else { "partially_completed" };
+        let new_actual_end = if is_complete { Some(now) } else { existing.2 };
+
+        sqlx::query(
+            "UPDATE manufacturing_work_orders
+             SET quantity_completed = $1, status = $2, actual_end = $3, updated_at = $4
+             WHERE id = $5",
+        )
+        .bind(new_quantity_completed)
+        .bind(new_status)
+        .bind(new_actual_end)
         .bind(now)
         .bind(id)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
-
-        if result.rows_affected() == 0 {
-            return Err(CommerceError::NotFound);
-        }
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }

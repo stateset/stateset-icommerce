@@ -631,6 +631,7 @@ pub struct SubscriptionFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
     use std::str::FromStr;
 
     #[test]
@@ -679,6 +680,22 @@ mod tests {
             SubscriptionEventType::PaymentRetrySucceeded
         );
     }
+
+    #[test]
+    fn test_generate_subscription_number_prefix_and_shape() {
+        let generated = generate_subscription_number();
+        assert!(generated.starts_with("SUB-"));
+        assert!(generated.len() > 12);
+    }
+
+    #[test]
+    fn test_generate_subscription_number_sample_uniqueness() {
+        let mut generated = HashSet::new();
+        for _ in 0..1000 {
+            generated.insert(generate_subscription_number());
+        }
+        assert_eq!(generated.len(), 1000);
+    }
 }
 
 /// Filter for listing billing cycles
@@ -698,10 +715,11 @@ pub struct BillingCycleFilter {
 
 /// Generate a unique subscription number
 pub fn generate_subscription_number() -> String {
+    let timestamp_ms = Utc::now().timestamp_millis();
     let id = Uuid::new_v4();
     let bytes = id.as_bytes();
-    let random = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % 1000000;
-    format!("SUB-{:06}", random)
+    let random = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    format!("SUB-{timestamp_ms}-{random:08X}")
 }
 
 /// Generate a unique plan code

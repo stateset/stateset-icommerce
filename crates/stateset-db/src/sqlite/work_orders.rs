@@ -600,35 +600,39 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         // Do the update in a scoped block
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-            let rows_affected = conn
-                .execute(
-                    "UPDATE manufacturing_work_orders
-                 SET quantity_completed = quantity_completed + ?,
-                     status = CASE
-                         WHEN quantity_completed + ? >= quantity_to_build THEN 'completed'
-                         ELSE 'partially_completed'
-                     END,
-                     actual_end = CASE
-                         WHEN quantity_completed + ? >= quantity_to_build THEN ?
-                         ELSE actual_end
-                     END,
-                     updated_at = ?
-                 WHERE id = ?",
-                    rusqlite::params![
-                        quantity_completed.to_string(),
-                        quantity_completed.to_string(),
-                        quantity_completed.to_string(),
-                        now.to_rfc3339(),
-                        now.to_rfc3339(),
-                        id.to_string(),
-                    ],
+            let existing: (String, String, Option<String>) = conn
+                .query_row(
+                    "SELECT quantity_completed, quantity_to_build, actual_end FROM manufacturing_work_orders WHERE id = ?",
+                    [id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                    _ => CommerceError::DatabaseError(e.to_string()),
+                })?;
 
-            if rows_affected == 0 {
-                return Err(CommerceError::NotFound);
-            }
+            let existing_completed =
+                parse_decimal_strict(&existing.0, "work_order", "quantity_completed")?;
+            let quantity_to_build =
+                parse_decimal_strict(&existing.1, "work_order", "quantity_to_build")?;
+            let new_quantity_completed = existing_completed + quantity_completed;
+            let is_complete = new_quantity_completed >= quantity_to_build;
+            let new_status = if is_complete { "completed" } else { "partially_completed" };
+            let new_actual_end = if is_complete { Some(now.to_rfc3339()) } else { existing.2 };
+
+            conn.execute(
+                "UPDATE manufacturing_work_orders
+                 SET quantity_completed = ?, status = ?, actual_end = ?, updated_at = ?
+                 WHERE id = ?",
+                rusqlite::params![
+                    new_quantity_completed.to_string(),
+                    new_status,
+                    new_actual_end,
+                    now.to_rfc3339(),
+                    id.to_string()
+                ],
+            )
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         } // Connection released here
 
         // Fetch and return the updated work order

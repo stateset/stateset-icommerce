@@ -5,7 +5,7 @@ use super::{
     SqliteCustomerRepository, SqliteOrderRepository, SqlitePromotionRepository, build_in_clause,
     map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
     parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
-    sum_decimal_query, uuid_params,
+    uuid_params,
 };
 use chrono::{Duration, Utc};
 use r2d2::Pool;
@@ -379,16 +379,30 @@ impl SqliteCartRepository {
     }
 
     fn update_cart_totals(&self, conn: &rusqlite::Connection, cart_id: CartId) -> Result<()> {
-        // Calculate subtotal from items
-        let cart_id_param = cart_id.to_string();
-        let cart_params: [&dyn rusqlite::ToSql; 1] = [&cart_id_param];
-        let subtotal = sum_decimal_query(
-            conn,
-            "SELECT total FROM cart_items WHERE cart_id = ?",
-            &cart_params,
-            "cart_item",
-            "total",
-        )?;
+        // Calculate subtotal from pre-tax line amounts to avoid double-counting tax.
+        let mut subtotal = Decimal::ZERO;
+        let mut stmt = conn
+            .prepare(
+                "SELECT quantity, unit_price, discount_amount FROM cart_items WHERE cart_id = ?",
+            )
+            .map_err(map_db_error)?;
+        let rows = stmt
+            .query_map([cart_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, i32>("quantity")?,
+                    row.get::<_, String>("unit_price")?,
+                    row.get::<_, String>("discount_amount")?,
+                ))
+            })
+            .map_err(map_db_error)?;
+
+        for row in rows {
+            let (quantity, unit_price, discount_amount) = row.map_err(map_db_error)?;
+            let line_subtotal = parse_decimal_err(&unit_price, "cart_item", "unit_price")?
+                * Decimal::from(quantity)
+                - parse_decimal_err(&discount_amount, "cart_item", "discount_amount")?;
+            subtotal += line_subtotal;
+        }
 
         // Get current tax and shipping
         let (tax, shipping, discount): (String, String, String) = conn

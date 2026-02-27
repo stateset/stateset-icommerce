@@ -118,7 +118,7 @@ impl JobStore for InMemoryJobStore {
             self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
         match map.get_mut(id) {
             Some(job) => {
-                job.status = status;
+                job.transition_to(status)?;
                 Ok(())
             }
             None => Err(JobError::NotFound(*id)),
@@ -242,6 +242,17 @@ mod tests {
         let store = InMemoryJobStore::new();
         let result = store.update_status(&Uuid::new_v4(), JobStatus::Running);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_status_rejects_invalid_transition() {
+        let store = InMemoryJobStore::new();
+        let inst = make_instance("test");
+        let id = inst.id;
+        store.save(&inst).unwrap();
+
+        let result = store.update_status(&id, JobStatus::Completed);
+        assert!(matches!(result, Err(JobError::InvalidTransition { .. })));
     }
 
     #[test]

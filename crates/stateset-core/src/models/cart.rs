@@ -512,7 +512,11 @@ impl Cart {
 
     /// Recalculate totals from items
     pub fn recalculate_totals(&mut self) {
-        self.subtotal = self.items.iter().map(|i| i.total).sum();
+        self.subtotal = self
+            .items
+            .iter()
+            .map(|i| (i.unit_price * Decimal::from(i.quantity)) - i.discount_amount)
+            .sum();
         self.grand_total =
             self.subtotal + self.tax_amount + self.shipping_amount - self.discount_amount;
     }
@@ -672,5 +676,73 @@ mod tests {
         assert_eq!(FulfillmentType::from_str("shipping").unwrap(), FulfillmentType::Shipping);
         assert_eq!(FulfillmentType::from_str("pick_up").unwrap(), FulfillmentType::Pickup);
         assert_eq!(FulfillmentType::from_str("digital").unwrap(), FulfillmentType::Digital);
+    }
+
+    #[test]
+    fn test_recalculate_totals_does_not_double_count_tax() {
+        let mut cart = Cart {
+            id: CartId::new(),
+            cart_number: "CART-002".to_string(),
+            customer_id: None,
+            status: CartStatus::Active,
+            currency: "USD".to_string(),
+            items: vec![CartItem {
+                id: Uuid::new_v4(),
+                cart_id: CartId::new(),
+                product_id: None,
+                variant_id: None,
+                sku: "SKU-TAX".to_string(),
+                name: "Taxed Item".to_string(),
+                description: None,
+                image_url: None,
+                quantity: 1,
+                unit_price: dec!(10.00),
+                original_price: None,
+                discount_amount: Decimal::ZERO,
+                tax_amount: dec!(0.80),
+                total: dec!(10.80),
+                weight: None,
+                requires_shipping: false,
+                metadata: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            }],
+            subtotal: Decimal::ZERO,
+            tax_amount: dec!(0.80),
+            shipping_amount: Decimal::ZERO,
+            discount_amount: Decimal::ZERO,
+            grand_total: Decimal::ZERO,
+            customer_email: None,
+            customer_phone: None,
+            customer_name: None,
+            shipping_address: None,
+            billing_address: None,
+            billing_same_as_shipping: true,
+            fulfillment_type: None,
+            shipping_method: None,
+            shipping_carrier: None,
+            estimated_delivery: None,
+            payment_method: None,
+            payment_token: None,
+            payment_status: CartPaymentStatus::None,
+            coupon_code: None,
+            discount_description: None,
+            order_id: None,
+            order_number: None,
+            notes: None,
+            metadata: None,
+            inventory_reserved: false,
+            reservation_expires_at: None,
+            x402_payment: None,
+            expires_at: None,
+            completed_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        cart.recalculate_totals();
+
+        assert_eq!(cart.subtotal, dec!(10.00));
+        assert_eq!(cart.grand_total, dec!(10.80));
     }
 }

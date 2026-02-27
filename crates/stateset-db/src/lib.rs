@@ -52,6 +52,8 @@ pub mod postgres;
 pub mod saga;
 
 pub mod transactions;
+#[cfg(feature = "postgres")]
+mod unsupported_repositories;
 
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteDatabase;
@@ -73,6 +75,14 @@ use stateset_core::{
     StoreCreditRepository, SubscriptionRepository, TaxRepository, WarehouseRepository,
     WarrantyRepository, WishlistRepository, WorkOrderRepository, X402CreditRepository,
     X402PaymentIntentRepository, ZoneShippingMethodRepository,
+};
+#[cfg(feature = "postgres")]
+use unsupported_repositories::{
+    UnsupportedFraudRepository, UnsupportedGiftCardRepository, UnsupportedLoyaltyProgramRepository,
+    UnsupportedReviewRepository, UnsupportedRewardRepository, UnsupportedSearchConfigRepository,
+    UnsupportedSegmentRepository, UnsupportedShippingZoneRepository,
+    UnsupportedStoreCreditRepository, UnsupportedWishlistRepository,
+    UnsupportedZoneShippingMethodRepository,
 };
 
 // ============================================================================
@@ -362,6 +372,114 @@ pub trait AsyncDatabaseExt {
         T: Send;
 }
 
+trait NewDomainRepositoryFactory {
+    fn gift_cards_repo(&self) -> Box<dyn GiftCardRepository + '_>;
+    fn store_credits_repo(&self) -> Box<dyn StoreCreditRepository + '_>;
+    fn segments_repo(&self) -> Box<dyn SegmentRepository + '_>;
+    fn shipping_zones_repo(&self) -> Box<dyn ShippingZoneRepository + '_>;
+    fn zone_shipping_methods_repo(&self) -> Box<dyn ZoneShippingMethodRepository + '_>;
+    fn reviews_repo(&self) -> Box<dyn ReviewRepository + '_>;
+    fn wishlists_repo(&self) -> Box<dyn WishlistRepository + '_>;
+    fn loyalty_programs_repo(&self) -> Box<dyn LoyaltyProgramRepository + '_>;
+    fn rewards_repo(&self) -> Box<dyn RewardRepository + '_>;
+    fn fraud_repo(&self) -> Box<dyn FraudRepository + '_>;
+    fn search_configs_repo(&self) -> Box<dyn SearchConfigRepository + '_>;
+}
+
+#[cfg(feature = "sqlite")]
+impl NewDomainRepositoryFactory for SqliteDatabase {
+    fn gift_cards_repo(&self) -> Box<dyn GiftCardRepository + '_> {
+        Box::new(self.gift_cards())
+    }
+
+    fn store_credits_repo(&self) -> Box<dyn StoreCreditRepository + '_> {
+        Box::new(self.store_credits())
+    }
+
+    fn segments_repo(&self) -> Box<dyn SegmentRepository + '_> {
+        Box::new(self.segments())
+    }
+
+    fn shipping_zones_repo(&self) -> Box<dyn ShippingZoneRepository + '_> {
+        Box::new(self.shipping_zones())
+    }
+
+    fn zone_shipping_methods_repo(&self) -> Box<dyn ZoneShippingMethodRepository + '_> {
+        Box::new(self.zone_shipping_methods())
+    }
+
+    fn reviews_repo(&self) -> Box<dyn ReviewRepository + '_> {
+        Box::new(self.reviews())
+    }
+
+    fn wishlists_repo(&self) -> Box<dyn WishlistRepository + '_> {
+        Box::new(self.wishlists())
+    }
+
+    fn loyalty_programs_repo(&self) -> Box<dyn LoyaltyProgramRepository + '_> {
+        Box::new(self.loyalty_programs())
+    }
+
+    fn rewards_repo(&self) -> Box<dyn RewardRepository + '_> {
+        Box::new(self.rewards())
+    }
+
+    fn fraud_repo(&self) -> Box<dyn FraudRepository + '_> {
+        Box::new(self.fraud())
+    }
+
+    fn search_configs_repo(&self) -> Box<dyn SearchConfigRepository + '_> {
+        Box::new(self.search_configs())
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl NewDomainRepositoryFactory for PostgresDatabase {
+    fn gift_cards_repo(&self) -> Box<dyn GiftCardRepository + '_> {
+        Box::new(UnsupportedGiftCardRepository::new("postgres"))
+    }
+
+    fn store_credits_repo(&self) -> Box<dyn StoreCreditRepository + '_> {
+        Box::new(UnsupportedStoreCreditRepository::new("postgres"))
+    }
+
+    fn segments_repo(&self) -> Box<dyn SegmentRepository + '_> {
+        Box::new(UnsupportedSegmentRepository::new("postgres"))
+    }
+
+    fn shipping_zones_repo(&self) -> Box<dyn ShippingZoneRepository + '_> {
+        Box::new(UnsupportedShippingZoneRepository::new("postgres"))
+    }
+
+    fn zone_shipping_methods_repo(&self) -> Box<dyn ZoneShippingMethodRepository + '_> {
+        Box::new(UnsupportedZoneShippingMethodRepository::new("postgres"))
+    }
+
+    fn reviews_repo(&self) -> Box<dyn ReviewRepository + '_> {
+        Box::new(UnsupportedReviewRepository::new("postgres"))
+    }
+
+    fn wishlists_repo(&self) -> Box<dyn WishlistRepository + '_> {
+        Box::new(UnsupportedWishlistRepository::new("postgres"))
+    }
+
+    fn loyalty_programs_repo(&self) -> Box<dyn LoyaltyProgramRepository + '_> {
+        Box::new(UnsupportedLoyaltyProgramRepository::new("postgres"))
+    }
+
+    fn rewards_repo(&self) -> Box<dyn RewardRepository + '_> {
+        Box::new(UnsupportedRewardRepository::new("postgres"))
+    }
+
+    fn fraud_repo(&self) -> Box<dyn FraudRepository + '_> {
+        Box::new(UnsupportedFraudRepository::new("postgres"))
+    }
+
+    fn search_configs_repo(&self) -> Box<dyn SearchConfigRepository + '_> {
+        Box::new(UnsupportedSearchConfigRepository::new("postgres"))
+    }
+}
+
 /// Macro to eliminate duplicate Database implementations
 /// Generates all 32 repository accessor methods for any concrete Database type
 macro_rules! impl_database_accessors {
@@ -526,47 +644,47 @@ macro_rules! impl_database_accessors {
             // --- New domain repositories ---
 
             fn gift_cards(&self) -> Box<dyn GiftCardRepository + '_> {
-                panic!("gift_cards repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::gift_cards_repo(self)
             }
 
             fn store_credits(&self) -> Box<dyn StoreCreditRepository + '_> {
-                panic!("store_credits repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::store_credits_repo(self)
             }
 
             fn segments(&self) -> Box<dyn SegmentRepository + '_> {
-                panic!("segments repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::segments_repo(self)
             }
 
             fn shipping_zones(&self) -> Box<dyn ShippingZoneRepository + '_> {
-                panic!("shipping_zones repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::shipping_zones_repo(self)
             }
 
             fn zone_shipping_methods(&self) -> Box<dyn ZoneShippingMethodRepository + '_> {
-                panic!("zone_shipping_methods repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::zone_shipping_methods_repo(self)
             }
 
             fn reviews(&self) -> Box<dyn ReviewRepository + '_> {
-                panic!("reviews repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::reviews_repo(self)
             }
 
             fn wishlists(&self) -> Box<dyn WishlistRepository + '_> {
-                panic!("wishlists repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::wishlists_repo(self)
             }
 
             fn loyalty_programs(&self) -> Box<dyn LoyaltyProgramRepository + '_> {
-                panic!("loyalty_programs repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::loyalty_programs_repo(self)
             }
 
             fn rewards(&self) -> Box<dyn RewardRepository + '_> {
-                panic!("rewards repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::rewards_repo(self)
             }
 
             fn fraud(&self) -> Box<dyn FraudRepository + '_> {
-                panic!("fraud repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::fraud_repo(self)
             }
 
             fn search_configs(&self) -> Box<dyn SearchConfigRepository + '_> {
-                panic!("search_configs repository is not implemented for this backend")
+                crate::NewDomainRepositoryFactory::search_configs_repo(self)
             }
         }
     };

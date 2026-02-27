@@ -184,26 +184,29 @@ impl PostgresDatabase {
         ));
 
         for (name, sql) in migrations {
-            // Check if migration already applied
+            let mut tx =
+                pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            // Check if migration already applied (inside tx so apply+record is atomic per migration).
             let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _migrations WHERE name = $1")
                 .bind(name)
-                .fetch_one(pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
             if count.0 == 0 {
-                // Run migration
-                sqlx::raw_sql(sql).execute(pool).await.map_err(|e| {
+                sqlx::raw_sql(sql).execute(tx.as_mut()).await.map_err(|e| {
                     CommerceError::DatabaseError(format!("Migration {} failed: {}", name, e))
                 })?;
 
-                // Record migration
                 sqlx::query("INSERT INTO _migrations (name) VALUES ($1)")
                     .bind(name)
-                    .execute(pool)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             }
+
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         }
 
         Ok(())
@@ -470,7 +473,7 @@ fn duplicate_key_value(message: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+mod unique_constraint_tests {
     use super::{duplicate_key_value, map_unique_constraint_error};
     use stateset_core::CommerceError;
 

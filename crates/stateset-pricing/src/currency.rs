@@ -98,6 +98,10 @@ pub struct CurrencyConverter {
     base_currency: String,
 }
 
+fn normalize_currency_code(code: &str) -> String {
+    code.trim().to_ascii_uppercase()
+}
+
 impl CurrencyConverter {
     /// Create a new empty converter with USD as the base currency.
     #[must_use]
@@ -108,12 +112,16 @@ impl CurrencyConverter {
     /// Create a new converter with a custom base currency for triangulation.
     #[must_use]
     pub fn with_base_currency(base: impl Into<String>) -> Self {
-        Self { rates: HashMap::new(), base_currency: base.into() }
+        let base = base.into();
+        Self { rates: HashMap::new(), base_currency: normalize_currency_code(&base) }
     }
 
     /// Add an exchange rate to the converter.
     pub fn add_rate(&mut self, rate: ExchangeRate) {
-        let key = (rate.from.clone(), rate.to.clone());
+        let normalized_from = normalize_currency_code(&rate.from);
+        let normalized_to = normalize_currency_code(&rate.to);
+        let key = (normalized_from.clone(), normalized_to.clone());
+        let rate = ExchangeRate { from: normalized_from, to: normalized_to, ..rate };
         self.rates.insert(key, rate);
     }
 
@@ -133,47 +141,50 @@ impl CurrencyConverter {
         from: &str,
         to: &str,
     ) -> PricingResult<ConversionResult> {
+        let normalized_from = normalize_currency_code(from);
+        let normalized_to = normalize_currency_code(to);
+
         // Same currency — no conversion needed
-        if from.eq_ignore_ascii_case(to) {
+        if normalized_from == normalized_to {
             return Ok(ConversionResult {
                 amount,
                 rate: Decimal::ONE,
-                from: from.into(),
-                to: to.into(),
+                from: normalized_from,
+                to: normalized_to,
             });
         }
 
         // 1. Direct rate
-        if let Some(rate) = self.find_rate(from, to) {
+        if let Some(rate) = self.find_rate(&normalized_from, &normalized_to) {
             let converted = amount * rate.rate;
             return Ok(ConversionResult {
                 amount: converted,
                 rate: rate.rate,
-                from: from.into(),
-                to: to.into(),
+                from: normalized_from.clone(),
+                to: normalized_to.clone(),
             });
         }
 
         // 2. Inverse rate
-        if let Some(rate) = self.find_rate(to, from) {
+        if let Some(rate) = self.find_rate(&normalized_to, &normalized_from) {
             if rate.rate.is_zero() {
-                return Err(PricingError::no_exchange_rate(from, to));
+                return Err(PricingError::no_exchange_rate(normalized_from, normalized_to));
             }
             let inverse = Decimal::ONE / rate.rate;
             let converted = amount * inverse;
             return Ok(ConversionResult {
                 amount: converted,
                 rate: inverse,
-                from: from.into(),
-                to: to.into(),
+                from: normalized_from.clone(),
+                to: normalized_to.clone(),
             });
         }
 
         // 3. Triangulation through base currency
         let base = &self.base_currency;
-        if from != base && to != base {
-            let to_base = self.find_effective_rate(from, base);
-            let from_base = self.find_effective_rate(base, to);
+        if normalized_from != *base && normalized_to != *base {
+            let to_base = self.find_effective_rate(&normalized_from, base);
+            let from_base = self.find_effective_rate(base, &normalized_to);
 
             if let (Some(rate_to_base), Some(rate_from_base)) = (to_base, from_base) {
                 let composite_rate = rate_to_base * rate_from_base;
@@ -181,13 +192,13 @@ impl CurrencyConverter {
                 return Ok(ConversionResult {
                     amount: converted,
                     rate: composite_rate,
-                    from: from.into(),
-                    to: to.into(),
+                    from: normalized_from,
+                    to: normalized_to,
                 });
             }
         }
 
-        Err(PricingError::no_exchange_rate(from, to))
+        Err(PricingError::no_exchange_rate(normalized_from, normalized_to))
     }
 
     /// Get all loaded rates.
@@ -204,7 +215,7 @@ impl CurrencyConverter {
 
     /// Find a direct rate.
     fn find_rate(&self, from: &str, to: &str) -> Option<&ExchangeRate> {
-        self.rates.get(&(from.to_owned(), to.to_owned()))
+        self.rates.get(&(normalize_currency_code(from), normalize_currency_code(to)))
     }
 
     /// Find the effective rate from -> to, trying direct then inverse.
@@ -267,6 +278,16 @@ mod tests {
         let c = usd_eur_converter();
         let r = c.convert(dec!(1000000.00), "USD", "EUR").unwrap();
         assert_eq!(r.amount, dec!(920000.00));
+    }
+
+    #[test]
+    fn direct_conversion_lookup_is_case_insensitive() {
+        let mut c = CurrencyConverter::new();
+        c.add_rate(make_rate("usd", "eur", dec!(0.92)));
+        let r = c.convert(dec!(100.00), "USD", "EuR").unwrap();
+        assert_eq!(r.amount, dec!(92.00));
+        assert_eq!(r.from, "USD");
+        assert_eq!(r.to, "EUR");
     }
 
     // ---- inverse conversion ----
@@ -369,6 +390,17 @@ mod tests {
         // 100 / 1.09 * 0.86 ≈ 78.90
         assert!(r.amount > dec!(78.00));
         assert!(r.amount < dec!(80.00));
+    }
+
+    #[test]
+    fn custom_base_currency_lookup_is_case_insensitive() {
+        let mut c = CurrencyConverter::with_base_currency("usd");
+        c.add_rate(make_rate("Usd", "eur", dec!(0.92)));
+        c.add_rate(make_rate("USD", "JPY", dec!(150.00)));
+
+        let r = c.convert(dec!(100.00), "eUr", "jPy").unwrap();
+        assert!(r.amount > dec!(16300.00));
+        assert!(r.amount < dec!(16310.00));
     }
 
     // ---- multiple rates ----

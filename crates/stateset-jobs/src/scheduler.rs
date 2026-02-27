@@ -12,7 +12,9 @@ use uuid::Uuid;
 
 use crate::context::JobContext;
 use crate::error::JobError;
-use crate::job::{JobDefinition, Schedule};
+use crate::job::JobDefinition;
+#[cfg(test)]
+use crate::job::Schedule;
 use crate::queue::JobQueue;
 use crate::state::{JobInstance, JobOutput, JobStatus};
 use crate::store::JobStore;
@@ -98,7 +100,7 @@ pub struct Scheduler {
 }
 
 /// Metadata about a currently running job.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RunningJob {
     #[allow(dead_code)]
     definition_name: String,
@@ -179,7 +181,7 @@ impl Scheduler {
         let mut actions = Vec::new();
 
         // --- Check for timeouts on running jobs ---
-        let timed_out: Vec<Uuid> = self
+        let timed_out: Vec<(Uuid, RunningJob)> = self
             .running
             .iter()
             .filter(|(_, rj)| {
@@ -189,13 +191,12 @@ impl Scheduler {
                     .unwrap_or(std::time::Duration::ZERO);
                 elapsed >= rj.timeout
             })
-            .map(|(id, _)| *id)
+            .map(|(id, rj)| (*id, rj.clone()))
             .collect();
 
-        for id in timed_out {
+        for (id, timeout_meta) in timed_out {
             self.running.remove(&id);
-            let _ = self.store.update_status(&id, JobStatus::TimedOut);
-            actions.push(TickAction::Timeout { job_id: id });
+            self.handle_timeout(id, now, &timeout_meta, &mut actions);
         }
 
         // --- Dequeue ready jobs ---
@@ -256,6 +257,61 @@ impl Scheduler {
         }
 
         actions
+    }
+
+    fn handle_timeout(
+        &mut self,
+        job_id: Uuid,
+        now: DateTime<Utc>,
+        timeout_meta: &RunningJob,
+        actions: &mut Vec<TickAction>,
+    ) {
+        let Ok(Some(mut instance)) = self.store.get(&job_id) else {
+            return;
+        };
+
+        if instance.status != JobStatus::Running {
+            return;
+        }
+
+        let elapsed = now
+            .signed_duration_since(timeout_meta.started_at)
+            .to_std()
+            .unwrap_or(std::time::Duration::ZERO);
+        let timeout_msg = format!(
+            "timed out after {}s (limit {}s)",
+            elapsed.as_secs(),
+            timeout_meta.timeout.as_secs()
+        );
+
+        if instance.mark_timed_out().is_err() {
+            return;
+        }
+        instance.completed_at = Some(now);
+        instance.error = Some(timeout_msg.clone());
+        if self.store.save(&instance).is_err() {
+            return;
+        }
+        actions.push(TickAction::Timeout { job_id });
+
+        if let Some(def) = self.definitions.get(&instance.definition_name) {
+            if instance.should_retry(def.max_retries) {
+                let retry_at = instance.next_retry_at(&def.retry_backoff, now);
+                if instance.mark_retrying(retry_at).is_ok()
+                    && self.store.save(&instance).is_ok()
+                    && self.queue.enqueue(instance.clone()).is_ok()
+                {
+                    actions.push(TickAction::Retry { job_id, retry_at });
+                    return;
+                }
+            }
+        }
+
+        if instance.mark_failed(format!("{timeout_msg}; retries exhausted")).is_ok() {
+            instance.completed_at = Some(now);
+            let _ = self.store.save(&instance);
+        }
+        let _ = self.reschedule_recurring(&instance, now);
     }
 
     /// Mark a job as completed after successful execution.
@@ -357,19 +413,7 @@ impl Scheduler {
             None => return Ok(()),
         };
 
-        let next_run = match &def.schedule {
-            Schedule::Interval(dur) => {
-                let dur_chrono =
-                    chrono::Duration::from_std(*dur).unwrap_or(chrono::Duration::seconds(60));
-                Some(now + dur_chrono)
-            }
-            Schedule::Cron(_) => {
-                // Simplified: a full cron evaluator is out of scope for this crate.
-                // In production, this would compute the next cron match.
-                None
-            }
-            Schedule::Once | Schedule::OnEvent(_) => None,
-        };
+        let next_run = def.schedule.next_run_after(now);
 
         if let Some(run_at) = next_run {
             let new_instance = JobInstance::new_scheduled(&instance.definition_name, run_at);
@@ -393,7 +437,7 @@ mod tests {
     use super::*;
     use crate::job::{BackoffStrategy, BoxFuture, JobHandler};
     use crate::store::InMemoryJobStore;
-    use chrono::Duration;
+    use chrono::{Duration, Timelike};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -550,11 +594,10 @@ mod tests {
         assert_eq!(first_actions.len(), 1);
         assert_eq!(s.status().queued_jobs, 1);
 
-        let first_job_id = match &first_actions[0] {
-            TickAction::Execute { job_id, .. } => *job_id,
-            _ => panic!("expected execute action"),
+        let TickAction::Execute { job_id: first_job_id, .. } = &first_actions[0] else {
+            unreachable!("expected execute action");
         };
-        s.complete(first_job_id, JobOutput::new("ok")).unwrap();
+        s.complete(*first_job_id, JobOutput::new("ok")).unwrap();
 
         let second_actions = s.tick(now);
         assert_eq!(second_actions.len(), 1);
@@ -621,6 +664,53 @@ mod tests {
         assert_eq!(s.status().running_jobs, 1);
     }
 
+    #[test]
+    fn tick_timeout_retries_when_allowed() {
+        let mut s = make_scheduler();
+        let (handler, _) = CountingHandler::new("retry_timeout");
+        let def = JobDefinition::new("retry_timeout", Schedule::Once, Box::new(handler))
+            .with_timeout(std::time::Duration::from_secs(1))
+            .with_max_retries(2)
+            .with_retry_backoff(BackoffStrategy::fixed(std::time::Duration::from_secs(5)));
+        s.register(def).unwrap();
+
+        let t0 = Utc::now();
+        let id = s.schedule("retry_timeout", t0).unwrap();
+        s.tick(t0);
+
+        let timeout_actions = s.tick(t0 + Duration::seconds(2));
+        assert!(timeout_actions.iter().any(|a| matches!(a, TickAction::Timeout { .. })));
+        assert!(timeout_actions.iter().any(|a| matches!(a, TickAction::Retry { .. })));
+
+        let timed_out = s.store().get(&id).unwrap().unwrap();
+        assert_eq!(timed_out.status, JobStatus::Retrying);
+        assert_eq!(timed_out.attempt, 1);
+        assert!(timed_out.error.as_deref().unwrap_or_default().contains("timed out"));
+        assert!(timed_out.next_run_at.is_some());
+    }
+
+    #[test]
+    fn tick_timeout_marks_failed_when_retries_exhausted() {
+        let mut s = make_scheduler();
+        let (handler, _) = CountingHandler::new("timeout_fail");
+        let def = JobDefinition::new("timeout_fail", Schedule::Once, Box::new(handler))
+            .with_timeout(std::time::Duration::from_secs(1))
+            .with_max_retries(0);
+        s.register(def).unwrap();
+
+        let t0 = Utc::now();
+        let id = s.schedule("timeout_fail", t0).unwrap();
+        s.tick(t0);
+
+        let timeout_actions = s.tick(t0 + Duration::seconds(2));
+        assert!(timeout_actions.iter().any(|a| matches!(a, TickAction::Timeout { .. })));
+        assert!(!timeout_actions.iter().any(|a| matches!(a, TickAction::Retry { .. })));
+
+        let timed_out = s.store().get(&id).unwrap().unwrap();
+        assert_eq!(timed_out.status, JobStatus::Failed);
+        assert!(timed_out.error.as_deref().unwrap_or_default().contains("retries exhausted"));
+    }
+
     // -----------------------------------------------------------------------
     // Complete & reschedule
     // -----------------------------------------------------------------------
@@ -656,6 +746,25 @@ mod tests {
         s.complete(id, JobOutput::new("done")).unwrap();
 
         assert!(s.queue.size() > 0);
+    }
+
+    #[test]
+    fn complete_cron_reschedules() {
+        let mut s = make_scheduler();
+        let (handler, _) = CountingHandler::new("cron");
+        let def =
+            JobDefinition::new("cron", Schedule::Cron("*/5 * * * *".into()), Box::new(handler));
+        s.register(def).unwrap();
+
+        let now = Utc::now();
+        let id = s.schedule("cron", now).unwrap();
+        s.tick(now);
+        s.complete(id, JobOutput::new("done")).unwrap();
+
+        assert!(s.queue.size() > 0);
+        let next_run = s.status().next_run_at.expect("cron should be rescheduled");
+        assert_eq!(next_run.second(), 0);
+        assert_eq!(next_run.minute() % 5, 0);
     }
 
     // -----------------------------------------------------------------------
