@@ -66,7 +66,7 @@ export async function createWhatsAppSocket({
     version,
     logger,
     printQRInTerminal: false,
-    browser: ['StateSet Commerce', 'CLI', '0.7.8'],
+    browser: ['StateSet Commerce', 'CLI', '0.7.13'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
   });

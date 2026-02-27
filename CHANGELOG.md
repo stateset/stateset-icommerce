@@ -6,6 +6,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-02-27
+
+### Changed
+- Bumped workspace and cross-language release metadata from `0.7.12` to `0.7.13`.
+- Bumped CLI/runtime version references from `0.7.8` to `0.7.13`.
+- Added `stateset-setup --quickstart` preset for one-command agent onboarding (`--demo --agent openclaw --starter-pack ops --agent-only --verify`).
+- Expanded onboarding artifacts with generated launch/health scripts (`start-mcp.sh`, `check-mcp.sh`) and handoff launch commands.
+
+### Fixed
+- Improved onboarding verification coverage to validate handoff launch command readiness.
+- Improved setup next-step guidance with direct launch and health-check commands for faster agent time-to-value.
+
 ## [0.7.10] - 2026-02-27
 
 ### Changed

@@ -165,6 +165,229 @@ describe('stateset-setup wizard', () => {
     });
   });
 
+  describe('agent onboarding', () => {
+    it('writes OpenClaw MCP config with --agent openclaw', () => {
+      const result = runSetup(['--agent', 'openclaw'], { ANTHROPIC_API_KEY: 'sk-ant-test' });
+      assert.equal(result.exitCode, 0);
+
+      const configPath = path.join(testHome, '.openclaw', 'mcp.json');
+      assert.ok(fs.existsSync(configPath), 'should create .openclaw/mcp.json');
+
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      assert.ok(parsed.mcpServers, 'should include mcpServers');
+      assert.ok(parsed.mcpServers['stateset-commerce'], 'should include stateset-commerce server');
+    });
+
+    it('merges into an existing MCP config file', () => {
+      const configDir = path.join(testHome, '.openclaw');
+      fs.mkdirSync(configDir, { recursive: true });
+      const configPath = path.join(configDir, 'mcp.json');
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            mcpServers: {
+              'existing-server': {
+                command: 'node',
+                args: ['existing.js'],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runSetup(['--agent', 'openclaw'], { ANTHROPIC_API_KEY: 'sk-ant-test' });
+      assert.equal(result.exitCode, 0);
+
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      assert.ok(parsed.mcpServers['existing-server'], 'should keep existing server');
+      assert.ok(parsed.mcpServers['stateset-commerce'], 'should add stateset-commerce server');
+    });
+
+    it('supports explicit --mcp-config path', () => {
+      const customPath = path.join(testHome, 'custom', 'agent-mcp.json');
+      const result = runSetup(['--mcp-config', customPath], { ANTHROPIC_API_KEY: 'sk-ant-test' });
+      assert.equal(result.exitCode, 0);
+      assert.ok(fs.existsSync(customPath), 'should create custom MCP config path');
+    });
+
+    it('allows agent-only onboarding without local API key', () => {
+      const result = runSetup(['--json', '--agent', 'openclaw'], { ANTHROPIC_API_KEY: '' });
+      assert.equal(result.exitCode, 0);
+      const parsed = JSON.parse(result.stdout);
+      const apiStep = parsed.steps.find((s) => s.name === 'api_key');
+      assert.equal(apiStep.status, 'optional');
+      assert.equal(parsed.success, true);
+    });
+  });
+
+  describe('starter packs', () => {
+    it('installs starter pack policies and prompt artifacts', () => {
+      const result = runSetup(
+        ['--starter-pack', 'ops', '--db', './tenant/store.db'],
+        { ANTHROPIC_API_KEY: 'sk-ant-test' },
+      );
+      assert.equal(result.exitCode, 0);
+
+      const policyBase = path.join(testHome, 'tenant', '.stateset');
+      const policyFile = path.join(policyBase, 'policies', 'starter-ops-orders.json');
+      const promptFile = path.join(policyBase, 'agent-starters', 'starter-ops.md');
+
+      assert.ok(fs.existsSync(policyFile), 'should create starter policy file');
+      assert.ok(fs.existsSync(promptFile), 'should create starter prompt file');
+
+      const parsedPolicy = JSON.parse(fs.readFileSync(policyFile, 'utf8'));
+      assert.equal(parsedPolicy.domain, 'orders');
+      assert.ok(Array.isArray(parsedPolicy.rules));
+      assert.ok(parsedPolicy.rules.length > 0);
+    });
+
+    it('returns starter pack metadata in JSON mode', () => {
+      const result = runSetup(
+        ['--json', '--starter-pack', 'checkout', '--print-starter'],
+        { ANTHROPIC_API_KEY: 'sk-ant-test' },
+      );
+      assert.equal(result.exitCode, 0);
+      const parsed = JSON.parse(result.stdout);
+      const starterStep = parsed.steps.find((s) => s.name === 'starter_pack');
+      assert.equal(starterStep.status, 'configured');
+      assert.equal(starterStep.pack, 'checkout');
+      assert.ok(Array.isArray(starterStep.sampleRequests));
+      assert.ok(starterStep.sampleRequests.length > 0);
+    });
+
+    it('reports unknown starter pack values', () => {
+      const result = runSetup(['--json', '--starter-pack', 'invalid-pack'], {
+        ANTHROPIC_API_KEY: 'sk-ant-test',
+      });
+      assert.equal(result.exitCode, 0);
+      const parsed = JSON.parse(result.stdout);
+      const starterStep = parsed.steps.find((s) => s.name === 'starter_pack');
+      assert.equal(starterStep.status, 'error');
+      assert.ok(String(starterStep.error || '').includes('unknown starter pack'));
+    });
+  });
+
+  describe('handoff bundle', () => {
+    it('writes handoff bundle when onboarding is configured', () => {
+      const result = runSetup(
+        ['--agent', 'openclaw', '--starter-pack', 'ops', '--db', './tenant/store.db'],
+        { ANTHROPIC_API_KEY: 'sk-ant-test' },
+      );
+      assert.equal(result.exitCode, 0);
+
+      const handoffPath = path.join(testHome, 'tenant', '.stateset', 'agent-starters', 'handoff.json');
+      assert.ok(fs.existsSync(handoffPath), 'should create handoff bundle');
+
+      const parsed = JSON.parse(fs.readFileSync(handoffPath, 'utf8'));
+      assert.equal(parsed.schema, 'stateset.agentic-handoff.v1');
+      assert.ok(parsed.mcp, 'should include mcp section');
+      assert.ok(parsed.starterPack, 'should include starter pack section');
+      assert.ok(parsed.launch, 'should include launch section');
+      assert.ok(
+        typeof parsed.launch.startCommand === 'string' && parsed.launch.startCommand.includes('start-mcp.sh'),
+      );
+      assert.ok(
+        typeof parsed.launch.checkCommand === 'string' && parsed.launch.checkCommand.includes('check-mcp.sh'),
+      );
+
+      const launchStart = path.join(testHome, 'tenant', '.stateset', 'agent-starters', 'start-mcp.sh');
+      const launchCheck = path.join(testHome, 'tenant', '.stateset', 'agent-starters', 'check-mcp.sh');
+      assert.ok(fs.existsSync(launchStart), 'should create start-mcp.sh');
+      assert.ok(fs.existsSync(launchCheck), 'should create check-mcp.sh');
+    });
+
+    it('returns handoff bundle in JSON mode when --print-handoff is set', () => {
+      const result = runSetup(
+        ['--json', '--agent', 'openclaw', '--starter-pack', 'checkout', '--print-handoff'],
+        { ANTHROPIC_API_KEY: 'sk-ant-test' },
+      );
+      assert.equal(result.exitCode, 0);
+      const parsed = JSON.parse(result.stdout);
+      const handoffStep = parsed.steps.find((s) => s.name === 'handoff_bundle');
+      assert.equal(handoffStep.status, 'configured');
+      assert.ok(handoffStep.bundle, 'should include bundle payload');
+      assert.equal(handoffStep.bundle.schema, 'stateset.agentic-handoff.v1');
+    });
+  });
+
+  describe('quickstart preset', () => {
+    it('applies openclaw + ops + agent-only + verify defaults', () => {
+      fs.writeFileSync(path.join(testHome, 'store.db'), '');
+      const result = runSetup(['--json', '--quickstart'], { ANTHROPIC_API_KEY: '' });
+      assert.equal(result.exitCode, 0);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.equal(parsed.quickstart?.enabled, true);
+      assert.equal(parsed.quickstart?.agent, 'openclaw');
+      assert.equal(parsed.quickstart?.starterPack, 'ops');
+      assert.equal(parsed.quickstart?.demo, true);
+      assert.equal(parsed.quickstart?.verify, true);
+
+      const apiStep = parsed.steps.find((s) => s.name === 'api_key');
+      const onboardingStep = parsed.steps.find((s) => s.name === 'agent_onboarding');
+      const starterStep = parsed.steps.find((s) => s.name === 'starter_pack');
+      const verifyStep = parsed.steps.find((s) => s.name === 'verification');
+
+      assert.equal(apiStep.status, 'optional');
+      assert.equal(onboardingStep.status, 'configured');
+      assert.equal(starterStep.status, 'configured');
+      assert.equal(verifyStep.status, 'ok');
+      assert.equal(parsed.success, true);
+    });
+
+    it('respects explicit overrides while quickstart is enabled', () => {
+      fs.writeFileSync(path.join(testHome, 'store.db'), '');
+      const result = runSetup(
+        ['--json', '--quickstart', '--agent', 'cursor', '--starter-pack', 'support'],
+        { ANTHROPIC_API_KEY: '' },
+      );
+      assert.equal(result.exitCode, 0);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.equal(parsed.quickstart?.agent, 'cursor');
+      assert.equal(parsed.quickstart?.starterPack, 'support');
+
+      const onboardingStep = parsed.steps.find((s) => s.name === 'agent_onboarding');
+      const starterStep = parsed.steps.find((s) => s.name === 'starter_pack');
+      assert.equal(onboardingStep.agent, 'cursor');
+      assert.equal(starterStep.pack, 'support');
+    });
+  });
+
+  describe('verification', () => {
+    it('verifies configured onboarding artifacts', () => {
+      fs.writeFileSync(path.join(testHome, 'store.db'), '');
+      const result = runSetup(
+        ['--json', '--agent', 'openclaw', '--starter-pack', 'ops', '--verify'],
+        { ANTHROPIC_API_KEY: 'sk-ant-test' },
+      );
+      assert.equal(result.exitCode, 0);
+      const parsed = JSON.parse(result.stdout);
+      const verifyStep = parsed.steps.find((s) => s.name === 'verification');
+      assert.equal(verifyStep.status, 'ok');
+      assert.ok(Array.isArray(verifyStep.checks));
+      assert.ok(verifyStep.checks.some((check) => check.name === 'handoff_launch_commands'));
+      assert.ok(Array.isArray(parsed.nextSteps));
+      assert.ok(parsed.nextSteps.some((s) => s.includes('Start MCP gateway')));
+      assert.ok(parsed.nextSteps.some((s) => s.includes('Launch MCP gateway locally')));
+    });
+
+    it('verify-strict fails setup on warnings', () => {
+      fs.writeFileSync(path.join(testHome, 'store.db'), '');
+      const result = runSetup(['--json', '--verify', '--verify-strict'], {
+        ANTHROPIC_API_KEY: 'sk-ant-test',
+      });
+      assert.equal(result.exitCode, 0);
+      const parsed = JSON.parse(result.stdout);
+      const verifyStep = parsed.steps.find((s) => s.name === 'verification');
+      assert.equal(verifyStep.status, 'warnings');
+      assert.equal(parsed.success, false);
+    });
+  });
+
   describe('health check', () => {
     it('checks Node.js version', () => {
       const result = runSetup(['--json'], { ANTHROPIC_API_KEY: 'sk-ant-test' });

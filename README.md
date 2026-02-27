@@ -35,6 +35,25 @@ stateset "what is my revenue this month?"
 
 StateSet exposes **256 commerce tools** via the [Model Context Protocol](https://modelcontextprotocol.io). Add it to your AI editor in one step.
 
+**One-command onboarding (including OpenClaw):**
+```bash
+npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
+```
+
+This writes an MCP config at `.openclaw/mcp.json` and wires `stateset-mcp-events` automatically.
+It also installs starter guardrail policies + an agent prompt pack under `./.stateset/`.
+`--quickstart` enables: `--demo --agent openclaw --starter-pack ops --agent-only --verify`.
+It also generates `./.stateset/agent-starters/start-mcp.sh` and `check-mcp.sh` for launch + health checks.
+For a fully explicit run, use:
+```bash
+npx -y @stateset/cli@latest stateset-setup --yes --demo --agent openclaw --starter-pack ops --print-handoff --verify --db ./store.db
+```
+Use `--agent claude`, `--agent cursor`, or `--agent windsurf` for those clients, or pass
+`--mcp-config <path>` for any MCP-compatible agent runtime.
+Use `--starter-pack support` or `--starter-pack checkout` for different operating modes.
+Use `--agent-only` when you only need MCP onboarding and don't want to require a local Anthropic key.
+Use `--verify-strict` in CI to fail setup if any readiness warnings are present.
+
 **Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
