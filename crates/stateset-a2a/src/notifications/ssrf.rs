@@ -125,7 +125,14 @@ where
 
     let default_port = if parsed.scheme == "https" { 443 } else { 80 };
     let lookup_port = parsed.port.unwrap_or(default_port);
-    for resolved_ip in resolver(&parsed.host, lookup_port) {
+    let resolved_ips = resolver(&parsed.host, lookup_port);
+    if resolved_ips.is_empty() {
+        return Err(A2AError::SsrfBlocked(format!(
+            "host could not be resolved safely: {}",
+            parsed.host
+        )));
+    }
+    for resolved_ip in resolved_ips {
         if let Some(reason) = blocked_ip_reason(resolved_ip) {
             return Err(A2AError::SsrfBlocked(format!(
                 "cannot fetch {reason}: {} resolved to {resolved_ip}",
@@ -528,22 +535,36 @@ mod tests {
 
     #[test]
     fn allows_public_https() {
-        assert!(validate_url("https://example.com/webhooks").is_ok());
+        let result = validate_url_with_resolver("https://example.com/webhooks", |_host, _port| {
+            vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]
+        });
+        assert!(result.is_ok());
     }
 
     #[test]
     fn allows_public_http() {
-        assert!(validate_url("http://api.example.com/hooks").is_ok());
+        let result = validate_url_with_resolver("http://api.example.com/hooks", |_host, _port| {
+            vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]
+        });
+        assert!(result.is_ok());
     }
 
     #[test]
     fn allows_public_with_port() {
-        assert!(validate_url("https://example.com:8443/webhooks").is_ok());
+        let result =
+            validate_url_with_resolver("https://example.com:8443/webhooks", |_host, _port| {
+                vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]
+            });
+        assert!(result.is_ok());
     }
 
     #[test]
     fn allows_subdomain() {
-        assert!(validate_url("https://hooks.seller-bot.example.com/a2a").is_ok());
+        let result = validate_url_with_resolver(
+            "https://hooks.seller-bot.example.com/a2a",
+            |_host, _port| vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))],
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -848,14 +869,24 @@ mod tests {
     #[test]
     fn allowlist_empty_preserves_default_behavior() {
         let options = UrlValidationOptions::new();
-        assert!(validate_url_with_options("https://api.example.com/hook", &options).is_ok());
+        let result = validate_url_with_resolver_and_options(
+            "https://api.example.com/hook",
+            |_host, _port| vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))],
+            &options,
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
     fn allowlist_allows_exact_host() {
         let options =
             UrlValidationOptions::new().with_outbound_allowlist(["api.example.com".to_string()]);
-        assert!(validate_url_with_options("https://api.example.com/hook", &options).is_ok());
+        let result = validate_url_with_resolver_and_options(
+            "https://api.example.com/hook",
+            |_host, _port| vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))],
+            &options,
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -870,7 +901,12 @@ mod tests {
     #[test]
     fn allowlist_supports_wildcard_subdomains_only() {
         let options = UrlValidationOptions::new().with_outbound_allowlist(["*.example.com"]);
-        assert!(validate_url_with_options("https://hooks.example.com/hook", &options).is_ok());
+        let result = validate_url_with_resolver_and_options(
+            "https://hooks.example.com/hook",
+            |_host, _port| vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))],
+            &options,
+        );
+        assert!(result.is_ok());
         let err = validate_url_with_options("https://example.com/hook", &options).unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
@@ -891,6 +927,13 @@ mod tests {
             &options,
         )
         .unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn dns_resolution_failure_style_empty_result_is_blocked() {
+        let err = validate_url_with_resolver("https://api.example.com/hook", |_host, _port| vec![])
+            .unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 }

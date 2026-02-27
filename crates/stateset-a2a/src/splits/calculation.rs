@@ -212,21 +212,32 @@ pub fn calculate_fixed_split(
     let remaining = total - fee;
 
     // --- Validate fixed amounts sum to remaining ---
-    let fixed_sum: Decimal =
-        recipients.iter().map(|r| r.amount.unwrap_or_default().round_dp(DECIMALS_DP)).sum();
+    let mut rounded_amounts: Vec<Decimal> =
+        recipients.iter().map(|r| r.amount.unwrap_or_default().round_dp(DECIMALS_DP)).collect();
+    let fixed_sum: Decimal = rounded_amounts.iter().copied().sum();
 
     // Allow 1 smallest-unit tolerance for rounding
     let one_unit = Decimal::new(1, DECIMALS_DP);
-    if (fixed_sum - remaining).abs() > one_unit {
+    let residual = remaining - fixed_sum;
+    if residual.abs() > one_unit {
         return Err(A2AError::FixedSumMismatch { expected: remaining, actual: fixed_sum });
+    }
+
+    if let Some(last) = rounded_amounts.last_mut() {
+        let adjusted = (*last + residual).round_dp(DECIMALS_DP);
+        if adjusted < Decimal::ZERO {
+            return Err(A2AError::validation(
+                "residual normalization would make last recipient amount negative",
+            ));
+        }
+        *last = adjusted;
     }
 
     // --- Build shares ---
     let mut shares = Vec::with_capacity(recipients.len());
     let mut distributed = Decimal::ZERO;
 
-    for r in recipients {
-        let amount = r.amount.unwrap_or_default().round_dp(DECIMALS_DP);
+    for (r, amount) in recipients.iter().zip(rounded_amounts.into_iter()) {
         distributed += amount;
         shares.push(SplitShare { address: r.address.clone(), amount });
     }
@@ -483,6 +494,16 @@ mod tests {
         // The check is > one_unit, so exactly one_unit should pass
         let result = calculate_fixed_split(dec!(100), dec!(0), &r);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fixed_split_normalizes_residual_to_match_total_exactly() {
+        let r = make_fixed_recipients(&[("0xA", dec!(59.999999)), ("0xB", dec!(40.000000))]);
+        let result = calculate_fixed_split(dec!(100), dec!(0), &r).unwrap();
+
+        assert_eq!(result.shares[0].amount, dec!(59.999999));
+        assert_eq!(result.shares[1].amount, dec!(40.000001));
+        assert_eq!(result.total_distributed, dec!(100.000000));
     }
 
     #[test]

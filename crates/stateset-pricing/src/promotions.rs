@@ -218,6 +218,7 @@ pub fn evaluate_promotions(
     }
 
     let mut applied: Vec<AppliedPromotion> = Vec::new();
+    let mut remaining_discount_budget = context.order_total.max(Decimal::ZERO);
 
     // Non-stackable: pick best
     if !eligible_non_stackable.is_empty() {
@@ -231,11 +232,12 @@ pub fn evaluate_promotions(
 
         for (idx, (promo_idx, discount_amount)) in eligible_non_stackable.iter().enumerate() {
             if idx == best_idx {
-                applied.push(AppliedPromotion {
-                    code: promotions[*promo_idx].code.clone(),
-                    discount_amount: *discount_amount,
-                    discount: promotions[*promo_idx].discount.clone(),
-                });
+                apply_with_budget(
+                    &mut applied,
+                    &promotions[*promo_idx],
+                    *discount_amount,
+                    &mut remaining_discount_budget,
+                );
             } else {
                 let winner_code = promotions[eligible_non_stackable[best_idx].0].code.clone();
                 rejected.push(RejectedPromotion {
@@ -248,16 +250,35 @@ pub fn evaluate_promotions(
 
     // Stackable: apply all
     for (promo_idx, discount_amount) in &eligible_stackable {
-        applied.push(AppliedPromotion {
-            code: promotions[*promo_idx].code.clone(),
-            discount_amount: *discount_amount,
-            discount: promotions[*promo_idx].discount.clone(),
-        });
+        apply_with_budget(
+            &mut applied,
+            &promotions[*promo_idx],
+            *discount_amount,
+            &mut remaining_discount_budget,
+        );
     }
 
     let total_discount: Decimal = applied.iter().map(|a| a.discount_amount).sum();
 
     PromotionResult { applied, rejected, total_discount }
+}
+
+fn apply_with_budget(
+    applied: &mut Vec<AppliedPromotion>,
+    promo: &Promotion,
+    requested_discount_amount: Decimal,
+    remaining_discount_budget: &mut Decimal,
+) {
+    let capped_amount = requested_discount_amount
+        .max(Decimal::ZERO)
+        .min((*remaining_discount_budget).max(Decimal::ZERO));
+    *remaining_discount_budget = (*remaining_discount_budget - capped_amount).max(Decimal::ZERO);
+
+    applied.push(AppliedPromotion {
+        code: promo.code.clone(),
+        discount_amount: capped_amount,
+        discount: promo.discount.clone(),
+    });
 }
 
 /// Check all rules and return descriptions of any that failed.
@@ -773,5 +794,19 @@ mod tests {
         let result = evaluate_promotions(&promos, &ctx);
         assert_eq!(result.applied.len(), 1);
         assert_eq!(result.total_discount, Decimal::ZERO); // clamped to base
+    }
+
+    #[test]
+    fn cumulative_discount_is_capped_to_order_total() {
+        let promos = vec![
+            simple_promo("BIG", LineDiscount::FixedAmount(dec!(80.00)), true),
+            simple_promo("BIGGER", LineDiscount::FixedAmount(dec!(50.00)), true),
+        ];
+
+        let result = evaluate_promotions(&promos, &base_context());
+        assert_eq!(result.applied.len(), 2);
+        assert_eq!(result.applied[0].discount_amount, dec!(80.00));
+        assert_eq!(result.applied[1].discount_amount, dec!(20.00));
+        assert_eq!(result.total_discount, dec!(100.00));
     }
 }

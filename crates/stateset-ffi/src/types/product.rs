@@ -19,7 +19,7 @@ use super::money::FfiMoney;
 pub struct FfiProduct {
     /// Product UUID.
     pub id: FfiUuid,
-    /// Product name — owned, null-terminated UTF-8. May be null on error.
+    /// Product name — owned, null-terminated UTF-8.
     pub name: *mut c_char,
     /// SKU — null-terminated, max 63 chars + null. Padded with zeros.
     pub sku: [u8; 64],
@@ -45,8 +45,7 @@ impl FfiProduct {
     /// price defaults to zero since the Product model does not carry price
     /// directly — prices live on variants.
     pub fn from_domain(p: &Product) -> Self {
-        let name_ptr =
-            CString::new(p.name.clone()).map(CString::into_raw).unwrap_or(std::ptr::null_mut());
+        let name_ptr = into_owned_c_string_ptr(&p.name);
 
         let mut sku = [0u8; 64];
         let slug_bytes = p.slug.as_bytes();
@@ -60,6 +59,13 @@ impl FfiProduct {
             price: FfiMoney::default(), // variants carry price, not Product
         }
     }
+}
+
+fn into_owned_c_string_ptr(value: &str) -> *mut c_char {
+    let sanitized = value.replace('\0', "");
+    CString::new(sanitized)
+        .expect("sanitized string must not contain interior null bytes")
+        .into_raw()
 }
 
 /// Free an [`FfiProduct`] and its owned string fields.
@@ -172,6 +178,19 @@ mod tests {
         let ffi = FfiProduct::from_domain(&p);
         let debug = format!("{:?}", ffi);
         assert!(debug.contains("FfiProduct"));
+        unsafe { stateset_product_free(ffi) };
+    }
+
+    #[test]
+    fn product_from_domain_sanitizes_interior_null_bytes() {
+        let mut p = make_test_product();
+        p.name = "Wid\0get".to_string();
+        let ffi = FfiProduct::from_domain(&p);
+
+        assert!(!ffi.name.is_null());
+        let name = unsafe { CStr::from_ptr(ffi.name) };
+        assert_eq!(name.to_str().unwrap(), "Widget");
+
         unsafe { stateset_product_free(ffi) };
     }
 }

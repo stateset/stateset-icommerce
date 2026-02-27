@@ -44,6 +44,7 @@ pub struct SyncEngine {
     outbox: Outbox,
     buffer: EventBuffer,
     resolver: ConflictResolver,
+    last_pulled_sequence: u64,
     next_pull_cursor: Option<u64>,
     initialized: bool,
 }
@@ -59,6 +60,7 @@ impl SyncEngine {
             outbox: Outbox::with_default_capacity(),
             buffer: EventBuffer::new(buffer_capacity),
             resolver: ConflictResolver::default(),
+            last_pulled_sequence: 0,
             next_pull_cursor: None,
             initialized: true,
         }
@@ -74,6 +76,7 @@ impl SyncEngine {
             outbox: Outbox::with_default_capacity(),
             buffer: EventBuffer::new(buffer_capacity),
             resolver: ConflictResolver::new(strategy),
+            last_pulled_sequence: 0,
             next_pull_cursor: None,
             initialized: true,
         }
@@ -131,7 +134,7 @@ impl SyncEngine {
     ///
     /// Returns [`SyncError::Transport`] if the transport operation fails.
     pub async fn pull(&mut self, transport: &dyn Transport) -> Result<PullResult, SyncError> {
-        let since = self.next_pull_cursor.unwrap_or(self.state.remote_head);
+        let since = self.next_pull_cursor.unwrap_or(self.last_pulled_sequence);
         let (result, next_cursor) = self.pull_since(transport, since).await?;
         self.next_pull_cursor = next_cursor;
         Ok(result)
@@ -194,6 +197,11 @@ impl SyncEngine {
 
         self.state.remote_head = result.remote_head;
         self.state.last_pull = Some(Utc::now());
+        let observed_cursor = transport_next_cursor
+            .filter(|cursor| *cursor > since)
+            .or_else(|| derive_next_cursor(since, &result.events))
+            .unwrap_or(since);
+        self.last_pulled_sequence = self.last_pulled_sequence.max(observed_cursor);
 
         let next_cursor = Self::resolve_next_cursor(
             since,
@@ -290,7 +298,7 @@ impl SyncEngine {
         transport: &dyn Transport,
     ) -> Result<(PushResult, PullResult), SyncError> {
         let push_result = self.push(transport).await?;
-        let mut since = self.next_pull_cursor.unwrap_or(self.state.remote_head);
+        let mut since = self.next_pull_cursor.unwrap_or(self.last_pulled_sequence);
         let (mut pull_result, next_cursor) = self.pull_since(transport, since).await?;
         self.next_pull_cursor = next_cursor;
         let mut pull_pages = 1;
@@ -739,6 +747,47 @@ mod tests {
         assert_eq!(engine.state().remote_head, 999);
         assert_eq!(transport.pulls.load(Ordering::SeqCst), 2);
         assert_eq!(&*since_args.lock().unwrap(), &[0, 1]);
+    }
+
+    #[tokio::test]
+    async fn pull_cursor_does_not_advance_from_push_remote_head() {
+        #[derive(Debug)]
+        struct HeadSkewTransport {
+            since_args: Arc<Mutex<Vec<u64>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl Transport for HeadSkewTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult { accepted: events.len(), remote_head: 1000 })
+            }
+
+            async fn pull_events(
+                &self,
+                since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                self.since_args.lock().unwrap().push(since);
+                Ok(PullResult {
+                    events: vec![
+                        SyncEvent::new("order.updated", "order", "ORD-1", json!({}))
+                            .with_sequence(7),
+                    ],
+                    remote_head: 1000,
+                    has_more: false,
+                })
+            }
+        }
+
+        let since_args = Arc::new(Mutex::new(Vec::new()));
+        let transport = HeadSkewTransport { since_args: Arc::clone(&since_args) };
+        let mut engine = SyncEngine::new(make_config());
+
+        engine.record(make_event("local.pending")).unwrap();
+        let (_push, pull) = engine.full_sync(&transport).await.unwrap();
+
+        assert_eq!(pull.events.len(), 1);
+        assert_eq!(&*since_args.lock().unwrap(), &[0]);
     }
 
     #[tokio::test]

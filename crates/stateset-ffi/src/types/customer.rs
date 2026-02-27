@@ -20,9 +20,9 @@ use super::ids::FfiUuid;
 pub struct FfiCustomer {
     /// Customer UUID.
     pub id: FfiUuid,
-    /// Full name — owned, null-terminated UTF-8. May be null on error.
+    /// Full name — owned, null-terminated UTF-8.
     pub name: *mut c_char,
-    /// Email address — owned, null-terminated UTF-8. May be null on error.
+    /// Email address — owned, null-terminated UTF-8.
     pub email: *mut c_char,
     /// Unix timestamp in milliseconds when the customer was created.
     pub created_at_epoch_ms: i64,
@@ -47,11 +47,8 @@ impl FfiCustomer {
     pub fn from_domain(c: &Customer) -> Self {
         let full_name = format!("{} {}", c.first_name, c.last_name);
 
-        let name_ptr =
-            CString::new(full_name).map(CString::into_raw).unwrap_or(std::ptr::null_mut());
-
-        let email_ptr =
-            CString::new(c.email.clone()).map(CString::into_raw).unwrap_or(std::ptr::null_mut());
+        let name_ptr = into_owned_c_string_ptr(&full_name);
+        let email_ptr = into_owned_c_string_ptr(&c.email);
 
         Self {
             id: FfiUuid::from(c.id),
@@ -60,6 +57,13 @@ impl FfiCustomer {
             created_at_epoch_ms: c.created_at.timestamp_millis(),
         }
     }
+}
+
+fn into_owned_c_string_ptr(value: &str) -> *mut c_char {
+    let sanitized = value.replace('\0', "");
+    CString::new(sanitized)
+        .expect("sanitized string must not contain interior null bytes")
+        .into_raw()
 }
 
 /// Free an [`FfiCustomer`] and its owned string fields.
@@ -170,6 +174,25 @@ mod tests {
         let ffi = FfiCustomer::from_domain(&c);
         let back: CustomerId = ffi.id.into();
         assert_eq!(back, original_id);
+        unsafe { stateset_customer_free(ffi) };
+    }
+
+    #[test]
+    fn customer_from_domain_sanitizes_interior_null_bytes() {
+        let mut c = make_test_customer();
+        c.first_name = "Ali\0ce".to_string();
+        c.email = "ali\0ce@example.com".to_string();
+        let ffi = FfiCustomer::from_domain(&c);
+
+        assert!(!ffi.name.is_null());
+        assert!(!ffi.email.is_null());
+
+        let name = unsafe { CStr::from_ptr(ffi.name) };
+        assert_eq!(name.to_str().unwrap(), "Alice Smith");
+
+        let email = unsafe { CStr::from_ptr(ffi.email) };
+        assert_eq!(email.to_str().unwrap(), "alice@example.com");
+
         unsafe { stateset_customer_free(ffi) };
     }
 }

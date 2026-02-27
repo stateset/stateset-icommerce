@@ -195,8 +195,9 @@ impl Scheduler {
             .collect();
 
         for (id, timeout_meta) in timed_out {
-            self.running.remove(&id);
-            self.handle_timeout(id, now, &timeout_meta, &mut actions);
+            if self.handle_timeout(id, now, &timeout_meta, &mut actions) {
+                self.running.remove(&id);
+            }
         }
 
         // --- Dequeue ready jobs ---
@@ -221,7 +222,9 @@ impl Scheduler {
 
         // Keep overflow jobs scheduled instead of dropping them.
         for instance in deferred {
-            let _ = self.queue.enqueue(instance);
+            if let Err(err) = self.queue.enqueue(instance) {
+                eprintln!("failed to re-enqueue deferred job: {err}");
+            }
         }
 
         for mut instance in to_run {
@@ -229,6 +232,7 @@ impl Scheduler {
                 continue;
             }
 
+            let scheduled_instance = instance.clone();
             let def_name = instance.definition_name.clone();
 
             let timeout = self
@@ -240,7 +244,13 @@ impl Scheduler {
             if instance.mark_running().is_err() {
                 continue;
             }
-            let _ = self.store.save(&instance);
+            if let Err(err) = self.store.save(&instance) {
+                eprintln!("failed to persist running job state: {err}");
+                if let Err(requeue_err) = self.queue.enqueue(scheduled_instance) {
+                    eprintln!("failed to re-enqueue job after save failure: {requeue_err}");
+                }
+                continue;
+            }
 
             let ctx = JobContext::new(instance.id, instance.attempt, now);
 
@@ -265,13 +275,18 @@ impl Scheduler {
         now: DateTime<Utc>,
         timeout_meta: &RunningJob,
         actions: &mut Vec<TickAction>,
-    ) {
-        let Ok(Some(mut instance)) = self.store.get(&job_id) else {
-            return;
+    ) -> bool {
+        let mut instance = match self.store.get(&job_id) {
+            Ok(Some(instance)) => instance,
+            Ok(None) => return true,
+            Err(err) => {
+                eprintln!("failed to load job state for timeout handling: {err}");
+                return false;
+            }
         };
 
         if instance.status != JobStatus::Running {
-            return;
+            return true;
         }
 
         let elapsed = now
@@ -285,33 +300,41 @@ impl Scheduler {
         );
 
         if instance.mark_timed_out().is_err() {
-            return;
+            return false;
         }
         instance.completed_at = Some(now);
         instance.error = Some(timeout_msg.clone());
         if self.store.save(&instance).is_err() {
-            return;
+            return false;
         }
         actions.push(TickAction::Timeout { job_id });
 
         if let Some(def) = self.definitions.get(&instance.definition_name) {
             if instance.should_retry(def.max_retries) {
                 let retry_at = instance.next_retry_at(&def.retry_backoff, now);
-                if instance.mark_retrying(retry_at).is_ok()
-                    && self.store.save(&instance).is_ok()
-                    && self.queue.enqueue(instance.clone()).is_ok()
-                {
+                if instance.mark_retrying(retry_at).is_ok() {
+                    if self.store.save(&instance).is_err() {
+                        return false;
+                    }
+                    if self.queue.enqueue(instance.clone()).is_err() {
+                        return false;
+                    }
                     actions.push(TickAction::Retry { job_id, retry_at });
-                    return;
+                    return true;
                 }
             }
         }
 
         if instance.mark_failed(format!("{timeout_msg}; retries exhausted")).is_ok() {
             instance.completed_at = Some(now);
-            let _ = self.store.save(&instance);
+            if self.store.save(&instance).is_err() {
+                return false;
+            }
         }
-        let _ = self.reschedule_recurring(&instance, now);
+        if self.reschedule_recurring(&instance, now).is_err() {
+            return false;
+        }
+        true
     }
 
     /// Mark a job as completed after successful execution.
@@ -335,14 +358,13 @@ impl Scheduler {
         output: JobOutput,
         now: DateTime<Utc>,
     ) -> Result<(), JobError> {
-        self.running.remove(&job_id);
-
         let mut instance = self.store.get(&job_id)?.ok_or(JobError::NotFound(job_id))?;
 
         instance.mark_completed(output)?;
         self.store.save(&instance)?;
+        self.running.remove(&job_id);
 
-        let _ = self.reschedule_recurring(&instance, now);
+        self.reschedule_recurring(&instance, now)?;
 
         Ok(())
     }
@@ -372,12 +394,11 @@ impl Scheduler {
         error: &str,
         now: DateTime<Utc>,
     ) -> Result<Option<TickAction>, JobError> {
-        self.running.remove(&job_id);
-
         let mut instance = self.store.get(&job_id)?.ok_or(JobError::NotFound(job_id))?;
 
         instance.mark_failed(error)?;
         self.store.save(&instance)?;
+        self.running.remove(&job_id);
 
         let def = self.definitions.get(&instance.definition_name);
         if let Some(def) = def {
@@ -391,7 +412,7 @@ impl Scheduler {
             }
         }
 
-        let _ = self.reschedule_recurring(&instance, now);
+        self.reschedule_recurring(&instance, now)?;
 
         Ok(None)
     }

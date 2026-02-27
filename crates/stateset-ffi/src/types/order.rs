@@ -1,13 +1,11 @@
 //! ABI-safe order types.
 
-use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 use stateset_core::models::order::{Order, OrderStatus};
 
-use crate::error::{FfiErrorCode, set_last_error};
+use crate::error::FfiErrorCode;
 
 use super::ids::FfiUuid;
-use super::money::FfiMoney;
+use super::money::{FfiMoney, decimal_to_minor_units_for_currency};
 
 /// ABI-safe order status.
 #[repr(C)]
@@ -89,9 +87,14 @@ pub struct FfiOrder {
 impl FfiOrder {
     /// Fallible conversion from domain [`Order`] into [`FfiOrder`].
     pub(crate) fn try_from_order(order: &Order) -> Result<Self, FfiErrorCode> {
-        let cents = decimal_to_minor_units(order.total_amount, "order.total_amount")?;
+        let currency_code = order.currency.trim().to_ascii_uppercase();
+        let cents = decimal_to_minor_units_for_currency(
+            order.total_amount,
+            &currency_code,
+            "order.total_amount",
+        )?;
         let mut currency = [0u8; 3];
-        let code_bytes = order.currency.as_bytes();
+        let code_bytes = currency_code.as_bytes();
         let len = code_bytes.len().min(3);
         currency[..len].copy_from_slice(&code_bytes[..len]);
 
@@ -112,29 +115,6 @@ impl From<&Order> for FfiOrder {
     }
 }
 
-fn decimal_to_minor_units(value: Decimal, field: &str) -> Result<i64, FfiErrorCode> {
-    let cents = value.checked_mul(Decimal::from(100)).ok_or_else(|| {
-        set_last_error(&format!(
-            "{field} value `{value}` is out of range for i64 cents or has too much precision"
-        ));
-        FfiErrorCode::InvalidArgument
-    })?;
-
-    if !cents.fract().is_zero() {
-        set_last_error(&format!(
-            "{field} value `{value}` is out of range for i64 cents or has too much precision"
-        ));
-        return Err(FfiErrorCode::InvalidArgument);
-    }
-
-    cents.to_i64().ok_or_else(|| {
-        set_last_error(&format!(
-            "{field} value `{value}` is out of range for i64 cents or has too much precision"
-        ));
-        FfiErrorCode::InvalidArgument
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -144,6 +124,7 @@ mod tests {
     use super::*;
     use crate::error::{clear_last_error, last_error_as_str};
     use chrono::Utc;
+    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use stateset_core::models::order::{FulfillmentStatus, OrderItem, PaymentStatus};
     use stateset_primitives::{CustomerId, OrderId, OrderItemId, ProductId};
@@ -300,5 +281,23 @@ mod tests {
         assert_eq!(err, FfiErrorCode::InvalidArgument);
         let msg = last_error_as_str().unwrap();
         assert!(msg.contains("order.total_amount"));
+    }
+
+    #[test]
+    fn ffi_order_uses_currency_specific_minor_units() {
+        let mut order = make_test_order(OrderStatus::Pending);
+        order.currency = "JPY".to_string();
+        order.total_amount = dec!(1500);
+        let ffi = FfiOrder::from(&order);
+        assert_eq!(ffi.total.amount_cents, 1500);
+        assert_eq!(&ffi.total.currency, b"JPY");
+    }
+
+    #[test]
+    fn ffi_order_normalizes_currency_code_case() {
+        let mut order = make_test_order(OrderStatus::Pending);
+        order.currency = "usd".to_string();
+        let ffi = FfiOrder::from(&order);
+        assert_eq!(&ffi.total.currency, b"USD");
     }
 }

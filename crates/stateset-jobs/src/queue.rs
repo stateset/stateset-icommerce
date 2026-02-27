@@ -95,13 +95,24 @@ impl JobQueue {
     ///
     /// Returns `true` if the job was found and cancelled.
     pub fn cancel(&mut self, job_id: Uuid) -> bool {
-        for jobs in self.jobs.values_mut() {
-            for job in jobs.iter_mut() {
-                if job.id == job_id {
-                    // Best-effort cancel — ignore transition errors for terminal jobs
+        let keys: Vec<DateTime<Utc>> = self.jobs.keys().copied().collect();
+        for key in keys {
+            let mut should_remove_bucket = false;
+            let mut found = false;
+            if let Some(jobs) = self.jobs.get_mut(&key) {
+                if let Some(idx) = jobs.iter().position(|job| job.id == job_id) {
+                    let mut job = jobs.remove(idx);
                     let _ = job.mark_cancelled();
-                    return true;
+                    self.count = self.count.saturating_sub(1);
+                    should_remove_bucket = jobs.is_empty();
+                    found = true;
                 }
+            }
+            if should_remove_bucket {
+                self.jobs.remove(&key);
+            }
+            if found {
+                return true;
             }
         }
         false
@@ -205,6 +216,18 @@ mod tests {
         q.enqueue(inst).unwrap();
 
         assert!(q.cancel(id));
+        assert_eq!(q.size(), 0);
+    }
+
+    #[test]
+    fn cancel_frees_queue_capacity() {
+        let mut q = JobQueue::new(1);
+        let now = Utc::now();
+        let inst = make_instance("test", now);
+        let id = inst.id;
+        q.enqueue(inst).unwrap();
+        assert!(q.cancel(id));
+        assert!(q.enqueue(make_instance("replacement", now)).is_ok());
     }
 
     #[test]

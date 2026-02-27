@@ -9,6 +9,7 @@ use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 /// Webhook endpoint configuration
@@ -37,6 +38,8 @@ pub struct Webhook {
 pub enum WebhookRegistrationError {
     /// The webhook URL is considered unsafe (e.g. localhost, private network, invalid scheme).
     UnsafeUrl,
+    /// A webhook with this ID already exists.
+    DuplicateId,
     /// Webhooks are disabled in the event system configuration.
     WebhooksDisabled,
 }
@@ -46,6 +49,9 @@ impl fmt::Display for WebhookRegistrationError {
         match self {
             Self::UnsafeUrl => {
                 write!(f, "webhook registration rejected: URL validation failed")
+            }
+            Self::DuplicateId => {
+                write!(f, "webhook registration rejected: duplicate webhook id")
             }
             Self::WebhooksDisabled => {
                 write!(f, "webhook registration rejected: webhook subsystem is disabled")
@@ -229,6 +235,7 @@ pub struct WebhookManager {
     config: WebhookConfig,
     client: reqwest::Client,
     runtime: WebhookRuntime,
+    delivery_task_limit: Arc<Semaphore>,
 }
 
 impl std::fmt::Debug for WebhookManager {
@@ -255,12 +262,14 @@ impl WebhookManager {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|err| {
                 tracing::error!("Failed to create HTTP client: {}", err);
                 reqwest::Client::new()
             });
         let runtime = WebhookRuntime::new();
+        let delivery_task_limit = Arc::new(Semaphore::new(config.max_in_flight.max(1)));
 
         Self {
             webhooks: Arc::new(RwLock::new(HashMap::new())),
@@ -268,6 +277,7 @@ impl WebhookManager {
             config,
             client,
             runtime,
+            delivery_task_limit,
         }
     }
 
@@ -307,6 +317,10 @@ impl WebhookManager {
                 poison.into_inner()
             }
         };
+        if webhooks.contains_key(&id) {
+            tracing::warn!(webhook_id = %id, "Rejected webhook registration: duplicate id");
+            return Err(WebhookRegistrationError::DuplicateId);
+        }
         webhooks.insert(id, webhook);
         tracing::info!(webhook_id = %id, "Webhook registered");
         Ok(id)
@@ -444,8 +458,17 @@ impl WebhookManager {
         let config = self.config.clone();
         let delivery_history = self.delivery_history.clone();
         let max_in_flight = config.max_in_flight.max(1);
+        let Some(delivery_permit) = self.delivery_task_limit.clone().try_acquire_owned().ok()
+        else {
+            tracing::warn!(
+                event_type = event.event_type(),
+                "Dropping webhook delivery due to saturated delivery workers"
+            );
+            return;
+        };
 
         self.runtime.spawn(async move {
+            let _delivery_permit = delivery_permit;
             let deliveries = stream::iter(webhooks.into_iter().map(|webhook| {
                 let client = client.clone();
                 let event = event.clone();
@@ -1347,6 +1370,18 @@ mod tests {
 
         assert_eq!(id, Uuid::nil());
         assert!(manager.list().is_empty());
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_duplicate_id() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("Primary", "https://example.com/webhook");
+        let duplicate = webhook.clone();
+
+        let first_id = manager.register_strict(webhook).unwrap();
+        assert_eq!(first_id, duplicate.id);
+        assert_eq!(manager.register_strict(duplicate), Err(WebhookRegistrationError::DuplicateId));
+        assert_eq!(manager.list().len(), 1);
     }
 
     #[test]

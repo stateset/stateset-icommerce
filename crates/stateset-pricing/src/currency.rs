@@ -118,6 +118,9 @@ impl CurrencyConverter {
 
     /// Add an exchange rate to the converter.
     pub fn add_rate(&mut self, rate: ExchangeRate) {
+        if !is_valid_rate_value(rate.rate) {
+            return;
+        }
         let normalized_from = normalize_currency_code(&rate.from);
         let normalized_to = normalize_currency_code(&rate.to);
         let key = (normalized_from.clone(), normalized_to.clone());
@@ -156,6 +159,9 @@ impl CurrencyConverter {
 
         // 1. Direct rate
         if let Some(rate) = self.find_rate(&normalized_from, &normalized_to) {
+            if !is_valid_rate_value(rate.rate) {
+                return Err(PricingError::no_exchange_rate(normalized_from, normalized_to));
+            }
             let converted = amount * rate.rate;
             return Ok(ConversionResult {
                 amount: converted,
@@ -167,7 +173,7 @@ impl CurrencyConverter {
 
         // 2. Inverse rate
         if let Some(rate) = self.find_rate(&normalized_to, &normalized_from) {
-            if rate.rate.is_zero() {
+            if !is_valid_rate_value(rate.rate) {
                 return Err(PricingError::no_exchange_rate(normalized_from, normalized_to));
             }
             let inverse = Decimal::ONE / rate.rate;
@@ -221,15 +227,21 @@ impl CurrencyConverter {
     /// Find the effective rate from -> to, trying direct then inverse.
     fn find_effective_rate(&self, from: &str, to: &str) -> Option<Decimal> {
         if let Some(rate) = self.find_rate(from, to) {
-            return Some(rate.rate);
+            if is_valid_rate_value(rate.rate) {
+                return Some(rate.rate);
+            }
         }
         if let Some(rate) = self.find_rate(to, from) {
-            if !rate.rate.is_zero() {
+            if is_valid_rate_value(rate.rate) {
                 return Some(Decimal::ONE / rate.rate);
             }
         }
         None
     }
+}
+
+fn is_valid_rate_value(rate: Decimal) -> bool {
+    rate > Decimal::ZERO
 }
 
 impl Default for CurrencyConverter {
@@ -471,6 +483,14 @@ mod tests {
         let mut c = CurrencyConverter::new();
         c.add_rate(make_rate("USD", "EUR", Decimal::ZERO));
         let r = c.convert(dec!(100.00), "EUR", "USD");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn negative_rate_is_rejected() {
+        let mut c = CurrencyConverter::new();
+        c.add_rate(make_rate("USD", "EUR", dec!(-1.23)));
+        let r = c.convert(dec!(100.00), "USD", "EUR");
         assert!(r.is_err());
     }
 }

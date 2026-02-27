@@ -120,6 +120,15 @@ impl EventEnvelope {
     /// assert!(envelope.validate().is_ok());
     /// ```
     pub fn validate(&self) -> Result<()> {
+        if self.protocol_version != 1 {
+            return Err(ProtocolError::UnsupportedVersion(format!(
+                "unsupported envelope protocol_version {} (expected 1)",
+                self.protocol_version
+            )));
+        }
+        if self.schema_version == 0 {
+            return Err(ProtocolError::InvalidEnvelope("schema_version must be >= 1".into()));
+        }
         if self.event_type.is_empty() {
             return Err(ProtocolError::InvalidEnvelope("event_type must not be empty".into()));
         }
@@ -593,6 +602,20 @@ mod tests {
         let mut env = sample_envelope();
         env.payload = Vec::new();
         assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_protocol_version() {
+        let mut env = sample_envelope();
+        env.protocol_version = 2;
+        assert!(matches!(env.validate(), Err(ProtocolError::UnsupportedVersion(_))));
+    }
+
+    #[test]
+    fn validate_rejects_zero_schema_version() {
+        let mut env = sample_envelope();
+        env.schema_version = 0;
+        assert!(matches!(env.validate(), Err(ProtocolError::InvalidEnvelope(_))));
     }
 
     #[test]

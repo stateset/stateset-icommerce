@@ -37,11 +37,11 @@ use crate::merkle;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MerkleLeafHashMode {
-    /// Legacy mode for compatibility with previously emitted batches.
-    #[default]
-    PayloadHashV1,
     /// Secure mode that hashes full envelope integrity leaves.
+    #[default]
     EnvelopeHashV2,
+    /// Legacy mode for compatibility with previously emitted batches.
+    PayloadHashV1,
 }
 
 /// A batch of events for synchronization between nodes.
@@ -147,12 +147,23 @@ impl SyncBatch {
     /// [`ProtocolError::InvalidEnvelope`] if any envelope is invalid, or
     /// [`ProtocolError::MerkleVerificationFailed`] if the root does not match.
     pub fn validate(&self) -> Result<()> {
+        if self.protocol_version != 1 {
+            return Err(ProtocolError::UnsupportedVersion(format!(
+                "unsupported batch protocol_version {} (expected 1)",
+                self.protocol_version
+            )));
+        }
         if self.source_node_id.is_empty() {
             return Err(ProtocolError::InvalidBatch("source_node_id must not be empty".into()));
         }
         if self.leaves.is_empty() {
             return Err(ProtocolError::InvalidBatch(
                 "batch must contain at least one event".into(),
+            ));
+        }
+        if self.merkle_leaf_hash_mode != MerkleLeafHashMode::EnvelopeHashV2 {
+            return Err(ProtocolError::UnsupportedVersion(
+                "legacy merkle_leaf_hash_mode payload_hash_v1 is not accepted".into(),
             ));
         }
 
@@ -338,7 +349,7 @@ mod tests {
             batch.leaves.iter().map(|e| e.payload_hash).collect();
         batch.merkle_root = merkle::compute_merkle_root(&legacy_leaf_hashes);
         assert!(batch.verify_merkle_root());
-        assert!(batch.validate().is_ok());
+        assert!(matches!(batch.validate(), Err(ProtocolError::UnsupportedVersion(_))));
     }
 
     #[test]
@@ -388,6 +399,14 @@ mod tests {
         let result = batch.validate();
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ProtocolError::MerkleVerificationFailed(_)));
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_protocol_version() {
+        let envs = vec![make_envelope("1", b"data")];
+        let mut batch = SyncBatch::new("node", envs);
+        batch.protocol_version = 2;
+        assert!(matches!(batch.validate(), Err(ProtocolError::UnsupportedVersion(_))));
     }
 
     // --- add_signature / add_proof tests ---
@@ -517,12 +536,12 @@ mod tests {
     }
 
     #[test]
-    fn sync_batch_deserialize_without_leaf_mode_defaults_to_legacy() {
+    fn sync_batch_deserialize_without_leaf_mode_defaults_to_secure_mode() {
         let batch = SyncBatch::new("node", vec![make_envelope("1", b"d")]);
         let mut as_value = serde_json::to_value(&batch).unwrap();
         as_value.as_object_mut().unwrap().remove("merkle_leaf_hash_mode");
         let deserialized: SyncBatch = serde_json::from_value(as_value).unwrap();
-        assert_eq!(deserialized.merkle_leaf_hash_mode, MerkleLeafHashMode::PayloadHashV1);
+        assert_eq!(deserialized.merkle_leaf_hash_mode, MerkleLeafHashMode::EnvelopeHashV2);
     }
 
     #[test]

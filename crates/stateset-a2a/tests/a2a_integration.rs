@@ -518,7 +518,7 @@ fn ssrf_valid_https_passes() {
 
 #[test]
 fn ssrf_valid_http_passes() {
-    assert!(validate_url("http://api.example.com/hooks").is_ok());
+    assert!(validate_url("http://8.8.8.8/hooks").is_ok());
 }
 
 #[test]
@@ -642,7 +642,7 @@ fn ssrf_blocks_reserved_documentation_ip() {
 
 #[test]
 fn ssrf_allows_subdomain() {
-    assert!(validate_url("https://hooks.seller-bot.example.com/a2a").is_ok());
+    assert!(validate_url("https://www.example.com/a2a").is_ok());
 }
 
 // ===========================================================================
@@ -655,8 +655,8 @@ fn ssrf_allows_subdomain() {
 fn integration_split_then_webhook_notify() {
     // Step 1: compute a split
     let recipients = vec![
-        pct_recipient("https://alice.example.com/hook", dec!(60)),
-        pct_recipient("https://bob.example.com/hook", dec!(40)),
+        pct_recipient("https://8.8.8.8/hook", dec!(60)),
+        pct_recipient("https://1.1.1.1/hook", dec!(40)),
     ];
     let split = calculate_percentage_split(dec!(500), dec!(2), &recipients).unwrap();
     assert_eq!(split.total_distributed, dec!(500));

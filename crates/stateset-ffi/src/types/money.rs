@@ -14,11 +14,13 @@ use crate::strings::rust_to_c_string;
 
 /// ABI-safe monetary amount in minor units with a 3-byte ISO 4217 currency code.
 ///
-/// For example, `$12.34 USD` is represented as `{ amount_cents: 1234, currency: *b"USD" }`.
+/// For example, `$12.34 USD` is represented as `{ amount_cents: 1234, currency: *b"USD" }`
+/// while `JPY 42` is represented as `{ amount_cents: 42, currency: *b"JPY" }`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct FfiMoney {
-    /// Amount in minor units (e.g. cents). Negative values represent credits.
+    /// Amount in minor units. Field name is historical (`amount_cents`).
+    /// Negative values represent credits.
     pub amount_cents: i64,
     /// ISO 4217 three-letter currency code, e.g. `b"USD"`.
     pub currency: [u8; 3],
@@ -45,10 +47,10 @@ impl From<Money> for FfiMoney {
 impl FfiMoney {
     /// Fallible conversion from domain [`Money`] into [`FfiMoney`].
     pub(crate) fn try_from_money(m: Money) -> Result<Self, FfiErrorCode> {
-        let cents = decimal_to_minor_units(m.amount(), "money.amount")?;
-        let mut currency = [0u8; 3];
         let code = m.currency();
         let code_str = code.as_str();
+        let cents = decimal_to_minor_units_for_currency(m.amount(), code_str, "money.amount")?;
+        let mut currency = [0u8; 3];
         let code_bytes = code_str.as_bytes();
         let len = code_bytes.len().min(3);
         currency[..len].copy_from_slice(&code_bytes[..len]);
@@ -61,7 +63,7 @@ impl TryFrom<FfiMoney> for Money {
 
     fn try_from(ffi: FfiMoney) -> Result<Self, Self::Error> {
         let code = CurrencyCode::from_bytes(ffi.currency).ok_or("invalid currency code bytes")?;
-        let amount = Decimal::from(ffi.amount_cents) / Decimal::from(100);
+        let amount = major_units_from_minor(ffi.amount_cents, code.as_str());
         Ok(Self::new(amount, code))
     }
 }
@@ -84,43 +86,109 @@ pub extern "C" fn stateset_money_format(money: FfiMoney) -> *mut c_char {
 
         let is_negative = money.amount_cents < 0;
         let absolute = money.amount_cents.unsigned_abs();
-        let major = absolute / 100;
-        let minor = absolute % 100;
         let sign = if is_negative { "-" } else { "" };
         let code = std::str::from_utf8(&money.currency).unwrap_or("???");
+        let minor_units = currency_minor_unit_scale(code);
+        let factor = minor_unit_factor(minor_units);
+        let major = absolute / factor;
+        let minor = absolute % factor;
+        let width = minor_units as usize;
 
         let formatted = match code {
-            "USD" => format!("${sign}{major}.{minor:02}"),
-            "EUR" => format!("\u{20ac}{sign}{major}.{minor:02}"),
-            "GBP" => format!("\u{00a3}{sign}{major}.{minor:02}"),
-            _ => format!("{sign}{major}.{minor:02} {code}"),
+            "USD" => {
+                if minor_units == 0 {
+                    format!("${sign}{major}")
+                } else {
+                    format!("${sign}{major}.{minor:0width$}")
+                }
+            }
+            "EUR" => {
+                if minor_units == 0 {
+                    format!("\u{20ac}{sign}{major}")
+                } else {
+                    format!("\u{20ac}{sign}{major}.{minor:0width$}")
+                }
+            }
+            "GBP" => {
+                if minor_units == 0 {
+                    format!("\u{00a3}{sign}{major}")
+                } else {
+                    format!("\u{00a3}{sign}{major}.{minor:0width$}")
+                }
+            }
+            _ => {
+                if minor_units == 0 {
+                    format!("{sign}{major} {code}")
+                } else {
+                    format!("{sign}{major}.{minor:0width$} {code}")
+                }
+            }
         };
 
         rust_to_c_string(&formatted)
     })
 }
 
-fn decimal_to_minor_units(value: Decimal, field: &str) -> Result<i64, FfiErrorCode> {
-    let cents = value.checked_mul(Decimal::from(100)).ok_or_else(|| {
+pub(crate) fn decimal_to_minor_units_for_currency(
+    value: Decimal,
+    currency_code: &str,
+    field: &str,
+) -> Result<i64, FfiErrorCode> {
+    let minor_units = currency_minor_unit_scale(currency_code);
+    decimal_to_minor_units(value, minor_units, field)
+}
+
+fn decimal_to_minor_units(
+    value: Decimal,
+    minor_units: u32,
+    field: &str,
+) -> Result<i64, FfiErrorCode> {
+    let unit = minor_unit_decimal(minor_units);
+    let cents = value.checked_div(unit).ok_or_else(|| {
         set_last_error(&format!(
-            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+            "{field} value `{value}` is out of range for i64 minor units or has too much precision"
         ));
         FfiErrorCode::InvalidArgument
     })?;
 
     if !cents.fract().is_zero() {
         set_last_error(&format!(
-            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+            "{field} value `{value}` is out of range for i64 minor units or has too much precision"
         ));
         return Err(FfiErrorCode::InvalidArgument);
     }
 
     cents.to_i64().ok_or_else(|| {
         set_last_error(&format!(
-            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+            "{field} value `{value}` is out of range for i64 minor units or has too much precision"
         ));
         FfiErrorCode::InvalidArgument
     })
+}
+
+fn major_units_from_minor(minor_amount: i64, currency_code: &str) -> Decimal {
+    let unit = minor_unit_decimal(currency_minor_unit_scale(currency_code));
+    Decimal::from(minor_amount) * unit
+}
+
+fn minor_unit_decimal(minor_units: u32) -> Decimal {
+    Decimal::new(1, minor_units)
+}
+
+fn minor_unit_factor(minor_units: u32) -> u64 {
+    10_u64.saturating_pow(minor_units)
+}
+
+pub(crate) fn currency_minor_unit_scale(code: &str) -> u32 {
+    match code {
+        // ISO 4217 zero-decimal currencies (subset commonly used in commerce).
+        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG" | "RWF" | "UGX"
+        | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
+        // ISO 4217 three-decimal currencies.
+        "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
+        // Most fiat currencies use two decimals.
+        _ => 2,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +234,30 @@ mod tests {
         let money = Money::new(dec!(999999.99), CurrencyCode::USD);
         let ffi: FfiMoney = money.into();
         assert_eq!(ffi.amount_cents, 99999999);
+    }
+
+    #[test]
+    fn money_roundtrip_jpy_uses_zero_minor_units() {
+        let money = Money::new(dec!(42), CurrencyCode::JPY);
+        let ffi: FfiMoney = money.into();
+        assert_eq!(ffi.amount_cents, 42);
+        assert_eq!(&ffi.currency, b"JPY");
+
+        let back: Money = ffi.try_into().unwrap();
+        assert_eq!(back.amount(), dec!(42));
+        assert_eq!(back.currency(), CurrencyCode::JPY);
+    }
+
+    #[test]
+    fn money_roundtrip_three_decimal_currency() {
+        let kwd = CurrencyCode::from_bytes(*b"KWD").unwrap();
+        let money = Money::new(dec!(1.234), kwd);
+        let ffi: FfiMoney = money.into();
+        assert_eq!(ffi.amount_cents, 1234);
+
+        let back: Money = ffi.try_into().unwrap();
+        assert_eq!(back.amount(), dec!(1.234));
+        assert_eq!(back.currency(), kwd);
     }
 
     #[test]
@@ -221,10 +313,10 @@ mod tests {
 
     #[test]
     fn ffi_money_format_other() {
-        let ffi = FfiMoney { amount_cents: 4200, currency: *b"JPY" };
+        let ffi = FfiMoney { amount_cents: 42, currency: *b"JPY" };
         let ptr = stateset_money_format(ffi);
         let s = unsafe { CStr::from_ptr(ptr) };
-        assert_eq!(s.to_str().unwrap(), "42.00 JPY");
+        assert_eq!(s.to_str().unwrap(), "42 JPY");
         unsafe { crate::strings::stateset_string_free(ptr) };
     }
 
