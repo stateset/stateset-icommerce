@@ -7,7 +7,7 @@ use stateset_core::CommerceEvent;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::future::Future;
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
@@ -506,6 +506,8 @@ async fn deliver_to_webhook(
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
 
+        begin_delivery_attempt(&mut delivery, attempt + 1);
+
         let mut request = client
             .post(&webhook.url)
             .header("Content-Type", "application/json")
@@ -525,9 +527,6 @@ async fn deliver_to_webhook(
         for (key, value) in &webhook.headers {
             request = request.header(key, value);
         }
-
-        delivery.attempts = attempt + 1;
-        delivery.last_attempt_at = Some(Utc::now());
 
         match request.body(body.clone()).send().await {
             Ok(response) => {
@@ -598,6 +597,15 @@ async fn deliver_to_webhook(
     );
 }
 
+fn begin_delivery_attempt(delivery: &mut WebhookDelivery, attempt: u32) {
+    delivery.attempts = attempt;
+    delivery.last_attempt_at = Some(Utc::now());
+    // Keep only metadata from the active attempt.
+    delivery.response_status = None;
+    delivery.response_body = None;
+    delivery.error = None;
+}
+
 fn append_delivery_record(
     delivery_history: &Arc<RwLock<HashMap<Uuid, VecDeque<WebhookDelivery>>>>,
     webhook_id: Uuid,
@@ -663,6 +671,30 @@ fn is_safe_webhook_url_with_dns_check(url: &str, resolve_dns: bool) -> bool {
         return false;
     }
 
+    // Reject all IPv6-mapped IPv4 literals up front (`::ffff:...`). Even when
+    // syntactically valid, these are unnecessary for webhook endpoints and are
+    // a common bypass vector for localhost/private filtering logic.
+    let normalized_host = host.trim().trim_matches('[').trim_matches(']').to_ascii_lowercase();
+    if normalized_host.contains("::ffff:") {
+        tracing::warn!(webhook_url = %url, "Webhook URL host rejected (IPv6-mapped IPv4 literal)");
+        return false;
+    }
+
+    // Some `host_str` forms of IPv6-mapped IPv4 literals can evade strict
+    // `IpAddr` parsing depending on representation. Handle dotted suffix forms
+    // explicitly to keep registration checks deterministic.
+    if let Some(mapped_v4) = parse_ipv6_mapped_ipv4_host(host) {
+        if is_public_ipv4(mapped_v4) {
+            return true;
+        }
+        tracing::warn!(
+            webhook_url = %url,
+            mapped_ipv4 = %mapped_v4,
+            "Webhook URL host rejected (IPv6-mapped non-public IPv4)"
+        );
+        return false;
+    }
+
     match host.parse::<IpAddr>() {
         Ok(ip) => {
             if is_public_ip(ip) {
@@ -680,6 +712,12 @@ fn is_safe_webhook_url_with_dns_check(url: &str, resolve_dns: bool) -> bool {
             }
         }
     }
+}
+
+fn parse_ipv6_mapped_ipv4_host(host: &str) -> Option<Ipv4Addr> {
+    let normalized = host.trim().trim_matches('[').trim_matches(']').to_ascii_lowercase();
+    let mapped = normalized.strip_prefix("::ffff:")?;
+    mapped.parse::<Ipv4Addr>().ok()
 }
 
 fn is_localhostish_host(host: &str) -> bool {
@@ -723,24 +761,78 @@ fn is_public_hostname(host: &str, port: u16) -> bool {
     }
 }
 
-const fn is_public_ip(ip: IpAddr) -> bool {
+fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(addr) => {
-            !addr.is_loopback()
-                && !addr.is_private()
-                && !addr.is_link_local()
-                && !addr.is_multicast()
-                && !addr.is_unspecified()
-                && !addr.is_broadcast()
-                && !addr.is_documentation()
-        }
-        IpAddr::V6(addr) => {
-            !addr.is_loopback()
-                && !addr.is_unspecified()
-                && !addr.is_multicast()
-                && !addr.is_unique_local()
-        }
+        IpAddr::V4(addr) => is_public_ipv4(addr),
+        IpAddr::V6(addr) => is_public_ipv6(addr),
     }
+}
+
+fn is_public_ipv4(addr: Ipv4Addr) -> bool {
+    let octets = addr.octets();
+
+    // Reject all non-public, local, and special-use ranges.
+    if addr.is_loopback()
+        || addr.is_private()
+        || addr.is_link_local()
+        || addr.is_multicast()
+        || addr.is_unspecified()
+        || addr.is_broadcast()
+        || addr.is_documentation()
+    {
+        return false;
+    }
+
+    // 0.0.0.0/8 ("this" network)
+    if octets[0] == 0 {
+        return false;
+    }
+
+    // 100.64.0.0/10 (carrier-grade NAT)
+    if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+        return false;
+    }
+
+    // 192.0.0.0/24 (IETF protocol assignments)
+    if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
+        return false;
+    }
+
+    // 198.18.0.0/15 (benchmarking)
+    if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
+        return false;
+    }
+
+    // 240.0.0.0/4 (future use / reserved)
+    if octets[0] >= 240 {
+        return false;
+    }
+
+    true
+}
+
+fn is_public_ipv6(addr: Ipv6Addr) -> bool {
+    if addr.to_ipv4_mapped().is_some() {
+        return false;
+    }
+
+    let segments = addr.segments();
+    let first = segments[0];
+
+    // fc00::/7 unique-local, fe80::/10 link-local, fec0::/10 site-local (deprecated)
+    let is_unique_local = (first & 0xfe00) == 0xfc00;
+    let is_link_local = (first & 0xffc0) == 0xfe80;
+    let is_site_local = (first & 0xffc0) == 0xfec0;
+    // 2001:db8::/32 documentation
+    let is_documentation = first == 0x2001 && segments[1] == 0x0db8;
+
+    !addr.is_loopback()
+        && !addr.is_unspecified()
+        && !addr.is_multicast()
+        && !is_unique_local
+        && !is_link_local
+        && !is_site_local
+        && !is_documentation
 }
 
 /// Webhook payload wrapper
@@ -846,6 +938,50 @@ mod tests {
         );
         assert!(manager.try_register(webhook).is_none());
         assert!(manager.list().is_empty());
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_ipv6_mapped_ipv4_loopback() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("IPv6 mapped loopback hook", "https://[::ffff:127.0.0.1]/cb");
+
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
+        assert!(manager.try_register(webhook).is_none());
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_ipv6_mapped_ipv4_private() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("IPv6 mapped private hook", "https://[::ffff:10.0.0.1]/cb");
+
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
+        assert!(manager.try_register(webhook).is_none());
+    }
+
+    #[test]
+    fn test_webhook_register_rejects_shared_ipv4_space() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("CGNAT hook", "https://100.64.0.1/cb");
+
+        assert_eq!(
+            manager.register_strict(webhook.clone()),
+            Err(WebhookRegistrationError::UnsafeUrl)
+        );
+        assert!(manager.try_register(webhook).is_none());
+    }
+
+    #[test]
+    fn test_webhook_register_accepts_public_ipv6() {
+        let manager = WebhookManager::new(3, 30);
+        let webhook = Webhook::new("Public IPv6 Hook", "https://[2606:4700:4700::1111]/callback");
+        let id = manager.try_register(webhook).expect("expected public IPv6 to be accepted");
+        assert_ne!(id, Uuid::nil());
     }
 
     #[test]
@@ -1042,5 +1178,30 @@ mod tests {
 
         assert_eq!(id, Uuid::nil());
         assert!(manager.list().is_empty());
+    }
+
+    #[test]
+    fn test_begin_delivery_attempt_clears_stale_metadata() {
+        let mut delivery = WebhookDelivery {
+            id: Uuid::new_v4(),
+            webhook_id: Uuid::new_v4(),
+            event_type: "order_created".to_string(),
+            event_id: Uuid::new_v4(),
+            status: DeliveryStatus::Retrying,
+            attempts: 1,
+            last_attempt_at: Some(Utc::now()),
+            response_status: Some(500),
+            response_body: Some("bad gateway".to_string()),
+            error: Some("connection refused".to_string()),
+            created_at: Utc::now(),
+        };
+
+        begin_delivery_attempt(&mut delivery, 2);
+
+        assert_eq!(delivery.attempts, 2);
+        assert!(delivery.last_attempt_at.is_some());
+        assert_eq!(delivery.response_status, None);
+        assert_eq!(delivery.response_body, None);
+        assert_eq!(delivery.error, None);
     }
 }

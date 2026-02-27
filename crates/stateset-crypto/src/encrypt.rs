@@ -97,6 +97,11 @@ pub fn encrypt_payload(
     let ciphertext_with_tag = cipher
         .encrypt(nonce, aead_payload)
         .map_err(|e| CryptoError::EncryptionError(e.to_string()))?;
+    if ciphertext_with_tag.len() < TAG_SIZE {
+        return Err(CryptoError::EncryptionError(
+            "AES-GCM output shorter than authentication tag".to_string(),
+        ));
+    }
 
     // aes-gcm appends the tag to the ciphertext
     let ct_len = ciphertext_with_tag.len() - TAG_SIZE;
@@ -160,7 +165,6 @@ pub fn encrypt_payload(
 /// - The recipient is not found ([`CryptoError::RecipientNotFound`])
 /// - Decryption fails ([`CryptoError::DecryptionError`])
 /// - The payload hash does not match ([`CryptoError::PayloadHashMismatch`])
-#[allow(clippy::missing_panics_doc)]
 pub fn decrypt_payload(
     payload_encrypted: &serde_json::Value,
     payload_aad: &[u8; 32],
@@ -200,6 +204,13 @@ pub fn decrypt_payload(
         )
         .map_err(|e| CryptoError::DecryptionError(e.to_string()))?;
 
+    if enc.len() != KEY_SIZE {
+        return Err(CryptoError::DecryptionError(format!(
+            "Invalid enc_b64u length: expected {KEY_SIZE}, got {}",
+            enc.len()
+        )));
+    }
+
     let mut enc_arr = [0u8; 32];
     enc_arr.copy_from_slice(&enc);
     let dek = unwrap_dek(&enc_arr, &wrapped_key, recipient_private_key, payload_aad)?;
@@ -213,6 +224,12 @@ pub fn decrypt_payload(
                 .ok_or_else(|| CryptoError::DecryptionError("Missing nonce_b64u".to_string()))?,
         )
         .map_err(|e| CryptoError::DecryptionError(e.to_string()))?;
+    if nonce_bytes.len() != NONCE_SIZE {
+        return Err(CryptoError::DecryptionError(format!(
+            "Invalid nonce length: expected {NONCE_SIZE}, got {}",
+            nonce_bytes.len()
+        )));
+    }
 
     let ciphertext = b64
         .decode(
@@ -230,6 +247,12 @@ pub fn decrypt_payload(
                 .ok_or_else(|| CryptoError::DecryptionError("Missing tag_b64u".to_string()))?,
         )
         .map_err(|e| CryptoError::DecryptionError(e.to_string()))?;
+    if tag.len() != TAG_SIZE {
+        return Err(CryptoError::DecryptionError(format!(
+            "Invalid tag length: expected {TAG_SIZE}, got {}",
+            tag.len()
+        )));
+    }
 
     // Decrypt with AES-256-GCM
     let key = Key::<Aes256Gcm>::from_slice(&dek);
@@ -323,7 +346,7 @@ fn unwrap_dek(
     hk.expand(info, &mut wrapping_key).map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
 
     // Unwrap DEK
-    if wrapped_key.len() < NONCE_SIZE {
+    if wrapped_key.len() < NONCE_SIZE + TAG_SIZE {
         return Err(CryptoError::KeyWrapError("Wrapped key too short".to_string()));
     }
     let wrap_nonce = Nonce::from_slice(&wrapped_key[..NONCE_SIZE]);
@@ -335,6 +358,12 @@ fn unwrap_dek(
     let dek_bytes = wrap_cipher
         .decrypt(wrap_nonce, ciphertext_tag)
         .map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
+    if dek_bytes.len() != KEY_SIZE {
+        return Err(CryptoError::KeyWrapError(format!(
+            "Invalid unwrapped DEK length: expected {KEY_SIZE}, got {}",
+            dek_bytes.len()
+        )));
+    }
 
     let mut dek = [0u8; KEY_SIZE];
     dek.copy_from_slice(&dek_bytes);
@@ -502,5 +531,104 @@ mod tests {
             &enc_result.payload_plain_hash,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_rejects_invalid_ephemeral_key_length() {
+        let payload = json!({"key": "value"});
+        let plain_hash = [0u8; 32];
+        let aad_params = test_aad_params(&plain_hash);
+
+        let (private_key, public_key) = generate_x25519_keypair();
+        let recipients = vec![RecipientKey { kid: 1, public_key }];
+        let enc_result = encrypt_payload(&payload, &aad_params, &recipients).unwrap();
+
+        let dec_aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
+        let dec_payload_aad = crate::hash::compute_payload_aad(&dec_aad_params).unwrap();
+
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut tampered = enc_result.payload_encrypted.clone();
+        tampered["recipients"][0]["enc_b64u"] = serde_json::Value::String(b64.encode([7u8; 31]));
+
+        let err = decrypt_payload(
+            &tampered,
+            &dec_payload_aad,
+            1,
+            &private_key,
+            &enc_result.payload_plain_hash,
+        )
+        .expect_err("invalid enc length should error");
+
+        match err {
+            CryptoError::DecryptionError(msg) => assert!(msg.contains("Invalid enc_b64u length")),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decrypt_rejects_invalid_nonce_length() {
+        let payload = json!({"key": "value"});
+        let plain_hash = [0u8; 32];
+        let aad_params = test_aad_params(&plain_hash);
+
+        let (private_key, public_key) = generate_x25519_keypair();
+        let recipients = vec![RecipientKey { kid: 1, public_key }];
+        let enc_result = encrypt_payload(&payload, &aad_params, &recipients).unwrap();
+
+        let dec_aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
+        let dec_payload_aad = crate::hash::compute_payload_aad(&dec_aad_params).unwrap();
+
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut tampered = enc_result.payload_encrypted.clone();
+        tampered["nonce_b64u"] = serde_json::Value::String(b64.encode([1u8; 11]));
+
+        let err = decrypt_payload(
+            &tampered,
+            &dec_payload_aad,
+            1,
+            &private_key,
+            &enc_result.payload_plain_hash,
+        )
+        .expect_err("invalid nonce length should error");
+
+        match err {
+            CryptoError::DecryptionError(msg) => assert!(msg.contains("Invalid nonce length")),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decrypt_rejects_invalid_tag_length() {
+        let payload = json!({"key": "value"});
+        let plain_hash = [0u8; 32];
+        let aad_params = test_aad_params(&plain_hash);
+
+        let (private_key, public_key) = generate_x25519_keypair();
+        let recipients = vec![RecipientKey { kid: 1, public_key }];
+        let enc_result = encrypt_payload(&payload, &aad_params, &recipients).unwrap();
+
+        let dec_aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
+        let dec_payload_aad = crate::hash::compute_payload_aad(&dec_aad_params).unwrap();
+
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut tampered = enc_result.payload_encrypted.clone();
+        tampered["tag_b64u"] = serde_json::Value::String(b64.encode([9u8; 8]));
+
+        let err = decrypt_payload(
+            &tampered,
+            &dec_payload_aad,
+            1,
+            &private_key,
+            &enc_result.payload_plain_hash,
+        )
+        .expect_err("invalid tag length should error");
+
+        match err {
+            CryptoError::DecryptionError(msg) => assert!(msg.contains("Invalid tag length")),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
     }
 }

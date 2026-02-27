@@ -17,8 +17,10 @@ use proc_macro::TokenStream;
 
 /// Derive macro for generating strongly-typed ID newtypes.
 ///
-/// Generates a newtype wrapper around `uuid::Uuid` with the following
-/// implementations:
+/// The input must be a single-field tuple struct wrapping `uuid::Uuid`:
+/// `pub struct InvoiceId(uuid::Uuid);`.
+///
+/// The macro generates the following implementations:
 ///
 /// - `new()`, `nil()`, `from_uuid()`, `as_uuid()`, `into_uuid()`, `is_nil()`
 /// - `Debug`, `Display`, `FromStr`
@@ -28,10 +30,6 @@ use proc_macro::TokenStream;
 /// - `Default` (generates new v4 UUID)
 /// - `#[must_use]`
 ///
-/// Under `#[cfg(any(test, feature = "arbitrary"))]`, also generates:
-/// - `proptest::arbitrary::Arbitrary`
-/// - `From<[u8; 16]>`
-///
 /// # Example
 ///
 /// ```ignore
@@ -39,7 +37,7 @@ use proc_macro::TokenStream;
 ///
 /// #[derive(StateSetId)]
 /// /// A unique invoice identifier.
-/// pub struct InvoiceId;
+/// pub struct InvoiceId(uuid::Uuid);
 /// ```
 #[proc_macro_derive(StateSetId)]
 pub fn derive_stateset_id(input: TokenStream) -> TokenStream {

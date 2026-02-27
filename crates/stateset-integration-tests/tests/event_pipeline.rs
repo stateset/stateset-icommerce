@@ -4,6 +4,7 @@
 //! through the event bus, exercising the Commerce -> Events boundary.
 
 use stateset_core::CommerceEvent;
+use stateset_embedded::{Webhook, WebhookRegistrationError};
 use stateset_integration_tests::create_test_commerce;
 use stateset_test_utils::fixtures;
 
@@ -235,4 +236,17 @@ fn event_store_persists_events() {
         let events = store.get_events_since(0, 50).expect("get events from store");
         assert!(!events.is_empty(), "Event store should have events");
     }
+}
+
+#[test]
+fn webhook_registration_rejects_ipv6_mapped_loopback() {
+    let (commerce, _dir) = create_test_commerce();
+    let webhook = Webhook::new("Mapped loopback", "https://[::ffff:127.0.0.1]/webhook");
+
+    assert_eq!(
+        commerce.register_webhook_strict(webhook.clone()),
+        Err(WebhookRegistrationError::UnsafeUrl)
+    );
+    assert_eq!(commerce.try_register_webhook(webhook), None);
+    assert!(commerce.list_webhooks().is_empty());
 }
