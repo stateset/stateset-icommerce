@@ -1,4 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use stateset_benches::perf_gate::run_gate_if_enabled_with_iterations;
 use stateset_crypto::merkle::compute_merkle_root;
 
 /// Generate `n` deterministic 32-byte leaf hashes.
@@ -24,6 +25,10 @@ fn bench_merkle_tree(c: &mut Criterion) {
 
     for size in [10, 100, 1_000, 10_000] {
         let leaves = generate_leaves(size);
+        let gate_name = format!("merkle_{size}");
+        run_gate_if_enabled_with_iterations(gate_name.as_str(), 50, || {
+            let _ = compute_merkle_root(&leaves);
+        });
 
         group.bench_function(format!("merkle_{size}"), |bencher| {
             bencher.iter(|| compute_merkle_root(black_box(&leaves)));

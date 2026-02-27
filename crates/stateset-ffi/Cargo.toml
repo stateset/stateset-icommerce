@@ -28,3 +28,4 @@ cbindgen = []
 [dev-dependencies]
 rust_decimal_macros = "1.36"
 chrono = { workspace = true }
+tempfile = { workspace = true }

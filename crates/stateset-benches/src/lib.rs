@@ -4,7 +4,10 @@
 //! Shared benchmark helpers for StateSet iCommerce.
 //!
 //! Provides fixture generators and convenience functions used across all
-//! criterion benchmark suites in this crate.
+//! criterion benchmark suites in this crate, plus optional perf-gate checks
+//! (`STATESET_PERF_GATE=1`) for CI threshold enforcement.
+
+pub mod perf_gate;
 
 // Dependencies used only in bench binaries — suppress unused_crate_dependencies.
 use chrono as _;

@@ -397,9 +397,16 @@ jobs:
         run: pytest -q
 
   postgres:
-    name: Postgres Migrations
+    name: Postgres Parity (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - db-postgres
+          - db-postgres-saga
+          - embedded-postgres
     services:
       postgres:
         image: postgres:16
@@ -414,6 +421,10 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+      POSTGRES_PARITY_MODE: ${{ matrix.suite }}
 
     steps:
       - uses: actions/checkout@v6
@@ -425,77 +436,39 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
-      - name: Test postgres migrations
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_migrations
+      - name: Run Postgres parity matrix
+        run: ./scripts/ci/run_postgres_parity_matrix.sh
 
-      - name: Postgres Validations
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_validations
+  ffi-sanitizers:
+    name: FFI Sanitizers (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, undefined]
 
-      - name: Postgres Order Transitions
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_order_transitions
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
-      - name: Postgres Order Versioning
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_order_versioning
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: nightly
+          components: rust-src
+          targets: x86_64-unknown-linux-gnu
 
-      - name: Postgres CRUD smoke
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_crud
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+        with:
+          shared-key: ffi-sanitizer-${{ matrix.sanitizer }}
 
-      - name: Postgres Agent Cards smoke
+      - name: Run sanitizer lane
         env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_agent_cards
-
-      - name: Postgres x402 Credits smoke
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_x402_credits
-
-      - name: Postgres x402 Payment Intents smoke
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_x402_payment_intents
-
-      - name: Postgres AsyncCommerce smoke
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-embedded --features postgres --test postgres_async_smoke
-
-      - name: Postgres Cart Checkout smoke
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-embedded --features postgres --test postgres_cart_checkout_smoke
-
-      - name: Test postgres migrations (saga feature)
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features "postgres,saga" --test postgres_migrations
-
-      - name: Postgres Saga smoke
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
-        run: cargo test -p stateset-db --no-default-features --features "postgres,saga" --test postgres_saga
+          SANITIZER: ${{ matrix.sanitizer }}
+          SANITIZER_TARGET: x86_64-unknown-linux-gnu
+        run: ./scripts/ci/run_ffi_sanitizer.sh
 
   cli:
     name: CLI Tests
@@ -810,14 +783,11 @@ jobs:
         working-directory: bindings/php
         run: php -d extension=../../target/release/libstateset_embedded.so vendor/bin/phpunit tests/
 
-  benchmarks:
-    name: Benchmark Tests
+  release-governance:
+    name: Release Governance
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [rust]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    permissions:
-      contents: write
+    timeout-minutes: 35
+    needs: [feature-checks]
 
     steps:
       - uses: actions/checkout@v6
@@ -829,20 +799,49 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
-      - name: Run benchmarks
-        run: |
-          cargo bench -p stateset-core -p stateset-db -p stateset-embedded
+      - name: Generate crate compatibility report
+        env:
+          COMPAT_REPORT_DIR: artifacts/compatibility
+        run: ./scripts/ci/generate_compatibility_report.sh
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
+      - name: Upload compatibility report
+        uses: actions/upload-artifact@v4
         with:
-          tool: 'cargo'
-          output-file-path: target/criterion/report/index.html
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          comment-on-alert: true
-          alert-threshold: '150%'
-          fail-on-alert: true
+          name: compatibility-report
+          path: artifacts/compatibility
+
+  benchmarks:
+    name: Perf Regression Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [rust]
+    env:
+      PERF_THRESHOLD_FILE: scripts/ci/perf-thresholds.json
+      PERF_THRESHOLD_MULTIPLIER: ${{ vars.PERF_THRESHOLD_MULTIPLIER }}
+      PERF_SAMPLE_SIZE: ${{ vars.PERF_SAMPLE_SIZE }}
+      PERF_WARMUP_SECONDS: ${{ vars.PERF_WARMUP_SECONDS }}
+      PERF_MEASUREMENT_SECONDS: ${{ vars.PERF_MEASUREMENT_SECONDS }}
+      PERF_REPORT_PATH: artifacts/perf-regression/perf-regression-report.md
+      PERF_REPORT_JSON_PATH: artifacts/perf-regression/perf-regression-report.json
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Run perf regression gate
+        run: ./scripts/ci/perf_regression_gate.sh
+
+      - name: Upload perf regression report
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-regression-report
+          path: artifacts/perf-regression
 
   ci-success:
     name: CI Success
@@ -866,6 +865,7 @@ jobs:
       - node-bindings
       - python-bindings
       - postgres
+      - ffi-sanitizers
       - cli
       - ruby-bindings
       - admin
@@ -876,6 +876,7 @@ jobs:
       - wasm-bindings
       - coverage
       - php-bindings
+      - release-governance
       - benchmarks
       - codeql
       - rust-docs

@@ -1,5 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use serde_json::json;
+use stateset_benches::perf_gate::run_gate_if_enabled_with_iterations;
 use stateset_crypto::canonicalize::canonicalize_json;
 
 fn make_small_payload() -> serde_json::Value {
@@ -54,6 +55,15 @@ fn bench_jcs_canonicalize(c: &mut Criterion) {
     let small = make_small_payload();
     let medium = make_medium_payload();
     let large = make_large_payload();
+    run_gate_if_enabled_with_iterations("jcs_small", 5_000, || {
+        let _ = canonicalize_json(&small).unwrap();
+    });
+    run_gate_if_enabled_with_iterations("jcs_medium", 1_500, || {
+        let _ = canonicalize_json(&medium).unwrap();
+    });
+    run_gate_if_enabled_with_iterations("jcs_large", 200, || {
+        let _ = canonicalize_json(&large).unwrap();
+    });
 
     let mut group = c.benchmark_group("jcs_canonicalize");
 

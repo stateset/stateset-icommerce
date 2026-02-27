@@ -1,0 +1,34 @@
+{
+  "benchmarks": [
+    {
+      "id": "sqlite_batch_insert_orders/batch_orders_100",
+      "max_median_ns": 250000000,
+      "note": "100-order SQLite insert median should stay under 250ms"
+    },
+    {
+      "id": "sqlite_batch_insert_customers/batch_customers_100",
+      "max_median_ns": 200000000,
+      "note": "100-customer SQLite insert median should stay under 200ms"
+    },
+    {
+      "id": "api/create_customer",
+      "max_median_ns": 15000000,
+      "note": "Embedded API customer create target <15ms"
+    },
+    {
+      "id": "api/inventory_get_stock",
+      "max_median_ns": 4000000,
+      "note": "Embedded API stock lookup target <4ms"
+    },
+    {
+      "id": "api/create_order_single_item",
+      "max_median_ns": 30000000,
+      "note": "Embedded API single-item order create target <30ms"
+    },
+    {
+      "id": "api/analytics_sales_summary",
+      "max_median_ns": 100000000,
+      "note": "Embedded API analytics summary target <100ms"
+    }
+  ]
+}

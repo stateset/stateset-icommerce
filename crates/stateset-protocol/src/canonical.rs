@@ -185,7 +185,52 @@ impl From<SchemaVersion> for u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use serde_json::json;
+    use serde_json::{Map, Value};
+
+    fn arb_json_value() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(|n| Value::Number(n.into())),
+            proptest::string::string_regex("[a-zA-Z0-9_]{0,16}").unwrap().prop_map(Value::String),
+        ];
+
+        leaf.prop_recursive(4, 128, 10, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(Value::Array),
+                prop::collection::btree_map(
+                    proptest::string::string_regex("[a-zA-Z0-9_]{1,8}").unwrap(),
+                    inner,
+                    0..6
+                )
+                .prop_map(|entries| {
+                    let mut map = Map::new();
+                    for (k, v) in entries {
+                        map.insert(k, v);
+                    }
+                    Value::Object(map)
+                }),
+            ]
+        })
+    }
+
+    fn reorder_object_keys(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.reverse();
+                let mut reordered = Map::with_capacity(map.len());
+                for (key, nested) in entries {
+                    reordered.insert(key.clone(), reorder_object_keys(nested));
+                }
+                Value::Object(reordered)
+            }
+            Value::Array(items) => Value::Array(items.iter().map(reorder_object_keys).collect()),
+            _ => value.clone(),
+        }
+    }
 
     // --- canonical_json tests ---
 
@@ -400,5 +445,45 @@ mod tests {
         set.insert(SchemaVersion::new(1));
         set.insert(SchemaVersion::new(1));
         assert_eq!(set.len(), 1);
+    }
+
+    proptest! {
+        #[test]
+        fn canonical_json_stable_under_object_key_reordering(value in arb_json_value()) {
+            let reordered = reorder_object_keys(&value);
+            let canonical_original = canonical_json(&value).unwrap();
+            let canonical_reordered = canonical_json(&reordered).unwrap();
+            prop_assert_eq!(canonical_original, canonical_reordered);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn canonical_json_roundtrip_preserves_semantics(value in arb_json_value()) {
+            let canonical = canonical_json(&value).unwrap();
+            let reparsed: Value = serde_json::from_str(&canonical).unwrap();
+            prop_assert_eq!(reparsed, value);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn domain_hash_changes_when_domain_or_payload_changes(
+            domain in proptest::string::string_regex("[A-Z0-9_]{0,16}").unwrap(),
+            payload in prop::collection::vec(any::<u8>(), 0..64),
+            other in prop::collection::vec(any::<u8>(), 0..64),
+        ) {
+            let base = domain_hash(&domain, &payload);
+            let same = domain_hash(&domain, &payload);
+            prop_assert_eq!(base, same);
+
+            let domain_variant = format!("{domain}X");
+            if !domain_variant.is_empty() {
+                prop_assert_ne!(base, domain_hash(&domain_variant, &payload));
+            }
+            if payload != other {
+                prop_assert_ne!(base, domain_hash(&domain, &other));
+            }
+        }
     }
 }

@@ -137,6 +137,7 @@ impl Transport for NullTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use serde_json::json;
 
     #[test]
@@ -272,5 +273,71 @@ mod tests {
         assert_eq!(de.result.remote_head, 100);
         assert_eq!(de.next_cursor, Some(42));
         assert_eq!(de.result.events.len(), 1);
+    }
+
+    proptest! {
+        #[test]
+        fn derive_next_cursor_matches_highest_sequence_above_since(
+            since in 0u64..10_000,
+            sequences in prop::collection::vec(0u64..12_000, 0..64),
+        ) {
+            let events: Vec<SyncEvent> = sequences
+                .iter()
+                .enumerate()
+                .map(|(i, seq)| {
+                    SyncEvent::new(
+                        format!("evt-{i}"),
+                        "entity",
+                        format!("id-{i}"),
+                        json!({ "i": i }),
+                    )
+                    .with_sequence(*seq)
+                })
+                .collect();
+
+            let expected = sequences.iter().copied().filter(|seq| *seq > since).max();
+            prop_assert_eq!(derive_next_cursor(since, &events), expected);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn derive_next_cursor_independent_of_event_order(
+            since in 0u64..10_000,
+            sequences in prop::collection::vec(0u64..12_000, 0..64),
+        ) {
+            let ordered: Vec<SyncEvent> = sequences
+                .iter()
+                .enumerate()
+                .map(|(i, seq)| {
+                    SyncEvent::new(
+                        format!("ordered-{i}"),
+                        "entity",
+                        format!("ordered-id-{i}"),
+                        json!({}),
+                    )
+                    .with_sequence(*seq)
+                })
+                .collect();
+            let reversed: Vec<SyncEvent> = sequences
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(i, seq)| {
+                    SyncEvent::new(
+                        format!("rev-{i}"),
+                        "entity",
+                        format!("rev-id-{i}"),
+                        json!({}),
+                    )
+                    .with_sequence(*seq)
+                })
+                .collect();
+
+            prop_assert_eq!(
+                derive_next_cursor(since, &ordered),
+                derive_next_cursor(since, &reversed)
+            );
+        }
     }
 }

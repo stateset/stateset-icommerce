@@ -19,6 +19,8 @@
 //! - **[`tracing_ext`]** — Bootstrap for [`tracing_subscriber`] with `RUST_LOG` env
 //!   filter support. Deliberately lightweight to avoid imposing a backend on
 //!   downstream applications.
+//! - **[`conventions`]** — Canonical span/metric names and low-cardinality
+//!   normalization helpers for operation labels.
 //! - **[`metrics`]** — Lock-free atomic counters for business events (orders,
 //!   payments, inventory adjustments, etc.) with a snapshot API for periodic
 //!   export to Prometheus, `StatsD`, or any other metrics backend.
@@ -61,9 +63,11 @@
 //!     .expect("tracing init");
 //! ```
 
+pub mod conventions;
 pub mod metrics;
 pub mod tracing_ext;
 
+pub use conventions::*;
 pub use metrics::*;
 pub use tracing_ext::*;
 

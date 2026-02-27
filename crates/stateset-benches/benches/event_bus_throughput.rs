@@ -1,6 +1,7 @@
 use chrono::Utc;
 use criterion::{Criterion, criterion_group, criterion_main};
 use rust_decimal_macros::dec;
+use stateset_benches::perf_gate::run_gate_if_enabled_with_iterations;
 use stateset_core::{CommerceEvent, CustomerId, OrderId};
 use stateset_embedded::EventBus;
 
@@ -17,6 +18,11 @@ fn sample_event() -> CommerceEvent {
 
 fn bench_publish_no_subscribers(c: &mut Criterion) {
     let bus = EventBus::new(4096);
+    run_gate_if_enabled_with_iterations("publish_1000_no_sub", 25, || {
+        for _ in 0..1_000 {
+            bus.publish(sample_event());
+        }
+    });
 
     c.bench_function("publish_1000_no_sub", |bencher| {
         bencher.iter(|| {
@@ -29,6 +35,18 @@ fn bench_publish_no_subscribers(c: &mut Criterion) {
 
 fn bench_publish_one_subscriber(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    run_gate_if_enabled_with_iterations("publish_subscribe_1000", 10, || {
+        let bus = EventBus::new(4096);
+        let mut sub = bus.subscribe();
+        for _ in 0..1_000 {
+            bus.publish(sample_event());
+        }
+        rt.block_on(async {
+            for _ in 0..1_000 {
+                sub.try_recv();
+            }
+        });
+    });
 
     c.bench_function("publish_subscribe_1000", |bencher| {
         bencher.iter(|| {
@@ -52,6 +70,20 @@ fn bench_publish_one_subscriber(c: &mut Criterion) {
 
 fn bench_publish_multi_subscriber(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    run_gate_if_enabled_with_iterations("publish_multi_sub_1000", 5, || {
+        let bus = EventBus::new(4096);
+        let mut subs: Vec<_> = (0..10).map(|_| bus.subscribe()).collect();
+        for _ in 0..1_000 {
+            bus.publish(sample_event());
+        }
+        rt.block_on(async {
+            for sub in &mut subs {
+                for _ in 0..1_000 {
+                    sub.try_recv();
+                }
+            }
+        });
+    });
 
     c.bench_function("publish_multi_sub_1000", |bencher| {
         bencher.iter(|| {

@@ -27,3 +27,4 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+proptest = "1.4"

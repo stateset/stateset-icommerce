@@ -326,6 +326,7 @@ impl SyncEngine {
 mod tests {
     use super::*;
     use crate::transport::NullTransport;
+    use proptest::prelude::*;
     use serde_json::json;
     use std::sync::Arc;
     use std::sync::Mutex;
@@ -772,6 +773,69 @@ mod tests {
         let mut engine = SyncEngine::new(make_config());
         let err = engine.pull(&StalledPagingTransport).await.unwrap_err();
         assert!(matches!(err, SyncError::Transport(_)));
+    }
+
+    proptest! {
+        #[test]
+        fn resolve_next_cursor_enforces_monotonic_progress(
+            since in 0u64..20_000,
+            transport_cursor in prop::option::of(0u64..20_000),
+            sequences in prop::collection::vec(0u64..20_000, 0..64),
+        ) {
+            let events: Vec<SyncEvent> = sequences
+                .iter()
+                .enumerate()
+                .map(|(i, seq)| {
+                    SyncEvent::new(
+                        format!("evt-{i}"),
+                        "entity",
+                        format!("id-{i}"),
+                        json!({ "s": seq }),
+                    )
+                    .with_sequence(*seq)
+                })
+                .collect();
+
+            let result = SyncEngine::resolve_next_cursor(since, &events, true, transport_cursor);
+            if let Some(cursor) = transport_cursor {
+                if cursor > since {
+                    prop_assert_eq!(result.unwrap(), Some(cursor));
+                } else {
+                    prop_assert!(matches!(result, Err(SyncError::Transport(_))));
+                }
+            } else if let Some(expected) = derive_next_cursor(since, &events) {
+                prop_assert_eq!(result.unwrap(), Some(expected));
+            } else {
+                prop_assert!(matches!(result, Err(SyncError::Transport(_))));
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn resolve_next_cursor_returns_none_when_transport_signals_no_more(
+            since in 0u64..20_000,
+            transport_cursor in prop::option::of(0u64..20_000),
+            sequences in prop::collection::vec(0u64..20_000, 0..64),
+        ) {
+            let events: Vec<SyncEvent> = sequences
+                .iter()
+                .enumerate()
+                .map(|(i, seq)| {
+                    SyncEvent::new(
+                        format!("evt-{i}"),
+                        "entity",
+                        format!("id-{i}"),
+                        json!({}),
+                    )
+                    .with_sequence(*seq)
+                })
+                .collect();
+
+            let result = SyncEngine::resolve_next_cursor(since, &events, false, transport_cursor)
+                .unwrap();
+            prop_assert_eq!(result, None);
+        }
     }
 
     #[test]

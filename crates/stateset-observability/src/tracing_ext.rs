@@ -8,6 +8,7 @@
 //! If the host application has already set a global subscriber, initialization
 //! is a no-op — this avoids double-init panics in test and library contexts.
 
+use crate::conventions;
 use crate::{ObservabilityError, Result};
 use tracing_subscriber::EnvFilter;
 
@@ -84,6 +85,12 @@ pub fn init_tracing_with(config: TracingConfig) -> Result<()> {
     init_tracing(&config.service_name, &config.environment, &config.region)
 }
 
+/// Build a canonical StateSet span name for an operation.
+#[must_use]
+pub fn canonical_span_name(operation: &str) -> String {
+    conventions::operation_span_name(operation)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +111,10 @@ mod tests {
     fn rejects_empty_region() {
         let result = init_tracing("stateset", "test", "");
         assert!(matches!(result, Err(ObservabilityError::InvalidConfig(_))));
+    }
+
+    #[test]
+    fn canonical_span_name_is_normalized() {
+        assert_eq!(canonical_span_name("Order Created"), "stateset.order_created");
     }
 }

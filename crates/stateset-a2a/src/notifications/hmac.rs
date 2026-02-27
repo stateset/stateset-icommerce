@@ -2,7 +2,7 @@
 //!
 //! Matches the `JavaScript` implementation: `createHmac('sha256', secret).update(payload).digest('hex')`.
 
-use ::hmac::{Hmac, Mac};
+use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use thiserror::Error;
 

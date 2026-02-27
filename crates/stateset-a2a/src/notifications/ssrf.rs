@@ -15,6 +15,42 @@ struct ParsedUrl {
     port: Option<u16>,
 }
 
+/// Optional validation controls for outbound webhook URLs.
+///
+/// Defaults remain strict and unchanged when no allowlist entries are configured.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UrlValidationOptions {
+    outbound_allowlist: Vec<String>,
+}
+
+impl UrlValidationOptions {
+    /// Build default URL validation options.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Replace the outbound allowlist with normalized host rules.
+    ///
+    /// Supported entry forms:
+    /// - `example.com` (exact host match)
+    /// - `*.example.com` (subdomain match only; apex excluded)
+    ///
+    /// Empty/blank entries are ignored.
+    pub fn with_outbound_allowlist<I, S>(mut self, entries: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.outbound_allowlist = normalize_allowlist(entries);
+        self
+    }
+
+    /// Return normalized allowlist entries.
+    pub fn outbound_allowlist(&self) -> &[String] {
+        &self.outbound_allowlist
+    }
+}
+
 /// Validate that a URL is safe to send webhook requests to.
 ///
 /// Blocks the following patterns:
@@ -29,10 +65,27 @@ struct ParsedUrl {
 /// Returns [`A2AError::SsrfBlocked`] if the URL is blocked.
 /// Returns [`A2AError::Validation`] if the URL is malformed.
 pub fn validate_url(url: &str) -> A2AResult<()> {
-    validate_url_with_resolver(url, resolve_host_ips)
+    validate_url_with_options(url, &UrlValidationOptions::default())
 }
 
+/// Validate URL safety with optional outbound allowlist constraints.
+pub fn validate_url_with_options(url: &str, options: &UrlValidationOptions) -> A2AResult<()> {
+    validate_url_with_resolver_and_options(url, resolve_host_ips, options)
+}
+
+#[cfg(test)]
 fn validate_url_with_resolver<F>(url: &str, resolver: F) -> A2AResult<()>
+where
+    F: Fn(&str, u16) -> Vec<IpAddr>,
+{
+    validate_url_with_resolver_and_options(url, resolver, &UrlValidationOptions::default())
+}
+
+fn validate_url_with_resolver_and_options<F>(
+    url: &str,
+    resolver: F,
+    options: &UrlValidationOptions,
+) -> A2AResult<()>
 where
     F: Fn(&str, u16) -> Vec<IpAddr>,
 {
@@ -51,6 +104,7 @@ where
     let parsed = parse_url_components(url)?;
 
     check_hostname_rules(&parsed.host)?;
+    check_outbound_allowlist(&parsed.host, options)?;
 
     if let Ok(ip) = parsed.host.parse::<IpAddr>() {
         return check_ip(ip, &parsed.host);
@@ -59,6 +113,12 @@ where
     // Handle ambiguous single-integer IPv4 literals (e.g., 2130706433).
     if let Some(ip) = parse_decimal_ipv4_literal(&parsed.host) {
         return check_ip(IpAddr::V4(ip), &parsed.host);
+    }
+    if is_ambiguous_ipv4_encoding_host(&parsed.host) {
+        return Err(A2AError::SsrfBlocked(format!(
+            "ambiguous IPv4 host encoding is not allowed: {}",
+            parsed.host
+        )));
     }
 
     validate_hostname_syntax(&parsed.host)?;
@@ -187,6 +247,68 @@ fn parse_port(port: &str, original_url: &str) -> A2AResult<u16> {
     Ok(parsed)
 }
 
+fn normalize_allowlist<I, S>(entries: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut normalized = Vec::new();
+    for entry in entries {
+        let candidate = normalize_host_match_value(entry.as_ref());
+        if candidate.is_empty() {
+            continue;
+        }
+        if !normalized.contains(&candidate) {
+            normalized.push(candidate);
+        }
+    }
+    normalized
+}
+
+fn normalize_host_match_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if let Some(suffix) = trimmed.strip_prefix("*.") {
+        let suffix = suffix.trim_end_matches('.').to_ascii_lowercase();
+        if suffix.is_empty() {
+            return String::new();
+        }
+        return format!("*.{suffix}");
+    }
+    trimmed.trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn check_outbound_allowlist(host: &str, options: &UrlValidationOptions) -> A2AResult<()> {
+    if options.outbound_allowlist.is_empty() {
+        return Ok(());
+    }
+
+    if host_matches_allowlist(host, &options.outbound_allowlist) {
+        return Ok(());
+    }
+
+    Err(A2AError::SsrfBlocked(format!("host is not in outbound allowlist: {host}")))
+}
+
+fn host_matches_allowlist(host: &str, allowlist: &[String]) -> bool {
+    let normalized_host = normalize_host_match_value(host);
+
+    allowlist.iter().any(|entry| allowlist_entry_matches(normalized_host.as_str(), entry.as_str()))
+}
+
+fn allowlist_entry_matches(host: &str, entry: &str) -> bool {
+    if let Some(suffix) = entry.strip_prefix("*.") {
+        // Subdomain-only wildcard. `*.example.com` does not match `example.com`.
+        return host.len() > suffix.len()
+            && host.ends_with(suffix)
+            && host
+                .as_bytes()
+                .get(host.len().saturating_sub(suffix.len() + 1))
+                .is_some_and(|b| *b == b'.');
+    }
+
+    host == entry
+}
+
 fn check_hostname_rules(host: &str) -> A2AResult<()> {
     let blocked_exact = [
         "localhost",
@@ -217,6 +339,41 @@ fn check_hostname_rules(host: &str) -> A2AResult<()> {
     }
 
     Ok(())
+}
+
+fn is_ambiguous_ipv4_encoding_host(host: &str) -> bool {
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.is_empty() || labels.len() > 4 {
+        return false;
+    }
+
+    let mut saw_hex = false;
+    for label in &labels {
+        if label.is_empty() {
+            return false;
+        }
+
+        if let Some(hex_digits) = label.strip_prefix("0x") {
+            if hex_digits.is_empty() || !hex_digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return false;
+            }
+            saw_hex = true;
+            continue;
+        }
+
+        if !label.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+    }
+
+    // Single-integer decimal literals are already handled by parse_decimal_ipv4_literal.
+    if labels.len() == 1 {
+        return saw_hex;
+    }
+
+    saw_hex
+        || labels.len() < 4
+        || labels.iter().any(|label| label.len() > 1 && label.starts_with('0'))
 }
 
 fn validate_hostname_syntax(host: &str) -> A2AResult<()> {
@@ -329,9 +486,10 @@ fn blocked_ipv6_reason(ip: Ipv6Addr) -> Option<&'static str> {
         return Some("documentation/reserved IP");
     }
 
-    // IPv4-mapped IPv6 (::ffff:a.b.c.d): check mapped IPv4 policy too.
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d): treat as blocked-by-default even
+    // when mapped IPv4 is public to avoid parser/normalization confusion.
     if let Some(v4) = ip.to_ipv4_mapped() {
-        return blocked_ipv4_reason(v4);
+        return blocked_ipv4_reason(v4).or(Some("IPv4-mapped IPv6 address"));
     }
 
     None
@@ -627,6 +785,112 @@ mod tests {
     fn decimal_ipv4_literal_is_blocked() {
         // 2130706433 == 127.0.0.1
         let err = validate_url("http://2130706433/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn rejects_hex_ipv4_literal_encoding() {
+        let err = validate_url("http://0x7f000001/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn rejects_octal_ipv4_literal_encoding() {
+        let err = validate_url("http://0177.0.0.1/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn rejects_short_ipv4_literal_encoding() {
+        let err = validate_url("http://127.1/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn rejects_ipv4_mapped_ipv6_even_when_mapped_ip_is_public() {
+        let err = validate_url("http://[::ffff:8.8.8.8]/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn rejects_malformed_unterminated_ipv6_authority() {
+        let err = validate_url("http://[::1/hook").unwrap_err();
+        assert!(matches!(err, A2AError::Validation(_)));
+    }
+
+    #[test]
+    fn rejects_malformed_empty_ipv6_authority() {
+        let err = validate_url("http://[]/hook").unwrap_err();
+        assert!(matches!(err, A2AError::Validation(_)));
+    }
+
+    #[test]
+    fn rejects_malformed_empty_authority_host_with_port() {
+        let err = validate_url("http://:8080/hook").unwrap_err();
+        assert!(matches!(err, A2AError::Validation(_)));
+    }
+
+    #[test]
+    fn rejects_userinfo_confusion_variant() {
+        let err = validate_url("https://safe.example.com@127.0.0.1/hook").unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn dns_resolution_blocks_mixed_public_and_private_targets() {
+        let err = validate_url_with_resolver("https://public.example.com/hook", |_host, _port| {
+            vec![IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))]
+        })
+        .unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn allowlist_empty_preserves_default_behavior() {
+        let options = UrlValidationOptions::new();
+        assert!(validate_url_with_options("https://api.example.com/hook", &options).is_ok());
+    }
+
+    #[test]
+    fn allowlist_allows_exact_host() {
+        let options =
+            UrlValidationOptions::new().with_outbound_allowlist(["api.example.com".to_string()]);
+        assert!(validate_url_with_options("https://api.example.com/hook", &options).is_ok());
+    }
+
+    #[test]
+    fn allowlist_blocks_non_listed_host() {
+        let options =
+            UrlValidationOptions::new().with_outbound_allowlist(["api.example.com".to_string()]);
+        let err =
+            validate_url_with_options("https://other.example.com/hook", &options).unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn allowlist_supports_wildcard_subdomains_only() {
+        let options = UrlValidationOptions::new().with_outbound_allowlist(["*.example.com"]);
+        assert!(validate_url_with_options("https://hooks.example.com/hook", &options).is_ok());
+        let err = validate_url_with_options("https://example.com/hook", &options).unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn allowlist_cannot_override_private_ip_blocks() {
+        let options = UrlValidationOptions::new().with_outbound_allowlist(["127.0.0.1"]);
+        let err = validate_url_with_options("https://127.0.0.1/hook", &options).unwrap_err();
+        assert!(matches!(err, A2AError::SsrfBlocked(_)));
+    }
+
+    #[test]
+    fn allowlist_dns_rebinding_style_resolution_is_still_blocked() {
+        let options = UrlValidationOptions::new().with_outbound_allowlist(["api.example.com"]);
+        let err = validate_url_with_resolver_and_options(
+            "https://api.example.com/hook",
+            |_host, _port| vec![IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1))],
+            &options,
+        )
+        .unwrap_err();
         assert!(matches!(err, A2AError::SsrfBlocked(_)));
     }
 }

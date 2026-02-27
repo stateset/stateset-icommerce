@@ -79,6 +79,11 @@ pub struct EventConfig {
     /// Maximum webhook delivery records retained per webhook.
     /// Zero disables history retention for that webhook.
     pub webhook_max_delivery_history: usize,
+    /// Optional outbound webhook host allowlist.
+    ///
+    /// Empty keeps current strict default behavior (allow any public host).
+    /// Non-empty requires matching one of the configured host rules.
+    pub webhook_outbound_allowlist: Vec<String>,
 }
 
 impl Default for EventConfig {
@@ -94,6 +99,7 @@ impl Default for EventConfig {
             webhook_max_in_flight: 8,
             webhook_retry_delay_ms: 1000,
             webhook_max_delivery_history: 1_000,
+            webhook_outbound_allowlist: Vec::new(),
         }
     }
 }
@@ -111,6 +117,7 @@ impl std::fmt::Debug for EventConfig {
             .field("webhook_max_in_flight", &self.webhook_max_in_flight)
             .field("webhook_retry_delay_ms", &self.webhook_retry_delay_ms)
             .field("webhook_max_delivery_history", &self.webhook_max_delivery_history)
+            .field("webhook_outbound_allowlist", &self.webhook_outbound_allowlist)
             .finish()
     }
 }
@@ -156,6 +163,7 @@ impl EventSystem {
                 max_in_flight: config.webhook_max_in_flight,
                 retry_delay_ms: config.webhook_retry_delay_ms,
                 max_delivery_history: config.webhook_max_delivery_history,
+                outbound_allowlist: config.webhook_outbound_allowlist.clone(),
             }))
         } else {
             None

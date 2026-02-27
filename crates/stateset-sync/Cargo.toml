@@ -24,6 +24,7 @@ async-trait = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util"] }
+proptest = "1.4"
 
 [lints]
 workspace = true

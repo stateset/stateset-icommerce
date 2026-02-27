@@ -320,6 +320,21 @@ impl Scheduler {
     ///
     /// Returns [`JobError::NotFound`] if the job is not in the store.
     pub fn complete(&mut self, job_id: Uuid, output: JobOutput) -> Result<(), JobError> {
+        self.complete_at(job_id, output, Utc::now())
+    }
+
+    /// Mark a job as completed after successful execution, using an explicit
+    /// timestamp for deterministic testing and time-travel simulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobError::NotFound`] if the job is not in the store.
+    pub fn complete_at(
+        &mut self,
+        job_id: Uuid,
+        output: JobOutput,
+        now: DateTime<Utc>,
+    ) -> Result<(), JobError> {
         self.running.remove(&job_id);
 
         let mut instance = self.store.get(&job_id)?.ok_or(JobError::NotFound(job_id))?;
@@ -327,7 +342,7 @@ impl Scheduler {
         instance.mark_completed(output)?;
         self.store.save(&instance)?;
 
-        let _ = self.reschedule_recurring(&instance, Utc::now());
+        let _ = self.reschedule_recurring(&instance, now);
 
         Ok(())
     }
@@ -341,6 +356,22 @@ impl Scheduler {
     ///
     /// Returns [`JobError::NotFound`] if the job is not in the store.
     pub fn fail(&mut self, job_id: Uuid, error: &str) -> Result<Option<TickAction>, JobError> {
+        self.fail_at(job_id, error, Utc::now())
+    }
+
+    /// Mark a job as failed after an execution error at an explicit time.
+    ///
+    /// Useful for deterministic retry scheduling in tests.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobError::NotFound`] if the job is not in the store.
+    pub fn fail_at(
+        &mut self,
+        job_id: Uuid,
+        error: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<TickAction>, JobError> {
         self.running.remove(&job_id);
 
         let mut instance = self.store.get(&job_id)?.ok_or(JobError::NotFound(job_id))?;
@@ -351,7 +382,7 @@ impl Scheduler {
         let def = self.definitions.get(&instance.definition_name);
         if let Some(def) = def {
             if instance.should_retry(def.max_retries) {
-                let retry_at = instance.next_retry_at(&def.retry_backoff, Utc::now());
+                let retry_at = instance.next_retry_at(&def.retry_backoff, now);
                 instance.mark_retrying(retry_at)?;
                 self.store.save(&instance)?;
                 self.queue.enqueue(instance)?;
@@ -360,7 +391,7 @@ impl Scheduler {
             }
         }
 
-        let _ = self.reschedule_recurring(&instance, Utc::now());
+        let _ = self.reschedule_recurring(&instance, now);
 
         Ok(None)
     }
@@ -437,7 +468,7 @@ mod tests {
     use super::*;
     use crate::job::{BackoffStrategy, BoxFuture, JobHandler};
     use crate::store::InMemoryJobStore;
-    use chrono::{Duration, Timelike};
+    use chrono::{Duration, TimeZone, Timelike};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -711,6 +742,74 @@ mod tests {
         assert!(timed_out.error.as_deref().unwrap_or_default().contains("retries exhausted"));
     }
 
+    #[test]
+    fn tick_with_backwards_time_does_not_timeout_running_job() {
+        let mut s = make_scheduler();
+        let (handler, _) = CountingHandler::new("time_travel");
+        let def = JobDefinition::new("time_travel", Schedule::Once, Box::new(handler))
+            .with_timeout(std::time::Duration::from_secs(30));
+        s.register(def).unwrap();
+
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        s.schedule("time_travel", t0).unwrap();
+        let first_actions = s.tick(t0);
+        assert!(first_actions.iter().any(|a| matches!(a, TickAction::Execute { .. })));
+
+        let actions = s.tick(t0 - Duration::seconds(5));
+        assert!(actions.is_empty());
+        assert_eq!(s.status().running_jobs, 1);
+    }
+
+    #[test]
+    fn timeout_retry_progresses_under_irregular_ticks() {
+        let mut s = make_scheduler();
+        let (handler, _) = CountingHandler::new("chaos_retry");
+        let def = JobDefinition::new("chaos_retry", Schedule::Once, Box::new(handler))
+            .with_timeout(std::time::Duration::from_secs(5))
+            .with_max_retries(1)
+            .with_retry_backoff(BackoffStrategy::fixed(std::time::Duration::from_secs(10)));
+        s.register(def).unwrap();
+
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        let id = s.schedule("chaos_retry", t0).unwrap();
+        let first = s.tick(t0);
+        assert!(
+            first.iter().any(|a| matches!(a, TickAction::Execute { job_id, .. } if *job_id == id))
+        );
+
+        let early = s.tick(t0 + Duration::seconds(2));
+        assert!(!early.iter().any(|a| matches!(a, TickAction::Timeout { .. })));
+
+        let timeout_actions = s.tick(t0 + Duration::seconds(20));
+        assert!(
+            timeout_actions
+                .iter()
+                .any(|a| matches!(a, TickAction::Timeout { job_id } if *job_id == id))
+        );
+        let retry_at = timeout_actions
+            .iter()
+            .find_map(|a| match a {
+                TickAction::Retry { job_id, retry_at } if *job_id == id => Some(*retry_at),
+                _ => None,
+            })
+            .expect("retry action");
+        assert_eq!(retry_at, t0 + Duration::seconds(30));
+
+        let too_early_retry = s.tick(t0 + Duration::seconds(29));
+        assert!(
+            !too_early_retry
+                .iter()
+                .any(|a| matches!(a, TickAction::Execute { definition_name, .. } if definition_name == "chaos_retry"))
+        );
+
+        let retry_exec = s.tick(t0 + Duration::seconds(31));
+        assert!(
+            retry_exec.iter().any(
+                |a| matches!(a, TickAction::Execute { job_id, context, .. } if *job_id == id && context.attempt == 1)
+            )
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Complete & reschedule
     // -----------------------------------------------------------------------
@@ -767,6 +866,62 @@ mod tests {
         assert_eq!(next_run.minute() % 5, 0);
     }
 
+    #[test]
+    fn complete_at_cron_progresses_under_irregular_ticks() {
+        let mut s = make_scheduler();
+        let (handler, _) = CountingHandler::new("cron_irregular");
+        let def = JobDefinition::new(
+            "cron_irregular",
+            Schedule::Cron("*/5 * * * *".into()),
+            Box::new(handler),
+        );
+        s.register(def).unwrap();
+
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        let first_id = s.schedule("cron_irregular", t0).unwrap();
+        let first = s.tick(t0);
+        assert!(
+            first
+                .iter()
+                .any(|a| matches!(a, TickAction::Execute { job_id, .. } if *job_id == first_id))
+        );
+        s.complete_at(first_id, JobOutput::new("done"), t0 + Duration::minutes(2)).unwrap();
+        assert_eq!(s.status().next_run_at.unwrap(), t0 + Duration::minutes(5));
+
+        let no_run_yet = s.tick(t0 + Duration::minutes(4));
+        assert!(no_run_yet.is_empty());
+
+        let second = s.tick(t0 + Duration::minutes(11));
+        let second_id = second
+            .iter()
+            .find_map(|a| match a {
+                TickAction::Execute { job_id, definition_name, .. }
+                    if definition_name == "cron_irregular" =>
+                {
+                    Some(*job_id)
+                }
+                _ => None,
+            })
+            .expect("second cron execution");
+        s.complete_at(second_id, JobOutput::new("done"), t0 + Duration::minutes(11)).unwrap();
+        assert_eq!(s.status().next_run_at.unwrap(), t0 + Duration::minutes(15));
+
+        let third = s.tick(t0 + Duration::minutes(37));
+        let third_id = third
+            .iter()
+            .find_map(|a| match a {
+                TickAction::Execute { job_id, definition_name, .. }
+                    if definition_name == "cron_irregular" =>
+                {
+                    Some(*job_id)
+                }
+                _ => None,
+            })
+            .expect("third cron execution");
+        s.complete_at(third_id, JobOutput::new("done"), t0 + Duration::minutes(37)).unwrap();
+        assert_eq!(s.status().next_run_at.unwrap(), t0 + Duration::minutes(40));
+    }
+
     // -----------------------------------------------------------------------
     // Fail & retry
     // -----------------------------------------------------------------------
@@ -815,6 +970,26 @@ mod tests {
         let action = s.fail(id, "oops").unwrap().unwrap();
         assert!(matches!(action, TickAction::Retry { .. }));
         assert!(s.queue.size() > 0);
+    }
+
+    #[test]
+    fn fail_at_uses_explicit_time_for_retry_schedule() {
+        let mut s = make_scheduler();
+        let (handler, _) = CountingHandler::new("retry_time");
+        let def = JobDefinition::new("retry_time", Schedule::Once, Box::new(handler))
+            .with_max_retries(1)
+            .with_retry_backoff(BackoffStrategy::fixed(std::time::Duration::from_secs(7)));
+        s.register(def).unwrap();
+
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
+        let id = s.schedule("retry_time", t0).unwrap();
+        s.tick(t0);
+
+        let action = s.fail_at(id, "oops", t0 + Duration::seconds(30)).unwrap().unwrap();
+        let TickAction::Retry { retry_at, .. } = action else {
+            panic!("expected retry action");
+        };
+        assert_eq!(retry_at, t0 + Duration::seconds(37));
     }
 
     // -----------------------------------------------------------------------

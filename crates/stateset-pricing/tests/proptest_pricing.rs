@@ -368,3 +368,83 @@ proptest! {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 11. Rounded amounts never exceed one minor unit of error
+// ---------------------------------------------------------------------------
+
+proptest! {
+    #[test]
+    fn rounding_error_is_bounded_by_single_minor_unit(
+        raw in -1_000_000_000i64..1_000_000_000i64,
+        scale in 0u32..8,
+        policy in arb_rounding_policy(),
+    ) {
+        let amount = Decimal::new(raw, scale);
+        let rounded = round(amount, &policy);
+        let unit = Decimal::new(1, policy.minor_units);
+        let error = (rounded - amount).abs();
+        prop_assert!(
+            error <= unit,
+            "rounding error {} exceeded one minor unit {} (amount={}, rounded={}, policy={:?})",
+            error,
+            unit,
+            amount,
+            rounded,
+            policy,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 12. Rounding output is quantized to configured minor units
+// ---------------------------------------------------------------------------
+
+proptest! {
+    #[test]
+    fn rounding_quantizes_to_minor_units(
+        raw in -1_000_000_000i64..1_000_000_000i64,
+        scale in 0u32..8,
+        policy in arb_rounding_policy(),
+    ) {
+        let amount = Decimal::new(raw, scale);
+        let rounded = round(amount, &policy);
+        let normalized_scale = rounded.normalize().scale();
+        prop_assert!(
+            normalized_scale <= policy.minor_units,
+            "rounded scale {} exceeded minor_units {} for amount {} with policy {:?}",
+            normalized_scale,
+            policy.minor_units,
+            amount,
+            policy,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 13. Rounding monotonicity: if a <= b then round(a) <= round(b)
+// ---------------------------------------------------------------------------
+
+proptest! {
+    #[test]
+    fn rounding_monotonicity(
+        a_raw in -1_000_000_000i64..1_000_000_000i64,
+        b_raw in -1_000_000_000i64..1_000_000_000i64,
+        scale in 0u32..8,
+        policy in arb_rounding_policy(),
+    ) {
+        let a = Decimal::new(a_raw.min(b_raw), scale);
+        let b = Decimal::new(a_raw.max(b_raw), scale);
+        let rounded_a = round(a, &policy);
+        let rounded_b = round(b, &policy);
+        prop_assert!(
+            rounded_a <= rounded_b,
+            "rounding was not monotonic: round({})={} > round({})={} for policy {:?}",
+            a,
+            rounded_a,
+            b,
+            rounded_b,
+            policy,
+        );
+    }
+}

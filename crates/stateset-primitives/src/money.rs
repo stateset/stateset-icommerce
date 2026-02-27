@@ -226,7 +226,21 @@ pub enum CurrencyCodeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use rust_decimal_macros::dec;
+
+    fn arb_currency() -> impl Strategy<Value = CurrencyCode> {
+        prop_oneof![
+            Just(CurrencyCode::USD),
+            Just(CurrencyCode::EUR),
+            Just(CurrencyCode::GBP),
+            Just(CurrencyCode::JPY),
+            Just(CurrencyCode::CAD),
+            Just(CurrencyCode::AUD),
+            Just(CurrencyCode::CHF),
+            Just(CurrencyCode::CNY),
+        ]
+    }
 
     #[test]
     fn money_display() {
@@ -280,5 +294,62 @@ mod tests {
         assert!(z.is_zero());
         assert!(!z.is_positive());
         assert!(!z.is_negative());
+    }
+
+    proptest! {
+        #[test]
+        fn checked_add_sub_are_inverses_for_same_currency(
+            a_raw in -1_000_000i64..1_000_000,
+            b_raw in -1_000_000i64..1_000_000,
+            currency in arb_currency(),
+        ) {
+            let a = Money::new(Decimal::new(a_raw, 2), currency);
+            let b = Money::new(Decimal::new(b_raw, 2), currency);
+            let sum = a.checked_add(b).unwrap();
+            let back = sum.checked_sub(b).unwrap();
+            prop_assert_eq!(back, a);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn checked_add_is_commutative_when_currency_matches(
+            a_raw in -1_000_000i64..1_000_000,
+            b_raw in -1_000_000i64..1_000_000,
+            currency in arb_currency(),
+        ) {
+            let a = Money::new(Decimal::new(a_raw, 3), currency);
+            let b = Money::new(Decimal::new(b_raw, 3), currency);
+            prop_assert_eq!(a.checked_add(b), b.checked_add(a));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn round_dp_is_idempotent(
+            raw in -100_000_000i64..100_000_000,
+            scale in 0u32..8,
+            dp in 0u32..8,
+            currency in arb_currency(),
+        ) {
+            let money = Money::new(Decimal::new(raw, scale), currency);
+            let once = money.round_dp(dp);
+            let twice = once.round_dp(dp);
+            prop_assert_eq!(once, twice);
+            prop_assert!(once.amount().scale() <= dp);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn checked_add_rejects_currency_mismatch(
+            a_raw in -1_000_000i64..1_000_000,
+            b_raw in -1_000_000i64..1_000_000,
+        ) {
+            let usd = Money::new(Decimal::new(a_raw, 2), CurrencyCode::USD);
+            let eur = Money::new(Decimal::new(b_raw, 2), CurrencyCode::EUR);
+            prop_assert!(usd.checked_add(eur).is_none());
+            prop_assert!(usd.checked_sub(eur).is_none());
+        }
     }
 }

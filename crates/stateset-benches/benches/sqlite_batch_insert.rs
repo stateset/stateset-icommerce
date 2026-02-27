@@ -1,10 +1,33 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+use stateset_benches::perf_gate::run_gate_if_enabled_with_iterations;
 use stateset_benches::{create_temp_commerce, create_test_customers, create_test_orders};
 
 fn bench_batch_orders(c: &mut Criterion) {
     let mut group = c.benchmark_group("sqlite_batch_insert_orders");
 
     for size in [100, 1_000] {
+        let gate_name = format!("batch_orders_{size}");
+        run_gate_if_enabled_with_iterations(gate_name.as_str(), 2, || {
+            let (commerce, _dir) = create_temp_commerce();
+            let orders = create_test_orders(size);
+            let customer = commerce
+                .customers()
+                .create(stateset_core::models::customer::CreateCustomer {
+                    email: format!("batch-gate-{}@example.com", uuid::Uuid::new_v4()),
+                    first_name: "Bench".into(),
+                    last_name: "User".into(),
+                    phone: None,
+                    accepts_marketing: None,
+                    tags: None,
+                    metadata: None,
+                })
+                .expect("customer creation");
+            for mut order in orders {
+                order.customer_id = customer.id;
+                commerce.orders().create(order).expect("order insert");
+            }
+        });
+
         // Pre-generate order inputs outside the benchmark loop.
         // Each iteration gets a fresh Commerce + temp database.
         group.bench_function(format!("batch_orders_{size}"), |bencher| {
@@ -55,6 +78,15 @@ fn bench_batch_customers(c: &mut Criterion) {
     let mut group = c.benchmark_group("sqlite_batch_insert_customers");
 
     for size in [100, 1_000] {
+        let gate_name = format!("batch_customers_{size}");
+        run_gate_if_enabled_with_iterations(gate_name.as_str(), 2, || {
+            let (commerce, _dir) = create_temp_commerce();
+            let customers = create_test_customers(size);
+            for customer in customers {
+                commerce.customers().create(customer).expect("customer insert");
+            }
+        });
+
         group.bench_function(format!("batch_customers_{size}"), |bencher| {
             bencher.iter_with_setup(
                 || {
