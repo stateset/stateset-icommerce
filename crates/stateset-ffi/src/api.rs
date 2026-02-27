@@ -16,7 +16,7 @@
 //!
 //! e.g. `stateset_order_create`, `stateset_customer_get`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::os::raw::c_char;
 use std::sync::{Condvar, Mutex, OnceLock};
 
@@ -37,18 +37,28 @@ use crate::types::{FfiCustomer, FfiInventoryLevel, FfiOrder, FfiProduct, FfiUuid
 ///
 /// Created by [`stateset_init`] and destroyed by [`stateset_destroy`].
 /// All domain operations require a valid handle.
+///
+/// The handle is an opaque token represented as a pointer-shaped value for C
+/// ABI compatibility. Callers must never dereference it.
 pub type CommerceHandle = *mut Commerce;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 struct HandleState {
+    engine_ptr: usize,
     in_flight: usize,
     destroying: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct HandleRegistry {
     active: HashMap<usize, HandleState>,
-    retired: HashSet<usize>,
+    next_handle_id: usize,
+}
+
+impl Default for HandleRegistry {
+    fn default() -> Self {
+        Self { active: HashMap::new(), next_handle_id: 1 }
+    }
 }
 
 static HANDLE_REGISTRY: OnceLock<(Mutex<HandleRegistry>, Condvar)> = OnceLock::new();
@@ -66,36 +76,27 @@ fn with_handle_registry<T>(f: impl FnOnce(&mut HandleRegistry) -> T) -> T {
     f(&mut handles)
 }
 
-fn register_handle_key(key: usize) -> bool {
-    with_handle_registry(|handles| {
-        if handles.active.contains_key(&key) || handles.retired.contains(&key) {
-            return false;
-        }
-        handles.active.insert(key, HandleState::default());
-        true
-    })
-}
-
-#[cfg(test)]
-fn register_handle(handle: CommerceHandle) -> bool {
-    register_handle_key(handle as usize)
+const fn handle_id_to_token(id: usize) -> CommerceHandle {
+    id as CommerceHandle
 }
 
 struct EngineLease {
-    handle: CommerceHandle,
+    handle_id: usize,
+    engine_ptr: usize,
 }
 
 impl EngineLease {
+    #[allow(clippy::missing_const_for_fn)]
     #[allow(unsafe_code)]
     fn engine(&self) -> &Commerce {
         // SAFETY: The handle is registered and held by this lease until drop.
-        unsafe { &*self.handle }
+        unsafe { &*(self.engine_ptr as *const Commerce) }
     }
 }
 
 impl Drop for EngineLease {
     fn drop(&mut self) {
-        let key = self.handle as usize;
+        let key = self.handle_id;
         let (mutex, cvar) = handle_registry();
         let mut handles = match mutex.lock() {
             Ok(guard) => guard,
@@ -119,20 +120,20 @@ fn begin_engine_use(engine: CommerceHandle) -> Result<EngineLease, FfiErrorCode>
     }
 
     let key = engine as usize;
-    let found = with_handle_registry(|handles| match handles.active.get_mut(&key) {
+    let lease_ptr = with_handle_registry(|handles| match handles.active.get_mut(&key) {
         Some(state) if !state.destroying => {
             state.in_flight += 1;
-            true
+            Some(state.engine_ptr)
         }
-        _ => false,
+        _ => None,
     });
 
-    if !found {
+    let Some(engine_ptr) = lease_ptr else {
         set_last_error("invalid or stale engine handle");
         return Err(FfiErrorCode::InvalidArgument);
-    }
+    };
 
-    Ok(EngineLease { handle: engine })
+    Ok(EngineLease { handle_id: key, engine_ptr })
 }
 
 // ---------------------------------------------------------------------------
@@ -178,8 +179,8 @@ pub(crate) fn create_customer_safe(
     engine
         .customers()
         .create(input)
-        .map(|c| FfiCustomer::from_domain(&c))
         .map_err(|e| set_commerce_error(&e))
+        .and_then(|c| FfiCustomer::try_from_domain(&c))
 }
 
 /// Get a customer by ID (safe implementation).
@@ -191,7 +192,7 @@ pub(crate) fn get_customer_safe(
 
     let customer_id: CustomerId = id.into();
     match engine.customers().get(customer_id) {
-        Ok(Some(c)) => Ok(FfiCustomer::from_domain(&c)),
+        Ok(Some(c)) => FfiCustomer::try_from_domain(&c),
         Ok(None) => {
             set_last_error("customer not found");
             Err(FfiErrorCode::NotFound)
@@ -212,8 +213,8 @@ pub(crate) fn create_product_safe(
     engine
         .products()
         .create(input)
-        .map(|p| FfiProduct::from_domain(&p))
         .map_err(|e| set_commerce_error(&e))
+        .and_then(|p| FfiProduct::try_from_domain(&p))
 }
 
 /// Get a product by ID (safe implementation).
@@ -222,7 +223,7 @@ pub(crate) fn get_product_safe(engine: &Commerce, id: FfiUuid) -> Result<FfiProd
 
     let product_id: ProductId = id.into();
     match engine.products().get(product_id) {
-        Ok(Some(p)) => Ok(FfiProduct::from_domain(&p)),
+        Ok(Some(p)) => FfiProduct::try_from_domain(&p),
         Ok(None) => {
             set_last_error("product not found");
             Err(FfiErrorCode::NotFound)
@@ -276,23 +277,49 @@ unsafe fn deref_engine(engine: CommerceHandle) -> Result<EngineLease, FfiErrorCo
     begin_engine_use(engine)
 }
 
-const HANDLE_ALLOC_RETRY_LIMIT: usize = 8;
-
-fn register_new_engine_handle(
-    mut boxed: Box<Commerce>,
-    db_path: &str,
-) -> Result<CommerceHandle, FfiErrorCode> {
-    for _ in 0..HANDLE_ALLOC_RETRY_LIMIT {
-        let key = (&*boxed as *const Commerce) as usize;
-        if register_handle_key(key) {
-            return Ok(Box::into_raw(boxed));
+fn next_available_handle_id(handles: &mut HandleRegistry) -> Result<usize, FfiErrorCode> {
+    let start = handles.next_handle_id;
+    loop {
+        let candidate = handles.next_handle_id;
+        handles.next_handle_id = handles.next_handle_id.wrapping_add(1);
+        if handles.next_handle_id == 0 {
+            handles.next_handle_id = 1;
         }
 
-        boxed = init_engine(db_path)?;
+        if candidate != 0 && !handles.active.contains_key(&candidate) {
+            return Ok(candidate);
+        }
+        if handles.next_handle_id == start {
+            set_last_error("failed to allocate engine handle id");
+            return Err(FfiErrorCode::InternalError);
+        }
     }
+}
 
-    set_last_error("failed to allocate unique engine handle address");
-    Err(FfiErrorCode::InternalError)
+#[allow(unsafe_code)]
+fn drop_engine_ptr(engine_ptr: usize) {
+    // SAFETY: `engine_ptr` must have been allocated with `Box::into_raw`.
+    unsafe { drop(Box::from_raw(engine_ptr as *mut Commerce)) };
+}
+
+fn register_new_engine_handle(boxed: Box<Commerce>) -> Result<CommerceHandle, FfiErrorCode> {
+    let engine_ptr = Box::into_raw(boxed) as usize;
+    let (mutex, _) = handle_registry();
+    let mut handles = match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    let id = match next_available_handle_id(&mut handles) {
+        Ok(id) => id,
+        Err(code) => {
+            drop_engine_ptr(engine_ptr);
+            return Err(code);
+        }
+    };
+
+    handles.active.insert(id, HandleState { engine_ptr, in_flight: 0, destroying: false });
+    Ok(handle_id_to_token(id))
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +348,7 @@ pub unsafe extern "C" fn stateset_init(db_path: *const c_char) -> FfiResult<Comm
         };
 
         match init_engine(path) {
-            Ok(boxed) => match register_new_engine_handle(boxed, path) {
+            Ok(boxed) => match register_new_engine_handle(boxed) {
                 Ok(handle) => FfiResult { code: FfiErrorCode::Ok, value: handle },
                 Err(code) => FfiResult { code, value: std::ptr::null_mut() },
             },
@@ -370,15 +397,15 @@ pub unsafe extern "C" fn stateset_destroy(engine: CommerceHandle) {
                 };
             }
 
-            handles.active.remove(&key);
-            handles.retired.insert(key);
+            let Some(state) = handles.active.remove(&key) else {
+                set_last_error("invalid or stale engine handle");
+                return;
+            };
             drop(handles);
 
             // SAFETY: handle is registered, no in-flight users remain, and the
             // pointer originated from Box::into_raw in stateset_init.
-            unsafe {
-                drop(Box::from_raw(engine));
-            }
+            drop_engine_ptr(state.engine_ptr);
         }
     });
 }
@@ -895,21 +922,20 @@ mod tests {
     }
 
     #[test]
-    fn retired_handle_address_is_not_reused() {
-        let bogus = std::ptr::dangling_mut::<Commerce>();
-        let key = bogus as usize;
+    fn handles_do_not_alias_after_reinit() {
+        let path = CString::new(":memory:").unwrap();
+        let init_1 = unsafe { stateset_init(path.as_ptr()) };
+        assert_eq!(init_1.code, FfiErrorCode::Ok);
+        let stale = init_1.value;
+        unsafe { stateset_destroy(stale) };
 
-        assert!(register_handle(bogus));
-        with_handle_registry(|handles| {
-            handles.active.remove(&key);
-            handles.retired.insert(key);
-        });
+        let init_2 = unsafe { stateset_init(path.as_ptr()) };
+        assert_eq!(init_2.code, FfiErrorCode::Ok);
+        assert_ne!(stale as usize, init_2.value as usize);
 
-        assert!(!register_handle(bogus));
+        let stale_use = unsafe { stateset_order_get(stale, FfiUuid::NIL) };
+        assert_eq!(stale_use.code, FfiErrorCode::InvalidArgument);
 
-        with_handle_registry(|handles| {
-            handles.active.remove(&key);
-            handles.retired.remove(&key);
-        });
+        unsafe { stateset_destroy(init_2.value) };
     }
 }

@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 
 use stateset_core::models::customer::Customer;
 
-use crate::error::catch_ffi_void;
+use crate::error::{FfiErrorCode, catch_ffi_void, set_last_error};
 
 use super::ids::FfiUuid;
 
@@ -44,26 +44,42 @@ impl FfiCustomer {
     ///
     /// This allocates new C strings for `name` and `email`. The caller is
     /// responsible for freeing them.
-    pub fn from_domain(c: &Customer) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiErrorCode::InvalidArgument`] if any field contains an
+    /// interior null byte that cannot cross the C ABI safely.
+    pub fn try_from_domain(c: &Customer) -> Result<Self, FfiErrorCode> {
         let full_name = format!("{} {}", c.first_name, c.last_name);
+        let name_ptr = into_owned_c_string_ptr(&full_name, "customer.name")?;
+        let email_ptr = match into_owned_c_string_ptr(&c.email, "customer.email") {
+            Ok(ptr) => ptr,
+            Err(code) => {
+                drop_owned_c_string_ptr(name_ptr);
+                return Err(code);
+            }
+        };
 
-        let name_ptr = into_owned_c_string_ptr(&full_name);
-        let email_ptr = into_owned_c_string_ptr(&c.email);
-
-        Self {
+        Ok(Self {
             id: FfiUuid::from(c.id),
             name: name_ptr,
             email: email_ptr,
             created_at_epoch_ms: c.created_at.timestamp_millis(),
-        }
+        })
     }
 }
 
-fn into_owned_c_string_ptr(value: &str) -> *mut c_char {
-    let sanitized = value.replace('\0', "");
-    CString::new(sanitized)
-        .expect("sanitized string must not contain interior null bytes")
-        .into_raw()
+fn into_owned_c_string_ptr(value: &str, field: &str) -> Result<*mut c_char, FfiErrorCode> {
+    CString::new(value).map(CString::into_raw).map_err(|_| {
+        set_last_error(&format!("{field} contains interior null byte"));
+        FfiErrorCode::InvalidArgument
+    })
+}
+
+#[allow(unsafe_code)]
+fn drop_owned_c_string_ptr(ptr: *mut c_char) {
+    // SAFETY: `ptr` must originate from `CString::into_raw`.
+    unsafe { drop(CString::from_raw(ptr)) };
 }
 
 /// Free an [`FfiCustomer`] and its owned string fields.
@@ -97,6 +113,7 @@ pub unsafe extern "C" fn stateset_customer_free(customer: FfiCustomer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{clear_last_error, last_error_as_str};
     use chrono::Utc;
     use stateset_core::models::customer::CustomerStatus;
     use stateset_primitives::CustomerId;
@@ -125,7 +142,7 @@ mod tests {
     #[test]
     fn customer_from_domain() {
         let c = make_test_customer();
-        let ffi = FfiCustomer::from_domain(&c);
+        let ffi = FfiCustomer::try_from_domain(&c).unwrap();
 
         assert_eq!(ffi.id, FfiUuid::from(c.id));
         assert!(!ffi.name.is_null());
@@ -161,7 +178,7 @@ mod tests {
     #[test]
     fn customer_debug() {
         let c = make_test_customer();
-        let ffi = FfiCustomer::from_domain(&c);
+        let ffi = FfiCustomer::try_from_domain(&c).unwrap();
         let debug = format!("{:?}", ffi);
         assert!(debug.contains("FfiCustomer"));
         unsafe { stateset_customer_free(ffi) };
@@ -171,28 +188,21 @@ mod tests {
     fn customer_preserves_id() {
         let c = make_test_customer();
         let original_id = c.id;
-        let ffi = FfiCustomer::from_domain(&c);
+        let ffi = FfiCustomer::try_from_domain(&c).unwrap();
         let back: CustomerId = ffi.id.into();
         assert_eq!(back, original_id);
         unsafe { stateset_customer_free(ffi) };
     }
 
     #[test]
-    fn customer_from_domain_sanitizes_interior_null_bytes() {
+    fn customer_from_domain_rejects_interior_null_bytes() {
         let mut c = make_test_customer();
         c.first_name = "Ali\0ce".to_string();
         c.email = "ali\0ce@example.com".to_string();
-        let ffi = FfiCustomer::from_domain(&c);
-
-        assert!(!ffi.name.is_null());
-        assert!(!ffi.email.is_null());
-
-        let name = unsafe { CStr::from_ptr(ffi.name) };
-        assert_eq!(name.to_str().unwrap(), "Alice Smith");
-
-        let email = unsafe { CStr::from_ptr(ffi.email) };
-        assert_eq!(email.to_str().unwrap(), "alice@example.com");
-
-        unsafe { stateset_customer_free(ffi) };
+        clear_last_error();
+        let err = FfiCustomer::try_from_domain(&c).unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("customer.name") || msg.contains("customer.email"));
     }
 }

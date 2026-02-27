@@ -59,7 +59,7 @@ pub mod version;
 
 // Re-export the most commonly used items at the crate root.
 pub use api::CommerceHandle;
-pub use convert::{FromFfi, IntoFfi};
+pub use convert::{FromFfi, IntoFfi, TryIntoFfi};
 pub use error::{FfiErrorCode, FfiResult};
 pub use types::{
     FfiCustomer, FfiInventoryLevel, FfiMoney, FfiOrder, FfiOrderStatus, FfiProduct, FfiUuid,

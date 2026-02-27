@@ -15,6 +15,13 @@ pub trait IntoFfi<F> {
     fn into_ffi(&self) -> F;
 }
 
+/// Fallible conversion from a domain type into its FFI-safe representation.
+#[allow(clippy::wrong_self_convention)]
+pub trait TryIntoFfi<F> {
+    /// Attempt the conversion.
+    fn try_into_ffi(&self) -> Result<F, FfiErrorCode>;
+}
+
 /// Convert an FFI-safe type back into a domain type.
 pub trait FromFfi<F>: Sized {
     /// Attempt the conversion.
@@ -37,26 +44,25 @@ use crate::types::{FfiCustomer, FfiInventoryLevel, FfiMoney, FfiOrder, FfiProduc
 
 impl IntoFfi<FfiOrder> for Order {
     fn into_ffi(&self) -> FfiOrder {
-        FfiOrder::try_from_order(self).expect("order conversion to FFI must succeed")
+        self.try_into_ffi().expect("order conversion to FFI must succeed")
     }
 }
 
 impl IntoFfi<FfiCustomer> for Customer {
     fn into_ffi(&self) -> FfiCustomer {
-        FfiCustomer::from_domain(self)
+        self.try_into_ffi().expect("customer conversion to FFI must succeed")
     }
 }
 
 impl IntoFfi<FfiProduct> for Product {
     fn into_ffi(&self) -> FfiProduct {
-        FfiProduct::from_domain(self)
+        self.try_into_ffi().expect("product conversion to FFI must succeed")
     }
 }
 
 impl IntoFfi<FfiInventoryLevel> for StockLevel {
     fn into_ffi(&self) -> FfiInventoryLevel {
-        FfiInventoryLevel::try_from_stock_level(self)
-            .expect("inventory conversion to FFI must succeed")
+        self.try_into_ffi().expect("inventory conversion to FFI must succeed")
     }
 }
 
@@ -69,6 +75,42 @@ impl IntoFfi<FfiMoney> for Money {
 impl IntoFfi<FfiUuid> for uuid::Uuid {
     fn into_ffi(&self) -> FfiUuid {
         FfiUuid::from(*self)
+    }
+}
+
+impl TryIntoFfi<FfiOrder> for Order {
+    fn try_into_ffi(&self) -> Result<FfiOrder, FfiErrorCode> {
+        FfiOrder::try_from_order(self)
+    }
+}
+
+impl TryIntoFfi<FfiCustomer> for Customer {
+    fn try_into_ffi(&self) -> Result<FfiCustomer, FfiErrorCode> {
+        FfiCustomer::try_from_domain(self)
+    }
+}
+
+impl TryIntoFfi<FfiProduct> for Product {
+    fn try_into_ffi(&self) -> Result<FfiProduct, FfiErrorCode> {
+        FfiProduct::try_from_domain(self)
+    }
+}
+
+impl TryIntoFfi<FfiInventoryLevel> for StockLevel {
+    fn try_into_ffi(&self) -> Result<FfiInventoryLevel, FfiErrorCode> {
+        FfiInventoryLevel::try_from_stock_level(self)
+    }
+}
+
+impl TryIntoFfi<FfiMoney> for Money {
+    fn try_into_ffi(&self) -> Result<FfiMoney, FfiErrorCode> {
+        FfiMoney::try_from_money(*self)
+    }
+}
+
+impl TryIntoFfi<FfiUuid> for uuid::Uuid {
+    fn try_into_ffi(&self) -> Result<FfiUuid, FfiErrorCode> {
+        Ok(FfiUuid::from(*self))
     }
 }
 
@@ -95,6 +137,7 @@ impl FromFfi<FfiUuid> for uuid::Uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::FfiErrorCode;
     use chrono::Utc;
     use rust_decimal_macros::dec;
     use stateset_core::models::customer::CustomerStatus;
@@ -252,5 +295,21 @@ mod tests {
         let ffi = FfiUuid::from(Uuid::new_v4());
         let uuid = Uuid::from_ffi(&ffi).unwrap();
         assert_eq!(*uuid.as_bytes(), ffi.bytes);
+    }
+
+    #[test]
+    fn try_customer_into_ffi_rejects_interior_null() {
+        let mut customer = make_customer();
+        customer.first_name = "Bo\0b".to_string();
+        let err = customer.try_into_ffi().unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn try_order_into_ffi_rejects_invalid_currency() {
+        let mut order = make_order();
+        order.currency = "USDX".to_string();
+        let err = order.try_into_ffi().unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
     }
 }

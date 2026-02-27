@@ -1,8 +1,9 @@
 //! ABI-safe order types.
 
 use stateset_core::models::order::{Order, OrderStatus};
+use stateset_primitives::CurrencyCode;
 
-use crate::error::FfiErrorCode;
+use crate::error::{FfiErrorCode, set_last_error};
 
 use super::ids::FfiUuid;
 use super::money::{FfiMoney, decimal_to_minor_units_for_currency};
@@ -87,10 +88,14 @@ pub struct FfiOrder {
 impl FfiOrder {
     /// Fallible conversion from domain [`Order`] into [`FfiOrder`].
     pub(crate) fn try_from_order(order: &Order) -> Result<Self, FfiErrorCode> {
-        let currency_code = order.currency.trim().to_ascii_uppercase();
+        let parsed_currency = order.currency.parse::<CurrencyCode>().map_err(|err| {
+            set_last_error(&format!("invalid order.currency `{}`: {err}", order.currency));
+            FfiErrorCode::InvalidArgument
+        })?;
+        let currency_code = parsed_currency.as_str();
         let cents = decimal_to_minor_units_for_currency(
             order.total_amount,
-            &currency_code,
+            currency_code,
             "order.total_amount",
         )?;
         let mut currency = [0u8; 3];
@@ -111,7 +116,8 @@ impl FfiOrder {
 
 impl From<&Order> for FfiOrder {
     fn from(order: &Order) -> Self {
-        Self::try_from_order(order).expect("order.total_amount must be representable as i64 cents")
+        Self::try_from_order(order)
+            .expect("order total and currency must be representable as i64 minor units")
     }
 }
 
@@ -299,5 +305,16 @@ mod tests {
         order.currency = "usd".to_string();
         let ffi = FfiOrder::from(&order);
         assert_eq!(&ffi.total.currency, b"USD");
+    }
+
+    #[test]
+    fn ffi_order_invalid_currency_is_rejected() {
+        let mut order = make_test_order(OrderStatus::Pending);
+        order.currency = "USDX".to_string();
+        clear_last_error();
+        let err = FfiOrder::try_from_order(&order).unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("order.currency"));
     }
 }

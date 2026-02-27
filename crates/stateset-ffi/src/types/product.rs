@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 
 use stateset_core::models::product::Product;
 
-use crate::error::catch_ffi_void;
+use crate::error::{FfiErrorCode, catch_ffi_void, set_last_error};
 
 use super::ids::FfiUuid;
 use super::money::FfiMoney;
@@ -44,28 +44,33 @@ impl FfiProduct {
     /// The `sku` is taken from the product slug (as a placeholder SKU) and
     /// price defaults to zero since the Product model does not carry price
     /// directly — prices live on variants.
-    pub fn from_domain(p: &Product) -> Self {
-        let name_ptr = into_owned_c_string_ptr(&p.name);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiErrorCode::InvalidArgument`] if `name` contains an
+    /// interior null byte that cannot cross the C ABI safely.
+    pub fn try_from_domain(p: &Product) -> Result<Self, FfiErrorCode> {
+        let name_ptr = into_owned_c_string_ptr(&p.name, "product.name")?;
 
         let mut sku = [0u8; 64];
         let slug_bytes = p.slug.as_bytes();
         let len = slug_bytes.len().min(63);
         sku[..len].copy_from_slice(&slug_bytes[..len]);
 
-        Self {
+        Ok(Self {
             id: FfiUuid::from(p.id),
             name: name_ptr,
             sku,
             price: FfiMoney::default(), // variants carry price, not Product
-        }
+        })
     }
 }
 
-fn into_owned_c_string_ptr(value: &str) -> *mut c_char {
-    let sanitized = value.replace('\0', "");
-    CString::new(sanitized)
-        .expect("sanitized string must not contain interior null bytes")
-        .into_raw()
+fn into_owned_c_string_ptr(value: &str, field: &str) -> Result<*mut c_char, FfiErrorCode> {
+    CString::new(value).map(CString::into_raw).map_err(|_| {
+        set_last_error(&format!("{field} contains interior null byte"));
+        FfiErrorCode::InvalidArgument
+    })
 }
 
 /// Free an [`FfiProduct`] and its owned string fields.
@@ -94,6 +99,7 @@ pub unsafe extern "C" fn stateset_product_free(product: FfiProduct) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{clear_last_error, last_error_as_str};
     use chrono::Utc;
     use stateset_core::models::product::{ProductStatus, ProductType};
     use stateset_primitives::ProductId;
@@ -118,7 +124,7 @@ mod tests {
     #[test]
     fn product_from_domain() {
         let p = make_test_product();
-        let ffi = FfiProduct::from_domain(&p);
+        let ffi = FfiProduct::try_from_domain(&p).unwrap();
 
         assert_eq!(ffi.id, FfiUuid::from(p.id));
         assert!(!ffi.name.is_null());
@@ -153,7 +159,7 @@ mod tests {
         // Create a slug longer than 63 characters.
         p.slug = "a".repeat(100);
 
-        let ffi = FfiProduct::from_domain(&p);
+        let ffi = FfiProduct::try_from_domain(&p).unwrap();
         // Should be truncated to 63 + null terminator.
         assert_eq!(ffi.sku[63], 0); // null terminator position
         let sku_str = std::str::from_utf8(&ffi.sku[..63]).unwrap();
@@ -166,7 +172,7 @@ mod tests {
     fn product_preserves_id() {
         let p = make_test_product();
         let original_id = p.id;
-        let ffi = FfiProduct::from_domain(&p);
+        let ffi = FfiProduct::try_from_domain(&p).unwrap();
         let back: ProductId = ffi.id.into();
         assert_eq!(back, original_id);
         unsafe { stateset_product_free(ffi) };
@@ -175,22 +181,20 @@ mod tests {
     #[test]
     fn product_debug() {
         let p = make_test_product();
-        let ffi = FfiProduct::from_domain(&p);
+        let ffi = FfiProduct::try_from_domain(&p).unwrap();
         let debug = format!("{:?}", ffi);
         assert!(debug.contains("FfiProduct"));
         unsafe { stateset_product_free(ffi) };
     }
 
     #[test]
-    fn product_from_domain_sanitizes_interior_null_bytes() {
+    fn product_from_domain_rejects_interior_null_bytes() {
         let mut p = make_test_product();
         p.name = "Wid\0get".to_string();
-        let ffi = FfiProduct::from_domain(&p);
-
-        assert!(!ffi.name.is_null());
-        let name = unsafe { CStr::from_ptr(ffi.name) };
-        assert_eq!(name.to_str().unwrap(), "Widget");
-
-        unsafe { stateset_product_free(ffi) };
+        clear_last_error();
+        let err = FfiProduct::try_from_domain(&p).unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("product.name"));
     }
 }

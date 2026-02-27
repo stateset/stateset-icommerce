@@ -149,7 +149,7 @@ fn dylib_candidates(dirs: &[PathBuf]) -> Vec<PathBuf> {
     dirs.iter().map(|dir| dir.join(dylib_name())).collect()
 }
 
-fn dylib_name() -> &'static str {
+const fn dylib_name() -> &'static str {
     if cfg!(target_os = "macos") {
         "libstateset_ffi.dylib"
     } else if cfg!(target_os = "windows") {
@@ -207,7 +207,7 @@ fn set_runtime_library_env(cmd: &mut Command, dirs: &[PathBuf]) -> TestResult {
     Ok(())
 }
 
-fn runtime_library_env_key() -> &'static str {
+const fn runtime_library_env_key() -> &'static str {
     if cfg!(target_os = "macos") {
         "DYLD_LIBRARY_PATH"
     } else if cfg!(target_os = "windows") {

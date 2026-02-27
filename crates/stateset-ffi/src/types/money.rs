@@ -175,7 +175,7 @@ fn minor_unit_decimal(minor_units: u32) -> Decimal {
     Decimal::new(1, minor_units)
 }
 
-fn minor_unit_factor(minor_units: u32) -> u64 {
+const fn minor_unit_factor(minor_units: u32) -> u64 {
     10_u64.saturating_pow(minor_units)
 }
 
