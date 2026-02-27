@@ -6,6 +6,21 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-02-27
+
+### Changed
+- Bumped workspace and cross-language release metadata from `0.7.8` to `0.7.9`.
+- Updated binding package versions across Node, Python, Ruby, PHP, Java, Kotlin, Swift, .NET, and wasm artifacts.
+- Updated SDK/FFI surfaced version references to `0.7.9`.
+
+### Fixed
+- Hardened policy evaluation semantics, rule ordering, and authz rate-limit key handling.
+- Hardened A2A/embedded webhook SSRF protections and added mapped-IPv6 regression coverage.
+- Fixed sync pagination/cursor behavior and strengthened protocol integrity hashing/ordering guarantees.
+- Hardened FFI safety boundaries, conversion error handling, and HTTP readiness contract behavior.
+- Removed DB/runtime panic paths, fixed cart total recomputation and jobs timeout/cron lifecycle behavior, and improved subscription uniqueness handling.
+- Fixed crypto malformed-envelope panic surfaces and corrected `#[derive(StateSetId)]` downstream behavior.
+
 ## [0.7.8] - 2026-02-25
 
 ### Changed
