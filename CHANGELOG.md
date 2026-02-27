@@ -6,6 +6,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-02-27
+
+### Changed
+- Expanded CI quality gates with Postgres parity matrix lanes, FFI sanitizer lanes, perf regression reporting, and crate compatibility governance reporting.
+- Added cross-language FFI ABI contract fixtures/tests for C, C++, Python, and Swift.
+- Added observability conventions plus RED/SLO metrics primitives and documentation updates.
+- Added perf-gate benchmarks and strengthened property/chaos style test coverage in protocol/sync/pricing/primitives/jobs crates.
+
+### Fixed
+- Hardened A2A and embedded webhook SSRF protections (allowlists, ambiguous IPv4 encodings, IPv4-mapped IPv6 handling, and DNS rebinding coverage).
+- Fixed webhook host IP parsing behavior for deterministic IPv4/IPv6 safety checks.
+
 ## [0.7.9] - 2026-02-27
 
 ### Changed
