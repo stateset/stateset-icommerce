@@ -60,13 +60,13 @@ async fn list_products(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<ProductListResponse>, HttpError> {
+    let total = state.commerce().products().list(ProductFilter::default())?.len();
     let filter = ProductFilter {
         limit: Some(params.resolved_limit()),
         offset: Some(params.resolved_offset()),
         ..Default::default()
     };
     let products = state.commerce().products().list(filter)?;
-    let total = products.len();
     Ok(Json(ProductListResponse {
         products: products.into_iter().map(ProductResponse::from).collect(),
         total,
@@ -85,6 +85,12 @@ mod tests {
 
     fn app() -> Router {
         router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
+    }
+
+    fn app_with_state() -> (Router, AppState) {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let router = router().with_state(state.clone());
+        (router, state)
     }
 
     #[tokio::test]
@@ -168,5 +174,32 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn list_products_reports_total_before_pagination() {
+        let (app, state) = app_with_state();
+
+        for i in 0..2 {
+            state
+                .commerce()
+                .products()
+                .create(stateset_core::CreateProduct {
+                    name: format!("Paging Product {i}"),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let resp = app
+            .oneshot(Request::get("/products?limit=1&offset=0").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["products"].as_array().unwrap().len(), 1);
     }
 }

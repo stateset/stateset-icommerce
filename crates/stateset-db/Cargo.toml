@@ -19,6 +19,7 @@ rust_decimal = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 
 # SQLite dependencies (optional)
 rusqlite = { workspace = true, optional = true }

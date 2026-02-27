@@ -54,13 +54,13 @@ async fn list_customers(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<CustomerListResponse>, HttpError> {
+    let total = state.commerce().customers().list(CustomerFilter::default())?.len();
     let filter = CustomerFilter {
         limit: Some(params.resolved_limit()),
         offset: Some(params.resolved_offset()),
         ..Default::default()
     };
     let customers = state.commerce().customers().list(filter)?;
-    let total = customers.len();
     Ok(Json(CustomerListResponse {
         customers: customers.into_iter().map(CustomerResponse::from).collect(),
         total,
@@ -79,6 +79,12 @@ mod tests {
 
     fn app() -> Router {
         router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
+    }
+
+    fn app_with_state() -> (Router, AppState) {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let router = router().with_state(state.clone());
+        (router, state)
     }
 
     #[tokio::test]
@@ -162,5 +168,34 @@ mod tests {
         let resp_body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let fetched: serde_json::Value = serde_json::from_slice(&resp_body).unwrap();
         assert_eq!(fetched["email"], "bob@example.com");
+    }
+
+    #[tokio::test]
+    async fn list_customers_reports_total_before_pagination() {
+        let (app, state) = app_with_state();
+
+        for i in 0..2 {
+            state
+                .commerce()
+                .customers()
+                .create(stateset_core::CreateCustomer {
+                    email: format!("paging-customer-{i}@example.com"),
+                    first_name: "Paging".into(),
+                    last_name: "Customer".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let resp = app
+            .oneshot(Request::get("/customers?limit=1&offset=0").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["customers"].as_array().unwrap().len(), 1);
     }
 }

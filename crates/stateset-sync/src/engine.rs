@@ -53,33 +53,54 @@ impl SyncEngine {
     /// Create a new `SyncEngine` with the given configuration.
     #[must_use]
     pub fn new(config: SyncConfig) -> Self {
-        let buffer_capacity = config.buffer_capacity;
-        Self {
-            config,
-            state: SyncState::default(),
-            outbox: Outbox::with_default_capacity(),
-            buffer: EventBuffer::new(buffer_capacity),
-            resolver: ConflictResolver::default(),
-            last_pulled_sequence: 0,
-            next_pull_cursor: None,
-            initialized: true,
-        }
+        Self::try_new(config).unwrap_or_else(|err| panic!("invalid sync configuration: {err}"))
     }
 
     /// Create a `SyncEngine` with a custom conflict resolution strategy.
     #[must_use]
     pub fn with_strategy(config: SyncConfig, strategy: ConflictStrategy) -> Self {
-        let buffer_capacity = config.buffer_capacity;
-        Self {
+        Self::try_with_strategy(config, strategy)
+            .unwrap_or_else(|err| panic!("invalid sync configuration: {err}"))
+    }
+
+    /// Fallible constructor that validates config and initializes persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::InvalidConfig`] for invalid settings or
+    /// [`SyncError::Storage`] when durable outbox initialization fails.
+    pub fn try_new(config: SyncConfig) -> Result<Self, SyncError> {
+        Self::try_with_strategy(config, ConflictStrategy::default())
+    }
+
+    /// Fallible constructor with explicit conflict strategy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::InvalidConfig`] for invalid settings or
+    /// [`SyncError::Storage`] when durable outbox initialization fails.
+    pub fn try_with_strategy(
+        config: SyncConfig,
+        strategy: ConflictStrategy,
+    ) -> Result<Self, SyncError> {
+        config.validate()?;
+        let buffer_capacity = config.resolved_buffer_capacity();
+        let outbox = if let Some(path) = config.outbox_path.as_deref() {
+            Outbox::with_persistence(config.resolved_outbox_capacity(), path)?
+        } else {
+            Outbox::new(config.resolved_outbox_capacity())
+        };
+
+        Ok(Self {
             config,
             state: SyncState::default(),
-            outbox: Outbox::with_default_capacity(),
+            outbox,
             buffer: EventBuffer::new(buffer_capacity),
             resolver: ConflictResolver::new(strategy),
             last_pulled_sequence: 0,
             next_pull_cursor: None,
             initialized: true,
-        }
+        })
     }
 
     /// Record an event into the outbox for later push.
@@ -104,7 +125,7 @@ impl SyncEngine {
     ///
     /// Returns [`SyncError::Transport`] if the transport operation fails.
     pub async fn push(&mut self, transport: &dyn Transport) -> Result<PushResult, SyncError> {
-        let batch_size = self.config.batch_size;
+        let batch_size = self.config.resolved_batch_size();
         let events: Vec<SyncEvent> = self.outbox.peek(batch_size).into_iter().cloned().collect();
 
         if events.is_empty() {
@@ -145,7 +166,7 @@ impl SyncEngine {
         transport: &dyn Transport,
         since: u64,
     ) -> Result<(PullResult, Option<u64>), SyncError> {
-        let limit = self.config.batch_size;
+        let limit = self.config.resolved_batch_size();
         let PullPage { result, next_cursor: transport_next_cursor } =
             transport.pull_events_page(since, limit).await?;
 
@@ -339,6 +360,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use tempfile::tempdir;
 
     fn make_config() -> SyncConfig {
         SyncConfig::new("agent-1", "tenant-1", "store-1")
@@ -498,6 +520,36 @@ mod tests {
         let config = make_config();
         let engine = SyncEngine::new(config);
         assert_eq!(engine.config().agent_id, "agent-1");
+    }
+
+    #[test]
+    fn try_new_rejects_invalid_config() {
+        let bad = SyncConfig::new("", "tenant", "store");
+        assert!(SyncEngine::try_new(bad).is_err());
+    }
+
+    #[test]
+    fn try_new_with_persistent_outbox_restores_pending_events() {
+        let dir = tempdir().unwrap();
+        let outbox_path = dir.path().join("sync-outbox.json");
+        let path_str = outbox_path.to_string_lossy().to_string();
+
+        {
+            let mut engine = SyncEngine::try_new(
+                SyncConfig::new("agent-1", "tenant-1", "store-1")
+                    .with_outbox_path(path_str.clone()),
+            )
+            .unwrap();
+            engine.record(make_event("persisted-a")).unwrap();
+            engine.record(make_event("persisted-b")).unwrap();
+            assert_eq!(engine.pending_count(), 2);
+        }
+
+        let engine = SyncEngine::try_new(
+            SyncConfig::new("agent-1", "tenant-1", "store-1").with_outbox_path(path_str),
+        )
+        .unwrap();
+        assert_eq!(engine.pending_count(), 2);
     }
 
     #[tokio::test]

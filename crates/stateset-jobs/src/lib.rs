@@ -18,7 +18,7 @@
 //! - **Event-triggered jobs** — fired by an event type string
 //! - **Retry with backoff** — fixed, exponential, or linear strategies
 //! - **State machine** — validated transitions for job lifecycle
-//! - **Pluggable storage** — [`JobStore`] trait with an [`InMemoryJobStore`] for testing
+//! - **Pluggable storage** — [`JobStore`] trait with [`InMemoryJobStore`] and [`FileJobStore`]
 //! - **Built-in job types** — billing, webhook retry, retention, low stock, subscription renewal
 //!
 //! ## Quick Start
@@ -52,7 +52,7 @@
 //! - [`state`] — [`JobStatus`], [`JobInstance`], [`JobOutput`]
 //! - [`context`] — [`JobContext`] passed to handlers
 //! - [`queue`] — Time-sorted [`JobQueue`]
-//! - [`store`] — [`JobStore`] trait and [`InMemoryJobStore`]
+//! - [`store`] — [`JobStore`] trait, [`InMemoryJobStore`], and [`FileJobStore`]
 //! - [`builtins`] — Pre-defined commerce job types
 //! - [`scheduler`] — [`Scheduler`] orchestrator and [`TickAction`]
 //! - [`error`] — [`JobError`] error type
@@ -76,4 +76,4 @@ pub use job::{BackoffStrategy, JobDefinition, JobHandler, Schedule};
 pub use queue::JobQueue;
 pub use scheduler::{Scheduler, SchedulerStatus, TickAction};
 pub use state::{JobInstance, JobOutput, JobStatus};
-pub use store::{InMemoryJobStore, JobStore};
+pub use store::{FileJobStore, InMemoryJobStore, JobStore};

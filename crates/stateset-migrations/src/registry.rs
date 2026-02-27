@@ -98,15 +98,21 @@ impl MigrationRegistry {
     /// migrations. Returns `Ok(())` if all checksums match.
     pub fn validate_checksums(&self, applied: &[MigrationRecord]) -> Result<()> {
         for record in applied {
-            if let Some(migration) = self.migrations.get(&record.version) {
-                if record.checksum != migration.checksum {
-                    return Err(MigrationError::ChecksumMismatch {
-                        version: record.version,
-                        name: migration.name.clone(),
-                        expected: migration.checksum.clone(),
-                        actual: record.checksum.clone(),
-                    });
-                }
+            let Some(migration) = self.migrations.get(&record.version) else {
+                return Err(MigrationError::InvalidMigration {
+                    reason: format!(
+                        "applied migration v{} '{}' is not present in registry",
+                        record.version, record.name
+                    ),
+                });
+            };
+            if record.checksum != migration.checksum {
+                return Err(MigrationError::ChecksumMismatch {
+                    version: record.version,
+                    name: migration.name.clone(),
+                    expected: migration.checksum.clone(),
+                    actual: record.checksum.clone(),
+                });
             }
         }
         Ok(())
@@ -276,11 +282,13 @@ mod tests {
     }
 
     #[test]
-    fn validate_checksums_ignores_unknown_applied() {
+    fn validate_checksums_rejects_unknown_applied() {
         let reg = MigrationRegistry::new();
         let applied = vec![make_record(99, "unknown", "whatever")];
-        // Unknown applied migrations are not in the registry, so no mismatch
-        assert!(reg.validate_checksums(&applied).is_ok());
+        assert!(matches!(
+            reg.validate_checksums(&applied).unwrap_err(),
+            MigrationError::InvalidMigration { .. }
+        ));
     }
 
     #[test]

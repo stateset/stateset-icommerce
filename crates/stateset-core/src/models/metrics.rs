@@ -244,10 +244,11 @@ impl Histogram {
                 String::new()
             };
 
-            // Bucket lines
-            let mut cumulative = 0u64;
+            // Bucket lines.
+            // `observe` stores cumulative bucket counts already, so rendering
+            // should emit them directly.
             for (i, bucket) in self.buckets.iter().enumerate() {
-                cumulative += data.bucket_counts[i].load(Ordering::SeqCst);
+                let cumulative = data.bucket_counts[i].load(Ordering::SeqCst);
                 let label_str = if base_label_str.is_empty() {
                     format!("{{le=\"{}\"}}", bucket)
                 } else {
@@ -630,6 +631,10 @@ mod tests {
         assert!(output.contains("test_histogram_bucket"));
         assert!(output.contains("test_histogram_sum"));
         assert!(output.contains("test_histogram_count"));
+        assert!(output.contains("test_histogram_bucket{operation=\"read\",le=\"0.1\"} 1"));
+        assert!(output.contains("test_histogram_bucket{operation=\"read\",le=\"0.5\"} 2"));
+        assert!(output.contains("test_histogram_bucket{operation=\"read\",le=\"1\"} 3"));
+        assert!(output.contains("test_histogram_bucket{operation=\"read\",le=\"+Inf\"} 3"));
     }
 
     #[test]

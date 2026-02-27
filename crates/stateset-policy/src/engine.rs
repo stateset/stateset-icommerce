@@ -264,13 +264,26 @@ impl PolicyEngine {
         }
     }
 
-    /// Load policy sets from a directory of YAML/JSON files.
+    /// Load policy sets from a directory of YAML/JSON files (strict mode).
     ///
-    /// Scans for `*.yaml`, `*.yml`, and `*.json` files. Returns the number
-    /// of policy sets successfully loaded.
+    /// Scans for `*.yaml`, `*.yml`, and `*.json` files. Any invalid policy file
+    /// returns an error.
     #[cfg(feature = "yaml")]
     pub fn load_from_dir(&mut self, dir: &std::path::Path) -> crate::Result<usize> {
         let sets = crate::loader::load_policies_from_dir(dir)?;
+        let count = sets.len();
+        for set in sets {
+            self.register_policy_set(set);
+        }
+        Ok(count)
+    }
+
+    /// Load policy sets from a directory in permissive mode.
+    ///
+    /// Invalid policy files are skipped.
+    #[cfg(feature = "yaml")]
+    pub fn load_from_dir_permissive(&mut self, dir: &std::path::Path) -> crate::Result<usize> {
+        let sets = crate::loader::load_policies_from_dir_permissive(dir)?;
         let count = sets.len();
         for set in sets {
             self.register_policy_set(set);

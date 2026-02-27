@@ -59,13 +59,13 @@ async fn list_orders(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<OrderListResponse>, HttpError> {
+    let total = state.commerce().orders().list(OrderFilter::default())?.len();
     let filter = OrderFilter {
         limit: Some(params.resolved_limit()),
         offset: Some(params.resolved_offset()),
         ..Default::default()
     };
     let orders = state.commerce().orders().list(filter)?;
-    let total = orders.len();
     Ok(Json(OrderListResponse {
         orders: orders.into_iter().map(OrderResponse::from).collect(),
         total,
@@ -177,6 +177,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn list_orders_reports_total_before_pagination() {
+        let (app, state) = app_with_state();
+
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "paging-orders@example.com".into(),
+                first_name: "Paging".into(),
+                last_name: "Orders".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let product = state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Paging Widget".into(),
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: "PAGE-ORD-001".into(),
+                    price: dec!(9.99),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        for _ in 0..2 {
+            state
+                .commerce()
+                .orders()
+                .create(stateset_core::CreateOrder {
+                    customer_id: customer.id,
+                    items: vec![stateset_core::CreateOrderItem {
+                        product_id: product.id,
+                        variant_id: None,
+                        sku: "PAGE-ORD-001".into(),
+                        name: "Paging Widget".into(),
+                        quantity: 1,
+                        unit_price: dec!(9.99),
+                        discount: None,
+                        tax_amount: None,
+                    }],
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let resp = app
+            .oneshot(Request::get("/orders?limit=1&offset=0").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["orders"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]

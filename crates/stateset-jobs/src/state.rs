@@ -1,6 +1,7 @@
 //! Job status, instances, and output types.
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::JobError;
@@ -11,7 +12,8 @@ use crate::job::BackoffStrategy;
 // ---------------------------------------------------------------------------
 
 /// The lifecycle status of a job instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JobStatus {
     /// Waiting to be scheduled.
@@ -92,7 +94,7 @@ impl std::fmt::Display for JobStatus {
 // ---------------------------------------------------------------------------
 
 /// The output produced by a successful job execution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobOutput {
     /// Human-readable result message.
     pub message: String,
@@ -119,7 +121,7 @@ impl JobOutput {
 // ---------------------------------------------------------------------------
 
 /// A concrete instance of a job that has been enqueued or executed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobInstance {
     /// Unique identifier for this instance.
     pub id: Uuid,

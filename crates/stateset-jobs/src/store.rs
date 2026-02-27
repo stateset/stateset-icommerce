@@ -1,6 +1,8 @@
 //! Pluggable storage backend for job instances.
 
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
@@ -48,6 +50,26 @@ pub trait JobStore: Send + Sync {
     ///
     /// Returns [`JobError::StoreError`] on storage failures.
     fn delete_completed_before(&self, before: DateTime<Utc>) -> Result<u64, JobError>;
+
+    /// List active jobs that should be recovered on scheduler startup.
+    ///
+    /// The default implementation unions jobs in `Pending`, `Scheduled`,
+    /// `Retrying`, and `Running` states.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobError::StoreError`] on storage failures.
+    fn list_active(&self) -> Result<Vec<JobInstance>, JobError> {
+        let mut combined: HashMap<Uuid, JobInstance> = HashMap::new();
+        for status in
+            [JobStatus::Pending, JobStatus::Scheduled, JobStatus::Retrying, JobStatus::Running]
+        {
+            for job in self.list_by_status(status)? {
+                combined.insert(job.id, job);
+            }
+        }
+        Ok(combined.into_values().collect())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,10 +158,119 @@ impl JobStore for InMemoryJobStore {
     }
 }
 
+// ---------------------------------------------------------------------------
+// FileJobStore
+// ---------------------------------------------------------------------------
+
+/// A file-backed [`JobStore`] implementation using JSON snapshots.
+///
+/// Designed for single-process durability and restart recovery.
+#[derive(Debug, Clone)]
+pub struct FileJobStore {
+    path: PathBuf,
+    inner: Arc<Mutex<HashMap<Uuid, JobInstance>>>,
+}
+
+impl FileJobStore {
+    /// Open or create a file-backed job store at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JobError::StoreError`] if loading fails.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, JobError> {
+        let path = path.as_ref().to_path_buf();
+        let map = if path.exists() { Self::read_snapshot(&path)? } else { HashMap::new() };
+
+        let store = Self { path, inner: Arc::new(Mutex::new(map)) };
+        if !store.path.exists() {
+            store.persist_map(&store.lock_map_unpoisoned())?;
+        }
+        Ok(store)
+    }
+
+    fn lock_map_unpoisoned(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, JobInstance>> {
+        match self.inner.lock() {
+            Ok(map) => map,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn read_snapshot(path: &Path) -> Result<HashMap<Uuid, JobInstance>, JobError> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| JobError::StoreError(format!("read snapshot failed: {e}")))?;
+        if content.trim().is_empty() {
+            return Ok(HashMap::new());
+        }
+        serde_json::from_str(&content)
+            .map_err(|e| JobError::StoreError(format!("parse snapshot failed: {e}")))
+    }
+
+    fn persist_map(&self, map: &HashMap<Uuid, JobInstance>) -> Result<(), JobError> {
+        let serialized = serde_json::to_string_pretty(map)
+            .map_err(|e| JobError::StoreError(format!("serialize snapshot failed: {e}")))?;
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| JobError::StoreError(format!("create store directory failed: {e}")))?;
+        }
+        let tmp = self.path.with_extension("tmp");
+        fs::write(&tmp, serialized)
+            .map_err(|e| JobError::StoreError(format!("write snapshot failed: {e}")))?;
+        fs::rename(&tmp, &self.path)
+            .map_err(|e| JobError::StoreError(format!("replace snapshot failed: {e}")))?;
+        Ok(())
+    }
+}
+
+impl JobStore for FileJobStore {
+    fn save(&self, job: &JobInstance) -> Result<(), JobError> {
+        let mut map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
+        map.insert(job.id, job.clone());
+        self.persist_map(&map)
+    }
+
+    fn get(&self, id: &Uuid) -> Result<Option<JobInstance>, JobError> {
+        let map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
+        Ok(map.get(id).cloned())
+    }
+
+    fn list_by_status(&self, status: JobStatus) -> Result<Vec<JobInstance>, JobError> {
+        let map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
+        Ok(map.values().filter(|j| j.status == status).cloned().collect())
+    }
+
+    fn update_status(&self, id: &Uuid, status: JobStatus) -> Result<(), JobError> {
+        let mut map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
+        match map.get_mut(id) {
+            Some(job) => {
+                job.transition_to(status)?;
+                self.persist_map(&map)
+            }
+            None => Err(JobError::NotFound(*id)),
+        }
+    }
+
+    fn delete_completed_before(&self, before: DateTime<Utc>) -> Result<u64, JobError> {
+        let mut map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
+        let initial_len = map.len();
+        map.retain(|_, job| {
+            !(job.status == JobStatus::Completed && job.completed_at.is_some_and(|t| t < before))
+        });
+        let deleted = (initial_len - map.len()) as u64;
+        self.persist_map(&map)?;
+        Ok(deleted)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Duration;
+    use tempfile::tempdir;
 
     fn make_instance(name: &str) -> JobInstance {
         JobInstance::new(name)
@@ -298,5 +429,41 @@ mod tests {
         let clone = store;
         assert!(clone.get(&id).unwrap().is_some());
         assert_eq!(clone.len(), 1);
+    }
+
+    #[test]
+    fn file_store_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        let store = FileJobStore::open(&path).unwrap();
+
+        let inst = make_instance("file-roundtrip");
+        let id = inst.id;
+        store.save(&inst).unwrap();
+
+        let reopened = FileJobStore::open(&path).unwrap();
+        let retrieved = reopened.get(&id).unwrap().unwrap();
+        assert_eq!(retrieved.definition_name, "file-roundtrip");
+    }
+
+    #[test]
+    fn file_store_list_active_includes_running() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("jobs-active.json");
+        let store = FileJobStore::open(&path).unwrap();
+
+        let mut running = make_instance("running");
+        running.status = JobStatus::Running;
+        running.started_at = Some(Utc::now());
+        store.save(&running).unwrap();
+
+        let mut completed = make_instance("completed");
+        completed.status = JobStatus::Completed;
+        completed.completed_at = Some(Utc::now());
+        store.save(&completed).unwrap();
+
+        let active = store.list_active().unwrap();
+        assert!(active.iter().any(|job| job.id == running.id));
+        assert!(!active.iter().any(|job| job.id == completed.id));
     }
 }

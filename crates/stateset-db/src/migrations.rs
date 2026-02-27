@@ -3,6 +3,7 @@
 //! Embedded SQL migrations that run automatically on database initialization.
 
 use rusqlite::{Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -20,10 +21,12 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), MigrationError> {
         "CREATE TABLE IF NOT EXISTS _migrations (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
+            checksum TEXT,
             applied_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
         [],
     )?;
+    ensure_migration_checksum_column(conn)?;
 
     let migrations = get_migrations();
 
@@ -34,17 +37,31 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), MigrationError> {
         if name == "028_bm25_search" && !fts5_available(conn) {
             continue;
         }
-        // Check if migration already applied
-        let count: i32 =
-            conn.query_row("SELECT COUNT(*) FROM _migrations WHERE name = ?", [name], |row| {
-                row.get(0)
-            })?;
+        let checksum = compute_migration_checksum(sql);
+        let existing_checksum: Option<String> = conn
+            .query_row("SELECT checksum FROM _migrations WHERE name = ?", [name], |row| row.get(0))
+            .optional()?;
 
-        if count == 0 {
+        if let Some(existing) = existing_checksum {
+            if !existing.is_empty() && existing != checksum {
+                return Err(MigrationError::Failed(format!(
+                    "migration checksum mismatch for {name}: expected {checksum}, found {existing}",
+                )));
+            }
+            if existing.is_empty() {
+                conn.execute(
+                    "UPDATE _migrations SET checksum = ? WHERE name = ?",
+                    rusqlite::params![checksum, name],
+                )?;
+            }
+        } else {
             // Run migration atomically.
             let tx = conn.transaction()?;
             tx.execute_batch(sql)?;
-            tx.execute("INSERT INTO _migrations (name) VALUES (?)", [name])?;
+            tx.execute(
+                "INSERT INTO _migrations (name, checksum) VALUES (?, ?)",
+                rusqlite::params![name, checksum],
+            )?;
             tx.commit()?;
         }
     }
@@ -61,6 +78,24 @@ fn fts5_available(conn: &Connection) -> bool {
     .flatten()
     .unwrap_or(0)
         == 1
+}
+
+fn ensure_migration_checksum_column(conn: &Connection) -> Result<(), MigrationError> {
+    let has_checksum = conn
+        .prepare("PRAGMA table_info(_migrations)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .any(|column| column == "checksum");
+    if !has_checksum {
+        conn.execute("ALTER TABLE _migrations ADD COLUMN checksum TEXT", [])?;
+    }
+    Ok(())
+}
+
+fn compute_migration_checksum(sql: &str) -> String {
+    let digest = Sha256::digest(sql.as_bytes());
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Get list of migrations in order

@@ -149,7 +149,7 @@ impl Operator {
                 if let Value::Array(arr) = compare_value {
                     !arr.iter().any(|v| values_equal(field_value, v))
                 } else {
-                    true
+                    false
                 }
             }
             Self::IsEmpty => is_empty(field_value),
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn not_in_non_array() {
-        assert!(Operator::NotIn.evaluate(&json!("silver"), &json!("gold")));
+        assert!(!Operator::NotIn.evaluate(&json!("silver"), &json!("gold")));
     }
 
     #[test]

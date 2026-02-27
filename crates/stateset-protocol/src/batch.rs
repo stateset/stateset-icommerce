@@ -23,6 +23,7 @@
 //! ```
 
 use chrono::{DateTime, Utc};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -179,6 +180,9 @@ impl SyncBatch {
             ));
         }
 
+        self.validate_signatures()?;
+        self.validate_proofs()?;
+
         Ok(())
     }
 
@@ -202,6 +206,117 @@ impl SyncBatch {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.leaves.is_empty()
+    }
+
+    fn validate_signatures(&self) -> Result<()> {
+        if self.signatures.is_empty() {
+            return Ok(());
+        }
+
+        let message = self.signature_message()?;
+
+        for (idx, signature) in self.signatures.iter().enumerate() {
+            self.validate_signature(signature, &message).map_err(|err| {
+                ProtocolError::InvalidSignature(format!("signature[{idx}]: {err}"))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_signature(&self, signature: &BatchSignature, message: &[u8]) -> Result<()> {
+        if signature.signer_id.trim().is_empty() {
+            return Err(ProtocolError::InvalidSignature("signer_id must not be empty".into()));
+        }
+
+        match signature.algorithm {
+            SignatureAlgorithm::Ed25519 => {
+                let public_key_bytes: [u8; 32] =
+                    signature.public_key.as_slice().try_into().map_err(|_| {
+                        ProtocolError::InvalidSignature(
+                            "ed25519 public_key must be exactly 32 bytes".into(),
+                        )
+                    })?;
+                let verifying_key = VerifyingKey::from_bytes(&public_key_bytes).map_err(|e| {
+                    ProtocolError::InvalidSignature(format!("invalid ed25519 public_key: {e}"))
+                })?;
+                let parsed_signature = Signature::from_slice(signature.signature.as_slice())
+                    .map_err(|e| {
+                        ProtocolError::InvalidSignature(format!("invalid ed25519 signature: {e}"))
+                    })?;
+                verifying_key.verify_strict(message, &parsed_signature).map_err(|e| {
+                    ProtocolError::InvalidSignature(format!("ed25519 verification failed: {e}"))
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_proofs(&self) -> Result<()> {
+        if self.proofs.is_empty() {
+            return Ok(());
+        }
+
+        let leaf_hashes = self.leaf_hashes();
+        for (idx, proof) in self.proofs.iter().enumerate() {
+            if proof.leaf_index >= leaf_hashes.len() {
+                return Err(ProtocolError::MerkleVerificationFailed(format!(
+                    "proof[{idx}] leaf_index {} is out of bounds for {} leaves",
+                    proof.leaf_index,
+                    leaf_hashes.len()
+                )));
+            }
+
+            let expected_leaf_hash = leaf_hashes[proof.leaf_index];
+            if proof.leaf_hash != expected_leaf_hash {
+                return Err(ProtocolError::MerkleVerificationFailed(format!(
+                    "proof[{idx}] leaf_hash does not match leaf at index {}",
+                    proof.leaf_index
+                )));
+            }
+
+            if proof.root != self.merkle_root {
+                return Err(ProtocolError::MerkleVerificationFailed(format!(
+                    "proof[{idx}] root does not match batch merkle_root"
+                )));
+            }
+
+            if !proof.verify() {
+                return Err(ProtocolError::MerkleVerificationFailed(format!(
+                    "proof[{idx}] failed verification"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn signature_message(&self) -> Result<Vec<u8>> {
+        #[derive(Serialize)]
+        struct SigningPayload<'a> {
+            batch_id: Uuid,
+            source_node_id: &'a str,
+            merkle_root: [u8; 32],
+            merkle_leaf_hash_mode: MerkleLeafHashMode,
+            protocol_version: u16,
+            created_at: DateTime<Utc>,
+            leaves: &'a [EventEnvelope],
+        }
+
+        let payload = SigningPayload {
+            batch_id: self.batch_id,
+            source_node_id: &self.source_node_id,
+            merkle_root: self.merkle_root,
+            merkle_leaf_hash_mode: self.merkle_leaf_hash_mode,
+            protocol_version: self.protocol_version,
+            created_at: self.created_at,
+            leaves: &self.leaves,
+        };
+
+        let canonical = serde_jcs::to_string(&payload)
+            .map_err(|e| ProtocolError::SerializationError(e.to_string()))?;
+        Ok(canonical.into_bytes())
     }
 }
 
@@ -271,6 +386,7 @@ impl MerkleProof {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
 
     fn make_envelope(entity_id: &str, payload: &[u8]) -> EventEnvelope {
         EventEnvelope::builder()
@@ -436,6 +552,55 @@ mod tests {
         let proof = merkle::compute_merkle_proof(&leaf_hashes, 0).unwrap();
         batch.add_proof(proof);
         assert_eq!(batch.proofs.len(), 1);
+    }
+
+    #[test]
+    fn validate_accepts_valid_signature_and_proof() {
+        let envs = vec![make_envelope("1", b"d"), make_envelope("2", b"e")];
+        let mut batch = SyncBatch::new("node", envs);
+
+        let leaf_hashes = batch.leaf_hashes();
+        let proof = merkle::compute_merkle_proof(&leaf_hashes, 0).unwrap();
+        batch.add_proof(proof);
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let signature = signing_key.sign(&batch.signature_message().unwrap());
+        batch.add_signature(BatchSignature {
+            signer_id: "node_signer".into(),
+            algorithm: SignatureAlgorithm::Ed25519,
+            signature: signature.to_bytes().to_vec(),
+            public_key: signing_key.verifying_key().to_bytes().to_vec(),
+        });
+
+        assert!(batch.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_signature_bytes() {
+        let envs = vec![make_envelope("1", b"d")];
+        let mut batch = SyncBatch::new("node", envs);
+        batch.add_signature(BatchSignature {
+            signer_id: "node_signer".into(),
+            algorithm: SignatureAlgorithm::Ed25519,
+            signature: vec![1, 2, 3],
+            public_key: vec![0u8; 32],
+        });
+
+        let err = batch.validate().unwrap_err();
+        assert!(matches!(err, ProtocolError::InvalidSignature(_)));
+    }
+
+    #[test]
+    fn validate_rejects_proof_with_wrong_leaf_hash() {
+        let envs = vec![make_envelope("1", b"d"), make_envelope("2", b"e")];
+        let mut batch = SyncBatch::new("node", envs);
+        let leaf_hashes = batch.leaf_hashes();
+        let mut proof = merkle::compute_merkle_proof(&leaf_hashes, 0).unwrap();
+        proof.leaf_hash = [0xAB; 32];
+        batch.add_proof(proof);
+
+        let err = batch.validate().unwrap_err();
+        assert!(matches!(err, ProtocolError::MerkleVerificationFailed(_)));
     }
 
     // --- len / is_empty tests ---

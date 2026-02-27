@@ -518,18 +518,46 @@ pub struct CreatePaymentMethod {
 
 /// Generate a unique payment number
 pub fn generate_payment_number() -> String {
-    let now = chrono::Utc::now();
-    let timestamp = now.timestamp();
-    // Use 4 hex chars from UUID for entropy (65536 combinations per second)
-    let random: u32 = (uuid::Uuid::new_v4().as_u128() % 0xFFFF) as u32;
-    format!("PAY-{}-{:04X}", timestamp, random)
+    generate_number("PAY")
 }
 
 /// Generate a unique refund number
 pub fn generate_refund_number() -> String {
+    generate_number("REF")
+}
+
+fn generate_number(prefix: &str) -> String {
     let now = chrono::Utc::now();
-    let timestamp = now.timestamp();
-    // Use 4 hex chars from UUID for entropy (65536 combinations per second)
-    let random: u32 = (uuid::Uuid::new_v4().as_u128() % 0xFFFF) as u32;
-    format!("REF-{}-{:04X}", timestamp, random)
+    let timestamp = now.timestamp_millis();
+    let entropy = uuid::Uuid::new_v4().simple().to_string();
+    format!("{prefix}-{timestamp}-{}", entropy[..12].to_ascii_uppercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payment_number_has_prefix_and_entropy_suffix() {
+        let value = generate_payment_number();
+        assert!(value.starts_with("PAY-"));
+        let parts: Vec<&str> = value.split('-').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[2].len(), 12);
+    }
+
+    #[test]
+    fn refund_number_has_prefix_and_entropy_suffix() {
+        let value = generate_refund_number();
+        assert!(value.starts_with("REF-"));
+        let parts: Vec<&str> = value.split('-').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[2].len(), 12);
+    }
+
+    #[test]
+    fn generated_numbers_are_not_equal() {
+        assert_ne!(generate_payment_number(), generate_payment_number());
+        assert_ne!(generate_refund_number(), generate_refund_number());
+    }
 }

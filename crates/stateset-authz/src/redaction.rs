@@ -161,7 +161,14 @@ pub fn redact_value(value: &mut serde_json::Value, config: &RedactionConfig) {
 /// ```
 #[must_use]
 pub fn redact_string(s: &str) -> String {
-    if s.len() <= 6 { "***".to_owned() } else { format!("{}***{}", &s[..3], &s[s.len() - 3..]) }
+    let len = s.chars().count();
+    if len <= 6 {
+        return "***".to_owned();
+    }
+
+    let prefix: String = s.chars().take(3).collect();
+    let suffix: String = s.chars().skip(len - 3).collect();
+    format!("{prefix}***{suffix}")
 }
 
 #[cfg(test)]
@@ -354,6 +361,11 @@ mod tests {
     #[test]
     fn redact_string_single_char() {
         assert_eq!(redact_string("x"), "***");
+    }
+
+    #[test]
+    fn redact_string_unicode_safe() {
+        assert_eq!(redact_string("абвгдеёж"), "абв***еёж");
     }
 
     // -- Serde --

@@ -1,4 +1,8 @@
 use std::collections::VecDeque;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 use crate::error::SyncError;
 use crate::event::SyncEvent;
@@ -6,14 +10,21 @@ use crate::event::SyncEvent;
 /// Default maximum capacity for the outbox.
 const DEFAULT_MAX_CAPACITY: usize = 10_000;
 
-/// An in-memory, append-only event outbox.
+/// Snapshot schema for durable outbox persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OutboxSnapshot {
+    events: Vec<SyncEvent>,
+    next_sequence: u64,
+}
+
+/// An event outbox.
 ///
 /// Events are appended and assigned monotonically increasing sequence numbers.
 /// The outbox can be drained (consumed) in order for push operations, or
 /// peeked without consuming.
 ///
-/// This mirrors the JS `Outbox` class but without SQLite persistence
-/// (persistence is delegated to the transport layer or a storage backend).
+/// By default this is in-memory, but it can be backed by a durable JSON
+/// snapshot via [`Outbox::with_persistence`].
 ///
 /// # Examples
 ///
@@ -31,13 +42,14 @@ pub struct Outbox {
     events: VecDeque<SyncEvent>,
     max_capacity: usize,
     next_sequence: u64,
+    persistence_path: Option<PathBuf>,
 }
 
 impl Outbox {
-    /// Create a new `Outbox` with the given maximum capacity.
+    /// Create a new in-memory `Outbox` with the given maximum capacity.
     #[must_use]
     pub const fn new(max_capacity: usize) -> Self {
-        Self { events: VecDeque::new(), max_capacity, next_sequence: 1 }
+        Self { events: VecDeque::new(), max_capacity, next_sequence: 1, persistence_path: None }
     }
 
     /// Create a new `Outbox` with the default maximum capacity (10,000).
@@ -46,13 +58,53 @@ impl Outbox {
         Self::new(DEFAULT_MAX_CAPACITY)
     }
 
+    /// Create a durable outbox persisted to `path`.
+    ///
+    /// If the snapshot already exists, it is loaded and reused.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::Storage`] if snapshot I/O fails.
+    pub fn with_persistence(
+        max_capacity: usize,
+        path: impl AsRef<Path>,
+    ) -> Result<Self, SyncError> {
+        let path = path.as_ref().to_path_buf();
+        let mut outbox = Self {
+            events: VecDeque::new(),
+            max_capacity,
+            next_sequence: 1,
+            persistence_path: Some(path.clone()),
+        };
+
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .map_err(|e| SyncError::Storage(format!("read outbox snapshot failed: {e}")))?;
+            if !contents.trim().is_empty() {
+                let snapshot: OutboxSnapshot = serde_json::from_str(&contents)?;
+                outbox.events = snapshot.events.into();
+                outbox.next_sequence = snapshot.next_sequence.max(
+                    outbox.events.back().map(|event| event.sequence.saturating_add(1)).unwrap_or(1),
+                );
+                while outbox.events.len() > outbox.max_capacity {
+                    let _ = outbox.events.pop_front();
+                }
+            }
+        } else {
+            outbox.persist()?;
+        }
+
+        Ok(outbox)
+    }
+
     /// Append an event to the outbox, assigning it the next sequence number.
     ///
     /// Returns the assigned sequence number.
     ///
     /// # Errors
     ///
-    /// Returns [`SyncError::OutboxFull`] if the outbox is at capacity.
+    /// Returns [`SyncError::OutboxFull`] if the outbox is at capacity or
+    /// [`SyncError::Storage`] if durable persistence fails.
     pub fn append(&mut self, event: SyncEvent) -> Result<u64, SyncError> {
         if self.events.len() >= self.max_capacity {
             return Err(SyncError::OutboxFull {
@@ -65,6 +117,13 @@ impl Outbox {
         self.next_sequence += 1;
         let event = event.with_sequence(seq);
         self.events.push_back(event);
+
+        if let Err(err) = self.persist() {
+            let _ = self.events.pop_back();
+            self.next_sequence = self.next_sequence.saturating_sub(1);
+            return Err(err);
+        }
+
         Ok(seq)
     }
 
@@ -73,7 +132,16 @@ impl Outbox {
     /// Drained events are removed from the outbox.
     pub fn drain(&mut self, count: usize) -> Vec<SyncEvent> {
         let n = count.min(self.events.len());
-        self.events.drain(..n).collect()
+        let drained: Vec<SyncEvent> = self.events.drain(..n).collect();
+
+        if self.persist().is_err() {
+            for event in drained.iter().rev().cloned() {
+                self.events.push_front(event);
+            }
+            return Vec::new();
+        }
+
+        drained
     }
 
     /// Peek at up to `count` events from the front of the outbox without consuming them.
@@ -89,7 +157,11 @@ impl Outbox {
     where
         F: FnMut(&SyncEvent) -> bool,
     {
+        let before = self.events.clone();
         self.events.retain(|event| predicate(event));
+        if self.persist().is_err() {
+            self.events = before;
+        }
     }
 
     /// Return the number of events currently in the outbox.
@@ -112,7 +184,11 @@ impl Outbox {
 
     /// Remove all events from the outbox.
     pub fn clear(&mut self) {
+        let before = self.events.clone();
         self.events.clear();
+        if self.persist().is_err() {
+            self.events = before;
+        }
     }
 
     /// Return the maximum capacity of the outbox.
@@ -126,6 +202,32 @@ impl Outbox {
     pub const fn next_sequence(&self) -> u64 {
         self.next_sequence
     }
+
+    fn persist(&self) -> Result<(), SyncError> {
+        let Some(path) = &self.persistence_path else {
+            return Ok(());
+        };
+
+        let snapshot = OutboxSnapshot {
+            events: self.events.iter().cloned().collect(),
+            next_sequence: self.next_sequence,
+        };
+
+        let serialized = serde_json::to_string_pretty(&snapshot)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                SyncError::Storage(format!("create outbox snapshot directory failed: {e}"))
+            })?;
+        }
+
+        let tmp_path = path.with_extension("tmp");
+        fs::write(&tmp_path, serialized)
+            .map_err(|e| SyncError::Storage(format!("write outbox snapshot failed: {e}")))?;
+        fs::rename(&tmp_path, path)
+            .map_err(|e| SyncError::Storage(format!("replace outbox snapshot failed: {e}")))?;
+
+        Ok(())
+    }
 }
 
 impl Default for Outbox {
@@ -138,6 +240,7 @@ impl Default for Outbox {
 mod tests {
     use super::*;
     use serde_json::json;
+    use tempfile::tempdir;
 
     fn make_event(event_type: &str) -> SyncEvent {
         SyncEvent::new(event_type, "order", "ORD-1", json!({}))
@@ -324,5 +427,22 @@ mod tests {
         assert_eq!(outbox.next_sequence(), 1);
         outbox.append(make_event("a")).unwrap();
         assert_eq!(outbox.next_sequence(), 2);
+    }
+
+    #[test]
+    fn persistent_outbox_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("outbox.json");
+
+        {
+            let mut outbox = Outbox::with_persistence(10, &path).unwrap();
+            outbox.append(make_event("a")).unwrap();
+            outbox.append(make_event("b")).unwrap();
+            assert_eq!(outbox.count(), 2);
+        }
+
+        let outbox = Outbox::with_persistence(10, &path).unwrap();
+        assert_eq!(outbox.count(), 2);
+        assert_eq!(outbox.next_sequence(), 3);
     }
 }

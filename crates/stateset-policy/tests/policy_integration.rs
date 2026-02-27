@@ -523,9 +523,9 @@ fn empty_and_group_evaluates_to_true() {
 }
 
 #[test]
-fn empty_or_group_evaluates_to_true() {
+fn empty_or_group_evaluates_to_false() {
     let group = ConditionGroup::new(Logic::Or, vec![]);
-    assert!(group.evaluate(&json!({})));
+    assert!(!group.evaluate(&json!({})));
 }
 
 // ===========================================================================

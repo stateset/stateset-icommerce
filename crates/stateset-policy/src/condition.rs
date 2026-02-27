@@ -235,10 +235,14 @@ impl ConditionGroup {
         Self { logic, conditions }
     }
 
-    /// Evaluate the group. An empty group evaluates to `true`.
+    /// Evaluate the group.
+    ///
+    /// Empty groups follow standard boolean identity semantics:
+    /// - empty `And` is `true`
+    /// - empty `Or` is `false`
     pub fn evaluate(&self, context: &Value) -> bool {
         if self.conditions.is_empty() {
-            return true;
+            return matches!(self.logic, Logic::And);
         }
 
         match self.logic {
@@ -262,7 +266,7 @@ impl ConditionGroup {
     /// Evaluate and return both the match result and the details.
     pub fn evaluate_full(&self, context: &Value) -> (bool, Vec<ConditionDetail>) {
         if self.conditions.is_empty() {
-            return (true, Vec::new());
+            return (matches!(self.logic, Logic::And), Vec::new());
         }
 
         // Preserve nested AND/OR semantics by aggregating each child node's

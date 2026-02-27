@@ -38,16 +38,38 @@ pub fn load_policy_set_from_yaml(content: &str) -> crate::Result<PolicySet> {
     Ok(ps)
 }
 
-/// Load all policy files from a directory.
+/// Load all policy files from a directory in strict mode.
 ///
 /// Scans for files with extensions `.yaml`, `.yml`, and `.json`.
-/// Files that fail to parse are logged as warnings and skipped.
+/// Any read or parse failure returns an error.
+///
+/// # Errors
+///
+/// Returns [`PolicyError::IoError`](crate::PolicyError::IoError) if the directory cannot be read
+/// and a parse/serialization error if a policy file is invalid.
+#[cfg(feature = "yaml")]
+pub fn load_policies_from_dir(dir: &std::path::Path) -> crate::Result<Vec<PolicySet>> {
+    load_policies_from_dir_inner(dir, false)
+}
+
+/// Load all policy files from a directory in permissive mode.
+///
+/// Scans for files with extensions `.yaml`, `.yml`, and `.json`.
+/// Files that fail to parse are logged and skipped.
 ///
 /// # Errors
 ///
 /// Returns [`PolicyError::IoError`](crate::PolicyError::IoError) if the directory cannot be read.
 #[cfg(feature = "yaml")]
-pub fn load_policies_from_dir(dir: &std::path::Path) -> crate::Result<Vec<PolicySet>> {
+pub fn load_policies_from_dir_permissive(dir: &std::path::Path) -> crate::Result<Vec<PolicySet>> {
+    load_policies_from_dir_inner(dir, true)
+}
+
+#[cfg(feature = "yaml")]
+fn load_policies_from_dir_inner(
+    dir: &std::path::Path,
+    permissive: bool,
+) -> crate::Result<Vec<PolicySet>> {
     use std::fs;
 
     if !dir.exists() {
@@ -73,8 +95,15 @@ pub fn load_policies_from_dir(dir: &std::path::Path) -> crate::Result<Vec<Policy
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "Failed to read policy file");
-                continue;
+                if permissive {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "Failed to read policy file, skipping"
+                    );
+                    continue;
+                }
+                return Err(e.into());
             }
         };
 
@@ -95,11 +124,15 @@ pub fn load_policies_from_dir(dir: &std::path::Path) -> crate::Result<Vec<Policy
                 sets.push(ps);
             }
             Err(e) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "Failed to parse policy file, skipping"
-                );
+                if permissive {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "Failed to parse policy file, skipping"
+                    );
+                    continue;
+                }
+                return Err(e);
             }
         }
     }
@@ -312,7 +345,7 @@ rules:
 
     #[cfg(feature = "yaml")]
     #[test]
-    fn load_from_dir_skips_bad_files() {
+    fn load_from_dir_strict_rejects_bad_files() {
         use std::fs;
         use std::io::Write as _;
 
@@ -327,7 +360,26 @@ rules:
         let bad_path = dir.path().join("bad.json");
         fs::write(&bad_path, "not valid json").unwrap();
 
-        let sets = load_policies_from_dir(dir.path()).unwrap();
+        let err = load_policies_from_dir(dir.path()).unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn load_from_dir_permissive_skips_bad_files() {
+        use std::fs;
+        use std::io::Write as _;
+
+        let dir = tempfile::tempdir().unwrap();
+
+        let json_path = dir.path().join("good.json");
+        let mut f = fs::File::create(&json_path).unwrap();
+        writeln!(f, r#"{{"name": "good", "domain": "orders", "rules": []}}"#).unwrap();
+
+        let bad_path = dir.path().join("bad.json");
+        fs::write(&bad_path, "not valid json").unwrap();
+
+        let sets = load_policies_from_dir_permissive(dir.path()).unwrap();
         assert_eq!(sets.len(), 1);
         assert_eq!(sets[0].name, "good");
     }

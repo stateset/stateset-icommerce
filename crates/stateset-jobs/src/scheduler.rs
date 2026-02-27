@@ -80,6 +80,8 @@ pub struct SchedulerStatus {
     pub max_concurrent: usize,
     /// When the next job is due (if any).
     pub next_run_at: Option<DateTime<Utc>>,
+    /// Last internal scheduler/store recovery error, if any.
+    pub last_internal_error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +99,7 @@ pub struct Scheduler {
     store: Box<dyn JobStore>,
     running: HashMap<Uuid, RunningJob>,
     max_concurrent: usize,
+    last_internal_error: Option<String>,
 }
 
 /// Metadata about a currently running job.
@@ -112,13 +115,16 @@ impl Scheduler {
     /// Create a new scheduler with the given store.
     #[must_use]
     pub fn new(store: Box<dyn JobStore>) -> Self {
-        Self {
+        let mut scheduler = Self {
             definitions: HashMap::new(),
             queue: JobQueue::new(DEFAULT_MAX_QUEUE_SIZE),
             store,
             running: HashMap::new(),
             max_concurrent: DEFAULT_MAX_CONCURRENT,
-        }
+            last_internal_error: None,
+        };
+        scheduler.recover_from_store();
+        scheduler
     }
 
     /// Set the maximum number of concurrently running jobs.
@@ -142,6 +148,11 @@ impl Scheduler {
     /// Returns [`JobError::InvalidSchedule`] if the definition's schedule is invalid.
     pub fn register(&mut self, definition: JobDefinition) -> Result<(), JobError> {
         definition.validate()?;
+        for running in self.running.values_mut() {
+            if running.definition_name == definition.name {
+                running.timeout = definition.timeout;
+            }
+        }
         self.definitions.insert(definition.name.clone(), definition);
         Ok(())
     }
@@ -223,7 +234,7 @@ impl Scheduler {
         // Keep overflow jobs scheduled instead of dropping them.
         for instance in deferred {
             if let Err(err) = self.queue.enqueue(instance) {
-                eprintln!("failed to re-enqueue deferred job: {err}");
+                self.record_internal_error(format!("failed to re-enqueue deferred job: {err}"));
             }
         }
 
@@ -245,9 +256,11 @@ impl Scheduler {
                 continue;
             }
             if let Err(err) = self.store.save(&instance) {
-                eprintln!("failed to persist running job state: {err}");
+                self.record_internal_error(format!("failed to persist running job state: {err}"));
                 if let Err(requeue_err) = self.queue.enqueue(scheduled_instance) {
-                    eprintln!("failed to re-enqueue job after save failure: {requeue_err}");
+                    self.record_internal_error(format!(
+                        "failed to re-enqueue job after save failure: {requeue_err}"
+                    ));
                 }
                 continue;
             }
@@ -280,7 +293,9 @@ impl Scheduler {
             Ok(Some(instance)) => instance,
             Ok(None) => return true,
             Err(err) => {
-                eprintln!("failed to load job state for timeout handling: {err}");
+                self.record_internal_error(format!(
+                    "failed to load job state for timeout handling: {err}"
+                ));
                 return false;
             }
         };
@@ -445,6 +460,7 @@ impl Scheduler {
             queued_jobs: self.queue.size(),
             max_concurrent: self.max_concurrent,
             next_run_at: self.queue.peek_next(),
+            last_internal_error: self.last_internal_error.clone(),
         }
     }
 
@@ -452,6 +468,12 @@ impl Scheduler {
     #[must_use]
     pub fn store(&self) -> &dyn JobStore {
         &*self.store
+    }
+
+    /// Returns the last internal scheduler error, if any.
+    #[must_use]
+    pub fn last_internal_error(&self) -> Option<&str> {
+        self.last_internal_error.as_deref()
     }
 
     /// Re-schedule a recurring (interval/cron) job for its next run.
@@ -474,6 +496,43 @@ impl Scheduler {
         }
 
         Ok(())
+    }
+
+    fn recover_from_store(&mut self) {
+        match self.store.list_active() {
+            Ok(instances) => {
+                for instance in instances {
+                    match instance.status {
+                        JobStatus::Pending | JobStatus::Scheduled | JobStatus::Retrying => {
+                            if let Err(err) = self.queue.enqueue(instance.clone()) {
+                                self.record_internal_error(format!(
+                                    "failed to requeue recovered job {}: {err}",
+                                    instance.id
+                                ));
+                            }
+                        }
+                        JobStatus::Running => {
+                            self.running.insert(
+                                instance.id,
+                                RunningJob {
+                                    definition_name: instance.definition_name.clone(),
+                                    started_at: instance.started_at.unwrap_or(instance.created_at),
+                                    timeout: std::time::Duration::from_secs(300),
+                                },
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(err) => {
+                self.record_internal_error(format!("failed to recover jobs from store: {err}"));
+            }
+        }
+    }
+
+    fn record_internal_error(&mut self, message: String) {
+        self.last_internal_error = Some(message);
     }
 }
 
@@ -575,6 +634,37 @@ mod tests {
     fn schedule_unknown_definition_errors() {
         let mut s = make_scheduler();
         assert!(s.schedule("nonexistent", Utc::now()).is_err());
+    }
+
+    #[test]
+    fn scheduler_recovers_scheduled_jobs_from_store() {
+        let store = InMemoryJobStore::new();
+        let now = Utc::now();
+        let inst = JobInstance::new_scheduled("test", now);
+        let id = inst.id;
+        store.save(&inst).unwrap();
+
+        let mut s = Scheduler::new(Box::new(store));
+        register_noop(&mut s, "test");
+
+        assert_eq!(s.status().queued_jobs, 1);
+        let actions = s.tick(now);
+        assert!(
+            actions.iter().any(
+                |action| matches!(action, TickAction::Execute { job_id, .. } if *job_id == id)
+            )
+        );
+    }
+
+    #[test]
+    fn scheduler_recovers_running_jobs_from_store() {
+        let store = InMemoryJobStore::new();
+        let mut inst = JobInstance::new("running-job");
+        inst.mark_running().unwrap();
+        store.save(&inst).unwrap();
+
+        let s = Scheduler::new(Box::new(store));
+        assert_eq!(s.status().running_jobs, 1);
     }
 
     // -----------------------------------------------------------------------

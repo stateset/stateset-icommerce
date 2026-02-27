@@ -16,11 +16,11 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "0.7.10"
+//! stateset-sdk = "0.7.12"
 //! ```
 //!
 //! ```rust,ignore
-//! use stateset::prelude::*;
+//! use stateset_sdk::prelude::*;
 //!
 //! let commerce = Commerce::new("store.db")?;
 //! let customer = commerce.customers().create(CreateCustomer {
@@ -44,18 +44,23 @@
 // ── Core (always available) ──────────────────────────────────────────
 
 /// Primitive types: Money, `CurrencyCode`, Sku, typed IDs.
+#[cfg(feature = "core")]
 pub use stateset_primitives as primitives;
 
 /// Domain models, errors, events, validation, and repository traits.
+#[cfg(feature = "core")]
 pub use stateset_core as core;
 
 /// Database abstraction layer (SQLite, PostgreSQL).
+#[cfg(feature = "core")]
 pub use stateset_db as db;
 
 /// High-level Commerce API wrapping core + db.
+#[cfg(feature = "core")]
 pub use stateset_embedded as embedded;
 
 /// Metrics and observability.
+#[cfg(feature = "core")]
 pub use stateset_observability as observability;
 
 // ── Feature-gated re-exports ─────────────────────────────────────────
@@ -77,8 +82,9 @@ pub use stateset_macros as macros;
 /// Commonly used types, re-exported for convenience.
 ///
 /// ```rust,ignore
-/// use stateset::prelude::*;
+/// use stateset_sdk::prelude::*;
 /// ```
+#[cfg(feature = "core")]
 pub mod prelude {
     // Commerce API
     pub use stateset_embedded::Commerce;
@@ -152,6 +158,7 @@ pub mod prelude {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "core")]
     #[test]
     fn prelude_imports_compile() {
         // Verify key types are accessible through the prelude
@@ -160,22 +167,26 @@ mod tests {
         let _: OrderId = OrderId::new();
     }
 
+    #[cfg(feature = "core")]
     #[test]
     fn core_reexport_accessible() {
         let _ = core::CommerceError::NotFound;
     }
 
+    #[cfg(feature = "core")]
     #[test]
     fn primitives_reexport_accessible() {
         let _id = primitives::OrderId::new();
     }
 
+    #[cfg(feature = "core")]
     #[test]
     fn db_reexport_accessible() {
         // DatabaseConfig is available through db re-export
         let _cfg = db::DatabaseConfig::in_memory();
     }
 
+    #[cfg(feature = "core")]
     #[test]
     fn observability_reexport_accessible() {
         let _cfg = observability::MetricsConfig::default();

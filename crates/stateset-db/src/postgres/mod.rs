@@ -80,6 +80,7 @@ pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
 
+use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use stateset_core::CommerceError;
 use std::future::Future;
@@ -124,6 +125,7 @@ impl PostgresDatabase {
             CREATE TABLE IF NOT EXISTS _migrations (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
+                checksum TEXT,
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             "#,
@@ -186,21 +188,39 @@ impl PostgresDatabase {
         for (name, sql) in migrations {
             let mut tx =
                 pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let checksum = Self::compute_migration_checksum(sql);
 
             // Check if migration already applied (inside tx so apply+record is atomic per migration).
-            let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _migrations WHERE name = $1")
-                .bind(name)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let existing_checksum: Option<Option<String>> =
+                sqlx::query_scalar("SELECT checksum FROM _migrations WHERE name = $1")
+                    .bind(name)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            if count.0 == 0 {
+            if let Some(existing) = existing_checksum {
+                let existing = existing.unwrap_or_default();
+                if !existing.is_empty() && existing != checksum {
+                    return Err(CommerceError::DatabaseError(format!(
+                        "migration checksum mismatch for {name}: expected {checksum}, found {existing}",
+                    )));
+                }
+                if existing.is_empty() {
+                    sqlx::query("UPDATE _migrations SET checksum = $1 WHERE name = $2")
+                        .bind(&checksum)
+                        .bind(name)
+                        .execute(tx.as_mut())
+                        .await
+                        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                }
+            } else {
                 sqlx::raw_sql(sql).execute(tx.as_mut()).await.map_err(|e| {
                     CommerceError::DatabaseError(format!("Migration {} failed: {}", name, e))
                 })?;
 
-                sqlx::query("INSERT INTO _migrations (name) VALUES ($1)")
+                sqlx::query("INSERT INTO _migrations (name, checksum) VALUES ($1, $2)")
                     .bind(name)
+                    .bind(&checksum)
                     .execute(tx.as_mut())
                     .await
                     .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -210,6 +230,11 @@ impl PostgresDatabase {
         }
 
         Ok(())
+    }
+
+    fn compute_migration_checksum(sql: &str) -> String {
+        let digest = Sha256::digest(sql.as_bytes());
+        digest.iter().map(|b| format!("{:02x}", b)).collect()
     }
 
     /// Get order repository

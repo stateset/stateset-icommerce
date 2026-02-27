@@ -248,8 +248,13 @@ impl AuditLog {
     }
 
     /// Appends a record. If the log is full, the oldest record is removed.
+    ///
+    /// A `max_size` of `0` disables retention and drops all incoming records.
     pub fn record(&mut self, record: AuditRecord) {
-        if self.records.len() >= self.max_size && self.max_size > 0 {
+        if self.max_size == 0 {
+            return;
+        }
+        if self.records.len() >= self.max_size {
             let _ = self.records.pop_front();
         }
         self.records.push_back(record);
@@ -461,6 +466,13 @@ mod tests {
         assert_eq!(all[0].actor_id(), "actor-2");
         assert_eq!(all[1].actor_id(), "actor-3");
         assert_eq!(all[2].actor_id(), "actor-4");
+    }
+
+    #[test]
+    fn max_size_zero_drops_records() {
+        let mut log = AuditLog::new(0);
+        log.record(make_record("alice", "orders", AccessDecision::Allowed));
+        assert!(log.is_empty());
     }
 
     #[test]

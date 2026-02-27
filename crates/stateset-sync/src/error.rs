@@ -40,6 +40,10 @@ pub enum SyncError {
     #[error("serialization error: {0}")]
     Serialization(String),
 
+    /// A local storage operation failed (for durable outbox persistence).
+    #[error("storage error: {0}")]
+    Storage(String),
+
     /// An invalid configuration value was provided.
     #[error("invalid config: {0}")]
     InvalidConfig(String),
@@ -95,6 +99,12 @@ mod tests {
         let json_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
         let sync_err: SyncError = json_err.into();
         assert!(matches!(sync_err, SyncError::Serialization(_)));
+    }
+
+    #[test]
+    fn error_display_storage() {
+        let err = SyncError::Storage("disk full".into());
+        assert_eq!(err.to_string(), "storage error: disk full");
     }
 
     #[test]

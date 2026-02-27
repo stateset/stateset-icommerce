@@ -12,11 +12,11 @@ categories = ["api-bindings"]
 
 [dependencies]
 # Always included (core)
-stateset-primitives = { workspace = true }
-stateset-core = { workspace = true }
-stateset-db = { workspace = true }
-stateset-embedded = { workspace = true }
-stateset-observability = { workspace = true }
+stateset-primitives = { workspace = true, optional = true }
+stateset-core = { workspace = true, optional = true }
+stateset-db = { workspace = true, optional = true }
+stateset-embedded = { workspace = true, optional = true }
+stateset-observability = { workspace = true, optional = true }
 
 # Feature-gated
 stateset-crypto = { workspace = true, optional = true }
@@ -25,8 +25,14 @@ stateset-macros = { workspace = true, optional = true }
 
 [features]
 default = ["core"]
-core = []
-full = ["crypto", "policy", "macros"]
+core = [
+    "dep:stateset-primitives",
+    "dep:stateset-core",
+    "dep:stateset-db",
+    "dep:stateset-embedded",
+    "dep:stateset-observability",
+]
+full = ["core", "crypto", "policy", "macros"]
 crypto = ["dep:stateset-crypto"]
 policy = ["dep:stateset-policy"]
 macros = ["dep:stateset-macros"]
