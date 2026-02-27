@@ -15,7 +15,7 @@ function shellQuote(value) {
  * without running commands twice.
  */
 export function runNodeScript(scriptPath, args = [], options = {}) {
-  const env = { ...process.env, ...(options.env || {}) };
+  const env = { ...process.env, NODE_NO_WARNINGS: '1', ...(options.env || {}) };
   const captureDir = mkdtempSync(join(tmpdir(), 'stateset-cli-test-'));
   const capturePath = join(captureDir, 'capture.txt');
   const commandParts = [
@@ -36,6 +36,7 @@ export function runNodeScript(scriptPath, args = [], options = {}) {
   const result = spawnSync('bash', ['-lc', command], {
     encoding: 'utf-8',
     env,
+    cwd: options.cwd || process.cwd(),
   });
 
   let capturedOutput = '';

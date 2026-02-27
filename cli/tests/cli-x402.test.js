@@ -16,9 +16,11 @@ const X402_PATH = join(__dirname, '..', 'bin', 'stateset-x402.js');
 const X402_MCP_PATH = join(__dirname, '..', 'bin', 'stateset-x402-mcp.js');
 
 function runCli(binPath, args, opts = {}) {
-  const result = spawnSync('node', [binPath, ...args], {
+  const env = { ...process.env, NODE_NO_WARNINGS: '1', ...(opts.env || {}) };
+  const result = spawnSync(process.execPath, [binPath, ...args], {
     encoding: 'utf-8',
     ...opts,
+    env,
   });
 
   if (result.error) {

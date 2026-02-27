@@ -13,8 +13,9 @@ const __dirname = dirname(__filename);
 const CLI_PATH = join(__dirname, '..', 'bin', 'stateset-install-service.js');
 
 function runCli(args) {
-  const result = spawnSync('node', [CLI_PATH, ...args], {
+  const result = spawnSync(process.execPath, [CLI_PATH, ...args], {
     encoding: 'utf-8',
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
   });
   if (result.error) {
     throw result.error;

@@ -368,6 +368,29 @@ function formatOutput(data, format) {
   return formatStructuredOutput(data, format);
 }
 
+function failCli(message, { json = false, code = 1, details = [], hint = null } = {}) {
+  const normalizedMessage = String(message)
+    .replace(/^Error:\s*/i, '')
+    .trim();
+  if (json) {
+    const payload = { error: normalizedMessage };
+    if (hint) {
+      payload.hint = hint;
+    }
+    if (details.length > 0) {
+      payload.details = details;
+    }
+    console.log(JSON.stringify(payload));
+  } else {
+    const rendered = String(message).startsWith('Error:') ? String(message) : `Error: ${message}`;
+    console.error(rendered);
+    for (const detail of details) {
+      console.error(detail);
+    }
+  }
+  process.exit(code);
+}
+
 /**
  * Read lines from stdin
  */
@@ -654,20 +677,20 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
   const isQuiet = values.quiet || isJsonOutput;
   let parallelism = values.parallel ? parseInt(values.parallel, 10) : 0;
   if (values.parallel && (!Number.isFinite(parallelism) || parallelism < 1)) {
-    console.error('Error: --parallel must be a positive integer');
-    process.exit(1);
+    failCli('--parallel must be a positive integer', { json: isJsonOutput });
   }
   if (parallelism > MAX_PARALLELISM) {
-    console.error(
-      `Error: --parallel cannot exceed ${MAX_PARALLELISM}. Set STATESET_MAX_PARALLEL=<n> (max 64) to adjust the cap.`,
+    failCli(
+      `--parallel cannot exceed ${MAX_PARALLELISM}. Set STATESET_MAX_PARALLEL=<n> (max 64) to adjust the cap.`,
+      { json: isJsonOutput },
     );
-    process.exit(1);
   }
   if (!parallelism) parallelism = 0;
   if (values.resume && parallelism > 0) {
-    console.error('Error: --resume is not compatible with --parallel.');
-    console.error('Use --resume with sequential batch mode for session continuity.');
-    process.exit(1);
+    failCli('--resume is not compatible with --parallel.', {
+      json: isJsonOutput,
+      details: ['Use --resume with sequential batch mode for session continuity.'],
+    });
   }
   const onConfirmRequired = createConfirmHandler({
     output,
@@ -688,8 +711,7 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
   }
 
   if (requests.length === 0) {
-    console.error('Error: No requests to process');
-    process.exit(1);
+    failCli('No requests to process', { json: isJsonOutput });
   }
 
   const startTime = Date.now();
@@ -806,13 +828,13 @@ async function main() {
   });
   const values = normalizeMainCliValues(parsed.values);
   const { positionals } = parsed;
+  const jsonRequested = values.json || values.format === 'json';
 
   // Load profile config and merge with CLI args (CLI args take precedence)
   const profileConfig = loadConfigWithProfile(values.profile);
   const timeoutMs = values.timeout ? Number(values.timeout) : null;
   if (timeoutMs !== null && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
-    console.error('Error: --timeout must be a positive integer');
-    process.exit(1);
+    failCli('--timeout must be a positive integer', { json: jsonRequested });
   }
   const config = {
     db: values.db || profileConfig.db || './store.db',
@@ -822,7 +844,7 @@ async function main() {
     timeoutMs,
   };
 
-  const isJsonOutput = values.json || values.format === 'json';
+  const isJsonOutput = jsonRequested;
   const isQuiet = values.quiet || isJsonOutput;
   const memoryOverride = values.noMemory ? false : values.memory ? true : null;
   const treasuryEnabled = Boolean(
@@ -868,8 +890,7 @@ async function main() {
 
   if (values.queueStatus || values.queueClear) {
     const outputQueueError = (message, code = 1) => {
-      console.error(message);
-      process.exit(code);
+      failCli(message, { json: isJsonOutput, code });
     };
 
     const queueAdminAuthorized =
@@ -924,22 +945,19 @@ async function main() {
   if (values.format && values.format !== 'table') {
     const fmtResult = validateFormat(values.format);
     if (!fmtResult.valid) {
-      console.error(`Error: ${fmtResult.error}`);
-      process.exit(1);
+      failCli(fmtResult.error, { json: isJsonOutput });
     }
   }
   if (values.budget !== undefined) {
     const budgetResult = validateBudget(values.budget);
     if (!budgetResult.valid) {
-      console.error(`Error: ${budgetResult.error}`);
-      process.exit(1);
+      failCli(budgetResult.error, { json: isJsonOutput });
     }
   }
   if (values.provider) {
     const provResult = validateProvider(values.provider);
     if (!provResult.valid) {
-      console.error(`Error: ${provResult.error}`);
-      process.exit(1);
+      failCli(provResult.error, { json: isJsonOutput });
     }
   }
   if (values.model) {
@@ -950,17 +968,17 @@ async function main() {
   }
 
   if (values.stream && isJsonOutput) {
-    console.error(
-      'Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.',
-    );
-    process.exit(1);
+    failCli('--stream cannot be used with JSON output. Remove --stream or use a non-JSON format.', {
+      json: isJsonOutput,
+    });
   }
 
   // Validate agent name if provided
   if (values.agent && !AVAILABLE_AGENTS.includes(values.agent)) {
-    console.error(`Error: Unknown agent '${values.agent}'`);
-    console.error(`Available agents: ${AVAILABLE_AGENTS.join(', ')}`);
-    process.exit(1);
+    failCli(`Unknown agent '${values.agent}'`, {
+      json: isJsonOutput,
+      details: [`Available agents: ${AVAILABLE_AGENTS.join(', ')}`],
+    });
   }
 
   // Handle batch/stdin modes
@@ -972,6 +990,13 @@ async function main() {
   // Get request from positionals
   const request = positionals.join(' ').trim();
   if (!request) {
+    if (isJsonOutput) {
+      failCli('No request provided', {
+        json: true,
+        details: ['Usage: stateset "<your request>"', 'Run stateset --help for more information'],
+      });
+    }
+
     // Detect first-run: no request and no API key
     if (!process.env.ANTHROPIC_API_KEY) {
       console.log('\nWelcome to StateSet iCommerce CLI!');
@@ -980,9 +1005,9 @@ async function main() {
       console.log('  stateset-setup                     (guided setup)\n');
       console.log('Run stateset --help for all options');
     } else {
-      console.error('Error: No request provided');
-      console.error('Usage: stateset "<your request>"');
-      console.error('Run stateset --help for more information');
+      failCli('No request provided', {
+        details: ['Usage: stateset "<your request>"', 'Run stateset --help for more information'],
+      });
     }
     process.exit(1);
   }
@@ -991,8 +1016,7 @@ async function main() {
   const thinkLevel = values.think || 'off';
   const thinkResult = validateThinkLevel(thinkLevel);
   if (!thinkResult.valid) {
-    console.error(`Error: ${thinkResult.error}`);
-    process.exit(1);
+    failCli(thinkResult.error, { json: isJsonOutput });
   }
 
   // Resolve provider

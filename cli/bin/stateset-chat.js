@@ -71,7 +71,7 @@ async function main() {
       stream: { type: 'boolean', default: false },
       budget: { type: 'string' },
       memory: { type: 'boolean', default: false },
-      noMemory: { type: 'boolean', default: false },
+      'no-memory': { type: 'boolean', default: false },
       x402: { type: 'boolean', default: false },
       treasury: { type: 'boolean', default: false },
       treasuryChain: { type: 'string' },
@@ -105,7 +105,8 @@ async function main() {
   let streaming = values.stream || false;
   let provider = values.provider || 'claude';
   let budget = values.budget || null;
-  let memoryEnabled = values.noMemory ? false : values.memory ? true : null;
+  const noMemoryFlag = values['no-memory'] ?? values.noMemory ?? false;
+  let memoryEnabled = noMemoryFlag ? false : values.memory ? true : null;
   const x402Enabled = values.x402 || false;
   const treasuryEnabled = Boolean(
     values.treasury ||

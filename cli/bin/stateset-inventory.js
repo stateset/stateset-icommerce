@@ -99,7 +99,7 @@ async function main() {
       stream: { type: 'boolean', default: false },
       budget: { type: 'string' },
       memory: { type: 'boolean', default: false },
-      noMemory: { type: 'boolean', default: false },
+      'no-memory': { type: 'boolean', default: false },
       x402: { type: 'boolean', default: false },
       resume: { type: 'string' },
       json: { type: 'boolean', default: false },

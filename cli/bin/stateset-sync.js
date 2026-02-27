@@ -81,14 +81,19 @@ program
   .requiredOption('--store-id <uuid>', 'Store UUID')
   .option('--api-key <key>', 'API key for authentication')
   .option('--db <path>', 'Database path', './store.db')
+  .option('--force', 'Reinitialize if sync is already configured')
   .action(async (options) => {
     const spinner = ora('Initializing sync...').start();
 
     try {
       // Check if already configured
-      if (isSyncConfigured()) {
+      const alreadyConfigured = isSyncConfigured();
+      if (alreadyConfigured && !options.force) {
         spinner.warn('Sync already configured. Use --force to reinitialize.');
         process.exit(1);
+      }
+      if (alreadyConfigured && options.force) {
+        spinner.text = 'Reinitializing existing sync configuration...';
       }
 
       // Create configuration

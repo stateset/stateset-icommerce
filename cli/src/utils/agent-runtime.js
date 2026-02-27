@@ -7,7 +7,8 @@ export function resolveAgentRuntimeOptions(values = {}) {
   }
 
   const providerName = values.provider || 'claude';
-  const memoryOverride = values.noMemory ? false : values.memory ? true : null;
+  const noMemoryFlag = values['no-memory'] ?? values.noMemory ?? false;
+  const memoryOverride = noMemoryFlag ? false : values.memory ? true : null;
 
   return {
     thinkLevel,

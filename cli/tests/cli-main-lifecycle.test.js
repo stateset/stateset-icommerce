@@ -71,4 +71,20 @@ describe('stateset lifecycle and guardrails', () => {
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.doesNotThrow(() => JSON.parse(result.stdout));
   });
+
+  it('returns JSON validation errors when --json is set (provider)', () => {
+    const result = runMain(['--json', '--provider', 'bogus', 'ping']);
+    assert.equal(result.status, 1);
+    assert.doesNotThrow(() => JSON.parse(result.stdout));
+    const payload = JSON.parse(result.stdout);
+    assert.match(payload.error, /unknown provider/i);
+  });
+
+  it('returns JSON validation errors when --json is set (timeout)', () => {
+    const result = runMain(['--json', '--timeout', '0', 'ping']);
+    assert.equal(result.status, 1);
+    assert.doesNotThrow(() => JSON.parse(result.stdout));
+    const payload = JSON.parse(result.stdout);
+    assert.match(payload.error, /timeout.*positive integer/i);
+  });
 });

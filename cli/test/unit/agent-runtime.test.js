@@ -21,6 +21,7 @@ describe('agent-runtime utils', () => {
   it('resolves memory overrides', () => {
     assert.strictEqual(resolveAgentRuntimeOptions({ memory: true }).memoryOverride, true);
     assert.strictEqual(resolveAgentRuntimeOptions({ noMemory: true }).memoryOverride, false);
+    assert.strictEqual(resolveAgentRuntimeOptions({ 'no-memory': true }).memoryOverride, false);
     assert.strictEqual(resolveAgentRuntimeOptions({}).memoryOverride, null);
   });
 

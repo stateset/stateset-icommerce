@@ -15,9 +15,11 @@ const __dirname = dirname(__filename);
 const CLI_PATH = join(__dirname, '..', 'bin', 'stateset-autonomous.js');
 
 function runCli(args, opts = {}) {
-  const result = spawnSync('node', [CLI_PATH, ...args], {
+  const env = { ...process.env, NODE_NO_WARNINGS: '1', ...(opts.env || {}) };
+  const result = spawnSync(process.execPath, [CLI_PATH, ...args], {
     encoding: 'utf-8',
     ...opts,
+    env,
   });
 
   if (result.error) {
