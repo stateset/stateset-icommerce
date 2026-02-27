@@ -10,7 +10,7 @@ repository = "https://github.com/stateset/stateset-icommerce"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-stateset-core = { path = "../../crates/stateset-core" }
+stateset-core = { path = "../../crates/stateset-core", version = "0.7.13" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

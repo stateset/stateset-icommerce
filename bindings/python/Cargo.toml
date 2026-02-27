@@ -13,9 +13,9 @@ name = "stateset_embedded"
 crate-type = ["cdylib"]
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded", features = ["vector"] }
-stateset-core = { path = "../../crates/stateset-core", features = ["embeddings"] }
-stateset-db = { path = "../../crates/stateset-db", features = ["vector"] }
+stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded", features = ["vector"], version = "0.7.13" }
+stateset-core = { path = "../../crates/stateset-core", features = ["embeddings"], version = "0.7.13" }
+stateset-db = { path = "../../crates/stateset-db", features = ["vector"], version = "0.7.13" }
 pyo3 = { version = "0.24", features = ["extension-module"] }
 rust_decimal = { version = "1.36", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
