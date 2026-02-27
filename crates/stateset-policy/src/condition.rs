@@ -187,6 +187,17 @@ impl ConditionNode {
             Self::Group(g) => g.evaluate_with_detail(context),
         }
     }
+
+    /// Evaluate this node and return its match result plus flattened leaf details.
+    pub fn evaluate_full(&self, context: &Value) -> (bool, Vec<ConditionDetail>) {
+        match self {
+            Self::Leaf(c) => {
+                let detail = c.evaluate_with_detail(context);
+                (detail.matched, vec![detail])
+            }
+            Self::Group(g) => g.evaluate_full(context),
+        }
+    }
 }
 
 /// A group of conditions combined with [`Logic::And`] or [`Logic::Or`].
@@ -250,15 +261,26 @@ impl ConditionGroup {
 
     /// Evaluate and return both the match result and the details.
     pub fn evaluate_full(&self, context: &Value) -> (bool, Vec<ConditionDetail>) {
-        let details = self.evaluate_with_detail(context);
-        let matched = if self.conditions.is_empty() {
-            true
-        } else {
-            match self.logic {
-                Logic::And => details.iter().all(|d| d.matched),
-                Logic::Or => details.iter().any(|d| d.matched),
-            }
+        if self.conditions.is_empty() {
+            return (true, Vec::new());
+        }
+
+        // Preserve nested AND/OR semantics by aggregating each child node's
+        // boolean result (not every flattened leaf result).
+        let mut details = Vec::new();
+        let mut child_matches = Vec::with_capacity(self.conditions.len());
+
+        for condition in &self.conditions {
+            let (matched, mut node_details) = condition.evaluate_full(context);
+            child_matches.push(matched);
+            details.append(&mut node_details);
+        }
+
+        let matched = match self.logic {
+            Logic::And => child_matches.into_iter().all(std::convert::identity),
+            Logic::Or => child_matches.into_iter().any(std::convert::identity),
         };
+
         (matched, details)
     }
 }
@@ -421,6 +443,33 @@ mod tests {
         assert_eq!(details.len(), 2);
         assert!(details[0].matched); // a == 1
         assert!(!details[1].matched); // b > 10 fails
+    }
+
+    #[test]
+    fn group_evaluate_full_preserves_nested_logic() {
+        let nested_or = ConditionGroup::new(
+            Logic::Or,
+            vec![
+                ConditionNode::Leaf(Condition::new("x", Operator::Eq, json!(1))),
+                ConditionNode::Leaf(Condition::new("y", Operator::Eq, json!(2))),
+            ],
+        );
+
+        let outer = ConditionGroup::new(
+            Logic::And,
+            vec![
+                ConditionNode::Leaf(Condition::new("z", Operator::Eq, json!(3))),
+                ConditionNode::Group(nested_or),
+            ],
+        );
+
+        // z == 3 AND (x == 1 OR y == 2)
+        let (matched, details) = outer.evaluate_full(&json!({"x": 1, "y": 0, "z": 3}));
+        assert!(matched);
+        assert_eq!(details.len(), 3);
+        assert!(details[0].matched);
+        assert!(details[1].matched);
+        assert!(!details[2].matched);
     }
 
     #[test]

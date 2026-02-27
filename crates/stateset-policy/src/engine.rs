@@ -11,6 +11,22 @@ use crate::policy_set::{PolicySet, PolicySetEvaluation};
 /// Maximum number of evaluation records to keep in history.
 const MAX_HISTORY_SIZE: usize = 1000;
 
+/// Behavior when evaluating a domain with no registered policy sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UnknownDomainMode {
+    /// Fail-open: allow when no policy sets are registered for the domain.
+    Allow,
+    /// Fail-closed: deny when no policy sets are registered for the domain.
+    Deny,
+}
+
+impl Default for UnknownDomainMode {
+    fn default() -> Self {
+        Self::Deny
+    }
+}
+
 /// The main policy engine — manages policy sets and evaluates contexts.
 ///
 /// # Deny-overrides
@@ -18,6 +34,12 @@ const MAX_HISTORY_SIZE: usize = 1000;
 /// When evaluating a domain, if **any** matched action across **all** policy sets
 /// is a `Deny`, the overall result is `should_deny = true`, regardless of any
 /// `Allow` actions.
+///
+/// ## Unknown domains
+///
+/// By default, domains with no registered policy sets are denied
+/// ([`UnknownDomainMode::Deny`]). Use [`PolicyEngine::with_unknown_domain_mode`]
+/// or [`PolicyEngine::set_unknown_domain_mode`] to opt into fail-open behavior.
 ///
 /// # Examples
 ///
@@ -51,6 +73,8 @@ pub struct PolicyEngine {
     policy_sets: HashMap<Uuid, PolicySet>,
     /// Index from domain name to the UUIDs of its policy sets.
     domain_index: HashMap<String, Vec<Uuid>>,
+    /// Behavior for domains with no registered policy sets.
+    unknown_domain_mode: UnknownDomainMode,
     /// Evaluation history (capped at [`MAX_HISTORY_SIZE`]).
     history: VecDeque<EvaluationRecord>,
 }
@@ -58,7 +82,28 @@ pub struct PolicyEngine {
 impl PolicyEngine {
     /// Create a new, empty policy engine.
     pub fn new() -> Self {
-        Self { policy_sets: HashMap::new(), domain_index: HashMap::new(), history: VecDeque::new() }
+        Self {
+            policy_sets: HashMap::new(),
+            domain_index: HashMap::new(),
+            unknown_domain_mode: UnknownDomainMode::default(),
+            history: VecDeque::new(),
+        }
+    }
+
+    /// Builder: set unknown-domain behavior.
+    pub fn with_unknown_domain_mode(mut self, mode: UnknownDomainMode) -> Self {
+        self.unknown_domain_mode = mode;
+        self
+    }
+
+    /// Set unknown-domain behavior.
+    pub fn set_unknown_domain_mode(&mut self, mode: UnknownDomainMode) {
+        self.unknown_domain_mode = mode;
+    }
+
+    /// Get the currently configured unknown-domain behavior.
+    pub const fn unknown_domain_mode(&self) -> UnknownDomainMode {
+        self.unknown_domain_mode
     }
 
     /// Register a policy set. If a set with the same ID already exists, it is replaced.
@@ -134,6 +179,9 @@ impl PolicyEngine {
     ///
     /// If **any** action across all matched rules is `Deny`, `should_deny` is `true`
     /// and `should_allow` is `false`, regardless of any `Allow` actions.
+    ///
+    /// If no policy sets are registered for `domain`, behavior is controlled by
+    /// [`UnknownDomainMode`] (default: deny).
     pub fn evaluate(&mut self, domain: &str, context: &Value) -> PolicyEvaluation {
         let eval = self.evaluate_inner(domain, context, false);
 
@@ -164,6 +212,26 @@ impl PolicyEngine {
     fn evaluate_inner(&self, domain: &str, context: &Value, dry_run: bool) -> PolicyEvaluation {
         let policy_sets = self.get_policies_for_domain(domain);
 
+        if policy_sets.is_empty() {
+            let unknown_domain_action = match self.unknown_domain_mode {
+                UnknownDomainMode::Allow => PolicyAction::allow(),
+                UnknownDomainMode::Deny => PolicyAction::deny_simple(format!(
+                    "No policy sets registered for domain \"{domain}\"",
+                )),
+            };
+
+            let should_allow = matches!(self.unknown_domain_mode, UnknownDomainMode::Allow);
+            return PolicyEvaluation {
+                domain: domain.to_owned(),
+                results: Vec::new(),
+                actions: vec![unknown_domain_action],
+                explanations: Vec::new(),
+                should_allow,
+                should_deny: !should_allow,
+                dry_run,
+            };
+        }
+
         let mut all_results: Vec<PolicySetEvaluation> = Vec::new();
         let mut all_actions: Vec<PolicyAction> = Vec::new();
         let mut all_explanations: Vec<PolicyExplanation> = Vec::new();
@@ -190,7 +258,7 @@ impl PolicyEngine {
             results: all_results,
             actions: all_actions,
             explanations: all_explanations,
-            should_allow: !has_deny && (has_allow || policy_sets.is_empty()),
+            should_allow: !has_deny && has_allow,
             should_deny: has_deny,
             dry_run,
         }
@@ -354,18 +422,32 @@ mod tests {
     fn engine_no_policy_sets() {
         let mut engine = PolicyEngine::new();
         let result = engine.evaluate("orders", &json!({}));
-        assert!(result.should_allow);
-        assert!(!result.should_deny);
+        assert!(!result.should_allow);
+        assert!(result.should_deny);
+        assert_eq!(result.actions.len(), 1);
+        assert_eq!(result.actions[0].action_type, ActionType::Deny);
     }
 
     #[test]
-    fn engine_unknown_domain_allows() {
+    fn engine_unknown_domain_denies_by_default() {
         let mut engine = PolicyEngine::new();
         engine.register_policy_set(high_value_deny_set());
 
         // Evaluating a different domain that has no policy sets
         let result = engine.evaluate("returns", &json!({}));
+        assert!(!result.should_allow);
+        assert!(result.should_deny);
+    }
+
+    #[test]
+    fn engine_unknown_domain_can_allow_when_configured() {
+        let mut engine = PolicyEngine::new().with_unknown_domain_mode(UnknownDomainMode::Allow);
+        engine.register_policy_set(high_value_deny_set());
+
+        // Evaluating a different domain that has no policy sets
+        let result = engine.evaluate("returns", &json!({}));
         assert!(result.should_allow);
+        assert!(!result.should_deny);
     }
 
     #[test]

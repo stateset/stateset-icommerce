@@ -128,9 +128,21 @@ impl RateLimitState {
     }
 }
 
-/// Composite key for state lookups.
-fn state_key(actor_id: &str, resource_type: &str) -> String {
-    format!("{actor_id}:{resource_type}")
+/// Composite key for per-actor, per-resource state lookups.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct StateKey {
+    actor_id: String,
+    resource_type: String,
+}
+
+impl StateKey {
+    fn new(actor_id: &str, resource_type: &str) -> Self {
+        Self { actor_id: actor_id.to_owned(), resource_type: resource_type.to_owned() }
+    }
+}
+
+fn state_key(actor_id: &str, resource_type: &str) -> StateKey {
+    StateKey::new(actor_id, resource_type)
 }
 
 /// A window-based rate limiter.
@@ -154,7 +166,7 @@ fn state_key(actor_id: &str, resource_type: &str) -> String {
 #[derive(Debug)]
 pub struct RateLimiter {
     rules: HashMap<String, RateLimitRule>,
-    state: HashMap<String, RateLimitState>,
+    state: HashMap<StateKey, RateLimitState>,
     ops_since_cleanup: u16,
 }
 
@@ -200,9 +212,8 @@ impl RateLimiter {
     pub fn cleanup(&mut self) {
         let now = Instant::now();
         self.state.retain(|key, state| {
-            // Find the applicable window; if no rule, drop the entry
-            let resource_type = key.split(':').nth(1).unwrap_or("");
-            if let Some(rule) = self.rules.get(resource_type) {
+            // Find the applicable window; if no rule, drop the entry.
+            if let Some(rule) = self.rules.get(key.resource_type.as_str()) {
                 state.cleanup_and_count(rule.window, now);
                 !state.requests.is_empty()
             } else {
@@ -459,6 +470,34 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_handles_colons_in_actor_id() {
+        let mut limiter = RateLimiter::new();
+        limiter.add_rule(RateLimitRule::new("orders", 1, Duration::from_secs(60)));
+
+        let now = Instant::now();
+        limiter.record_at("tenant:alice", "orders", now);
+        limiter.cleanup();
+
+        // If cleanup mis-parses the state key, it drops the entry and this would become allowed.
+        assert!(!limiter.check_at("tenant:alice", "orders", now).is_allowed());
+    }
+
+    #[test]
+    fn actor_and_resource_with_colons_use_distinct_buckets() {
+        let mut limiter = RateLimiter::new();
+        limiter.add_rule(RateLimitRule::new("c", 1, Duration::from_secs(60)));
+        limiter.add_rule(RateLimitRule::new("b:c", 1, Duration::from_secs(60)));
+
+        let now = Instant::now();
+        assert!(limiter.check_and_record_at("a:b", "c", now).is_allowed());
+        assert!(limiter.check_and_record_at("a", "b:c", now).is_allowed());
+
+        // Each tuple should be independently limited to 1.
+        assert!(!limiter.check_and_record_at("a:b", "c", now).is_allowed());
+        assert!(!limiter.check_and_record_at("a", "b:c", now).is_allowed());
+    }
+
+    #[test]
     fn rule_count() {
         let mut limiter = RateLimiter::new();
         assert_eq!(limiter.rule_count(), 0);
@@ -521,8 +560,8 @@ mod tests {
         limiter.ops_since_cleanup = RateLimiter::AUTO_CLEANUP_INTERVAL_OPS - 1;
         let _ = limiter.check("fresh", "orders");
 
-        assert!(limiter.state.contains_key("fresh:orders"));
-        assert!(!limiter.state.contains_key("stale:orders"));
+        assert!(limiter.state.contains_key(&state_key("fresh", "orders")));
+        assert!(!limiter.state.contains_key(&state_key("stale", "orders")));
         assert_eq!(limiter.ops_since_cleanup, 0);
     }
 }

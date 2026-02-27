@@ -50,7 +50,7 @@ pub struct PolicySet {
     #[serde(default = "default_version")]
     pub version: String,
     /// The rules in this set, sorted by priority descending.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_rules_sorted")]
     pub rules: Vec<PolicyRule>,
     /// The default action when no rules match.
     #[serde(default = "PolicyAction::allow")]
@@ -62,6 +62,17 @@ pub struct PolicySet {
 
 fn default_version() -> String {
     "1.0.0".to_owned()
+}
+
+fn deserialize_rules_sorted<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<PolicyRule>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut rules = Vec::<PolicyRule>::deserialize(deserializer)?;
+    rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+    Ok(rules)
 }
 
 impl PolicySet {
@@ -176,6 +187,16 @@ impl PolicySet {
         let has_deny = actions.iter().any(|a| a.action_type == ActionType::Deny);
         let has_allow = actions.iter().any(|a| a.action_type == ActionType::Allow);
 
+        let (should_allow, should_deny) = if matched {
+            (!has_deny && has_allow, has_deny)
+        } else {
+            match self.default_action.action_type {
+                ActionType::Allow => (true, false),
+                ActionType::Deny => (false, true),
+                _ => (false, false),
+            }
+        };
+
         PolicySetEvaluation {
             policy_set_id: self.id,
             policy_set_name: self.name.clone(),
@@ -184,8 +205,8 @@ impl PolicySet {
             actions,
             explanations,
             default_applied: !matched,
-            should_allow: !has_deny && (has_allow || !matched),
-            should_deny: has_deny,
+            should_allow,
+            should_deny,
         }
     }
 }
@@ -260,6 +281,19 @@ mod tests {
         assert!(eval.default_applied);
         assert!(eval.should_allow);
         assert!(!eval.should_deny);
+    }
+
+    #[test]
+    fn no_match_uses_default_deny_for_reporting() {
+        let ps = PolicySet::new("default-deny", "orders")
+            .with_rule(make_allow_rule("allow-if-x", "x", Operator::Eq, json!(1), 10))
+            .with_default_action(PolicyAction::deny_simple("deny by default"));
+
+        let eval = ps.evaluate(&json!({"x": 2}));
+        assert!(!eval.matched);
+        assert!(eval.default_applied);
+        assert!(!eval.should_allow);
+        assert!(eval.should_deny);
     }
 
     #[test]
@@ -373,5 +407,39 @@ mod tests {
         assert_eq!(deser.name, "test-set");
         assert_eq!(deser.domain, "orders");
         assert_eq!(deser.rules.len(), 1);
+    }
+
+    #[test]
+    fn deserialize_sorts_rules_by_priority() {
+        let raw = r#"{
+            "name": "unsorted",
+            "domain": "orders",
+            "rules": [
+                {
+                    "name": "low",
+                    "priority": 10,
+                    "conditions": { "logic": "and", "conditions": [] },
+                    "action": { "type": "allow" }
+                },
+                {
+                    "name": "high",
+                    "priority": 100,
+                    "conditions": { "logic": "and", "conditions": [] },
+                    "action": { "type": "allow" }
+                },
+                {
+                    "name": "mid",
+                    "priority": 50,
+                    "conditions": { "logic": "and", "conditions": [] },
+                    "action": { "type": "allow" }
+                }
+            ]
+        }"#;
+
+        let deser: PolicySet = serde_json::from_str(raw).unwrap();
+        assert_eq!(deser.rules.len(), 3);
+        assert_eq!(deser.rules[0].name, "high");
+        assert_eq!(deser.rules[1].name, "mid");
+        assert_eq!(deser.rules[2].name, "low");
     }
 }

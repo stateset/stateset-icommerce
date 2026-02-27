@@ -15,7 +15,7 @@
 use serde_json::json;
 use stateset_policy::{
     ActionType, Condition, ConditionGroup, ConditionNode, Logic, Operator, PolicyAction,
-    PolicyEngine, PolicyExplanation, PolicyRule, PolicySet, TransformAuditEntry,
+    PolicyEngine, PolicyExplanation, PolicyRule, PolicySet, TransformAuditEntry, UnknownDomainMode,
 };
 use uuid::Uuid;
 
@@ -105,8 +105,16 @@ fn single_deny_rule_denies() {
 }
 
 #[test]
-fn empty_policy_set_defaults_to_allow() {
+fn empty_policy_engine_denies_by_default() {
     let mut engine = PolicyEngine::new();
+    let result = engine.evaluate("orders", &json!({"order": {"total": 100}}));
+    assert!(!result.should_allow);
+    assert!(result.should_deny);
+}
+
+#[test]
+fn unknown_domain_can_be_configured_to_allow() {
+    let mut engine = PolicyEngine::new().with_unknown_domain_mode(UnknownDomainMode::Allow);
     let result = engine.evaluate("orders", &json!({"order": {"total": 100}}));
     assert!(result.should_allow);
     assert!(!result.should_deny);

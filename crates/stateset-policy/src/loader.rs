@@ -158,6 +158,35 @@ mod tests {
     }
 
     #[test]
+    fn load_json_sorts_rules_by_priority() {
+        let json = r#"{
+            "name": "priority-check",
+            "domain": "orders",
+            "rules": [
+                {
+                    "name": "low-priority",
+                    "description": "low",
+                    "priority": 10,
+                    "conditions": { "logic": "and", "conditions": [] },
+                    "action": { "type": "allow" }
+                },
+                {
+                    "name": "high-priority",
+                    "description": "high",
+                    "priority": 100,
+                    "conditions": { "logic": "and", "conditions": [] },
+                    "action": { "type": "deny", "reason": "nope" }
+                }
+            ]
+        }"#;
+
+        let ps = load_policy_set_from_json(json).unwrap();
+        assert_eq!(ps.rules.len(), 2);
+        assert_eq!(ps.rules[0].name, "high-priority");
+        assert_eq!(ps.rules[1].name, "low-priority");
+    }
+
+    #[test]
     fn load_json_invalid() {
         let result = load_policy_set_from_json("not json");
         assert!(result.is_err());
@@ -202,6 +231,38 @@ defaultAction:
         assert_eq!(ps.rules.len(), 1);
         assert_eq!(ps.rules[0].name, "auto-approve");
         assert!(ps.rules[0].stop_on_match);
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn load_yaml_sorts_rules_by_priority() {
+        let yaml = r#"
+name: return-policy
+domain: returns
+rules:
+  - name: low-priority
+    description: low
+    priority: 10
+    conditions:
+      logic: and
+      conditions: []
+    action:
+      type: allow
+  - name: high-priority
+    description: high
+    priority: 100
+    conditions:
+      logic: and
+      conditions: []
+    action:
+      type: deny
+      reason: blocked
+"#;
+
+        let ps = load_policy_set_from_yaml(yaml).unwrap();
+        assert_eq!(ps.rules.len(), 2);
+        assert_eq!(ps.rules[0].name, "high-priority");
+        assert_eq!(ps.rules[1].name, "low-priority");
     }
 
     #[cfg(feature = "yaml")]

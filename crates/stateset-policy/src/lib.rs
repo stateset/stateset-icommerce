@@ -18,6 +18,7 @@
 //!
 //! - **20 operators** for condition evaluation (comparison, string, collection, type, numeric)
 //! - **Deny-overrides precedence** -- any deny action overrides all allow actions
+//! - **Secure unknown-domain default** -- unconfigured domains deny by default (configurable)
 //! - **Explainable denials** -- per-condition breakdown of why a request was denied
 //! - **Transform audit trail** -- tracks before/after values for policy transforms
 //! - **YAML/JSON policy loading** from filesystem (YAML requires the `yaml` feature)
