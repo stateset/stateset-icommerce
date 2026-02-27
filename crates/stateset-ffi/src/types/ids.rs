@@ -8,7 +8,10 @@ use uuid::Uuid;
 
 use stateset_primitives::{CustomerId, OrderId, ProductId};
 
-use crate::error::{FfiErrorCode, FfiResult, clear_last_error, set_last_error};
+use crate::error::{
+    FfiErrorCode, FfiResult, catch_ffi_mut_ptr, catch_ffi_result, catch_ffi_value,
+    clear_last_error, set_last_error,
+};
 use crate::strings::rust_to_c_string;
 
 /// ABI-safe UUID represented as 16 raw bytes.
@@ -112,9 +115,11 @@ impl From<FfiUuid> for ProductId {
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub extern "C" fn stateset_uuid_to_string(uuid: FfiUuid) -> *mut c_char {
-    clear_last_error();
-    let u: Uuid = uuid.into();
-    rust_to_c_string(&u.to_string())
+    catch_ffi_mut_ptr(|| {
+        clear_last_error();
+        let u: Uuid = uuid.into();
+        rust_to_c_string(&u.to_string())
+    })
 }
 
 /// Parse a hyphenated UUID string into an [`FfiUuid`].
@@ -128,28 +133,30 @@ pub extern "C" fn stateset_uuid_to_string(uuid: FfiUuid) -> *mut c_char {
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn stateset_uuid_from_string(s: *const c_char) -> FfiResult<FfiUuid> {
-    clear_last_error();
+    catch_ffi_result(|| {
+        clear_last_error();
 
-    // SAFETY: caller guarantees `s` is a valid C string.
-    let rust_str = match unsafe { crate::strings::c_string_to_rust(s) } {
-        Ok(s) => s,
-        Err(code) => return FfiResult::err(code),
-    };
+        // SAFETY: caller guarantees `s` is a valid C string.
+        let rust_str = match unsafe { crate::strings::c_string_to_rust(s) } {
+            Ok(s) => s,
+            Err(code) => return FfiResult::err(code),
+        };
 
-    match Uuid::parse_str(rust_str) {
-        Ok(uuid) => FfiResult::ok(FfiUuid::from(uuid)),
-        Err(e) => {
-            set_last_error(&format!("invalid UUID: {e}"));
-            FfiResult::err(FfiErrorCode::InvalidArgument)
+        match Uuid::parse_str(rust_str) {
+            Ok(uuid) => FfiResult::ok(FfiUuid::from(uuid)),
+            Err(e) => {
+                set_last_error(&format!("invalid UUID: {e}"));
+                FfiResult::err(FfiErrorCode::InvalidArgument)
+            }
         }
-    }
+    })
 }
 
 /// Generate a new random (v4) UUID.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub extern "C" fn stateset_uuid_generate() -> FfiUuid {
-    FfiUuid::from(Uuid::new_v4())
+    catch_ffi_value(|| FfiUuid::from(Uuid::new_v4()))
 }
 
 /// Return the nil (all-zeros) UUID.
@@ -224,7 +231,7 @@ mod tests {
         assert_eq!(result.code, FfiErrorCode::Ok);
         assert_eq!(result.value, ffi);
 
-        crate::strings::stateset_string_free(ptr);
+        unsafe { crate::strings::stateset_string_free(ptr) };
     }
 
     #[test]

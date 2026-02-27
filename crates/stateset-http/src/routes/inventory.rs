@@ -36,6 +36,12 @@ async fn adjust_stock(
     Path(sku): Path<String>,
     Json(req): Json<InventoryAdjustRequest>,
 ) -> Result<Json<InventoryResponse>, HttpError> {
+    if req.location_id.is_some() {
+        return Err(HttpError::ValidationError(
+            "location_id is not supported by /inventory/:sku/adjust; omit location_id".to_string(),
+        ));
+    }
+
     // Perform the adjustment
     state.commerce().inventory().adjust(&sku, req.quantity, &req.reason)?;
 
@@ -139,5 +145,42 @@ mod tests {
         let resp_body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&resp_body).unwrap();
         assert_eq!(json["sku"], "ADJ-001");
+    }
+
+    #[tokio::test]
+    async fn adjust_stock_rejects_location_id() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        state
+            .commerce()
+            .inventory()
+            .create_item(CreateInventoryItem {
+                sku: "LOC-001".into(),
+                name: "Location Item".into(),
+                initial_quantity: Some(dec!(10)),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let app = router().with_state(state);
+
+        let body = serde_json::json!({
+            "quantity": "-1",
+            "reason": "manual",
+            "location_id": 42
+        });
+        let resp = app
+            .oneshot(
+                Request::post("/inventory/LOC-001/adjust")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let resp_body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&resp_body).unwrap();
+        assert_eq!(json["error"]["code"], "validation_error");
     }
 }

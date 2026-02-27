@@ -13,6 +13,7 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::fmt;
 use std::os::raw::c_char;
+use std::panic::{self, AssertUnwindSafe};
 
 use stateset_core::CommerceError;
 
@@ -186,6 +187,77 @@ pub(crate) fn last_error_message_ptr() -> *const c_char {
     })
 }
 
+fn panic_payload_to_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(msg) = payload.downcast_ref::<&str>() {
+        (*msg).to_owned()
+    } else if let Some(msg) = payload.downcast_ref::<String>() {
+        msg.clone()
+    } else {
+        "unknown panic payload".to_owned()
+    }
+}
+
+pub(crate) fn catch_ffi_result<T: Default>(f: impl FnOnce() -> FfiResult<T>) -> FfiResult<T> {
+    match panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(result) => result,
+        Err(payload) => {
+            set_last_error(&format!(
+                "panic across FFI boundary: {}",
+                panic_payload_to_message(payload)
+            ));
+            FfiResult::err(FfiErrorCode::InternalError)
+        }
+    }
+}
+
+pub(crate) fn catch_ffi_void(f: impl FnOnce()) {
+    if let Err(payload) = panic::catch_unwind(AssertUnwindSafe(f)) {
+        set_last_error(&format!(
+            "panic across FFI boundary: {}",
+            panic_payload_to_message(payload)
+        ));
+    }
+}
+
+pub(crate) fn catch_ffi_mut_ptr<T>(f: impl FnOnce() -> *mut T) -> *mut T {
+    match panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(ptr) => ptr,
+        Err(payload) => {
+            set_last_error(&format!(
+                "panic across FFI boundary: {}",
+                panic_payload_to_message(payload)
+            ));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+pub(crate) fn catch_ffi_const_ptr<T>(f: impl FnOnce() -> *const T) -> *const T {
+    match panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(ptr) => ptr,
+        Err(payload) => {
+            set_last_error(&format!(
+                "panic across FFI boundary: {}",
+                panic_payload_to_message(payload)
+            ));
+            std::ptr::null()
+        }
+    }
+}
+
+pub(crate) fn catch_ffi_value<T: Default>(f: impl FnOnce() -> T) -> T {
+    match panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(value) => value,
+        Err(payload) => {
+            set_last_error(&format!(
+                "panic across FFI boundary: {}",
+                panic_payload_to_message(payload)
+            ));
+            T::default()
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public C API — error helpers
 // ---------------------------------------------------------------------------
@@ -203,14 +275,14 @@ pub(crate) fn last_error_message_ptr() -> *const c_char {
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub extern "C" fn stateset_last_error_message() -> *const c_char {
-    last_error_message_ptr()
+    catch_ffi_const_ptr(last_error_message_ptr)
 }
 
 /// Clear the last error message on the current thread.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub extern "C" fn stateset_clear_error() {
-    clear_last_error();
+    catch_ffi_void(clear_last_error);
 }
 
 // ---------------------------------------------------------------------------
@@ -426,5 +498,42 @@ mod tests {
         let err = CommerceError::OptimisticLockFailure;
         let code = set_commerce_error(&err);
         assert_eq!(code, FfiErrorCode::DatabaseError);
+    }
+
+    #[test]
+    fn catch_ffi_result_maps_panics_to_internal_error() {
+        clear_last_error();
+        let result = catch_ffi_result::<u32>(|| panic!("kaboom"));
+        assert_eq!(result.code, FfiErrorCode::InternalError);
+        assert_eq!(result.value, 0);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("panic across FFI boundary"));
+        assert!(msg.contains("kaboom"));
+    }
+
+    #[test]
+    fn catch_ffi_void_captures_panic_message() {
+        clear_last_error();
+        catch_ffi_void(|| panic!("void panic"));
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("void panic"));
+    }
+
+    #[test]
+    fn catch_ffi_mut_ptr_returns_null_on_panic() {
+        clear_last_error();
+        let ptr = catch_ffi_mut_ptr::<u8>(|| panic!("ptr panic"));
+        assert!(ptr.is_null());
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("ptr panic"));
+    }
+
+    #[test]
+    fn catch_ffi_value_returns_default_on_panic() {
+        clear_last_error();
+        let value = catch_ffi_value::<u32>(|| panic!("value panic"));
+        assert_eq!(value, 0);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("value panic"));
     }
 }

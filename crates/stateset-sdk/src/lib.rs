@@ -180,4 +180,22 @@ mod tests {
     fn observability_reexport_accessible() {
         let _cfg = observability::MetricsConfig::default();
     }
+
+    #[cfg(feature = "crypto")]
+    #[test]
+    fn crypto_reexport_accessible() {
+        let _ = crypto::ZERO_HASH;
+    }
+
+    #[cfg(feature = "policy")]
+    #[test]
+    fn policy_reexport_accessible() {
+        let _ = policy::PolicyEngine::new();
+    }
+
+    #[cfg(feature = "macros")]
+    #[test]
+    fn macros_reexport_accessible() {
+        use crate::macros as _;
+    }
 }

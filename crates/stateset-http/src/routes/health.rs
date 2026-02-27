@@ -1,6 +1,6 @@
 //! Health-check endpoints.
 
-use axum::{Json, Router, extract::State, routing::get};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 
 use crate::dto::{HealthResponse, ReadyResponse};
 use crate::state::AppState;
@@ -16,13 +16,22 @@ async fn health() -> Json<HealthResponse> {
 }
 
 /// `GET /health/ready` — readiness probe that checks DB connectivity.
-async fn readiness(State(state): State<AppState>) -> Json<ReadyResponse> {
+async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
     // Try a lightweight operation to verify DB is reachable.
-    let db_status = match state.commerce().orders().count(Default::default()) {
-        Ok(_) => "connected",
-        Err(_) => "disconnected",
-    };
-    Json(ReadyResponse { status: "ok", database: db_status })
+    let database_connected = state.commerce().orders().count(Default::default()).is_ok();
+    let (status, body) = readiness_response(database_connected);
+    (status, Json(body))
+}
+
+fn readiness_response(database_connected: bool) -> (StatusCode, ReadyResponse) {
+    if database_connected {
+        (StatusCode::OK, ReadyResponse { status: "ok", database: "connected" })
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            ReadyResponse { status: "not_ready", database: "disconnected" },
+        )
+    }
 }
 
 #[cfg(test)]
@@ -60,5 +69,13 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["status"], "ok");
         assert_eq!(json["database"], "connected");
+    }
+
+    #[test]
+    fn readiness_response_reports_not_ready_when_disconnected() {
+        let (status, body) = readiness_response(false);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body.status, "not_ready");
+        assert_eq!(body.database, "disconnected");
     }
 }

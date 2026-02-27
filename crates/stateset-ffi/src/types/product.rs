@@ -5,6 +5,8 @@ use std::os::raw::c_char;
 
 use stateset_core::models::product::Product;
 
+use crate::error::catch_ffi_void;
+
 use super::ids::FfiUuid;
 use super::money::FfiMoney;
 
@@ -68,13 +70,15 @@ impl FfiProduct {
 /// or be null.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn stateset_product_free(product: FfiProduct) {
-    // SAFETY: pointer was allocated by CString::into_raw or is null.
-    unsafe {
-        if !product.name.is_null() {
-            drop(CString::from_raw(product.name));
+pub unsafe extern "C" fn stateset_product_free(product: FfiProduct) {
+    catch_ffi_void(|| {
+        // SAFETY: pointer was allocated by CString::into_raw or is null.
+        unsafe {
+            if !product.name.is_null() {
+                drop(CString::from_raw(product.name));
+            }
         }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +124,7 @@ mod tests {
         let sku_str = std::str::from_utf8(&ffi.sku).unwrap().trim_end_matches('\0');
         assert_eq!(sku_str, "test-widget");
 
-        stateset_product_free(ffi);
+        unsafe { stateset_product_free(ffi) };
     }
 
     #[test]
@@ -134,7 +138,7 @@ mod tests {
 
     #[test]
     fn product_free_null_name() {
-        stateset_product_free(FfiProduct::default());
+        unsafe { stateset_product_free(FfiProduct::default()) };
     }
 
     #[test]
@@ -149,7 +153,7 @@ mod tests {
         let sku_str = std::str::from_utf8(&ffi.sku[..63]).unwrap();
         assert_eq!(sku_str.len(), 63);
 
-        stateset_product_free(ffi);
+        unsafe { stateset_product_free(ffi) };
     }
 
     #[test]
@@ -159,7 +163,7 @@ mod tests {
         let ffi = FfiProduct::from_domain(&p);
         let back: ProductId = ffi.id.into();
         assert_eq!(back, original_id);
-        stateset_product_free(ffi);
+        unsafe { stateset_product_free(ffi) };
     }
 
     #[test]
@@ -168,6 +172,6 @@ mod tests {
         let ffi = FfiProduct::from_domain(&p);
         let debug = format!("{:?}", ffi);
         assert!(debug.contains("FfiProduct"));
-        stateset_product_free(ffi);
+        unsafe { stateset_product_free(ffi) };
     }
 }

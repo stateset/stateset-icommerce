@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use stateset_primitives::{CurrencyCode, Money};
 
-use crate::error::clear_last_error;
+use crate::error::{FfiErrorCode, catch_ffi_mut_ptr, clear_last_error, set_last_error};
 use crate::strings::rust_to_c_string;
 
 /// ABI-safe monetary amount in minor units with a 3-byte ISO 4217 currency code.
@@ -38,17 +38,21 @@ impl FfiMoney {
 
 impl From<Money> for FfiMoney {
     fn from(m: Money) -> Self {
-        // Convert the decimal to cents (minor units).
-        let cents = (m.amount() * Decimal::from(100)).to_i64().unwrap_or(0);
+        Self::try_from_money(m).expect("Money amount must be representable as i64 minor units")
+    }
+}
 
+impl FfiMoney {
+    /// Fallible conversion from domain [`Money`] into [`FfiMoney`].
+    pub(crate) fn try_from_money(m: Money) -> Result<Self, FfiErrorCode> {
+        let cents = decimal_to_minor_units(m.amount(), "money.amount")?;
         let mut currency = [0u8; 3];
         let code = m.currency();
         let code_str = code.as_str();
         let code_bytes = code_str.as_bytes();
         let len = code_bytes.len().min(3);
         currency[..len].copy_from_slice(&code_bytes[..len]);
-
-        Self { amount_cents: cents, currency }
+        Ok(Self { amount_cents: cents, currency })
     }
 }
 
@@ -75,20 +79,48 @@ impl TryFrom<FfiMoney> for Money {
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub extern "C" fn stateset_money_format(money: FfiMoney) -> *mut c_char {
-    clear_last_error();
+    catch_ffi_mut_ptr(|| {
+        clear_last_error();
 
-    let major = money.amount_cents / 100;
-    let minor = (money.amount_cents % 100).unsigned_abs();
-    let code = std::str::from_utf8(&money.currency).unwrap_or("???");
+        let is_negative = money.amount_cents < 0;
+        let absolute = money.amount_cents.unsigned_abs();
+        let major = absolute / 100;
+        let minor = absolute % 100;
+        let sign = if is_negative { "-" } else { "" };
+        let code = std::str::from_utf8(&money.currency).unwrap_or("???");
 
-    let formatted = match code {
-        "USD" => format!("${major}.{minor:02}"),
-        "EUR" => format!("\u{20ac}{major}.{minor:02}"),
-        "GBP" => format!("\u{00a3}{major}.{minor:02}"),
-        _ => format!("{major}.{minor:02} {code}"),
-    };
+        let formatted = match code {
+            "USD" => format!("${sign}{major}.{minor:02}"),
+            "EUR" => format!("\u{20ac}{sign}{major}.{minor:02}"),
+            "GBP" => format!("\u{00a3}{sign}{major}.{minor:02}"),
+            _ => format!("{sign}{major}.{minor:02} {code}"),
+        };
 
-    rust_to_c_string(&formatted)
+        rust_to_c_string(&formatted)
+    })
+}
+
+fn decimal_to_minor_units(value: Decimal, field: &str) -> Result<i64, FfiErrorCode> {
+    let cents = value.checked_mul(Decimal::from(100)).ok_or_else(|| {
+        set_last_error(&format!(
+            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+        ));
+        FfiErrorCode::InvalidArgument
+    })?;
+
+    if !cents.fract().is_zero() {
+        set_last_error(&format!(
+            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+        ));
+        return Err(FfiErrorCode::InvalidArgument);
+    }
+
+    cents.to_i64().ok_or_else(|| {
+        set_last_error(&format!(
+            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+        ));
+        FfiErrorCode::InvalidArgument
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +130,7 @@ pub extern "C" fn stateset_money_format(money: FfiMoney) -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{clear_last_error, last_error_as_str};
     use rust_decimal_macros::dec;
     use std::ffi::CStr;
 
@@ -165,7 +198,7 @@ mod tests {
         let s = unsafe { CStr::from_ptr(ptr) };
         assert_eq!(s.to_str().unwrap(), "$12.34");
 
-        crate::strings::stateset_string_free(ptr);
+        unsafe { crate::strings::stateset_string_free(ptr) };
     }
 
     #[test]
@@ -174,7 +207,7 @@ mod tests {
         let ptr = stateset_money_format(ffi);
         let s = unsafe { CStr::from_ptr(ptr) };
         assert_eq!(s.to_str().unwrap(), "\u{20ac}5.00");
-        crate::strings::stateset_string_free(ptr);
+        unsafe { crate::strings::stateset_string_free(ptr) };
     }
 
     #[test]
@@ -183,7 +216,7 @@ mod tests {
         let ptr = stateset_money_format(ffi);
         let s = unsafe { CStr::from_ptr(ptr) };
         assert_eq!(s.to_str().unwrap(), "\u{00a3}0.99");
-        crate::strings::stateset_string_free(ptr);
+        unsafe { crate::strings::stateset_string_free(ptr) };
     }
 
     #[test]
@@ -192,7 +225,7 @@ mod tests {
         let ptr = stateset_money_format(ffi);
         let s = unsafe { CStr::from_ptr(ptr) };
         assert_eq!(s.to_str().unwrap(), "42.00 JPY");
-        crate::strings::stateset_string_free(ptr);
+        unsafe { crate::strings::stateset_string_free(ptr) };
     }
 
     #[test]
@@ -200,9 +233,17 @@ mod tests {
         let ffi = FfiMoney { amount_cents: -1050, currency: *b"USD" };
         let ptr = stateset_money_format(ffi);
         let s = unsafe { CStr::from_ptr(ptr) };
-        // -1050 / 100 = -10, abs(-1050 % 100) = 50
         assert_eq!(s.to_str().unwrap(), "$-10.50");
-        crate::strings::stateset_string_free(ptr);
+        unsafe { crate::strings::stateset_string_free(ptr) };
+    }
+
+    #[test]
+    fn ffi_money_format_negative_subunit() {
+        let ffi = FfiMoney { amount_cents: -50, currency: *b"USD" };
+        let ptr = stateset_money_format(ffi);
+        let s = unsafe { CStr::from_ptr(ptr) };
+        assert_eq!(s.to_str().unwrap(), "$-0.50");
+        unsafe { crate::strings::stateset_string_free(ptr) };
     }
 
     #[test]
@@ -218,5 +259,25 @@ mod tests {
         let a = FfiMoney { amount_cents: 100, currency: *b"USD" };
         let b = a;
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn money_try_from_overflow_is_rejected() {
+        let money = Money::new(Decimal::MAX, CurrencyCode::USD);
+        clear_last_error();
+        let err = FfiMoney::try_from_money(money).unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("money.amount"));
+    }
+
+    #[test]
+    fn money_try_from_excess_precision_is_rejected() {
+        let money = Money::new(dec!(1.999), CurrencyCode::USD);
+        clear_last_error();
+        let err = FfiMoney::try_from_money(money).unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("money.amount"));
     }
 }

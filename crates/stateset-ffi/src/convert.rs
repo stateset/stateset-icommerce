@@ -37,7 +37,7 @@ use crate::types::{FfiCustomer, FfiInventoryLevel, FfiMoney, FfiOrder, FfiProduc
 
 impl IntoFfi<FfiOrder> for Order {
     fn into_ffi(&self) -> FfiOrder {
-        FfiOrder::from(self)
+        FfiOrder::try_from_order(self).expect("order conversion to FFI must succeed")
     }
 }
 
@@ -55,7 +55,8 @@ impl IntoFfi<FfiProduct> for Product {
 
 impl IntoFfi<FfiInventoryLevel> for StockLevel {
     fn into_ffi(&self) -> FfiInventoryLevel {
-        FfiInventoryLevel::from_stock_level(self)
+        FfiInventoryLevel::try_from_stock_level(self)
+            .expect("inventory conversion to FFI must succeed")
     }
 }
 
@@ -199,7 +200,7 @@ mod tests {
         let customer = make_customer();
         let ffi: FfiCustomer = customer.into_ffi();
         assert_eq!(ffi.id, FfiUuid::from(customer.id));
-        crate::types::customer::stateset_customer_free(ffi);
+        unsafe { crate::types::customer::stateset_customer_free(ffi) };
     }
 
     #[test]
@@ -207,7 +208,7 @@ mod tests {
         let product = make_product();
         let ffi: FfiProduct = product.into_ffi();
         assert_eq!(ffi.id, FfiUuid::from(product.id));
-        crate::types::product::stateset_product_free(ffi);
+        unsafe { crate::types::product::stateset_product_free(ffi) };
     }
 
     #[test]

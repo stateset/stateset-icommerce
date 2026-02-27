@@ -1,6 +1,10 @@
 //! ABI-safe order types.
 
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use stateset_core::models::order::{Order, OrderStatus};
+
+use crate::error::{FfiErrorCode, set_last_error};
 
 use super::ids::FfiUuid;
 use super::money::FfiMoney;
@@ -25,6 +29,8 @@ pub enum FfiOrderStatus {
     Cancelled = 5,
     /// Order was refunded.
     Refunded = 6,
+    /// Unknown / forward-compatible status value.
+    Unknown = 255,
 }
 
 impl From<OrderStatus> for FfiOrderStatus {
@@ -38,7 +44,7 @@ impl From<OrderStatus> for FfiOrderStatus {
             OrderStatus::Cancelled => Self::Cancelled,
             OrderStatus::Refunded => Self::Refunded,
             // non_exhaustive fallback
-            _ => Self::Pending,
+            _ => Self::Unknown,
         }
     }
 }
@@ -53,6 +59,7 @@ impl From<FfiOrderStatus> for OrderStatus {
             FfiOrderStatus::Delivered => Self::Delivered,
             FfiOrderStatus::Cancelled => Self::Cancelled,
             FfiOrderStatus::Refunded => Self::Refunded,
+            FfiOrderStatus::Unknown => Self::Pending,
         }
     }
 }
@@ -79,27 +86,54 @@ pub struct FfiOrder {
     pub created_at_epoch_ms: i64,
 }
 
-impl From<&Order> for FfiOrder {
-    fn from(order: &Order) -> Self {
-        let cents = (order.total_amount * rust_decimal::Decimal::from(100)).to_i64().unwrap_or(0);
-
+impl FfiOrder {
+    /// Fallible conversion from domain [`Order`] into [`FfiOrder`].
+    pub(crate) fn try_from_order(order: &Order) -> Result<Self, FfiErrorCode> {
+        let cents = decimal_to_minor_units(order.total_amount, "order.total_amount")?;
         let mut currency = [0u8; 3];
         let code_bytes = order.currency.as_bytes();
         let len = code_bytes.len().min(3);
         currency[..len].copy_from_slice(&code_bytes[..len]);
 
-        Self {
+        Ok(Self {
             id: FfiUuid::from(order.id),
             customer_id: FfiUuid::from(order.customer_id),
             status: FfiOrderStatus::from(order.status),
             total: FfiMoney { amount_cents: cents, currency },
             item_count: order.items.len() as u32,
             created_at_epoch_ms: order.created_at.timestamp_millis(),
-        }
+        })
     }
 }
 
-use rust_decimal::prelude::ToPrimitive;
+impl From<&Order> for FfiOrder {
+    fn from(order: &Order) -> Self {
+        Self::try_from_order(order).expect("order.total_amount must be representable as i64 cents")
+    }
+}
+
+fn decimal_to_minor_units(value: Decimal, field: &str) -> Result<i64, FfiErrorCode> {
+    let cents = value.checked_mul(Decimal::from(100)).ok_or_else(|| {
+        set_last_error(&format!(
+            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+        ));
+        FfiErrorCode::InvalidArgument
+    })?;
+
+    if !cents.fract().is_zero() {
+        set_last_error(&format!(
+            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+        ));
+        return Err(FfiErrorCode::InvalidArgument);
+    }
+
+    cents.to_i64().ok_or_else(|| {
+        set_last_error(&format!(
+            "{field} value `{value}` is out of range for i64 cents or has too much precision"
+        ));
+        FfiErrorCode::InvalidArgument
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -108,6 +142,7 @@ use rust_decimal::prelude::ToPrimitive;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{clear_last_error, last_error_as_str};
     use chrono::Utc;
     use rust_decimal_macros::dec;
     use stateset_core::models::order::{FulfillmentStatus, OrderItem, PaymentStatus};
@@ -186,6 +221,7 @@ mod tests {
         assert_eq!(FfiOrderStatus::Delivered as i32, 4);
         assert_eq!(FfiOrderStatus::Cancelled as i32, 5);
         assert_eq!(FfiOrderStatus::Refunded as i32, 6);
+        assert_eq!(FfiOrderStatus::Unknown as i32, 255);
     }
 
     #[test]
@@ -239,7 +275,30 @@ mod tests {
         let mut set = HashSet::new();
         set.insert(FfiOrderStatus::Pending);
         set.insert(FfiOrderStatus::Shipped);
-        assert_eq!(set.len(), 2);
-        assert!(set.contains(&FfiOrderStatus::Pending));
+        set.insert(FfiOrderStatus::Unknown);
+        assert_eq!(set.len(), 3);
+        assert!(set.contains(&FfiOrderStatus::Unknown));
+    }
+
+    #[test]
+    fn ffi_order_overflow_total_is_rejected() {
+        let mut order = make_test_order(OrderStatus::Pending);
+        order.total_amount = Decimal::MAX;
+        clear_last_error();
+        let err = FfiOrder::try_from_order(&order).unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("order.total_amount"));
+    }
+
+    #[test]
+    fn ffi_order_fractional_cents_are_rejected() {
+        let mut order = make_test_order(OrderStatus::Pending);
+        order.total_amount = dec!(1.999);
+        clear_last_error();
+        let err = FfiOrder::try_from_order(&order).unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+        let msg = last_error_as_str().unwrap();
+        assert!(msg.contains("order.total_amount"));
     }
 }

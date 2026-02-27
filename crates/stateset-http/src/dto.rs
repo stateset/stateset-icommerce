@@ -209,7 +209,9 @@ pub struct InventoryAdjustRequest {
     pub quantity: Decimal,
     /// Reason for the adjustment.
     pub reason: String,
-    /// Optional location ID.
+    /// Deprecated: location-scoped adjustments are not supported by this endpoint.
+    ///
+    /// Supplying this field will return a validation error.
     pub location_id: Option<i32>,
 }
 

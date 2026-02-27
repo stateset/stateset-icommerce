@@ -5,6 +5,8 @@ use std::os::raw::c_char;
 
 use stateset_core::models::customer::Customer;
 
+use crate::error::catch_ffi_void;
+
 use super::ids::FfiUuid;
 
 /// ABI-safe customer summary.
@@ -70,16 +72,18 @@ impl FfiCustomer {
 /// `stateset_*` call or be null. Double-frees are undefined behaviour.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn stateset_customer_free(customer: FfiCustomer) {
-    // SAFETY: pointers were allocated by CString::into_raw or are null.
-    unsafe {
-        if !customer.name.is_null() {
-            drop(CString::from_raw(customer.name));
+pub unsafe extern "C" fn stateset_customer_free(customer: FfiCustomer) {
+    catch_ffi_void(|| {
+        // SAFETY: pointers were allocated by CString::into_raw or are null.
+        unsafe {
+            if !customer.name.is_null() {
+                drop(CString::from_raw(customer.name));
+            }
+            if !customer.email.is_null() {
+                drop(CString::from_raw(customer.email));
+            }
         }
-        if !customer.email.is_null() {
-            drop(CString::from_raw(customer.email));
-        }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +135,7 @@ mod tests {
 
         assert!(ffi.created_at_epoch_ms > 0);
 
-        stateset_customer_free(ffi);
+        unsafe { stateset_customer_free(ffi) };
     }
 
     #[test]
@@ -147,7 +151,7 @@ mod tests {
     #[test]
     fn customer_free_null_pointers() {
         // Must not crash.
-        stateset_customer_free(FfiCustomer::default());
+        unsafe { stateset_customer_free(FfiCustomer::default()) };
     }
 
     #[test]
@@ -156,7 +160,7 @@ mod tests {
         let ffi = FfiCustomer::from_domain(&c);
         let debug = format!("{:?}", ffi);
         assert!(debug.contains("FfiCustomer"));
-        stateset_customer_free(ffi);
+        unsafe { stateset_customer_free(ffi) };
     }
 
     #[test]
@@ -166,6 +170,6 @@ mod tests {
         let ffi = FfiCustomer::from_domain(&c);
         let back: CustomerId = ffi.id.into();
         assert_eq!(back, original_id);
-        stateset_customer_free(ffi);
+        unsafe { stateset_customer_free(ffi) };
     }
 }

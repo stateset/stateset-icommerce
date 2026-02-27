@@ -7,7 +7,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-use crate::error::{FfiErrorCode, set_last_error};
+use crate::error::{FfiErrorCode, catch_ffi_void, set_last_error};
 
 // ---------------------------------------------------------------------------
 // Rust → C
@@ -72,14 +72,16 @@ pub(crate) unsafe fn c_string_to_rust<'a>(ptr: *const c_char) -> Result<&'a str,
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn stateset_string_free(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        // SAFETY: The caller guarantees this pointer was allocated by
-        // `CString::into_raw()` in a prior `stateset_*` call.
-        unsafe {
-            drop(CString::from_raw(ptr));
+pub unsafe extern "C" fn stateset_string_free(ptr: *mut c_char) {
+    catch_ffi_void(|| {
+        if !ptr.is_null() {
+            // SAFETY: The caller guarantees this pointer was allocated by
+            // `CString::into_raw()` in a prior `stateset_*` call.
+            unsafe {
+                drop(CString::from_raw(ptr));
+            }
         }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +104,7 @@ mod tests {
         assert_eq!(back.to_str().unwrap(), original);
 
         // Clean up.
-        stateset_string_free(ptr);
+        unsafe { stateset_string_free(ptr) };
     }
 
     #[test]
@@ -113,7 +115,7 @@ mod tests {
         let back = unsafe { CStr::from_ptr(ptr) };
         assert_eq!(back.to_str().unwrap(), "");
 
-        stateset_string_free(ptr);
+        unsafe { stateset_string_free(ptr) };
     }
 
     #[test]
@@ -125,7 +127,7 @@ mod tests {
         let back = unsafe { CStr::from_ptr(ptr) };
         assert_eq!(back.to_str().unwrap(), original);
 
-        stateset_string_free(ptr);
+        unsafe { stateset_string_free(ptr) };
     }
 
     #[test]
@@ -157,14 +159,14 @@ mod tests {
     #[test]
     fn free_null_is_noop() {
         // Must not panic or crash.
-        stateset_string_free(std::ptr::null_mut());
+        unsafe { stateset_string_free(std::ptr::null_mut()) };
     }
 
     #[test]
     fn free_valid_pointer() {
         let ptr = rust_to_c_string("to be freed");
         assert!(!ptr.is_null());
-        stateset_string_free(ptr);
+        unsafe { stateset_string_free(ptr) };
         // No crash = success.
     }
 
