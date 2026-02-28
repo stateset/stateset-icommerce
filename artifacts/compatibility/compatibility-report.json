@@ -1,0 +1,270 @@
+{
+  "summary": {
+    "generated_at_utc": "2026-02-27T17:59:31.529425+00:00",
+    "total": 15,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 15
+  },
+  "rows": [
+    {
+      "crate": "stateset-primitives",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-primitives --all-targets",
+      "declared_features": [
+        "arbitrary",
+        "default",
+        "sqlx-postgres",
+        "std"
+      ],
+      "default_feature_members": [
+        "std"
+      ]
+    },
+    {
+      "crate": "stateset-core",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-core --all-targets",
+      "declared_features": [
+        "default",
+        "embeddings",
+        "metrics",
+        "sqlx-postgres",
+        "test-utils"
+      ],
+      "default_feature_members": []
+    },
+    {
+      "crate": "stateset-core",
+      "feature_set": "metrics",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-core --all-targets --features metrics",
+      "declared_features": [
+        "default",
+        "embeddings",
+        "metrics",
+        "sqlx-postgres",
+        "test-utils"
+      ],
+      "default_feature_members": []
+    },
+    {
+      "crate": "stateset-db",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-db --all-targets",
+      "declared_features": [
+        "default",
+        "postgres",
+        "saga",
+        "sqlite",
+        "vector"
+      ],
+      "default_feature_members": [
+        "sqlite"
+      ]
+    },
+    {
+      "crate": "stateset-db",
+      "feature_set": "postgres",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-db --all-targets --no-default-features --features postgres",
+      "declared_features": [
+        "default",
+        "postgres",
+        "saga",
+        "sqlite",
+        "vector"
+      ],
+      "default_feature_members": [
+        "sqlite"
+      ]
+    },
+    {
+      "crate": "stateset-db",
+      "feature_set": "postgres+saga",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-db --all-targets --no-default-features --features postgres,saga",
+      "declared_features": [
+        "default",
+        "postgres",
+        "saga",
+        "sqlite",
+        "vector"
+      ],
+      "default_feature_members": [
+        "sqlite"
+      ]
+    },
+    {
+      "crate": "stateset-embedded",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-embedded --all-targets",
+      "declared_features": [
+        "default",
+        "events",
+        "hex",
+        "hmac",
+        "opentelemetry",
+        "opentelemetry-otlp",
+        "opentelemetry_sdk",
+        "postgres",
+        "prometheus",
+        "r2d2",
+        "r2d2_sqlite",
+        "reqwest",
+        "rusqlite",
+        "sha2",
+        "sqlite",
+        "sqlite-events",
+        "sqlx",
+        "tracing-opentelemetry",
+        "vector"
+      ],
+      "default_feature_members": [
+        "events",
+        "sqlite"
+      ]
+    },
+    {
+      "crate": "stateset-embedded",
+      "feature_set": "postgres",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-embedded --all-targets --features postgres",
+      "declared_features": [
+        "default",
+        "events",
+        "hex",
+        "hmac",
+        "opentelemetry",
+        "opentelemetry-otlp",
+        "opentelemetry_sdk",
+        "postgres",
+        "prometheus",
+        "r2d2",
+        "r2d2_sqlite",
+        "reqwest",
+        "rusqlite",
+        "sha2",
+        "sqlite",
+        "sqlite-events",
+        "sqlx",
+        "tracing-opentelemetry",
+        "vector"
+      ],
+      "default_feature_members": [
+        "events",
+        "sqlite"
+      ]
+    },
+    {
+      "crate": "stateset-embedded",
+      "feature_set": "postgres+events",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-embedded --all-targets --no-default-features --features postgres,events",
+      "declared_features": [
+        "default",
+        "events",
+        "hex",
+        "hmac",
+        "opentelemetry",
+        "opentelemetry-otlp",
+        "opentelemetry_sdk",
+        "postgres",
+        "prometheus",
+        "r2d2",
+        "r2d2_sqlite",
+        "reqwest",
+        "rusqlite",
+        "sha2",
+        "sqlite",
+        "sqlite-events",
+        "sqlx",
+        "tracing-opentelemetry",
+        "vector"
+      ],
+      "default_feature_members": [
+        "events",
+        "sqlite"
+      ]
+    },
+    {
+      "crate": "stateset-ffi",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-ffi --all-targets",
+      "declared_features": [
+        "cbindgen",
+        "default"
+      ],
+      "default_feature_members": []
+    },
+    {
+      "crate": "stateset-sdk",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-sdk --all-targets",
+      "declared_features": [
+        "core",
+        "crypto",
+        "default",
+        "full",
+        "macros",
+        "policy"
+      ],
+      "default_feature_members": [
+        "core"
+      ]
+    },
+    {
+      "crate": "stateset-http",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-http --all-targets",
+      "declared_features": [],
+      "default_feature_members": []
+    },
+    {
+      "crate": "stateset-protocol",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-protocol --all-targets",
+      "declared_features": [],
+      "default_feature_members": []
+    },
+    {
+      "crate": "stateset-migrations",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-migrations --all-targets",
+      "declared_features": [],
+      "default_feature_members": []
+    },
+    {
+      "crate": "stateset-authz",
+      "feature_set": "default",
+      "status": "SKIPPED",
+      "duration_seconds": 0,
+      "command": "cargo check --locked -p stateset-authz --all-targets",
+      "declared_features": [],
+      "default_feature_members": []
+    }
+  ]
+}

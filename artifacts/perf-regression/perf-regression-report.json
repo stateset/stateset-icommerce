@@ -1,0 +1,59 @@
+{
+  "summary": {
+    "total": 6,
+    "passed": 0,
+    "failed": 0,
+    "missing": 6,
+    "threshold_multiplier": 1.0
+  },
+  "benchmarks": [
+    {
+      "id": "sqlite_batch_insert_orders/batch_orders_100",
+      "status": "MISSING",
+      "observed_median_ns": null,
+      "base_limit_ns": 250000000.0,
+      "effective_limit_ns": 250000000.0,
+      "note": "100-order SQLite insert median should stay under 250ms"
+    },
+    {
+      "id": "sqlite_batch_insert_customers/batch_customers_100",
+      "status": "MISSING",
+      "observed_median_ns": null,
+      "base_limit_ns": 200000000.0,
+      "effective_limit_ns": 200000000.0,
+      "note": "100-customer SQLite insert median should stay under 200ms"
+    },
+    {
+      "id": "api/create_customer",
+      "status": "MISSING",
+      "observed_median_ns": null,
+      "base_limit_ns": 15000000.0,
+      "effective_limit_ns": 15000000.0,
+      "note": "Embedded API customer create target <15ms"
+    },
+    {
+      "id": "api/inventory_get_stock",
+      "status": "MISSING",
+      "observed_median_ns": null,
+      "base_limit_ns": 4000000.0,
+      "effective_limit_ns": 4000000.0,
+      "note": "Embedded API stock lookup target <4ms"
+    },
+    {
+      "id": "api/create_order_single_item",
+      "status": "MISSING",
+      "observed_median_ns": null,
+      "base_limit_ns": 30000000.0,
+      "effective_limit_ns": 30000000.0,
+      "note": "Embedded API single-item order create target <30ms"
+    },
+    {
+      "id": "api/analytics_sales_summary",
+      "status": "MISSING",
+      "observed_median_ns": null,
+      "base_limit_ns": 100000000.0,
+      "effective_limit_ns": 100000000.0,
+      "note": "Embedded API analytics summary target <100ms"
+    }
+  ]
+}
