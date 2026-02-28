@@ -14,7 +14,9 @@ use stateset_http::{
     ServerBuilder,
 };
 use stateset_primitives::{CustomerId, OrderId, ProductId};
+use std::fs;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 // ============================================================================
 // Helpers
@@ -124,6 +126,7 @@ async fn api_accepts_valid_bearer_auth() {
         .oneshot(
             Request::get("/api/v1/orders")
                 .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "tenant-1")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -131,6 +134,71 @@ async fn api_accepts_valid_bearer_auth() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn tenant_db_routing_isolates_data_between_tenants() {
+    let tenant_dir =
+        std::env::temp_dir().join(format!("stateset-http-tenant-e2e-{}", Uuid::new_v4()));
+    let router = ServerBuilder::new(test_commerce())
+        .without_auth()
+        .with_tenant_db_dir(tenant_dir.clone())
+        .build();
+
+    let create_body = json!({
+        "email": "tenant-a@example.com",
+        "first_name": "Tenant",
+        "last_name": "A"
+    });
+
+    let create_resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("content-type", "application/json")
+                .header("x-tenant-id", "tenant-a")
+                .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), StatusCode::CREATED);
+
+    let tenant_a_list = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/customers")
+                .header("x-tenant-id", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(tenant_a_list.status(), StatusCode::OK);
+    let tenant_a_json = body_json(tenant_a_list).await;
+    assert_eq!(tenant_a_json["total"], 1);
+
+    let tenant_b_list = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/customers")
+                .header("x-tenant-id", "tenant-b")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(tenant_b_list.status(), StatusCode::OK);
+    let tenant_b_json = body_json(tenant_b_list).await;
+    assert_eq!(tenant_b_json["total"], 0);
+
+    let missing_tenant_header = router
+        .oneshot(Request::get("/api/v1/customers").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(missing_tenant_header.status(), StatusCode::BAD_REQUEST);
+
+    let _ = fs::remove_dir_all(tenant_dir);
 }
 
 #[tokio::test]

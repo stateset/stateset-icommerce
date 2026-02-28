@@ -15,10 +15,6 @@ spec:
       port: 80
       targetPort: http
       protocol: TCP
-    - name: metrics
-      port: 9090
-      targetPort: metrics
-      protocol: TCP
   selector:
     app.kubernetes.io/name: stateset-cli
 ---

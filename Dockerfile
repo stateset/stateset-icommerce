@@ -4,7 +4,7 @@
 # =============================================================================
 # Stage 1: Build Stage
 # =============================================================================
-FROM rust:1.75-bookworm AS builder
+FROM rust:1.85-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -39,8 +39,7 @@ USER stateset
 WORKDIR /app
 
 # Copy built artifacts from builder
-COPY --from=builder /app/target/release/libstateset_embedded.so /app/lib/ 2>/dev/null || true
-COPY --from=builder /app/target/release/libstateset_embedded.rlib /app/lib/ 2>/dev/null || true
+COPY --from=builder /app/target/release /app/build-artifacts
 
 # Create data directory
 RUN mkdir -p /app/data
@@ -86,11 +85,11 @@ ENV NODE_ENV=production
 ENV DATABASE_PATH=/app/data/store.db
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD node -e "console.log('healthy')" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:3000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # Default command
-CMD ["node", "bin/stateset.js"]
+CMD ["node", "bin/stateset-mcp-events.js", "--db", "/app/data/store.db", "--host", "0.0.0.0", "--port", "3000"]
 
 # =============================================================================
 # Stage 4: Python Bindings Image

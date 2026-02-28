@@ -34,6 +34,8 @@ ENDPOINTS:
   GET /history                        Fetch recent events
   GET /subscriptions                  List active subscriptions
   GET /health                         Service health
+  GET /ready                          Readiness status
+  GET /metrics                        Prometheus metrics
 
 OPTIONS:
   --db <path>             Database path (default: ./store.db)
@@ -99,9 +101,29 @@ const sendJson = (res, statusCode, payload) => {
   res.end(body);
 };
 
+const sendText = (
+  res,
+  statusCode,
+  body,
+  contentType = 'text/plain; version=0.0.4; charset=utf-8',
+) => {
+  res.writeHead(statusCode, {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.end(body);
+};
+
+const escapeLabelValue = (value) =>
+  String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+
 const runtime = {
   server: null,
   mcpInstance: null,
+  startedAt: Date.now(),
+  requestCounts: new Map(),
+  requestErrors: 0,
 };
 
 async function main() {
@@ -133,6 +155,7 @@ async function main() {
   const port = normalizePort(values.port, 8081);
   const historyLimit = parseLimit(values['history-limit']) || 500;
   const streamName = values['stream-name'];
+  runtime.startedAt = Date.now();
 
   let commerce;
   try {
@@ -161,23 +184,34 @@ async function main() {
   const transport = new StdioServerTransport();
   await mcpInstance.connect(transport);
   runtime.mcpInstance = mcpInstance;
-
-  const startedAt = Date.now();
   const server = createServer((req, res) => {
     void (async () => {
       const requestUrl = new URL(req.url || '/', `http://${host}:${port}`);
       const pathname = normalizePath(requestUrl.pathname);
+      const method = (req.method || 'GET').toUpperCase();
       const sessionId = requestUrl.searchParams.get('session') || undefined;
+      const countRequest = (statusCode) => {
+        const key = `${method}|${pathname}|${statusCode}`;
+        runtime.requestCounts.set(key, (runtime.requestCounts.get(key) || 0) + 1);
+      };
+      const sendJsonWithMetrics = (statusCode, payload) => {
+        countRequest(statusCode);
+        sendJson(res, statusCode, payload);
+      };
+      const sendTextWithMetrics = (statusCode, body, contentType) => {
+        countRequest(statusCode);
+        sendText(res, statusCode, body, contentType);
+      };
 
       if (pathname === '/health') {
-        if (req.method !== 'GET') {
-          sendJson(res, 405, { error: 'Method not allowed' });
+        if (method !== 'GET') {
+          sendJsonWithMetrics(405, { error: 'Method not allowed' });
           return;
         }
 
-        sendJson(res, 200, {
+        sendJsonWithMetrics(200, {
           status: 'ok',
-          uptimeMs: Date.now() - startedAt,
+          uptimeMs: Date.now() - runtime.startedAt,
           stream: streamName,
           host,
           port,
@@ -186,9 +220,59 @@ async function main() {
         return;
       }
 
+      if (pathname === '/ready') {
+        if (method !== 'GET') {
+          sendJsonWithMetrics(405, { error: 'Method not allowed' });
+          return;
+        }
+
+        sendJsonWithMetrics(200, {
+          status: 'ready',
+          timestamp: new Date().toISOString(),
+          checks: {
+            database: 'ok',
+            mcp: 'ok',
+            eventStream: 'ok',
+          },
+        });
+        return;
+      }
+
+      if (pathname === '/metrics') {
+        if (method !== 'GET') {
+          sendJsonWithMetrics(405, { error: 'Method not allowed' });
+          return;
+        }
+
+        const subscriptions = await eventStreamer.listSubscriptions({});
+        const lines = [
+          '# HELP stateset_mcp_uptime_seconds MCP gateway uptime in seconds.',
+          '# TYPE stateset_mcp_uptime_seconds gauge',
+          `stateset_mcp_uptime_seconds ${Math.floor((Date.now() - runtime.startedAt) / 1000)}`,
+          '# HELP stateset_mcp_active_subscriptions Active event subscriptions.',
+          '# TYPE stateset_mcp_active_subscriptions gauge',
+          `stateset_mcp_active_subscriptions ${subscriptions.length}`,
+          '# HELP stateset_mcp_request_errors_total Unhandled request errors.',
+          '# TYPE stateset_mcp_request_errors_total counter',
+          `stateset_mcp_request_errors_total ${runtime.requestErrors}`,
+          '# HELP stateset_mcp_http_requests_total Total HTTP requests by method/path/status.',
+          '# TYPE stateset_mcp_http_requests_total counter',
+        ];
+
+        for (const [key, value] of runtime.requestCounts.entries()) {
+          const [requestMethod, requestPath, statusCode] = key.split('|');
+          lines.push(
+            `stateset_mcp_http_requests_total{method="${escapeLabelValue(requestMethod)}",path="${escapeLabelValue(requestPath)}",status="${escapeLabelValue(statusCode)}"} ${value}`,
+          );
+        }
+
+        sendTextWithMetrics(200, `${lines.join('\n')}\n`);
+        return;
+      }
+
       if (pathname === '/events') {
-        if (req.method !== 'GET') {
-          sendJson(res, 405, { error: 'Method not allowed' });
+        if (method !== 'GET') {
+          sendJsonWithMetrics(405, { error: 'Method not allowed' });
           return;
         }
 
@@ -196,10 +280,11 @@ async function main() {
         const subscription = await eventStreamer.subscribe({
           sessionId,
           eventTypes,
+          exposeInListings: Boolean(sessionId),
         });
 
         if (!subscription.success) {
-          sendJson(res, 500, {
+          sendJsonWithMetrics(500, {
             error: 'Failed to create event subscription',
             details: subscription.error || null,
           });
@@ -221,8 +306,8 @@ async function main() {
       }
 
       if (pathname === '/history') {
-        if (req.method !== 'GET') {
-          sendJson(res, 405, { error: 'Method not allowed' });
+        if (method !== 'GET') {
+          sendJsonWithMetrics(405, { error: 'Method not allowed' });
           return;
         }
 
@@ -235,27 +320,28 @@ async function main() {
           limit,
         });
 
-        sendJson(res, 200, { events, count: events.length });
+        sendJsonWithMetrics(200, { events, count: events.length });
         return;
       }
 
       if (pathname === '/subscriptions') {
-        if (req.method !== 'GET') {
-          sendJson(res, 405, { error: 'Method not allowed' });
+        if (method !== 'GET') {
+          sendJsonWithMetrics(405, { error: 'Method not allowed' });
           return;
         }
 
         const subscriptions = await eventStreamer.listSubscriptions({ sessionId });
-        sendJson(res, 200, { subscriptions, count: subscriptions.length });
+        sendJsonWithMetrics(200, { subscriptions, count: subscriptions.length });
         return;
       }
 
-      sendJson(res, 404, {
+      sendJsonWithMetrics(404, {
         error: 'Not found',
         path: pathname,
       });
     })().catch((error) => {
       if (res.writableEnded) return;
+      runtime.requestErrors += 1;
       sendJson(res, 500, {
         error: 'Request failed',
         details: error?.message || String(error),
@@ -282,7 +368,9 @@ async function main() {
   console.log(
     `[stateset-mcp-events] MCP stdio and event gateway active on http://${host}:${advertisedPort}`,
   );
-  console.log('[stateset-mcp-events] Endpoints: /events, /history, /subscriptions, /health');
+  console.log(
+    '[stateset-mcp-events] Endpoints: /events, /history, /subscriptions, /health, /ready, /metrics',
+  );
 }
 
 runMain('stateset-mcp-events', main, {

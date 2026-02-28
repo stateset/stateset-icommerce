@@ -95,7 +95,7 @@ export function createMcpEventStreamer(options = {}) {
 
   /**
    * Subscriptions map.
-   * subscriptionId => { id, sessionId, eventTypes, active, createdAt, lastEventId }
+   * subscriptionId => { id, sessionId, eventTypes, active, createdAt, lastEventId, _exposeInListings }
    * @type {Map<string, Object>}
    */
   const _subscriptions = new Map();
@@ -140,6 +140,12 @@ export function createMcpEventStreamer(options = {}) {
     };
 
     return event;
+  };
+
+  const sanitizeSubscription = (subscription) => {
+    if (!subscription || typeof subscription !== 'object') return subscription;
+    const { _exposeInListings, ...publicSubscription } = subscription;
+    return publicSubscription;
   };
 
   const getHistorySnapshot = (events, since) => {
@@ -231,9 +237,10 @@ export function createMcpEventStreamer(options = {}) {
      * @param {Object} params
      * @param {string} [params.sessionId]
      * @param {string[]} [params.eventTypes=['*']]
+     * @param {boolean} [params.exposeInListings=true]
      * @returns {Promise<{ success: boolean, subscription: Object }>}
      */
-    async subscribe({ sessionId, eventTypes }) {
+    async subscribe({ sessionId, eventTypes, exposeInListings = true } = {}) {
       const subscriptionId = randomUUID();
       const normalizedSession = normalizeSession(sessionId);
       const resolvedTypes = normalizeEventTypes(eventTypes);
@@ -245,12 +252,13 @@ export function createMcpEventStreamer(options = {}) {
         active: true,
         createdAt: new Date().toISOString(),
         lastEventId: null,
+        _exposeInListings: exposeInListings !== false,
       };
 
       _subscriptions.set(subscriptionId, subscription);
       return {
         success: true,
-        subscription: { ...subscription },
+        subscription: sanitizeSubscription(subscription),
       };
     },
 
@@ -274,7 +282,7 @@ export function createMcpEventStreamer(options = {}) {
       _subscriptions.delete(subscriptionId);
       return {
         success: true,
-        subscription: { ...existing },
+        subscription: sanitizeSubscription(existing),
       };
     },
 
@@ -289,6 +297,9 @@ export function createMcpEventStreamer(options = {}) {
       const target = hasSessionFilter ? normalizeSession(sessionId) : GLOBAL_SESSION;
       const list = [];
       for (const sub of _subscriptions.values()) {
+        if (!sub._exposeInListings) {
+          continue;
+        }
         if (hasSessionFilter) {
           if (sub.sessionId !== target) {
             continue;
@@ -297,7 +308,7 @@ export function createMcpEventStreamer(options = {}) {
           continue;
         }
 
-        list.push({ ...sub });
+        list.push(sanitizeSubscription(sub));
       }
       return list;
     },

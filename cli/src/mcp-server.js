@@ -286,9 +286,13 @@ const AGENTIC_RUNTIME_TOOLS = [
           error: 'MCP event stream service is unavailable',
         };
       }
-      return mcpEventStream.listSubscriptions({
+      const subscriptions = await mcpEventStream.listSubscriptions({
         sessionId: params?.sessionId,
       });
+      return {
+        subscriptions,
+        count: Array.isArray(subscriptions) ? subscriptions.length : 0,
+      };
     },
   },
   {

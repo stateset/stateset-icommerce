@@ -11,6 +11,7 @@
  */
 
 import http from 'http';
+import { isIP } from 'node:net';
 import { getPluginRegistry } from './plugin-api.js';
 import { getCommandRegistry } from './command-registry.js';
 import { getMetrics } from './metrics.js';
@@ -42,6 +43,73 @@ const SECURITY_HEADERS = {
 
 const MAX_BROWSER_URL_LENGTH = 2_048;
 const ALLOWED_BROWSER_PROTOCOLS = new Set(['http:', 'https:']);
+const ALLOW_PRIVATE_BROWSER_URLS = process.env.STATESET_ALLOW_PRIVATE_BROWSER_URLS === '1';
+
+function isPrivateIpv4(hostname) {
+  const parts = hostname.split('.').map((part) => Number.parseInt(part, 10));
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)
+  ) {
+    return false;
+  }
+  const [a, b] = parts;
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+function isPrivateIpv6(hostname) {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === '::1' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe80:') ||
+    normalized.startsWith('::ffff:127.') ||
+    normalized.startsWith('::ffff:10.') ||
+    normalized.startsWith('::ffff:192.168.') ||
+    /^::ffff:172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+  );
+}
+
+function isBlockedBrowserHostname(hostname) {
+  if (ALLOW_PRIVATE_BROWSER_URLS) {
+    return false;
+  }
+
+  const normalized = String(hostname || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, '');
+  if (!normalized) {
+    return true;
+  }
+
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized.endsWith('.local') ||
+    normalized.endsWith('.internal')
+  ) {
+    return true;
+  }
+
+  const ipVersion = isIP(normalized);
+  if (ipVersion === 4) {
+    return isPrivateIpv4(normalized);
+  }
+  if (ipVersion === 6) {
+    return isPrivateIpv6(normalized);
+  }
+
+  // Disallow single-label hostnames by default to reduce internal DNS SSRF risk.
+  return !normalized.includes('.');
+}
 
 function sanitizeHostHeader(hostHeader) {
   if (typeof hostHeader !== 'string') return 'localhost';
@@ -88,6 +156,10 @@ function validateBrowserUrl(value) {
 
   if (!parsed.hostname) {
     return 'Invalid URL';
+  }
+
+  if (isBlockedBrowserHostname(parsed.hostname)) {
+    return 'URL host is not allowed by browser safety policy';
   }
 
   return null;
@@ -493,7 +565,7 @@ export class HttpGateway {
           status: 'ok',
           uptime: Date.now() - startTime,
           timestamp: new Date().toISOString(),
-          version: process.env.npm_package_version || '0.7.13',
+          version: process.env.npm_package_version || '0.7.14',
           subsystems: {
             voice: this._subsystems.voice ? 'enabled' : 'disabled',
             browser: this._subsystems.browser ? 'enabled' : 'disabled',

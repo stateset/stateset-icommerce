@@ -20,7 +20,7 @@ spec:
         app.kubernetes.io/component: cli
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9090"
+        prometheus.io/port: "3000"
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: stateset
@@ -33,12 +33,18 @@ spec:
         - name: stateset-cli
           image: stateset/icommerce-cli:latest
           imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - bin/stateset-mcp-events.js
+            - --db
+            - /app/data/store.db
+            - --host
+            - 0.0.0.0
+            - --port
+            - "3000"
           ports:
             - name: http
               containerPort: 3000
-              protocol: TCP
-            - name: metrics
-              containerPort: 9090
               protocol: TCP
           env:
             - name: NODE_ENV
@@ -52,7 +58,7 @@ spec:
             - name: METRICS_ENABLED
               value: "true"
             - name: METRICS_PORT
-              value: "9090"
+              value: "3000"
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

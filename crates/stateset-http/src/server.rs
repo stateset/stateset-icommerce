@@ -1,6 +1,6 @@
 //! Server builder for configuring and running the HTTP service.
 
-use std::net::SocketAddr;
+use std::{fmt, net::SocketAddr, path::PathBuf};
 
 use axum::Router;
 use stateset_embedded::Commerce;
@@ -32,14 +32,28 @@ const DEFAULT_ADDR: ([u8; 4], u16) = ([127, 0, 0, 1], 3000);
 ///     .serve()
 ///     .await?;
 /// ```
-#[derive(Debug)]
 pub struct ServerBuilder {
     state: AppState,
     addr: SocketAddr,
     enable_cors: bool,
     enable_request_id: bool,
     api_bearer_token: Option<String>,
+    bound_tenant_id: Option<String>,
     generated_default_token: bool,
+}
+
+impl fmt::Debug for ServerBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ServerBuilder")
+            .field("state", &"AppState { .. }")
+            .field("addr", &self.addr)
+            .field("enable_cors", &self.enable_cors)
+            .field("enable_request_id", &self.enable_request_id)
+            .field("api_bearer_token", &self.api_bearer_token.as_ref().map(|_| "<redacted>"))
+            .field("bound_tenant_id", &self.bound_tenant_id.as_ref().map(|_| "<redacted>"))
+            .field("generated_default_token", &self.generated_default_token)
+            .finish()
+    }
 }
 
 impl ServerBuilder {
@@ -54,6 +68,7 @@ impl ServerBuilder {
             // Secure-by-default: API routes require an auth token unless
             // explicitly disabled.
             api_bearer_token: Some(Uuid::new_v4().to_string()),
+            bound_tenant_id: None,
             generated_default_token: true,
         }
     }
@@ -92,10 +107,37 @@ impl ServerBuilder {
         self
     }
 
+    /// Bind the configured bearer token to a single tenant.
+    ///
+    /// Requests using this token must present the same `x-tenant-id`.
+    #[must_use]
+    pub fn bind_auth_tenant(mut self, tenant_id: impl Into<String>) -> Self {
+        self.bound_tenant_id = Some(tenant_id.into());
+        self
+    }
+
+    /// Configure bearer authentication and bind it to a tenant in one call.
+    #[must_use]
+    pub fn with_bearer_auth_for_tenant(
+        self,
+        token: impl Into<String>,
+        tenant_id: impl Into<String>,
+    ) -> Self {
+        self.with_bearer_auth(token).bind_auth_tenant(tenant_id)
+    }
+
+    /// Enable per-tenant storage using `<base_dir>/<tenant>.db`.
+    #[must_use]
+    pub fn with_tenant_db_dir(mut self, base_dir: impl Into<PathBuf>) -> Self {
+        self.state = self.state.with_tenant_db_dir(base_dir);
+        self
+    }
+
     /// Disable API authentication (not recommended for untrusted networks).
     #[must_use]
     pub fn without_auth(mut self) -> Self {
         self.api_bearer_token = None;
+        self.bound_tenant_id = None;
         self.generated_default_token = false;
         self
     }
@@ -110,13 +152,9 @@ impl ServerBuilder {
     ///
     /// Useful for testing or embedding in a larger application.
     pub fn build(self) -> Router {
+        let auth_config = self.api_bearer_token.map(|token| (token, self.bound_tenant_id));
         let router = routes::api_router().with_state(self.state);
-        middleware::apply_middleware(
-            router,
-            self.enable_cors,
-            self.enable_request_id,
-            self.api_bearer_token,
-        )
+        middleware::apply_middleware(router, self.enable_cors, self.enable_request_id, auth_config)
     }
 
     /// Build the router and start serving HTTP requests.
@@ -124,18 +162,37 @@ impl ServerBuilder {
     /// This method will block until the server is shut down.
     pub async fn serve(self) -> Result<(), HttpError> {
         let token = self.api_bearer_token.clone();
+        let bound_tenant_id = self.bound_tenant_id.clone();
         let generated_default_token = self.generated_default_token;
         let addr = self.addr;
+
+        if token.is_none() && !addr.ip().is_loopback() {
+            return Err(HttpError::BadRequest(
+                "Refusing to start without API auth on a non-loopback address".to_string(),
+            ));
+        }
+
         let app = self.build();
 
         tracing::info!("StateSet HTTP listening on {addr}");
         if let Some(token) = token.as_deref() {
             tracing::info!("API bearer authentication is enabled for /api/v1/*");
+            if let Some(bound_tenant_id) = bound_tenant_id.as_deref() {
+                tracing::info!(
+                    tenant_id = %bound_tenant_id,
+                    "API token is bound to a specific tenant"
+                );
+            }
             if generated_default_token {
                 tracing::warn!(
                     "Using generated bearer token. Persist it and rotate for production deployments."
                 );
-                tracing::info!(api_bearer_token = %token, "Generated API bearer token");
+                let preview: String = token.chars().take(8).collect();
+                tracing::info!(
+                    token_preview = %preview,
+                    token_length = token.len(),
+                    "Generated API bearer token (redacted preview)"
+                );
             }
         } else {
             tracing::warn!("API authentication is disabled for /api/v1/*");
@@ -171,6 +228,7 @@ mod tests {
         assert!(!builder.enable_cors);
         assert!(!builder.enable_request_id);
         assert!(builder.api_bearer_token.is_some());
+        assert!(builder.bound_tenant_id.is_none());
     }
 
     #[test]
@@ -196,12 +254,24 @@ mod tests {
     fn builder_with_bearer_auth() {
         let builder = ServerBuilder::new(test_commerce()).with_bearer_auth("test-token");
         assert_eq!(builder.bearer_auth_token(), Some("test-token"));
+        assert!(builder.bound_tenant_id.is_none());
+    }
+
+    #[test]
+    fn builder_with_bearer_auth_for_tenant() {
+        let builder = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_tenant("tenant-token", "tenant-1");
+        assert_eq!(builder.bearer_auth_token(), Some("tenant-token"));
+        assert_eq!(builder.bound_tenant_id.as_deref(), Some("tenant-1"));
     }
 
     #[test]
     fn builder_without_auth() {
-        let builder = ServerBuilder::new(test_commerce()).without_auth();
+        let builder = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_tenant("token", "tenant-1")
+            .without_auth();
         assert!(builder.bearer_auth_token().is_none());
+        assert!(builder.bound_tenant_id.is_none());
     }
 
     #[test]
@@ -211,11 +281,13 @@ mod tests {
             .bind(addr)
             .with_cors()
             .with_request_id()
-            .with_bearer_auth("chain-token");
+            .with_bearer_auth("chain-token")
+            .bind_auth_tenant("chain-tenant");
         assert_eq!(builder.addr, addr);
         assert!(builder.enable_cors);
         assert!(builder.enable_request_id);
         assert_eq!(builder.bearer_auth_token(), Some("chain-token"));
+        assert_eq!(builder.bound_tenant_id.as_deref(), Some("chain-tenant"));
     }
 
     #[test]
@@ -281,6 +353,7 @@ mod tests {
         let builder = ServerBuilder::new(test_commerce());
         let dbg = format!("{builder:?}");
         assert!(dbg.contains("ServerBuilder"));
+        assert!(dbg.contains("<redacted>"));
     }
 
     #[tokio::test]
@@ -305,11 +378,44 @@ mod tests {
             .oneshot(
                 Request::get("/api/v1/orders")
                     .header("authorization", format!("Bearer {token}"))
+                    .header("x-tenant-id", "tenant-1")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn built_router_rejects_mismatched_tenant_for_bound_token() {
+        let router = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_tenant("bound-token", "tenant-1")
+            .build();
+
+        let resp = router
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", "Bearer bound-token")
+                    .header("x-tenant-id", "tenant-2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn serve_refuses_public_bind_without_auth() {
+        let addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let err = ServerBuilder::new(test_commerce())
+            .bind(addr)
+            .without_auth()
+            .serve()
+            .await
+            .expect_err("should reject public bind without auth");
+
+        assert!(err.to_string().contains("Refusing to start without API auth"));
     }
 }

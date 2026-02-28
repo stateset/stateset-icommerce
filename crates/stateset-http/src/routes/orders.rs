@@ -3,6 +3,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::HeaderMap,
     routing::{get, patch, post},
 };
 
@@ -10,7 +11,7 @@ use crate::dto::{
     CreateOrderItemRequest, CreateOrderRequest, OrderListResponse, OrderResponse, PaginationParams,
 };
 use crate::error::HttpError;
-use crate::state::AppState;
+use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{Address, CreateOrder, CreateOrderItem, OrderFilter, OrderId};
 
 /// Build the orders sub-router.
@@ -25,8 +26,12 @@ pub fn router() -> Router<AppState> {
 /// `POST /api/v1/orders`
 async fn create_order(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CreateOrderRequest>,
 ) -> Result<(axum::http::StatusCode, Json<OrderResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
     let input = CreateOrder {
         customer_id: req.customer_id,
         items: req.items.into_iter().map(into_core_order_item).collect(),
@@ -37,17 +42,19 @@ async fn create_order(
         payment_method: req.payment_method,
         shipping_method: req.shipping_method,
     };
-    let order = state.commerce().orders().create(input)?;
+    let order = commerce.orders().create(input)?;
     Ok((axum::http::StatusCode::CREATED, Json(OrderResponse::from(order))))
 }
 
 /// `GET /api/v1/orders/:id`
 async fn get_order(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<OrderId>,
 ) -> Result<Json<OrderResponse>, HttpError> {
-    let order = state
-        .commerce()
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let order = commerce
         .orders()
         .get(id)?
         .ok_or_else(|| HttpError::NotFound(format!("Order {id} not found")))?;
@@ -57,15 +64,18 @@ async fn get_order(
 /// `GET /api/v1/orders`
 async fn list_orders(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<OrderListResponse>, HttpError> {
-    let total = state.commerce().orders().list(OrderFilter::default())?.len();
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let total = commerce.orders().list(OrderFilter::default())?.len();
     let filter = OrderFilter {
         limit: Some(params.resolved_limit()),
         offset: Some(params.resolved_offset()),
         ..Default::default()
     };
-    let orders = state.commerce().orders().list(filter)?;
+    let orders = commerce.orders().list(filter)?;
     Ok(Json(OrderListResponse {
         orders: orders.into_iter().map(OrderResponse::from).collect(),
         total,
@@ -77,18 +87,24 @@ async fn list_orders(
 /// `PATCH /api/v1/orders/:id/cancel`
 async fn cancel_order(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<OrderId>,
 ) -> Result<Json<OrderResponse>, HttpError> {
-    let order = state.commerce().orders().cancel(id)?;
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let order = commerce.orders().cancel(id)?;
     Ok(Json(OrderResponse::from(order)))
 }
 
 /// `PATCH /api/v1/orders/:id/ship`
 async fn ship_order(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<OrderId>,
 ) -> Result<Json<OrderResponse>, HttpError> {
-    let order = state.commerce().orders().ship(id, None)?;
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let order = commerce.orders().ship(id, None)?;
     Ok(Json(OrderResponse::from(order)))
 }
 

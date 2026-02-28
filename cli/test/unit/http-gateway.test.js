@@ -459,6 +459,78 @@ describe('HttpGateway /browser/evaluate hardening', () => {
   });
 });
 
+describe('HttpGateway /browser/navigate URL safety', () => {
+  /** @type {HttpGateway} */
+  let gw;
+  let baseUrl;
+  let lastNavigated = null;
+
+  before(async () => {
+    gw = new HttpGateway({
+      port: 0,
+      host: '127.0.0.1',
+      apiKeys: [{ key: 'sk-admin-browser', name: 'admin', level: 'admin' }],
+    });
+    gw.setSubsystems({
+      browser: {
+        async navigate(url) {
+          lastNavigated = url;
+        },
+      },
+    });
+    const addr = await startGateway(gw);
+    baseUrl = `http://${addr.host}:${addr.port}`;
+  });
+
+  after(async () => {
+    await gw.stop();
+  });
+
+  it('blocks localhost URLs by default', async () => {
+    const res = await request(`${baseUrl}/browser/navigate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer sk-admin-browser',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: 'http://localhost:8080/private' }),
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.ok(String(res.body.error || '').includes('not allowed'));
+    assert.strictEqual(lastNavigated, null);
+  });
+
+  it('blocks private IPv4 targets by default', async () => {
+    const res = await request(`${baseUrl}/browser/navigate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer sk-admin-browser',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: 'http://10.0.0.12/admin' }),
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.ok(String(res.body.error || '').includes('not allowed'));
+    assert.strictEqual(lastNavigated, null);
+  });
+
+  it('allows public HTTPS targets', async () => {
+    const res = await request(`${baseUrl}/browser/navigate`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer sk-admin-browser',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: 'https://example.com/products' }),
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(lastNavigated, 'https://example.com/products');
+  });
+});
+
 // ===========================================================================
 // Lifecycle
 // ===========================================================================

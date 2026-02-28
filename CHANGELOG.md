@@ -6,6 +6,21 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.14] - 2026-02-28
+
+### Changed
+- Bumped workspace and cross-language release metadata from `0.7.13` to `0.7.14`.
+- Bumped CLI/runtime version references and packaging metadata to `0.7.14` across manifests, config constants, templates, and version assertion tests.
+- Added MCP gateway readiness and Prometheus metrics endpoints (`/ready`, `/metrics`) and updated Kubernetes/Prometheus deployment wiring.
+- Tightened CI quality gates by failing coverage jobs on undetermined coverage values.
+
+### Fixed
+- Enforced tenant-aware API access in `stateset-http`: authenticated `/api/v1/*` requests now require validated `x-tenant-id`.
+- Added bearer-token tenant binding support and rejection of tenant/token mismatches for principal isolation.
+- Implemented per-tenant SQLite routing in `stateset-http` (`<tenant>.db`) and added integration tests proving cross-tenant data isolation.
+- Hardened browser navigation URL policy in CLI gateway to block local/private/internal hosts by default (SSRF risk reduction).
+- Aligned CLI/mcp-events output contracts and test behavior, including stable event-subscription payload shape and runtime binary selection in E2E tests.
+
 ## [0.7.13] - 2026-02-27
 
 ### Changed

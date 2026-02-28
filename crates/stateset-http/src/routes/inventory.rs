@@ -3,12 +3,13 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
+    http::HeaderMap,
     routing::{get, post},
 };
 
 use crate::dto::{InventoryAdjustRequest, InventoryResponse};
 use crate::error::HttpError;
-use crate::state::AppState;
+use crate::state::{AppState, tenant_id_from_headers};
 
 /// Build the inventory sub-router.
 pub fn router() -> Router<AppState> {
@@ -20,10 +21,12 @@ pub fn router() -> Router<AppState> {
 /// `GET /api/v1/inventory/:sku`
 async fn get_stock(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(sku): Path<String>,
 ) -> Result<Json<InventoryResponse>, HttpError> {
-    let stock = state
-        .commerce()
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let stock = commerce
         .inventory()
         .get_stock(&sku)?
         .ok_or_else(|| HttpError::NotFound(format!("Inventory item {sku} not found")))?;
@@ -33,6 +36,7 @@ async fn get_stock(
 /// `POST /api/v1/inventory/:sku/adjust`
 async fn adjust_stock(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(sku): Path<String>,
     Json(req): Json<InventoryAdjustRequest>,
 ) -> Result<Json<InventoryResponse>, HttpError> {
@@ -42,12 +46,14 @@ async fn adjust_stock(
         ));
     }
 
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
     // Perform the adjustment
-    state.commerce().inventory().adjust(&sku, req.quantity, &req.reason)?;
+    commerce.inventory().adjust(&sku, req.quantity, &req.reason)?;
 
     // Fetch updated stock levels
-    let stock = state
-        .commerce()
+    let stock = commerce
         .inventory()
         .get_stock(&sku)?
         .ok_or_else(|| HttpError::NotFound(format!("Inventory item {sku} not found")))?;

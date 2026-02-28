@@ -19,7 +19,7 @@ data:
 
   # Metrics settings
   METRICS_ENABLED: "true"
-  METRICS_PORT: "9090"
+  METRICS_PORT: "3000"
   METRICS_PATH: "/metrics"
 
   # Feature flags

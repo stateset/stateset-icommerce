@@ -299,7 +299,8 @@ describe('mcp-server', () => {
       const payload = JSON.parse(res.content[0].text);
 
       assert.equal(payload._agentic, undefined);
-      assert.equal(Array.isArray(payload), true);
+      assert.equal(Array.isArray(payload.subscriptions), true);
+      assert.equal(payload.count, 0);
     });
 
     it('should expose agentic tool result schema contract from runtime tool', async () => {
@@ -395,9 +396,9 @@ describe('mcp-server', () => {
       const res = await tool.handler({ sessionId: 'session-1' });
       const payload = JSON.parse(res.content[0].text);
 
-      assert.equal(Array.isArray(payload), true);
-      assert.equal(payload.length, 1);
-      assert.equal(payload[0].sessionId, 'session-1');
+      assert.equal(Array.isArray(payload.subscriptions), true);
+      assert.equal(payload.count, 1);
+      assert.equal(payload.subscriptions[0].sessionId, 'session-1');
     });
 
     it('agentic_get_event_history forwards to stream service', async () => {

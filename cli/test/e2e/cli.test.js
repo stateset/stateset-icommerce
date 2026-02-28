@@ -21,7 +21,7 @@ const TEST_DB = path.join(os.tmpdir(), `stateset-e2e-${Date.now()}.db`);
  */
 function execCli(command, args = [], options = {}) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('node', [path.join(CLI_DIR, command), ...args], {
+    const proc = spawn(process.execPath, [path.join(CLI_DIR, command), ...args], {
       env: { ...process.env, ...options.env },
       timeout: options.timeout || 30000
     });
@@ -108,18 +108,22 @@ describe('CLI E2E Tests', () => {
 
     describe('resource aliases', () => {
       it('should expand single letter aliases', async () => {
-        const { stdout: fullOutput } = await execCli('stateset-direct.js', [
+        const fullRun = await execCli('stateset-direct.js', [
           '--db', ':memory:',
           'customers', 'list', '--json'
         ]);
 
-        const { stdout: aliasOutput } = await execCli('stateset-direct.js', [
+        const aliasRun = await execCli('stateset-direct.js', [
           '--db', ':memory:',
           'c', 'l', '--json'
         ]);
 
-        // Both should produce similar output structure
-        // (empty array for in-memory db)
+        assert.strictEqual(fullRun.code, 0);
+        assert.strictEqual(aliasRun.code, 0);
+
+        const full = JSON.parse(fullRun.stdout.trim());
+        const alias = JSON.parse(aliasRun.stdout.trim());
+        assert.deepStrictEqual(alias, full);
       });
     });
 
@@ -274,9 +278,8 @@ describe('CLI Integration', () => {
         'customers', 'list'
       ]);
 
-      if (stdout.trim()) {
-        assert.doesNotThrow(() => JSON.parse(stdout.trim()));
-      }
+      assert.ok(stdout.trim().length > 0, 'expected JSON output');
+      assert.doesNotThrow(() => JSON.parse(stdout.trim()));
     });
   });
 

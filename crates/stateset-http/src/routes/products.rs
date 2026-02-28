@@ -3,12 +3,13 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::HeaderMap,
     routing::{get, post},
 };
 
 use crate::dto::{CreateProductRequest, PaginationParams, ProductListResponse, ProductResponse};
 use crate::error::HttpError;
-use crate::state::AppState;
+use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{CreateProduct, ProductFilter, ProductId, ProductType};
 use std::str::FromStr;
 
@@ -22,8 +23,12 @@ pub fn router() -> Router<AppState> {
 /// `POST /api/v1/products`
 async fn create_product(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CreateProductRequest>,
 ) -> Result<(axum::http::StatusCode, Json<ProductResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
     let product_type = req
         .product_type
         .as_deref()
@@ -38,17 +43,19 @@ async fn create_product(
         product_type,
         ..Default::default()
     };
-    let product = state.commerce().products().create(input)?;
+    let product = commerce.products().create(input)?;
     Ok((axum::http::StatusCode::CREATED, Json(ProductResponse::from(product))))
 }
 
 /// `GET /api/v1/products/:id`
 async fn get_product(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<ProductId>,
 ) -> Result<Json<ProductResponse>, HttpError> {
-    let product = state
-        .commerce()
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let product = commerce
         .products()
         .get(id)?
         .ok_or_else(|| HttpError::NotFound(format!("Product {id} not found")))?;
@@ -58,15 +65,18 @@ async fn get_product(
 /// `GET /api/v1/products`
 async fn list_products(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<ProductListResponse>, HttpError> {
-    let total = state.commerce().products().list(ProductFilter::default())?.len();
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let total = commerce.products().list(ProductFilter::default())?.len();
     let filter = ProductFilter {
         limit: Some(params.resolved_limit()),
         offset: Some(params.resolved_offset()),
         ..Default::default()
     };
-    let products = state.commerce().products().list(filter)?;
+    let products = commerce.products().list(filter)?;
     Ok(Json(ProductListResponse {
         products: products.into_iter().map(ProductResponse::from).collect(),
         total,

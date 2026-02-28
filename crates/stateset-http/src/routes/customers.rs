@@ -3,12 +3,13 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::HeaderMap,
     routing::{get, post},
 };
 
 use crate::dto::{CreateCustomerRequest, CustomerListResponse, CustomerResponse, PaginationParams};
 use crate::error::HttpError;
-use crate::state::AppState;
+use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{CreateCustomer, CustomerFilter, CustomerId};
 
 /// Build the customers sub-router.
@@ -21,8 +22,12 @@ pub fn router() -> Router<AppState> {
 /// `POST /api/v1/customers`
 async fn create_customer(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CreateCustomerRequest>,
 ) -> Result<(axum::http::StatusCode, Json<CustomerResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
     let input = CreateCustomer {
         email: req.email,
         first_name: req.first_name,
@@ -32,17 +37,19 @@ async fn create_customer(
         tags: req.tags,
         metadata: req.metadata,
     };
-    let customer = state.commerce().customers().create(input)?;
+    let customer = commerce.customers().create(input)?;
     Ok((axum::http::StatusCode::CREATED, Json(CustomerResponse::from(customer))))
 }
 
 /// `GET /api/v1/customers/:id`
 async fn get_customer(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<CustomerId>,
 ) -> Result<Json<CustomerResponse>, HttpError> {
-    let customer = state
-        .commerce()
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let customer = commerce
         .customers()
         .get(id)?
         .ok_or_else(|| HttpError::NotFound(format!("Customer {id} not found")))?;
@@ -52,15 +59,18 @@ async fn get_customer(
 /// `GET /api/v1/customers`
 async fn list_customers(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<CustomerListResponse>, HttpError> {
-    let total = state.commerce().customers().list(CustomerFilter::default())?.len();
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let total = commerce.customers().list(CustomerFilter::default())?.len();
     let filter = CustomerFilter {
         limit: Some(params.resolved_limit()),
         offset: Some(params.resolved_offset()),
         ..Default::default()
     };
-    let customers = state.commerce().customers().list(filter)?;
+    let customers = commerce.customers().list(filter)?;
     Ok(Json(CustomerListResponse {
         customers: customers.into_iter().map(CustomerResponse::from).collect(),
         total,

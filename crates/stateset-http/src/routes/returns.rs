@@ -3,12 +3,13 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
+    http::HeaderMap,
     routing::{get, patch, post},
 };
 
 use crate::dto::{CreateReturnRequest, ReturnResponse};
 use crate::error::HttpError;
-use crate::state::AppState;
+use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{
     CreateReturn, CreateReturnItem, ItemCondition, OrderItemId, ReturnId, ReturnReason,
 };
@@ -25,8 +26,12 @@ pub fn router() -> Router<AppState> {
 /// `POST /api/v1/returns`
 async fn create_return(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CreateReturnRequest>,
 ) -> Result<(axum::http::StatusCode, Json<ReturnResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
     let reason = ReturnReason::from_str(&req.reason)
         .map_err(|e| HttpError::BadRequest(format!("Invalid reason: {e}")))?;
 
@@ -56,17 +61,19 @@ async fn create_return(
         notes: req.notes,
         ..Default::default()
     };
-    let ret = state.commerce().returns().create(input)?;
+    let ret = commerce.returns().create(input)?;
     Ok((axum::http::StatusCode::CREATED, Json(ReturnResponse::from(ret))))
 }
 
 /// `GET /api/v1/returns/:id`
 async fn get_return(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<ReturnId>,
 ) -> Result<Json<ReturnResponse>, HttpError> {
-    let ret = state
-        .commerce()
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let ret = commerce
         .returns()
         .get(id)?
         .ok_or_else(|| HttpError::NotFound(format!("Return {id} not found")))?;
@@ -76,9 +83,12 @@ async fn get_return(
 /// `PATCH /api/v1/returns/:id/approve`
 async fn approve_return(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<ReturnId>,
 ) -> Result<Json<ReturnResponse>, HttpError> {
-    let ret = state.commerce().returns().approve(id)?;
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let ret = commerce.returns().approve(id)?;
     Ok(Json(ReturnResponse::from(ret)))
 }
 
