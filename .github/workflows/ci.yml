@@ -290,6 +290,17 @@ jobs:
       - name: Build docs
         run: mdbook build docs
 
+  version-sync:
+    name: Version Sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Check version sync
+        run: bash ./scripts/ci/check_version_sync.sh
+
   rust:
     name: Rust
     runs-on: ubuntu-latest
@@ -861,6 +872,7 @@ jobs:
       - miri
       - no-std
       - docs
+      - version-sync
       - rust
       - node-bindings
       - python-bindings

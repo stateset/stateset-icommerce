@@ -13,10 +13,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.7.4    # Python
-gem install stateset_embedded -v 0.7.4  # Ruby
-npm install @stateset/embedded@0.7.4    # Node.js
-npm install -g @stateset/cli@0.7.4      # CLI
+pip install stateset-embedded==0.7.14    # Python
+gem install stateset_embedded -v 0.7.14  # Ruby
+npm install @stateset/embedded@0.7.14    # Node.js
+npm install -g @stateset/cli@0.7.14      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -93,7 +93,7 @@ npm run check                # root quality checks
 
 ---
 
-## What's New in v0.7.4
+## What's New in v0.7.14
 
 **21-crate Rust workspace** — The engine now ships as a modular workspace of 21 specialized crates covering protocol, policy, transport, operations, interchange, and cross-cutting concerns. 2,671 Rust tests, 0 failures.
 
@@ -1258,7 +1258,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.7.4"
+stateset-embedded = "0.7.14"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1308,14 +1308,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.7.4</version>
+    <version>0.7.14</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.7.4'
+implementation 'com.stateset:embedded:0.7.14'
 ```
 
 ### Kotlin (Gradle)
@@ -1323,7 +1323,7 @@ implementation 'com.stateset:embedded:0.7.4'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.7.4")
+    implementation("com.stateset:embedded-kotlin:0.7.14")
 }
 ```
 
@@ -1332,32 +1332,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.4")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.14")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.7.4'
+pod 'StateSet', '~> 0.7.14'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.7.4
+dotnet add package StateSet.Embedded --version 0.7.14
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.7.4" />
+<PackageReference Include="StateSet.Embedded" Version="0.7.14" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.4
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.14
 ```
 
 ### CLI

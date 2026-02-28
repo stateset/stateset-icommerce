@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+- Updated README versioned install snippets and "What's New" heading to `0.7.14` for release-line consistency.
+- Raised Rust threshold in `.github/workflows/coverage.yml` from 70% to 80% to match primary CI policy.
+- Refreshed `docs/TESTING_STRATEGY.md` coverage section to document enforced CI gates instead of stale point-in-time estimates.
+- Expanded `RELEASING.md` with Rust crates.io release flow and generalized binding release examples to `vX.Y.Z`.
+
+### Added
+- Added CI `version-sync` gate (`scripts/ci/check_version_sync.sh`) and wired it into root `npm run check`.
+- Added Rust crate publish automation: `scripts/publish-rust-crates.sh` and `.github/workflows/publish-rust-crates.yml`.
+
+### Removed
+- Removed tracked SQLite WAL/SHM artifacts from `cli/` (`checkout-demo`, `demo`, `store`) to keep repository state clean.
+
 ## [0.7.14] - 2026-02-28
 
 ### Changed

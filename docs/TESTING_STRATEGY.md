@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the comprehensive testing strategy for StateSet iCommerce, ensuring A+ quality through 80%+ test coverage, performance regression testing, and mutation testing.
+This document outlines the testing strategy for StateSet iCommerce, including the quality gates enforced in CI and the broader test methodology used across crates and bindings.
 
 ## Test Pyramid
 
@@ -24,16 +24,13 @@ This document outlines the comprehensive testing strategy for StateSet iCommerce
                   - Error handling
 ```
 
-## Coverage Goals
+## Coverage Gates
 
-| Component | Target | Current | Notes |
-|-----------|--------|---------|-------|
-| **stateset-core** | 90% | ~75% | Domain models, business logic |
-| **stateset-db** | 85% | ~70% | Database operations, migrations |
-| **stateset-embedded** | 80% | ~65% | API layer, workflows |
-| **Bindings** | 60% | ~40% | Language-specific wrappers |
-| **CLI** | 70% | ~50% | Command-line interface |
-| **Overall** | 80% | ~65% | Across all crates |
+| Signal | Gate | Enforced In | Notes |
+|--------|------|-------------|-------|
+| **Rust workspace line coverage** | **>= 80%** | CI (`cargo tarpaulin`) and coverage workflow (`cargo llvm-cov`) | Excludes benches/tests from gate calculations where configured |
+| **CLI line coverage** | **>= 75%** | Coverage workflow (`node --experimental-test-coverage`) | Parsed from Node coverage summary |
+| **Per-crate quality** | Feature/MSRV/lint/test must pass | Main CI matrix | clippy, feature checks, Postgres parity, sanitizers, CodeQL, docs build |
 
 ## Test Categories
 

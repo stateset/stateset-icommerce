@@ -1,6 +1,6 @@
-# Releasing StateSet Bindings
+# Releasing StateSet Artifacts
 
-This guide covers publishing the Ruby and PHP bindings to their respective package registries. It also captures the repo-wide checklist for docs and changelog updates.
+This guide covers publishing Rust crates and language bindings. It also captures the repo-wide checklist for docs and changelog updates.
 
 ## Release Checklist (All)
 
@@ -19,6 +19,7 @@ Add these secrets to your GitHub repository settings:
 
 | Secret | Description |
 |--------|-------------|
+| `CARGO_REGISTRY_TOKEN` | crates.io API token with publish scope |
 | `RUBYGEMS_API_KEY` | API key from https://rubygems.org/profile/api_keys |
 | `PACKAGIST_USERNAME` | Your Packagist.org username |
 | `PACKAGIST_API_TOKEN` | API token from https://packagist.org/profile |
@@ -41,6 +42,31 @@ Add these secrets to your GitHub repository settings:
 
 ## Release Process
 
+### Rust Crates Release (crates.io)
+
+```bash
+# 1) Ensure workspace version, changelog, and README are in sync.
+bash ./scripts/ci/check_version_sync.sh
+
+# 2) Validate publishability for all publishable crates.
+bash ./scripts/publish-rust-crates.sh --dry-run
+
+# 3) Publish all crates in dependency order.
+export CARGO_REGISTRY_TOKEN=...
+bash ./scripts/publish-rust-crates.sh --publish
+
+# 4) Create and push release tag.
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+GitHub Actions workflow:
+
+- `.github/workflows/publish-rust-crates.yml`
+- Tag trigger: `v*`
+- Manual trigger: `workflow_dispatch` with `publish=true` to publish, or `publish=false` for dry-run only
+- Script used by workflow: `scripts/publish-rust-crates.sh`
+
 ### Ruby Release
 
 ```bash
@@ -50,11 +76,11 @@ Add these secrets to your GitHub repository settings:
 
 # 2. Commit the changes
 git add -A
-git commit -m "chore: bump ruby gem to v0.2.0"
+git commit -m "chore: bump ruby gem to vX.Y.Z"
 
 # 3. Create and push tag
-git tag ruby-v0.2.0
-git push origin ruby-v0.2.0
+git tag ruby-vX.Y.Z
+git push origin ruby-vX.Y.Z
 
 # GitHub Actions will automatically:
 # - Build native gems for all platforms
@@ -71,11 +97,11 @@ git push origin ruby-v0.2.0
 
 # 2. Commit the changes
 git add -A
-git commit -m "chore: bump php package to v0.2.0"
+git commit -m "chore: bump php package to vX.Y.Z"
 
 # 3. Create and push tag
-git tag php-v0.2.0
-git push origin php-v0.2.0
+git tag php-vX.Y.Z
+git push origin php-vX.Y.Z
 
 # GitHub Actions will automatically:
 # - Build native extensions for all platforms
@@ -90,12 +116,12 @@ For releasing both at once:
 ```bash
 # Update all version numbers
 git add -A
-git commit -m "chore: release v0.2.0"
+git commit -m "chore: release vX.Y.Z"
 
 # Tag both
-git tag ruby-v0.2.0
-git tag php-v0.2.0
-git push origin ruby-v0.2.0 php-v0.2.0
+git tag ruby-vX.Y.Z
+git tag php-vX.Y.Z
+git push origin ruby-vX.Y.Z php-vX.Y.Z
 ```
 
 ## Manual Publishing
@@ -113,11 +139,11 @@ bundle install
 bundle exec rake native gem
 
 # Publish
-gem push stateset_embedded-0.2.0.gem
+gem push stateset_embedded-X.Y.Z.gem
 
 # Or publish pre-built native gems
-gem push pkg/stateset_embedded-0.2.0-x86_64-linux.gem
-gem push pkg/stateset_embedded-0.2.0-arm64-darwin.gem
+gem push pkg/stateset_embedded-X.Y.Z-x86_64-linux.gem
+gem push pkg/stateset_embedded-X.Y.Z-arm64-darwin.gem
 ```
 
 ### PHP (Manual)
@@ -166,6 +192,7 @@ We use semantic versioning (SemVer):
 Keep versions in sync across:
 - `Cargo.toml` (workspace version)
 - `CHANGELOG.md` (entry for the release)
+- Rust release automation: `scripts/publish-rust-crates.sh` and `.github/workflows/publish-rust-crates.yml`
 - Ruby: `stateset_embedded.gemspec`, `lib/stateset_embedded.rb`
 - PHP: `composer.json`, `scripts/install-extension.php`
  - Docs: `docs/versions/vX.Y.Z/` snapshot
