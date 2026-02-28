@@ -62,6 +62,12 @@ pub struct RedSnapshot {
     pub error_rate: f64,
     /// Average request duration in milliseconds.
     pub avg_duration_ms: f64,
+    /// p50 latency in milliseconds (0.0 if no histogram data).
+    pub p50_ms: f64,
+    /// p95 latency in milliseconds (0.0 if no histogram data).
+    pub p95_ms: f64,
+    /// p99 latency in milliseconds (0.0 if no histogram data).
+    pub p99_ms: f64,
 }
 
 impl RedSnapshot {
@@ -70,7 +76,7 @@ impl RedSnapshot {
         let error_rate = if requests == 0 { 0.0 } else { errors as f64 / requests as f64 };
         let avg_duration_ms = if requests == 0 { 0.0 } else { duration_total_ms / requests as f64 };
 
-        Self { requests, errors, duration_total_ms, error_rate, avg_duration_ms }
+        Self { requests, errors, duration_total_ms, error_rate, avg_duration_ms, p50_ms: 0.0, p95_ms: 0.0, p99_ms: 0.0 }
     }
 
     /// Evaluate this RED snapshot against an SLO target.
@@ -171,6 +177,24 @@ pub struct MetricsSnapshot {
     pub payments_completed: u64,
     /// Number of inventory adjustment events.
     pub inventory_adjustments: u64,
+    /// Number of A2A quotes created.
+    pub a2a_quotes_created: u64,
+    /// Number of A2A purchases created.
+    pub a2a_purchases_created: u64,
+    /// Number of x402 payment intents created.
+    pub x402_intents_created: u64,
+    /// Number of x402 payment intents settled.
+    pub x402_intents_settled: u64,
+    /// Number of policy evaluations performed.
+    pub policy_evaluations: u64,
+    /// Number of policy denials.
+    pub policy_denials: u64,
+    /// Number of agent registrations.
+    pub agent_registrations: u64,
+    /// Number of webhook deliveries attempted.
+    pub webhook_deliveries: u64,
+    /// Number of webhook delivery failures.
+    pub webhook_failures: u64,
     /// Sum of recorded order amounts.
     pub order_amount_total: f64,
     /// Sum of recorded payment amounts.
@@ -204,11 +228,71 @@ impl MetricsSnapshot {
     }
 }
 
+/// Simple sorted-insert histogram for latency percentiles.
+///
+/// Provides p50/p95/p99 latency tracking for individual operations.
+///
+/// # Example
+///
+/// ```rust
+/// use stateset_observability::LatencyHistogram;
+///
+/// let mut h = LatencyHistogram::new();
+/// for i in 1..=100 {
+///     h.record(i * 1000); // 1ms to 100ms in micros
+/// }
+/// assert!(h.percentile(0.50) > 0.0);
+/// assert!(h.percentile(0.95) > h.percentile(0.50));
+/// ```
+#[derive(Debug, Clone)]
+pub struct LatencyHistogram {
+    values: Vec<u64>,
+}
+
+impl Default for LatencyHistogram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LatencyHistogram {
+    /// Create a new empty histogram.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { values: Vec::new() }
+    }
+
+    /// Record a latency value in microseconds.
+    pub fn record(&mut self, duration_micros: u64) {
+        let pos = self.values.binary_search(&duration_micros).unwrap_or_else(|e| e);
+        self.values.insert(pos, duration_micros);
+    }
+
+    /// Get a percentile (0.0 to 1.0) in milliseconds. Returns 0.0 if empty.
+    #[must_use]
+    pub fn percentile(&self, p: f64) -> f64 {
+        if self.values.is_empty() {
+            return 0.0;
+        }
+        let p = p.clamp(0.0, 1.0);
+        let idx = ((self.values.len() as f64 * p) - 1.0).max(0.0) as usize;
+        let idx = idx.min(self.values.len() - 1);
+        self.values[idx] as f64 / 1_000.0
+    }
+
+    /// Number of recorded values.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.values.len()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct RedAccumulator {
     requests: u64,
     errors: u64,
     duration_micros_total: u64,
+    histogram: LatencyHistogram,
 }
 
 impl RedAccumulator {
@@ -218,10 +302,15 @@ impl RedAccumulator {
             self.errors = self.errors.saturating_add(1);
         }
         self.duration_micros_total = self.duration_micros_total.saturating_add(duration_micros);
+        self.histogram.record(duration_micros);
     }
 
     fn snapshot(&self) -> RedSnapshot {
-        RedSnapshot::from_counts(self.requests, self.errors, self.duration_micros_total)
+        let mut snap = RedSnapshot::from_counts(self.requests, self.errors, self.duration_micros_total);
+        snap.p50_ms = self.histogram.percentile(0.50);
+        snap.p95_ms = self.histogram.percentile(0.95);
+        snap.p99_ms = self.histogram.percentile(0.99);
+        snap
     }
 }
 
@@ -247,6 +336,15 @@ struct MetricsInner {
     subscriptions_created: AtomicU64,
     payments_completed: AtomicU64,
     inventory_adjustments: AtomicU64,
+    a2a_quotes_created: AtomicU64,
+    a2a_purchases_created: AtomicU64,
+    x402_intents_created: AtomicU64,
+    x402_intents_settled: AtomicU64,
+    policy_evaluations: AtomicU64,
+    policy_denials: AtomicU64,
+    agent_registrations: AtomicU64,
+    webhook_deliveries: AtomicU64,
+    webhook_failures: AtomicU64,
     requests_total: AtomicU64,
     request_errors_total: AtomicU64,
     request_duration_micros_total: AtomicU64,
@@ -308,6 +406,15 @@ impl Metrics {
             subscriptions_created: self.inner.subscriptions_created.load(Ordering::Relaxed),
             payments_completed: self.inner.payments_completed.load(Ordering::Relaxed),
             inventory_adjustments: self.inner.inventory_adjustments.load(Ordering::Relaxed),
+            a2a_quotes_created: self.inner.a2a_quotes_created.load(Ordering::Relaxed),
+            a2a_purchases_created: self.inner.a2a_purchases_created.load(Ordering::Relaxed),
+            x402_intents_created: self.inner.x402_intents_created.load(Ordering::Relaxed),
+            x402_intents_settled: self.inner.x402_intents_settled.load(Ordering::Relaxed),
+            policy_evaluations: self.inner.policy_evaluations.load(Ordering::Relaxed),
+            policy_denials: self.inner.policy_denials.load(Ordering::Relaxed),
+            agent_registrations: self.inner.agent_registrations.load(Ordering::Relaxed),
+            webhook_deliveries: self.inner.webhook_deliveries.load(Ordering::Relaxed),
+            webhook_failures: self.inner.webhook_failures.load(Ordering::Relaxed),
             order_amount_total: totals.order_amount_total,
             payment_amount_total: totals.payment_amount_total,
             inventory_delta_total: totals.inventory_delta_total,
@@ -419,6 +526,68 @@ impl Metrics {
         totals.inventory_delta_total += delta;
     }
 
+    /// Record an A2A quote creation.
+    pub fn record_a2a_quote_created(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.inner.a2a_quotes_created.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record an A2A purchase creation.
+    pub fn record_a2a_purchase_created(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.inner.a2a_purchases_created.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record an x402 payment intent creation.
+    pub fn record_x402_intent_created(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.inner.x402_intents_created.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record an x402 payment intent settlement.
+    pub fn record_x402_intent_settled(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.inner.x402_intents_settled.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a policy evaluation.
+    pub fn record_policy_evaluation(&self, denied: bool) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.inner.policy_evaluations.fetch_add(1, Ordering::Relaxed);
+        if denied {
+            self.inner.policy_denials.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Record an agent registration.
+    pub fn record_agent_registration(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.inner.agent_registrations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a webhook delivery attempt.
+    pub fn record_webhook_delivery(&self, failed: bool) {
+        if !self.is_enabled() {
+            return;
+        }
+        self.inner.webhook_deliveries.fetch_add(1, Ordering::Relaxed);
+        if failed {
+            self.inner.webhook_failures.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// Record a request in RED metrics.
     ///
     /// `operation` is normalized to a low-cardinality label.
@@ -470,6 +639,15 @@ pub fn init_metrics(config: MetricsConfig) -> Metrics {
             subscriptions_created: AtomicU64::new(0),
             payments_completed: AtomicU64::new(0),
             inventory_adjustments: AtomicU64::new(0),
+            a2a_quotes_created: AtomicU64::new(0),
+            a2a_purchases_created: AtomicU64::new(0),
+            x402_intents_created: AtomicU64::new(0),
+            x402_intents_settled: AtomicU64::new(0),
+            policy_evaluations: AtomicU64::new(0),
+            policy_denials: AtomicU64::new(0),
+            agent_registrations: AtomicU64::new(0),
+            webhook_deliveries: AtomicU64::new(0),
+            webhook_failures: AtomicU64::new(0),
             requests_total: AtomicU64::new(0),
             request_errors_total: AtomicU64::new(0),
             request_duration_micros_total: AtomicU64::new(0),
@@ -654,5 +832,87 @@ mod tests {
             .unwrap();
         assert!(!report.passed);
         assert!(report.reason.unwrap().contains("insufficient requests"));
+    }
+
+    #[test]
+    fn agentic_counters_record() {
+        let metrics = init_metrics(MetricsConfig::default());
+        metrics.record_a2a_quote_created();
+        metrics.record_a2a_quote_created();
+        metrics.record_a2a_purchase_created();
+        metrics.record_x402_intent_created();
+        metrics.record_x402_intent_settled();
+        metrics.record_policy_evaluation(false);
+        metrics.record_policy_evaluation(true);
+        metrics.record_agent_registration();
+        metrics.record_webhook_delivery(false);
+        metrics.record_webhook_delivery(true);
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.a2a_quotes_created, 2);
+        assert_eq!(snap.a2a_purchases_created, 1);
+        assert_eq!(snap.x402_intents_created, 1);
+        assert_eq!(snap.x402_intents_settled, 1);
+        assert_eq!(snap.policy_evaluations, 2);
+        assert_eq!(snap.policy_denials, 1);
+        assert_eq!(snap.agent_registrations, 1);
+        assert_eq!(snap.webhook_deliveries, 2);
+        assert_eq!(snap.webhook_failures, 1);
+    }
+
+    #[test]
+    fn histogram_empty() {
+        let h = LatencyHistogram::new();
+        assert_eq!(h.count(), 0);
+        assert_eq!(h.percentile(0.5), 0.0);
+        assert_eq!(h.percentile(0.99), 0.0);
+    }
+
+    #[test]
+    fn histogram_single_value() {
+        let mut h = LatencyHistogram::new();
+        h.record(5000); // 5ms
+        assert_eq!(h.count(), 1);
+        assert_eq!(h.percentile(0.5), 5.0);
+        assert_eq!(h.percentile(0.99), 5.0);
+    }
+
+    #[test]
+    fn histogram_percentiles() {
+        let mut h = LatencyHistogram::new();
+        for i in 1..=100 {
+            h.record(i * 1000);
+        }
+        assert_eq!(h.count(), 100);
+        let p50 = h.percentile(0.50);
+        let p95 = h.percentile(0.95);
+        let p99 = h.percentile(0.99);
+        assert!(p50 >= 49.0 && p50 <= 51.0, "p50 was {p50}");
+        assert!(p95 >= 94.0 && p95 <= 96.0, "p95 was {p95}");
+        assert!(p99 >= 98.0 && p99 <= 100.0, "p99 was {p99}");
+    }
+
+    #[test]
+    fn histogram_clamps_percentile() {
+        let mut h = LatencyHistogram::new();
+        h.record(1000);
+        assert_eq!(h.percentile(-1.0), 1.0);
+        assert_eq!(h.percentile(2.0), 1.0);
+    }
+
+    #[test]
+    fn red_snapshot_includes_percentiles() {
+        let metrics = init_metrics(MetricsConfig::default());
+        metrics.record_request_success("test.op", Duration::from_millis(10));
+        metrics.record_request_success("test.op", Duration::from_millis(50));
+        metrics.record_request_success("test.op", Duration::from_millis(100));
+
+        let snap = metrics.snapshot();
+        if let Some(red) = snap.red_by_operation.get("test_op") {
+            assert_eq!(red.requests, 3);
+            assert!(red.p50_ms > 0.0, "p50 should be > 0");
+        } else {
+            panic!("Expected test_op in red_by_operation");
+        }
     }
 }

@@ -70,7 +70,7 @@ impl Money {
     /// Returns `true` if the amount is negative.
     #[inline]
     pub const fn is_negative(&self) -> bool {
-        self.amount.is_sign_negative()
+        self.amount.is_sign_negative() && !self.amount.is_zero()
     }
 
     /// Add two monetary values. Returns `None` if currencies don't match.
@@ -96,6 +96,33 @@ impl Money {
     #[must_use = "returns a new Money with rounded amount"]
     pub fn round_dp(self, dp: u32) -> Self {
         Self { amount: self.amount.round_dp(dp), currency: self.currency }
+    }
+
+    /// Multiply by a scalar factor (e.g., quantity or tax rate). Currency is preserved.
+    #[must_use = "returns a new Money with scaled amount"]
+    pub fn checked_mul_scalar(self, factor: Decimal) -> Self {
+        Self { amount: self.amount * factor, currency: self.currency }
+    }
+
+    /// Divide by a scalar. Returns `None` if divisor is zero.
+    #[must_use]
+    pub fn checked_div_scalar(self, divisor: Decimal) -> Option<Self> {
+        if divisor.is_zero() {
+            return None;
+        }
+        Some(Self { amount: self.amount / divisor, currency: self.currency })
+    }
+
+    /// Return the absolute value of this monetary amount.
+    #[must_use = "returns a new Money with absolute amount"]
+    pub fn abs(self) -> Self {
+        Self { amount: self.amount.abs(), currency: self.currency }
+    }
+
+    /// Negate this monetary amount.
+    #[must_use = "returns a new Money with negated amount"]
+    pub fn negate(self) -> Self {
+        Self { amount: -self.amount, currency: self.currency }
     }
 }
 
@@ -351,5 +378,78 @@ mod tests {
             prop_assert!(usd.checked_add(eur).is_none());
             prop_assert!(usd.checked_sub(eur).is_none());
         }
+    }
+
+    #[test]
+    fn is_negative_returns_false_for_zero() {
+        let zero = Money::zero(CurrencyCode::USD);
+        assert!(!zero.is_negative());
+        assert!(!zero.is_positive());
+    }
+
+    #[test]
+    fn is_negative_returns_true_for_negative() {
+        let money = Money::new(dec!(-5.00), CurrencyCode::USD);
+        assert!(money.is_negative());
+        assert!(!money.is_positive());
+    }
+
+    #[test]
+    fn is_positive_returns_true_for_positive() {
+        let money = Money::new(dec!(5.00), CurrencyCode::USD);
+        assert!(money.is_positive());
+        assert!(!money.is_negative());
+    }
+
+    #[test]
+    fn checked_mul_scalar() {
+        let money = Money::new(dec!(10.00), CurrencyCode::USD);
+        let result = money.checked_mul_scalar(dec!(3));
+        assert_eq!(result.amount(), dec!(30.00));
+        assert_eq!(result.currency(), CurrencyCode::USD);
+    }
+
+    #[test]
+    fn checked_mul_scalar_fractional() {
+        let money = Money::new(dec!(100.00), CurrencyCode::USD);
+        let result = money.checked_mul_scalar(dec!(0.0825)); // 8.25% tax
+        assert_eq!(result.amount(), dec!(8.2500));
+    }
+
+    #[test]
+    fn checked_div_scalar() {
+        let money = Money::new(dec!(30.00), CurrencyCode::USD);
+        let result = money.checked_div_scalar(dec!(3)).unwrap();
+        assert_eq!(result.amount(), dec!(10.00));
+        assert_eq!(result.currency(), CurrencyCode::USD);
+    }
+
+    #[test]
+    fn checked_div_scalar_zero_returns_none() {
+        let money = Money::new(dec!(30.00), CurrencyCode::USD);
+        assert!(money.checked_div_scalar(dec!(0)).is_none());
+    }
+
+    #[test]
+    fn abs_negative_becomes_positive() {
+        let money = Money::new(dec!(-5.00), CurrencyCode::USD);
+        let result = money.abs();
+        assert_eq!(result.amount(), dec!(5.00));
+    }
+
+    #[test]
+    fn abs_positive_stays_positive() {
+        let money = Money::new(dec!(5.00), CurrencyCode::USD);
+        let result = money.abs();
+        assert_eq!(result.amount(), dec!(5.00));
+    }
+
+    #[test]
+    fn negate_round_trip() {
+        let money = Money::new(dec!(5.00), CurrencyCode::USD);
+        let negated = money.negate();
+        assert_eq!(negated.amount(), dec!(-5.00));
+        let restored = negated.negate();
+        assert_eq!(restored.amount(), dec!(5.00));
     }
 }

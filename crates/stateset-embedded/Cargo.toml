@@ -53,6 +53,7 @@ sqlite = ["stateset-db/sqlite"]
 postgres = ["stateset-db/postgres", "sqlx"]
 events = ["reqwest/rustls-tls", "hmac", "sha2", "hex"]
 sqlite-events = ["events", "r2d2", "r2d2_sqlite", "rusqlite"]
+otel = ["opentelemetry", "opentelemetry-otlp", "opentelemetry_sdk", "tracing-opentelemetry"]
 vector = ["stateset-db/vector", "stateset-core/embeddings"]
 
 [dev-dependencies]

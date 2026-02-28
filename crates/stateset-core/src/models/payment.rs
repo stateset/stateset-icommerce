@@ -39,6 +39,51 @@ pub enum PaymentTransactionStatus {
     Disputed,
 }
 
+impl PaymentTransactionStatus {
+    /// Check if a status transition is allowed.
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+        match self {
+            Self::Pending => matches!(next, Self::Processing | Self::Cancelled | Self::Failed),
+            Self::Processing => matches!(
+                next,
+                Self::RequiresAction | Self::Completed | Self::Failed | Self::Cancelled
+            ),
+            Self::RequiresAction => matches!(
+                next,
+                Self::Processing | Self::Completed | Self::Failed | Self::Cancelled
+            ),
+            Self::Completed => {
+                matches!(next, Self::Refunded | Self::PartiallyRefunded | Self::Disputed)
+            }
+            Self::PartiallyRefunded => matches!(next, Self::Refunded | Self::Disputed),
+            Self::Disputed => matches!(next, Self::Completed | Self::Refunded | Self::Cancelled),
+            Self::Failed | Self::Cancelled | Self::Refunded => false,
+        }
+    }
+
+    /// Returns true if this status is a terminal state.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Failed | Self::Cancelled | Self::Refunded)
+    }
+
+    /// Returns true if this status represents a successful payment.
+    #[must_use]
+    pub const fn is_successful(self) -> bool {
+        matches!(self, Self::Completed | Self::PartiallyRefunded)
+    }
+
+    /// Returns true if this payment is still in progress.
+    #[must_use]
+    pub const fn is_in_progress(self) -> bool {
+        matches!(self, Self::Pending | Self::Processing | Self::RequiresAction)
+    }
+}
+
 /// Payment method type
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
@@ -185,6 +230,33 @@ pub enum RefundStatus {
     /// Refund was cancelled
     #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
+}
+
+impl RefundStatus {
+    /// Check if a status transition is allowed.
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+        match self {
+            Self::Pending => matches!(next, Self::Processing | Self::Cancelled | Self::Failed),
+            Self::Processing => matches!(next, Self::Completed | Self::Failed),
+            Self::Completed | Self::Failed | Self::Cancelled => false,
+        }
+    }
+
+    /// Returns true if this refund is still in progress.
+    #[must_use]
+    pub const fn is_in_progress(self) -> bool {
+        matches!(self, Self::Pending | Self::Processing)
+    }
+
+    /// Returns true if this status is a terminal state.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
 }
 
 /// A payment transaction
@@ -559,5 +631,105 @@ mod tests {
     fn generated_numbers_are_not_equal() {
         assert_ne!(generate_payment_number(), generate_payment_number());
         assert_ne!(generate_refund_number(), generate_refund_number());
+    }
+
+    #[test]
+    fn payment_status_valid_transitions() {
+        use PaymentTransactionStatus::*;
+        // Pending transitions
+        assert!(Pending.can_transition_to(Processing));
+        assert!(Pending.can_transition_to(Cancelled));
+        assert!(Pending.can_transition_to(Failed));
+        // Processing transitions
+        assert!(Processing.can_transition_to(RequiresAction));
+        assert!(Processing.can_transition_to(Completed));
+        assert!(Processing.can_transition_to(Failed));
+        assert!(Processing.can_transition_to(Cancelled));
+        // RequiresAction transitions
+        assert!(RequiresAction.can_transition_to(Processing));
+        assert!(RequiresAction.can_transition_to(Completed));
+        // Completed transitions
+        assert!(Completed.can_transition_to(Refunded));
+        assert!(Completed.can_transition_to(PartiallyRefunded));
+        assert!(Completed.can_transition_to(Disputed));
+        // PartiallyRefunded transitions
+        assert!(PartiallyRefunded.can_transition_to(Refunded));
+        assert!(PartiallyRefunded.can_transition_to(Disputed));
+        // Disputed transitions
+        assert!(Disputed.can_transition_to(Completed));
+        assert!(Disputed.can_transition_to(Refunded));
+        assert!(Disputed.can_transition_to(Cancelled));
+    }
+
+    #[test]
+    fn payment_status_invalid_transitions() {
+        use PaymentTransactionStatus::*;
+        assert!(!Pending.can_transition_to(Completed));
+        assert!(!Pending.can_transition_to(Refunded));
+        assert!(!Completed.can_transition_to(Pending));
+        assert!(!Completed.can_transition_to(Processing));
+        assert!(!PartiallyRefunded.can_transition_to(Pending));
+    }
+
+    #[test]
+    fn payment_status_terminal_states() {
+        use PaymentTransactionStatus::*;
+        assert!(Failed.is_terminal());
+        assert!(Cancelled.is_terminal());
+        assert!(Refunded.is_terminal());
+        assert!(!Pending.is_terminal());
+        assert!(!Processing.is_terminal());
+        assert!(!Completed.is_terminal());
+        // Terminal states reject all transitions
+        assert!(!Failed.can_transition_to(Pending));
+        assert!(!Cancelled.can_transition_to(Processing));
+        assert!(!Refunded.can_transition_to(Completed));
+    }
+
+    #[test]
+    fn payment_status_self_transitions() {
+        use PaymentTransactionStatus::*;
+        assert!(Pending.can_transition_to(Pending));
+        assert!(Processing.can_transition_to(Processing));
+        assert!(Failed.can_transition_to(Failed));
+    }
+
+    #[test]
+    fn payment_status_is_successful() {
+        use PaymentTransactionStatus::*;
+        assert!(Completed.is_successful());
+        assert!(PartiallyRefunded.is_successful());
+        assert!(!Pending.is_successful());
+        assert!(!Failed.is_successful());
+        assert!(!Refunded.is_successful());
+    }
+
+    #[test]
+    fn refund_status_valid_transitions() {
+        use RefundStatus::*;
+        assert!(Pending.can_transition_to(Processing));
+        assert!(Pending.can_transition_to(Cancelled));
+        assert!(Pending.can_transition_to(Failed));
+        assert!(Processing.can_transition_to(Completed));
+        assert!(Processing.can_transition_to(Failed));
+    }
+
+    #[test]
+    fn refund_status_invalid_transitions() {
+        use RefundStatus::*;
+        assert!(!Pending.can_transition_to(Completed));
+        assert!(!Processing.can_transition_to(Cancelled));
+        assert!(!Completed.can_transition_to(Pending));
+        assert!(!Failed.can_transition_to(Processing));
+    }
+
+    #[test]
+    fn refund_status_terminal_states() {
+        use RefundStatus::*;
+        assert!(Completed.is_terminal());
+        assert!(Failed.is_terminal());
+        assert!(Cancelled.is_terminal());
+        assert!(!Pending.is_terminal());
+        assert!(!Processing.is_terminal());
     }
 }

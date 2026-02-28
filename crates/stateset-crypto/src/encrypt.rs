@@ -9,7 +9,9 @@ use base64::Engine;
 use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 use crate::CryptoError;
 use crate::canonicalize::canonicalize_json;
@@ -67,10 +69,10 @@ pub fn encrypt_payload(
 
     // Generate random values
     let mut salt = [0u8; SALT_SIZE];
-    let mut dek = [0u8; KEY_SIZE];
+    let mut dek = Zeroizing::new([0u8; KEY_SIZE]);
     let mut nonce_bytes = [0u8; NONCE_SIZE];
     rng.fill_bytes(&mut salt);
-    rng.fill_bytes(&mut dek);
+    rng.fill_bytes(dek.as_mut());
     rng.fill_bytes(&mut nonce_bytes);
 
     // Compute payload_plain_hash with salt
@@ -88,7 +90,7 @@ pub fn encrypt_payload(
     plaintext.extend_from_slice(canonical.as_bytes());
 
     // Encrypt with AES-256-GCM
-    let key = Key::<Aes256Gcm>::from_slice(&dek);
+    let key = Key::<Aes256Gcm>::from_slice(&*dek);
     let cipher = Aes256Gcm::new(key);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -273,14 +275,16 @@ pub fn decrypt_payload(
     if plaintext.len() < SALT_SIZE {
         return Err(CryptoError::DecryptionError("Plaintext too short".to_string()));
     }
-    let salt: [u8; 16] = plaintext[..SALT_SIZE].try_into().expect("salt slice is exactly 16 bytes");
+    let salt: [u8; 16] = plaintext[..SALT_SIZE]
+        .try_into()
+        .map_err(|_| CryptoError::InvalidSalt)?;
     let json_bytes = &plaintext[SALT_SIZE..];
     let payload: serde_json::Value = serde_json::from_slice(json_bytes)
         .map_err(|e| CryptoError::DecryptionError(e.to_string()))?;
 
     // Verify payload_plain_hash
     let computed_hash = compute_payload_plain_hash(&payload, Some(&salt))?;
-    if computed_hash != *expected_plain_hash {
+    if computed_hash.ct_eq(expected_plain_hash).unwrap_u8() == 0 {
         return Err(CryptoError::PayloadHashMismatch);
     }
 
@@ -305,14 +309,14 @@ fn wrap_dek(
 
     // Derive wrapping key using HKDF
     let hk = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
-    let mut wrapping_key = [0u8; 32];
-    hk.expand(info, &mut wrapping_key).map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
+    let mut wrapping_key = Zeroizing::new([0u8; 32]);
+    hk.expand(info, wrapping_key.as_mut()).map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
 
     // Wrap DEK with AES-256-GCM
     let mut wrap_nonce_bytes = [0u8; NONCE_SIZE];
     rng.fill_bytes(&mut wrap_nonce_bytes);
 
-    let key = Key::<Aes256Gcm>::from_slice(&wrapping_key);
+    let key = Key::<Aes256Gcm>::from_slice(&*wrapping_key);
     let wrap_cipher = Aes256Gcm::new(key);
     let wrap_nonce = Nonce::from_slice(&wrap_nonce_bytes);
 
@@ -342,8 +346,8 @@ fn unwrap_dek(
 
     // Derive wrapping key
     let hk = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
-    let mut wrapping_key = [0u8; 32];
-    hk.expand(info, &mut wrapping_key).map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
+    let mut wrapping_key = Zeroizing::new([0u8; 32]);
+    hk.expand(info, wrapping_key.as_mut()).map_err(|e| CryptoError::KeyWrapError(e.to_string()))?;
 
     // Unwrap DEK
     if wrapped_key.len() < NONCE_SIZE + TAG_SIZE {
@@ -352,7 +356,7 @@ fn unwrap_dek(
     let wrap_nonce = Nonce::from_slice(&wrapped_key[..NONCE_SIZE]);
     let ciphertext_tag = &wrapped_key[NONCE_SIZE..];
 
-    let key = Key::<Aes256Gcm>::from_slice(&wrapping_key);
+    let key = Key::<Aes256Gcm>::from_slice(&*wrapping_key);
     let wrap_cipher = Aes256Gcm::new(key);
 
     let dek_bytes = wrap_cipher
@@ -365,9 +369,9 @@ fn unwrap_dek(
         )));
     }
 
-    let mut dek = [0u8; KEY_SIZE];
+    let mut dek = Zeroizing::new([0u8; KEY_SIZE]);
     dek.copy_from_slice(&dek_bytes);
-    Ok(dek)
+    Ok(*dek)
 }
 
 /// Generate an X25519 keypair for key wrapping

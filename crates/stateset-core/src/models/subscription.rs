@@ -95,6 +95,32 @@ pub enum SubscriptionStatus {
     Pending,
 }
 
+impl SubscriptionStatus {
+    /// Check if a status transition is allowed.
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+        match self {
+            Self::Pending => matches!(next, Self::Trial | Self::Active | Self::Cancelled),
+            Self::Trial => matches!(next, Self::Active | Self::Cancelled | Self::Expired),
+            Self::Active => {
+                matches!(next, Self::Paused | Self::PastDue | Self::Cancelled | Self::Expired)
+            }
+            Self::Paused => matches!(next, Self::Active | Self::Cancelled),
+            Self::PastDue => matches!(next, Self::Active | Self::Cancelled | Self::Expired),
+            Self::Cancelled | Self::Expired => false,
+        }
+    }
+
+    /// Returns true if this status is a terminal state.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Cancelled | Self::Expired)
+    }
+}
+
 /// Status of a subscription plan
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,
@@ -695,6 +721,49 @@ mod tests {
             generated.insert(generate_subscription_number());
         }
         assert_eq!(generated.len(), 1000);
+    }
+
+    #[test]
+    fn subscription_status_valid_transitions() {
+        use SubscriptionStatus::*;
+        assert!(Pending.can_transition_to(Trial));
+        assert!(Pending.can_transition_to(Active));
+        assert!(Pending.can_transition_to(Cancelled));
+        assert!(Trial.can_transition_to(Active));
+        assert!(Trial.can_transition_to(Cancelled));
+        assert!(Trial.can_transition_to(Expired));
+        assert!(Active.can_transition_to(Paused));
+        assert!(Active.can_transition_to(PastDue));
+        assert!(Active.can_transition_to(Cancelled));
+        assert!(Active.can_transition_to(Expired));
+        assert!(Paused.can_transition_to(Active));
+        assert!(Paused.can_transition_to(Cancelled));
+        assert!(PastDue.can_transition_to(Active));
+        assert!(PastDue.can_transition_to(Cancelled));
+        assert!(PastDue.can_transition_to(Expired));
+    }
+
+    #[test]
+    fn subscription_status_invalid_transitions() {
+        use SubscriptionStatus::*;
+        assert!(!Pending.can_transition_to(Paused));
+        assert!(!Pending.can_transition_to(PastDue));
+        assert!(!Trial.can_transition_to(Paused));
+        assert!(!Paused.can_transition_to(Trial));
+        assert!(!Cancelled.can_transition_to(Active));
+        assert!(!Expired.can_transition_to(Active));
+    }
+
+    #[test]
+    fn subscription_status_terminal_states() {
+        use SubscriptionStatus::*;
+        assert!(Cancelled.is_terminal());
+        assert!(Expired.is_terminal());
+        assert!(!Pending.is_terminal());
+        assert!(!Trial.is_terminal());
+        assert!(!Active.is_terminal());
+        assert!(!Paused.is_terminal());
+        assert!(!PastDue.is_terminal());
     }
 }
 

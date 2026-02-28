@@ -42,6 +42,10 @@ pub enum PaymentError {
         got: String,
     },
 
+    /// Invalid status transition for a payment.
+    #[error("{0}")]
+    InvalidTransition(super::StateTransitionError<String>),
+
     /// Extensibility.
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync>),
@@ -71,6 +75,15 @@ impl PaymentError {
     #[track_caller]
     pub fn currency_mismatch(expected: impl Into<String>, got: impl Into<String>) -> Self {
         Self::CurrencyMismatch { expected: expected.into(), got: got.into() }
+    }
+
+    /// Convenience constructor for `InvalidTransition`.
+    #[track_caller]
+    pub fn invalid_transition(from: impl std::fmt::Display, to: impl std::fmt::Display) -> Self {
+        Self::InvalidTransition(super::StateTransitionError::new(
+            from.to_string(),
+            to.to_string(),
+        ))
     }
 }
 
@@ -102,6 +115,13 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("USD"));
         assert!(msg.contains("EUR"));
+    }
+
+    #[test]
+    fn invalid_transition_display() {
+        let err = PaymentError::invalid_transition("pending", "refunded");
+        assert!(err.to_string().contains("pending"));
+        assert!(err.to_string().contains("refunded"));
     }
 
     #[test]

@@ -12,18 +12,24 @@ use rust_decimal_macros::dec;
 use stateset_core::CustomerId;
 use uuid::Uuid;
 
-use stateset_core::ProductId;
+use stateset_core::{OrderId, OrderItemId, ProductId};
+use stateset_core::models::cart::{AddCartItem, CreateCart};
 use stateset_core::models::customer::{CreateCustomer, CreateCustomerAddress};
 use stateset_core::models::fraud::{CreateFraudRule, FraudDecision, FraudSignalType};
 use stateset_core::models::gift_card::CreateGiftCard;
 use stateset_core::models::inventory::CreateInventoryItem;
 use stateset_core::models::loyalty::{CreateLoyaltyProgram, LoyaltyTier};
 use stateset_core::models::order::{Address, CreateOrder, CreateOrderItem};
+use stateset_core::models::payment::{CreatePayment, PaymentMethodType};
 use stateset_core::models::product::{CreateProduct, CreateProductVariant};
+use stateset_core::models::returns::{CreateReturn, CreateReturnItem, ReturnReason};
 use stateset_core::models::review::CreateReview;
 use stateset_core::models::segment::{CreateSegment, SegmentType};
+use stateset_core::models::shipment::CreateShipment;
 use stateset_core::models::shipping_zone::CreateShippingZone;
 use stateset_core::models::store_credit::{CreateStoreCredit, StoreCreditReason};
+use stateset_core::models::subscription::{BillingInterval, CreateSubscription, CreateSubscriptionPlan};
+use stateset_core::models::warranty::CreateWarranty;
 use stateset_core::models::wishlist::CreateWishlist;
 
 // ============================================================================
@@ -418,6 +424,230 @@ pub fn create_fraud_rule_input() -> CreateFraudRule {
     }
 }
 
+// ============================================================================
+// Payment Fixtures
+// ============================================================================
+
+/// Create a [`CreatePayment`] input for the given order with a $59.98 USD credit-card charge.
+///
+/// ```rust
+/// let input = stateset_test_utils::fixtures::create_payment_input(stateset_core::OrderId::new());
+/// assert_eq!(input.amount, rust_decimal_macros::dec!(59.98));
+/// ```
+pub fn create_payment_input(order_id: OrderId) -> CreatePayment {
+    CreatePayment {
+        order_id: Some(order_id),
+        customer_id: Some(CustomerId::new()),
+        payment_method: PaymentMethodType::CreditCard,
+        amount: dec!(59.98),
+        currency: Some("USD".into()),
+        processor: Some("stripe".into()),
+        description: Some("Test payment".into()),
+        ..Default::default()
+    }
+}
+
+// ============================================================================
+// Shipment Fixtures
+// ============================================================================
+
+/// Create a [`CreateShipment`] input for the given order with UPS Standard shipping.
+///
+/// ```rust
+/// let input = stateset_test_utils::fixtures::create_shipment_input(stateset_core::OrderId::new());
+/// assert_eq!(input.recipient_name, "Test User");
+/// ```
+pub fn create_shipment_input(order_id: OrderId) -> CreateShipment {
+    use stateset_core::models::shipment::{CreateShipmentItem, ShippingCarrier, ShippingMethod};
+
+    CreateShipment {
+        order_id,
+        carrier: Some(ShippingCarrier::Ups),
+        shipping_method: Some(ShippingMethod::Standard),
+        tracking_number: Some("1Z999AA10123456784".into()),
+        recipient_name: "Test User".into(),
+        recipient_email: Some("test@example.com".into()),
+        recipient_phone: Some("+1-555-0100".into()),
+        shipping_address: "123 Main St, San Francisco, CA 94102, US".into(),
+        weight_kg: Some(dec!(1.5)),
+        dimensions: Some("30x20x10 cm".into()),
+        shipping_cost: Some(dec!(9.99)),
+        insurance_amount: None,
+        signature_required: Some(false),
+        estimated_delivery: None,
+        notes: None,
+        items: Some(vec![CreateShipmentItem {
+            order_item_id: Some(Uuid::new_v4()),
+            product_id: Some(ProductId::new()),
+            sku: "TEST-SKU-001".into(),
+            name: "Test Product".into(),
+            quantity: 2,
+        }]),
+    }
+}
+
+// ============================================================================
+// Return Fixtures
+// ============================================================================
+
+/// Create a [`CreateReturn`] input for the given order with one defective item.
+///
+/// ```rust
+/// let input = stateset_test_utils::fixtures::create_return_input(stateset_core::OrderId::new());
+/// assert_eq!(input.reason, stateset_core::models::returns::ReturnReason::Defective);
+/// assert_eq!(input.items.len(), 1);
+/// ```
+pub fn create_return_input(order_id: OrderId) -> CreateReturn {
+    CreateReturn {
+        order_id,
+        reason: ReturnReason::Defective,
+        reason_details: Some("Item arrived with a cracked screen".into()),
+        idempotency_key: Some(Uuid::new_v4().to_string()),
+        items: vec![CreateReturnItem {
+            order_item_id: OrderItemId::new(),
+            quantity: 1,
+            condition: Some(stateset_core::models::returns::ItemCondition::Defective),
+        }],
+        notes: None,
+    }
+}
+
+// ============================================================================
+// Subscription Plan Fixtures
+// ============================================================================
+
+/// Create a [`CreateSubscriptionPlan`] for a $29.99/month plan with a 14-day trial.
+///
+/// ```rust
+/// let input = stateset_test_utils::fixtures::create_subscription_plan_input();
+/// assert_eq!(input.name, "Test Monthly Plan");
+/// assert_eq!(input.price, rust_decimal_macros::dec!(29.99));
+/// ```
+pub fn create_subscription_plan_input() -> CreateSubscriptionPlan {
+    CreateSubscriptionPlan {
+        code: Some(format!("PLAN-{}", Uuid::new_v4().as_simple())),
+        name: "Test Monthly Plan".into(),
+        description: Some("A monthly subscription plan for testing".into()),
+        billing_interval: BillingInterval::Monthly,
+        custom_interval_days: None,
+        price: dec!(29.99),
+        setup_fee: None,
+        currency: Some("USD".into()),
+        trial_days: Some(14),
+        trial_requires_payment_method: Some(true),
+        min_cycles: None,
+        max_cycles: None,
+        items: None,
+        discount_percent: None,
+        discount_amount: None,
+        metadata: None,
+    }
+}
+
+// ============================================================================
+// Subscription Fixtures
+// ============================================================================
+
+/// Create a [`CreateSubscription`] linking a customer to a plan.
+///
+/// ```rust
+/// let input = stateset_test_utils::fixtures::create_subscription_input(
+///     stateset_core::CustomerId::new(),
+///     uuid::Uuid::new_v4(),
+/// );
+/// assert!(input.skip_trial.is_none());
+/// ```
+pub fn create_subscription_input(customer_id: CustomerId, plan_id: Uuid) -> CreateSubscription {
+    CreateSubscription {
+        customer_id,
+        plan_id,
+        items: None,
+        price: None,
+        payment_method_id: Some("pm_test_123".into()),
+        shipping_address: Some(test_address()),
+        billing_address: None,
+        skip_trial: None,
+        start_date: None,
+        coupon_code: None,
+        metadata: None,
+    }
+}
+
+// ============================================================================
+// Cart Fixtures
+// ============================================================================
+
+/// Create a [`CreateCart`] with one test item in USD.
+///
+/// ```rust
+/// let input = stateset_test_utils::fixtures::create_cart_input(None);
+/// assert_eq!(input.currency, Some("USD".to_string()));
+/// ```
+pub fn create_cart_input(customer_id: Option<CustomerId>) -> CreateCart {
+    CreateCart {
+        customer_id,
+        customer_email: if customer_id.is_none() {
+            Some("guest@example.com".into())
+        } else {
+            None
+        },
+        customer_name: if customer_id.is_none() { Some("Guest User".into()) } else { None },
+        currency: Some("USD".into()),
+        items: Some(vec![AddCartItem {
+            product_id: Some(ProductId::new()),
+            variant_id: None,
+            sku: "CART-SKU-001".into(),
+            name: "Cart Test Item".into(),
+            description: Some("An item for cart testing".into()),
+            image_url: None,
+            quantity: 1,
+            unit_price: dec!(19.99),
+            original_price: None,
+            weight: None,
+            requires_shipping: Some(true),
+            metadata: None,
+        }]),
+        shipping_address: None,
+        billing_address: None,
+        notes: None,
+        metadata: None,
+        expires_in_minutes: Some(60),
+    }
+}
+
+// ============================================================================
+// Warranty Fixtures
+// ============================================================================
+
+/// Create a [`CreateWarranty`] for the given product with a 12-month standard warranty.
+///
+/// ```rust
+/// let input = stateset_test_utils::fixtures::create_warranty_input(stateset_core::ProductId::new());
+/// assert_eq!(input.duration_months, Some(12));
+/// ```
+pub fn create_warranty_input(product_id: ProductId) -> CreateWarranty {
+    CreateWarranty {
+        customer_id: CustomerId::new(),
+        order_id: None,
+        order_item_id: None,
+        product_id: Some(product_id),
+        sku: Some("WRN-SKU-001".into()),
+        serial_number: Some(format!("SN-{}", Uuid::new_v4().as_simple())),
+        warranty_type: Some(stateset_core::models::warranty::WarrantyType::Standard),
+        provider: Some("Manufacturer".into()),
+        coverage_description: Some("Covers manufacturing defects".into()),
+        purchase_date: None,
+        start_date: None,
+        end_date: None,
+        duration_months: Some(12),
+        max_coverage_amount: Some(dec!(500.00)),
+        deductible: Some(dec!(25.00)),
+        max_claims: Some(3),
+        terms: None,
+        notes: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,5 +776,93 @@ mod tests {
         assert_eq!(rule.signal_type, FraudSignalType::HighValueFirstOrder);
         assert!((rule.threshold - 0.8).abs() < f64::EPSILON);
         assert_eq!(rule.action, FraudDecision::Review);
+    }
+
+    #[test]
+    fn payment_input_is_valid() {
+        let order_id = OrderId::new();
+        let payment = create_payment_input(order_id);
+        assert_eq!(payment.order_id, Some(order_id));
+        assert_eq!(payment.amount, dec!(59.98));
+        assert_eq!(payment.currency, Some("USD".to_string()));
+        assert_eq!(payment.payment_method, PaymentMethodType::CreditCard);
+        assert!(payment.customer_id.is_some());
+    }
+
+    #[test]
+    fn shipment_input_is_valid() {
+        let order_id = OrderId::new();
+        let shipment = create_shipment_input(order_id);
+        assert_eq!(shipment.order_id, order_id);
+        assert_eq!(shipment.recipient_name, "Test User");
+        assert!(shipment.tracking_number.is_some());
+        assert!(shipment.items.is_some());
+        assert_eq!(shipment.items.as_ref().unwrap().len(), 1);
+        assert_eq!(shipment.items.as_ref().unwrap()[0].quantity, 2);
+    }
+
+    #[test]
+    fn return_input_is_valid() {
+        let order_id = OrderId::new();
+        let ret = create_return_input(order_id);
+        assert_eq!(ret.order_id, order_id);
+        assert_eq!(ret.reason, ReturnReason::Defective);
+        assert_eq!(ret.items.len(), 1);
+        assert_eq!(ret.items[0].quantity, 1);
+        assert!(ret.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn subscription_plan_input_is_valid() {
+        let plan = create_subscription_plan_input();
+        assert_eq!(plan.name, "Test Monthly Plan");
+        assert_eq!(plan.price, dec!(29.99));
+        assert_eq!(plan.billing_interval, BillingInterval::Monthly);
+        assert_eq!(plan.trial_days, Some(14));
+        assert_eq!(plan.currency, Some("USD".to_string()));
+        assert!(plan.code.is_some());
+    }
+
+    #[test]
+    fn subscription_input_is_valid() {
+        let customer_id = CustomerId::new();
+        let plan_id = Uuid::new_v4();
+        let sub = create_subscription_input(customer_id, plan_id);
+        assert_eq!(sub.customer_id, customer_id);
+        assert_eq!(sub.plan_id, plan_id);
+        assert_eq!(sub.payment_method_id, Some("pm_test_123".to_string()));
+        assert!(sub.shipping_address.is_some());
+    }
+
+    #[test]
+    fn cart_input_with_customer_is_valid() {
+        let customer_id = CustomerId::new();
+        let cart = create_cart_input(Some(customer_id));
+        assert_eq!(cart.customer_id, Some(customer_id));
+        assert_eq!(cart.currency, Some("USD".to_string()));
+        assert!(cart.items.is_some());
+        assert_eq!(cart.items.as_ref().unwrap().len(), 1);
+        assert_eq!(cart.items.as_ref().unwrap()[0].sku, "CART-SKU-001");
+        assert!(cart.customer_email.is_none(), "should not set email when customer_id is provided");
+    }
+
+    #[test]
+    fn cart_input_guest_has_email() {
+        let cart = create_cart_input(None);
+        assert!(cart.customer_id.is_none());
+        assert_eq!(cart.customer_email.as_deref(), Some("guest@example.com"));
+        assert_eq!(cart.customer_name.as_deref(), Some("Guest User"));
+    }
+
+    #[test]
+    fn warranty_input_is_valid() {
+        let product_id = ProductId::new();
+        let warranty = create_warranty_input(product_id);
+        assert_eq!(warranty.product_id, Some(product_id));
+        assert_eq!(warranty.duration_months, Some(12));
+        assert_eq!(warranty.max_coverage_amount, Some(dec!(500.00)));
+        assert_eq!(warranty.max_claims, Some(3));
+        assert!(warranty.serial_number.is_some());
+        assert!(warranty.sku.is_some());
     }
 }

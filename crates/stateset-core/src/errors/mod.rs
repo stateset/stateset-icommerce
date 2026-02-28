@@ -108,8 +108,8 @@ mod _size_assertions {
     static_assert_size!(InventoryError, 72);
     static_assert_size!(CustomerError, 24);
     static_assert_size!(ProductError, 24);
-    static_assert_size!(ReturnError, 24);
-    static_assert_size!(PaymentError, 48);
+    static_assert_size!(ReturnError, 48);
+    static_assert_size!(PaymentError, 56);
     static_assert_size!(ShippingError, 48);
 }
 

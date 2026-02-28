@@ -12,6 +12,9 @@ pub enum CryptoError {
     /// The provided UUID string is invalid
     #[error("Invalid UUID: {0}")]
     InvalidUuid(String),
+    /// Invalid hex string
+    #[error("Invalid hex: {0}")]
+    InvalidHex(String),
     /// Salt must be exactly 16 bytes
     #[error("Salt must be 16 bytes")]
     InvalidSalt,

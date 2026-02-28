@@ -43,10 +43,10 @@ pub fn uuid_to_bytes(uuid: &str) -> Result<[u8; 16], CryptoError> {
 ///
 /// # Errors
 ///
-/// Returns [`CryptoError::InvalidUuid`] if the hex string is invalid.
+/// Returns [`CryptoError::InvalidHex`] if the hex string is invalid.
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, CryptoError> {
     let hex_str = hex.strip_prefix("0x").unwrap_or(hex);
-    hex::decode(hex_str).map_err(|e| CryptoError::InvalidUuid(e.to_string()))
+    hex::decode(hex_str).map_err(|e| CryptoError::InvalidHex(e.to_string()))
 }
 
 /// Convert bytes to hex string with 0x prefix

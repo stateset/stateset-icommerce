@@ -4,6 +4,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_core::{CartId, CustomerId, OrderId, ProductId, PromotionId, SubscriptionId};
 use stateset_embedded::Commerce as RustCommerce;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -354,7 +355,7 @@ impl Events {
             }
         }
 
-        Ok(commerce.register_webhook(webhook).map(|id| id.to_string()))
+        Ok(Some(commerce.register_webhook(webhook).to_string()))
     }
 
     /// Unregister a webhook endpoint.
@@ -5667,7 +5668,7 @@ impl Subscriptions {
         let subscription = commerce
             .subscriptions()
             .subscribe(stateset_core::CreateSubscription {
-                customer_id,
+                customer_id: customer_id.into(),
                 plan_id,
                 payment_method_id: input.payment_method_id,
                 skip_trial: input.skip_trial,
@@ -5693,7 +5694,7 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get subscription: {}", e)))?;
 
         Ok(subscription.map(|s| s.into()))
@@ -5721,7 +5722,7 @@ impl Subscriptions {
         let commerce = self.commerce.lock().await;
         let f = filter.unwrap_or_default();
 
-        let customer_id = f.customer_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let customer_id = f.customer_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok()).map(CustomerId::from);
         let plan_id = f.plan_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
         let from_date = f.from_date.as_ref().and_then(|s| {
             chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
@@ -5765,7 +5766,7 @@ impl Subscriptions {
         let subscription = commerce
             .subscriptions()
             .update(
-                uuid,
+                uuid.into(),
                 stateset_core::UpdateSubscription {
                     status: input.status.as_ref().and_then(|s| parse_subscription_status(s).ok()),
                     price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
@@ -5806,7 +5807,7 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .pause(uuid, stateset_core::PauseSubscription { reason: i.reason, resume_at })
+            .pause(uuid.into(), stateset_core::PauseSubscription { reason: i.reason, resume_at })
             .map_err(|e| Error::from_reason(format!("Failed to pause subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -5821,7 +5822,7 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .resume(uuid)
+            .resume(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to resume subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -5843,7 +5844,7 @@ impl Subscriptions {
         let subscription = commerce
             .subscriptions()
             .cancel(
-                uuid,
+                uuid.into(),
                 stateset_core::CancelSubscription {
                     reason: i.reason,
                     immediate: i.immediate,
@@ -5870,7 +5871,7 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .skip_next_cycle(uuid, stateset_core::SkipBillingCycle { reason: i.reason })
+            .skip_next_cycle(uuid.into(), stateset_core::SkipBillingCycle { reason: i.reason })
             .map_err(|e| Error::from_reason(format!("Failed to skip billing: {}", e)))?;
 
         Ok(subscription.into())
@@ -5890,7 +5891,7 @@ impl Subscriptions {
         let f = filter.unwrap_or_default();
 
         let subscription_id =
-            f.subscription_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+            f.subscription_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok()).map(SubscriptionId::from);
         let from_date = f.from_date.as_ref().and_then(|s| {
             chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
         });
@@ -5944,7 +5945,7 @@ impl Subscriptions {
 
         let events = commerce
             .subscriptions()
-            .get_events(uuid)
+            .get_events(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get events: {}", e)))?;
 
         Ok(events.into_iter().map(|e| e.into()).collect())
@@ -6412,7 +6413,7 @@ impl Promotions {
                 .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
             tiers: input.tiers.and_then(|s| serde_json::from_str(&s).ok()),
             bundle_product_ids: input.bundle_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from).collect()
             }),
             bundle_discount: input
                 .bundle_discount
@@ -6427,20 +6428,20 @@ impl Promotions {
             per_customer_limit: input.per_customer_limit,
             conditions: None,
             applicable_product_ids: input.applicable_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from).collect()
             }),
             applicable_category_ids: input.applicable_category_ids.map(|ids| {
                 ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
             }),
             applicable_skus: input.applicable_skus,
             excluded_product_ids: input.excluded_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from).collect()
             }),
             excluded_category_ids: input.excluded_category_ids.map(|ids| {
                 ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
             }),
             eligible_customer_ids: input.eligible_customer_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(CustomerId::from).collect()
             }),
             eligible_customer_groups: input.eligible_customer_groups,
             currency: input.currency,
@@ -6465,7 +6466,7 @@ impl Promotions {
 
         let promo = commerce
             .promotions()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
 
         Ok(promo.map(|p| p.into()))
@@ -6542,7 +6543,7 @@ impl Promotions {
 
         let promo = commerce
             .promotions()
-            .update(uuid, update)
+            .update(uuid.into(), update)
             .map_err(|e| Error::from_reason(format!("Failed to update promotion: {}", e)))?;
 
         Ok(promo.into())
@@ -6557,7 +6558,7 @@ impl Promotions {
 
         commerce
             .promotions()
-            .delete(uuid)
+            .delete(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to delete promotion: {}", e)))?;
 
         Ok(())
@@ -6572,7 +6573,7 @@ impl Promotions {
 
         let promo = commerce
             .promotions()
-            .activate(uuid)
+            .activate(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to activate promotion: {}", e)))?;
 
         Ok(promo.into())
@@ -6587,7 +6588,7 @@ impl Promotions {
 
         let promo = commerce
             .promotions()
-            .deactivate(uuid)
+            .deactivate(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to deactivate promotion: {}", e)))?;
 
         Ok(promo.into())
@@ -6612,7 +6613,7 @@ impl Promotions {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let valid = commerce.promotions().is_valid(uuid).map_err(|e| {
+        let valid = commerce.promotions().is_valid(uuid.into()).map_err(|e| {
             Error::from_reason(format!("Failed to check promotion validity: {}", e))
         })?;
 
@@ -6631,7 +6632,7 @@ impl Promotions {
             .map_err(|e| Error::from_reason(format!("Invalid promotion UUID: {}", e)))?;
 
         let create = stateset_core::CreateCouponCode {
-            promotion_id,
+            promotion_id: promotion_id.into(),
             code: input.code,
             usage_limit: input.usage_limit,
             per_customer_limit: input.per_customer_limit,
@@ -6689,7 +6690,7 @@ impl Promotions {
         let filter = filter.unwrap_or_default();
 
         let core_filter = stateset_core::CouponFilter {
-            promotion_id: filter.promotion_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            promotion_id: filter.promotion_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(PromotionId::from),
             status: filter.status.map(|s| parse_coupon_status(&s)),
             search: filter.search,
             limit: filter.limit.map(|v| v as u32),
@@ -6725,15 +6726,15 @@ impl Promotions {
     pub async fn apply(&self, input: ApplyPromotionsInput) -> Result<ApplyPromotionsOutput> {
         let commerce = self.commerce.lock().await;
         let request = stateset_core::ApplyPromotionsRequest {
-            cart_id: input.cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-            customer_id: input.customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            cart_id: input.cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CartId::from),
+            customer_id: input.customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CustomerId::from),
             coupon_codes: input.coupon_codes.unwrap_or_default(),
             line_items: input
                 .line_items
                 .into_iter()
                 .map(|item| stateset_core::PromotionLineItem {
                     id: item.id,
-                    product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                    product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from),
                     variant_id: item.variant_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
                     sku: item.sku,
                     category_ids: item
@@ -6784,11 +6785,11 @@ impl Promotions {
         let usage = commerce
             .promotions()
             .record_usage(
-                promotion_uuid,
+                promotion_uuid.into(),
                 coupon_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-                customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-                order_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-                cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CustomerId::from),
+                order_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(OrderId::from),
+                cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CartId::from),
                 Decimal::from_f64_retain(discount_amount).unwrap_or_default(),
                 &currency,
             )
@@ -7428,7 +7429,7 @@ impl Tax {
             .map(|item| stateset_core::TaxLineItem {
                 id: item.id,
                 sku: item.sku,
-                product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from),
                 quantity: Decimal::from_f64_retain(item.quantity).unwrap_or(Decimal::ONE),
                 unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
                 discount_amount: Decimal::from_f64_retain(item.discount_amount.unwrap_or(0.0))
@@ -9236,8 +9237,8 @@ impl Fulfillment {
     #[napi]
     pub async fn create_wave(&self, input: CreateWaveInput) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
-        let order_ids: Vec<uuid::Uuid> =
-            input.order_ids.iter().filter_map(|s| s.parse().ok()).collect();
+        let order_ids: Vec<OrderId> =
+            input.order_ids.iter().filter_map(|s| s.parse::<uuid::Uuid>().ok()).map(OrderId::from).collect();
         let wave = commerce
             .fulfillment()
             .create_wave(stateset_core::CreateWave {

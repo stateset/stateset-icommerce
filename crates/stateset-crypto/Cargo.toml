@@ -25,6 +25,8 @@ aes-gcm = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 hkdf = "0.12"
 rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+subtle = "2"
 thiserror = { workspace = true }
 
 [dev-dependencies]

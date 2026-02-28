@@ -61,8 +61,8 @@ impl BillOfMaterials {
 }
 
 /// BOM lifecycle status
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, Default)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BomStatus {
@@ -73,19 +73,6 @@ pub enum BomStatus {
     Active,
     /// Obsolete - no longer used
     Obsolete,
-}
-
-impl std::str::FromStr for BomStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "draft" => Ok(Self::Draft),
-            "active" => Ok(Self::Active),
-            "obsolete" => Ok(Self::Obsolete),
-            _ => Err(format!("Unknown BOM status: {}", s)),
-        }
-    }
 }
 
 /// A component in a Bill of Materials
@@ -244,8 +231,8 @@ impl WorkOrder {
 }
 
 /// Work order status
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, Default)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WorkOrderStatus {
@@ -253,35 +240,50 @@ pub enum WorkOrderStatus {
     #[default]
     Planned,
     /// Currently in progress
+    #[strum(serialize = "in_progress", serialize = "inprogress")]
     InProgress,
     /// Completed successfully
     Completed,
     /// Partially completed (some quantity done)
+    #[strum(serialize = "partially_completed", serialize = "partiallycompleted")]
     PartiallyCompleted,
     /// Cancelled
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     /// On hold (temporarily stopped)
+    #[strum(serialize = "on_hold", serialize = "onhold")]
     OnHold,
 }
 
-impl std::str::FromStr for WorkOrderStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "planned" => Ok(Self::Planned),
-            "in_progress" | "inprogress" => Ok(Self::InProgress),
-            "completed" => Ok(Self::Completed),
-            "partially_completed" | "partiallycompleted" => Ok(Self::PartiallyCompleted),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            "on_hold" | "onhold" => Ok(Self::OnHold),
-            _ => Err(format!("Unknown work order status: {}", s)),
+impl WorkOrderStatus {
+    /// Check if a status transition is allowed.
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
         }
+        match self {
+            Self::Planned => matches!(next, Self::InProgress | Self::Cancelled),
+            Self::InProgress => matches!(
+                next,
+                Self::Completed | Self::PartiallyCompleted | Self::OnHold | Self::Cancelled
+            ),
+            Self::OnHold => matches!(next, Self::InProgress | Self::Cancelled),
+            Self::PartiallyCompleted => matches!(next, Self::InProgress | Self::Completed),
+            Self::Completed | Self::Cancelled => false,
+        }
+    }
+
+    /// Returns true if this status is a terminal state.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
     }
 }
 
 /// Work order priority
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WorkOrderPriority {
@@ -294,31 +296,6 @@ pub enum WorkOrderPriority {
     High,
     /// Urgent - needs immediate attention
     Urgent,
-}
-
-impl std::fmt::Display for WorkOrderPriority {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Low => write!(f, "low"),
-            Self::Normal => write!(f, "normal"),
-            Self::High => write!(f, "high"),
-            Self::Urgent => write!(f, "urgent"),
-        }
-    }
-}
-
-impl std::str::FromStr for WorkOrderPriority {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "low" => Ok(Self::Low),
-            "normal" => Ok(Self::Normal),
-            "high" => Ok(Self::High),
-            "urgent" => Ok(Self::Urgent),
-            _ => Err(format!("Unknown work order priority: {}", s)),
-        }
-    }
 }
 
 /// Input for creating a work order
@@ -437,7 +414,8 @@ impl WorkOrderTask {
 }
 
 /// Task status
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TaskStatus {
@@ -445,40 +423,15 @@ pub enum TaskStatus {
     #[default]
     Pending,
     /// In progress
+    #[strum(serialize = "in_progress", serialize = "inprogress")]
     InProgress,
     /// Completed
     Completed,
     /// Skipped
     Skipped,
     /// Cancelled
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
-}
-
-impl std::fmt::Display for TaskStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::InProgress => write!(f, "in_progress"),
-            Self::Completed => write!(f, "completed"),
-            Self::Skipped => write!(f, "skipped"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
-impl std::str::FromStr for TaskStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "in_progress" | "inprogress" => Ok(Self::InProgress),
-            "completed" => Ok(Self::Completed),
-            "skipped" => Ok(Self::Skipped),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown task status: {}", s)),
-        }
-    }
 }
 
 /// Input for creating a work order task
@@ -631,5 +584,41 @@ mod tests {
     fn test_task_status_from_str() {
         assert_eq!(TaskStatus::from_str("pending").unwrap(), TaskStatus::Pending);
         assert!(TaskStatus::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn work_order_status_valid_transitions() {
+        use WorkOrderStatus::*;
+        assert!(Planned.can_transition_to(InProgress));
+        assert!(Planned.can_transition_to(Cancelled));
+        assert!(InProgress.can_transition_to(Completed));
+        assert!(InProgress.can_transition_to(PartiallyCompleted));
+        assert!(InProgress.can_transition_to(OnHold));
+        assert!(InProgress.can_transition_to(Cancelled));
+        assert!(OnHold.can_transition_to(InProgress));
+        assert!(OnHold.can_transition_to(Cancelled));
+        assert!(PartiallyCompleted.can_transition_to(InProgress));
+        assert!(PartiallyCompleted.can_transition_to(Completed));
+    }
+
+    #[test]
+    fn work_order_status_invalid_transitions() {
+        use WorkOrderStatus::*;
+        assert!(!Planned.can_transition_to(Completed));
+        assert!(!Planned.can_transition_to(OnHold));
+        assert!(!OnHold.can_transition_to(Completed));
+        assert!(!Completed.can_transition_to(InProgress));
+        assert!(!Cancelled.can_transition_to(Planned));
+    }
+
+    #[test]
+    fn work_order_status_terminal_states() {
+        use WorkOrderStatus::*;
+        assert!(Completed.is_terminal());
+        assert!(Cancelled.is_terminal());
+        assert!(!Planned.is_terminal());
+        assert!(!InProgress.is_terminal());
+        assert!(!OnHold.is_terminal());
+        assert!(!PartiallyCompleted.is_terminal());
     }
 }

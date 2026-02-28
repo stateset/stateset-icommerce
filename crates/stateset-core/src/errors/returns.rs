@@ -34,6 +34,10 @@ pub enum ReturnError {
     #[error("item not eligible for return")]
     ItemNotEligible,
 
+    /// Invalid status transition for a return.
+    #[error("{0}")]
+    InvalidTransition(super::StateTransitionError<String>),
+
     /// Extensibility.
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync>),
@@ -51,6 +55,15 @@ impl ReturnError {
     #[track_caller]
     pub fn cannot_approve(status: impl Into<String>) -> Self {
         Self::CannotApprove { status: status.into() }
+    }
+
+    /// Convenience constructor for `InvalidTransition`.
+    #[track_caller]
+    pub fn invalid_transition(from: impl std::fmt::Display, to: impl std::fmt::Display) -> Self {
+        Self::InvalidTransition(super::StateTransitionError::new(
+            from.to_string(),
+            to.to_string(),
+        ))
     }
 }
 
@@ -78,6 +91,13 @@ mod tests {
     #[test]
     fn item_not_eligible_display() {
         assert_eq!(ReturnError::ItemNotEligible.to_string(), "item not eligible for return");
+    }
+
+    #[test]
+    fn invalid_transition_display() {
+        let err = ReturnError::invalid_transition("requested", "completed");
+        assert!(err.to_string().contains("requested"));
+        assert!(err.to_string().contains("completed"));
     }
 
     #[test]

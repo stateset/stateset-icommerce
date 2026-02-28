@@ -2,7 +2,8 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
-    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    with_immediate_transaction, uuid_params,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -522,9 +523,8 @@ impl PaymentRepository for SqlitePaymentRepository {
         let refund = self.get_refund(id)?.ok_or(CommerceError::NotFound)?;
         let now = chrono::Utc::now();
 
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
                 "UPDATE refunds SET status = ?, refunded_at = ?, updated_at = ? WHERE id = ?",
                 params![
                     RefundStatus::Completed.to_string(),
@@ -532,11 +532,10 @@ impl PaymentRepository for SqlitePaymentRepository {
                     now.to_rfc3339(),
                     id.to_string()
                 ],
-            )
-            .map_err(map_db_error)?;
+            )?;
 
             // Update payment amount_refunded
-            conn.execute(
+            tx.execute(
                 "UPDATE payments SET amount_refunded = amount_refunded + ?, status = CASE
                  WHEN amount_refunded + ? >= amount THEN 'refunded' ELSE 'partially_refunded' END,
                  updated_at = ? WHERE id = ?",
@@ -546,9 +545,10 @@ impl PaymentRepository for SqlitePaymentRepository {
                     now.to_rfc3339(),
                     refund.payment_id.to_string()
                 ],
-            )
-            .map_err(map_db_error)?;
-        }
+            )?;
+
+            Ok(())
+        })?;
 
         self.get_refund(id)?.ok_or(CommerceError::NotFound)
     }
@@ -569,44 +569,46 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn create_payment_method(&self, input: CreatePaymentMethod) -> Result<PaymentMethod> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
 
-        // If setting as default, clear existing default
-        if input.is_default.unwrap_or(false) {
-            conn.execute(
-                "UPDATE payment_methods SET is_default = 0 WHERE customer_id = ?",
-                [input.customer_id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        }
+        with_immediate_transaction(&self.pool, |tx| {
+            // If setting as default, clear existing default
+            if input.is_default.unwrap_or(false) {
+                tx.execute(
+                    "UPDATE payment_methods SET is_default = 0 WHERE customer_id = ?",
+                    [input.customer_id.to_string()],
+                )?;
+            }
 
-        conn.execute(
-            "INSERT INTO payment_methods (id, customer_id, method_type, is_default, card_brand,
-             card_last4, card_exp_month, card_exp_year, cardholder_name, bank_name, account_last4,
-             external_id, billing_address, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                id.to_string(),
-                input.customer_id.to_string(),
-                input.method_type.to_string(),
-                input.is_default.unwrap_or(false) as i32,
-                input.card_brand.map(|b| b.to_string()),
-                input.card_last4,
-                input.card_exp_month,
-                input.card_exp_year,
-                input.cardholder_name,
-                input.bank_name,
-                input.account_last4,
-                input.external_id,
-                input.billing_address,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
+            tx.execute(
+                "INSERT INTO payment_methods (id, customer_id, method_type, is_default, card_brand,
+                 card_last4, card_exp_month, card_exp_year, cardholder_name, bank_name, account_last4,
+                 external_id, billing_address, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    input.customer_id.to_string(),
+                    input.method_type.to_string(),
+                    input.is_default.unwrap_or(false) as i32,
+                    input.card_brand.map(|b| b.to_string()),
+                    input.card_last4,
+                    input.card_exp_month,
+                    input.card_exp_year,
+                    input.cardholder_name,
+                    input.bank_name,
+                    input.account_last4,
+                    input.external_id,
+                    input.billing_address,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )?;
 
+            Ok(())
+        })?;
+
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt =
             conn.prepare("SELECT * FROM payment_methods WHERE id = ?").map_err(map_db_error)?;
         stmt.query_row([id.to_string()], Self::row_to_payment_method).map_err(map_db_error)
@@ -634,19 +636,19 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn set_default_payment_method(&self, customer_id: CustomerId, method_id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        with_immediate_transaction(&self.pool, |tx| {
+            tx.execute(
+                "UPDATE payment_methods SET is_default = 0 WHERE customer_id = ?",
+                [customer_id.to_string()],
+            )?;
 
-        conn.execute(
-            "UPDATE payment_methods SET is_default = 0 WHERE customer_id = ?",
-            [customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            tx.execute(
+                "UPDATE payment_methods SET is_default = 1 WHERE id = ? AND customer_id = ?",
+                params![method_id.to_string(), customer_id.to_string()],
+            )?;
 
-        conn.execute(
-            "UPDATE payment_methods SET is_default = 1 WHERE id = ? AND customer_id = ?",
-            params![method_id.to_string(), customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+            Ok(())
+        })?;
 
         Ok(())
     }

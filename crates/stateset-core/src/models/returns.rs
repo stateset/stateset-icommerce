@@ -65,6 +65,30 @@ impl Default for ReturnStatus {
     }
 }
 
+impl ReturnStatus {
+    /// Check if a status transition is allowed.
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+        match self {
+            Self::Requested => matches!(next, Self::Approved | Self::Rejected | Self::Cancelled),
+            Self::Approved => matches!(next, Self::InTransit | Self::Cancelled),
+            Self::InTransit => matches!(next, Self::Received),
+            Self::Received => matches!(next, Self::Inspecting),
+            Self::Inspecting => matches!(next, Self::Completed | Self::Rejected),
+            Self::Rejected | Self::Completed | Self::Cancelled => false,
+        }
+    }
+
+    /// Returns true if this status is a terminal state.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Rejected | Self::Completed | Self::Cancelled)
+    }
+}
+
 /// Return reason enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
@@ -226,5 +250,39 @@ mod tests {
     fn test_item_condition_from_str() {
         assert_eq!(ItemCondition::from_str("opened").unwrap(), ItemCondition::Opened);
         assert_eq!(ItemCondition::from_str("damaged").unwrap(), ItemCondition::Damaged);
+    }
+
+    #[test]
+    fn return_status_valid_transitions() {
+        assert!(ReturnStatus::Requested.can_transition_to(ReturnStatus::Approved));
+        assert!(ReturnStatus::Requested.can_transition_to(ReturnStatus::Rejected));
+        assert!(ReturnStatus::Requested.can_transition_to(ReturnStatus::Cancelled));
+        assert!(ReturnStatus::Approved.can_transition_to(ReturnStatus::InTransit));
+        assert!(ReturnStatus::Approved.can_transition_to(ReturnStatus::Cancelled));
+        assert!(ReturnStatus::InTransit.can_transition_to(ReturnStatus::Received));
+        assert!(ReturnStatus::Received.can_transition_to(ReturnStatus::Inspecting));
+        assert!(ReturnStatus::Inspecting.can_transition_to(ReturnStatus::Completed));
+        assert!(ReturnStatus::Inspecting.can_transition_to(ReturnStatus::Rejected));
+    }
+
+    #[test]
+    fn return_status_invalid_transitions() {
+        assert!(!ReturnStatus::Requested.can_transition_to(ReturnStatus::Completed));
+        assert!(!ReturnStatus::Requested.can_transition_to(ReturnStatus::InTransit));
+        assert!(!ReturnStatus::Approved.can_transition_to(ReturnStatus::Completed));
+        assert!(!ReturnStatus::InTransit.can_transition_to(ReturnStatus::Completed));
+        assert!(!ReturnStatus::Completed.can_transition_to(ReturnStatus::Requested));
+    }
+
+    #[test]
+    fn return_status_terminal_states() {
+        assert!(ReturnStatus::Rejected.is_terminal());
+        assert!(ReturnStatus::Completed.is_terminal());
+        assert!(ReturnStatus::Cancelled.is_terminal());
+        assert!(!ReturnStatus::Requested.is_terminal());
+        assert!(!ReturnStatus::Approved.is_terminal());
+        assert!(!ReturnStatus::InTransit.is_terminal());
+        assert!(!ReturnStatus::Received.is_terminal());
+        assert!(!ReturnStatus::Inspecting.is_terminal());
     }
 }
