@@ -598,6 +598,8 @@ Agent reputation is tracked across transactions:
 4. **Staking (Roadmap)**: Future versions will require agents to stake collateral proportional to their transaction volume, creating economic cost for Sybil attacks
 5. **Behavioral Analysis**: The heartbeat system monitors for anomalous patterns (burst quote requests, rapid-fire disputes) and can auto-suspend agents pending review
 
+**Compliance & AML.** Any system that moves money between autonomous agents must address regulatory requirements. The policy engine natively supports compliance guardrails: operators can restrict x402 and A2A transactions to agents holding verified KYC/KYB (Know Your Business) credentials in their ERC-8004 Agent Cards, enforce jurisdictional restrictions based on geographic IP or wallet provenance, cap transaction sizes by verification tier, and maintain immutable audit trails that satisfy AML (Anti-Money Laundering) reporting obligations. These policies are declarative and can be updated without code changes, allowing compliance teams to adapt to evolving regulations independently of engineering releases
+
 ### 9.3 Webhook Notifications
 
 A2A events trigger HMAC-SHA256-signed webhooks for real-time notification:
@@ -674,9 +676,11 @@ A key design goal of x402 is that **agents never need to hold or manage native g
 2. **Batch settlement**: The sequencer periodically compresses hundreds of intents into a single on-chain transaction using a Merkle commitment. This amortizes gas costs across all participants
 3. **Relayer network**: StateSet operates a relayer that pays gas on behalf of agents. Gas costs are recovered through a configurable settlement fee (basis points on the transaction amount), deducted from the payment before disbursement
 4. **ERC-4337 compatibility**: On EVM chains, the relayer uses account abstraction (ERC-4337 paymasters) so agents transact via smart contract wallets without needing ETH balances
-5. **Native settlement on SET Chain**: The SET Chain L2 provides sub-cent gas costs with ssUSD as the native gas token, eliminating the gas abstraction problem entirely for agents operating within the StateSet ecosystem
+5. **Native settlement on SET Chain**: The SET Chain L2 — an OP Stack rollup purpose-built for high-frequency agent transactions — provides sub-cent gas costs with ssUSD as the native gas token, eliminating the gas abstraction problem entirely for agents operating within the StateSet ecosystem. ssUSD is a yield-bearing stablecoin backed by U.S. Treasury reserves; idle agent balances automatically accrue interest, turning treasury management from a cost center into a revenue source
 
 This design means an agent can be initialized with only a stablecoin balance and immediately begin transacting — no faucet calls, no gas estimation, no token bridging.
+
+**Sequencer Permissionlessness.** While StateSet provides a default relayer for convenience, the x402 protocol is permissionless: any organization can run its own relayer, operate an independent sequencer node, or batch-submit intents directly to the settlement chain. This ensures that the system has no single point of failure or centralized gatekeeper — if the StateSet relayer goes offline, agents can route through alternative relayers or settle directly.
 
 ### 10.5 Supported Networks
 
@@ -1017,6 +1021,10 @@ The agent harness supports multiple AI providers with automatic fallback:
 | Ollama | Local models | Chat only |
 
 If the primary model is unavailable, the system automatically falls back to the next configured model, ensuring high availability for production agent deployments.
+
+### 14.5 Air-Gapped Commerce
+
+The combination of local-first SQLite execution (Section 3.1) and local LLM support via Ollama unlocks a deployment model with profound privacy implications: **air-gapped commerce**. An enterprise can run iCommerce alongside a local Llama, Mistral, or DeepSeek model, allowing autonomous agents to process highly sensitive ERP and financial data without a single byte ever leaving the corporate intranet. No data is sent to OpenAI, Anthropic, or any external API. This is critical for defense contractors, healthcare organizations, financial institutions, and any enterprise subject to data residency regulations (GDPR, HIPAA, SOC 2). The full 365+ tool surface remains available — only the LLM provider changes.
 
 ---
 
