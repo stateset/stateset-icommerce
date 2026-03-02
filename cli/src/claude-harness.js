@@ -569,7 +569,12 @@ export async function runAgentLoop({
   let syncConfig = null;
 
   // Check if sync is configured and should be enabled
-  const rawSyncConfig = loadSyncConfig();
+  let rawSyncConfig = null;
+  try {
+    rawSyncConfig = loadSyncConfig();
+  } catch {
+    // No sync config available — standalone mode
+  }
   const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig !== null;
 
   if (shouldEnableSync && rawSyncConfig) {
@@ -1734,11 +1739,16 @@ export async function* runAgentStream({
   }
 
   // Check if sync is configured
-  const rawSyncConfig = loadSyncConfig();
-  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig !== null;
+  let rawSyncConfig2 = null;
+  try {
+    rawSyncConfig2 = loadSyncConfig();
+  } catch {
+    // No sync config available — standalone mode
+  }
+  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig2 !== null;
 
-  if (shouldEnableSync && rawSyncConfig) {
-    const syncConfig = new SyncConfig(rawSyncConfig);
+  if (shouldEnableSync && rawSyncConfig2) {
+    const syncConfig = new SyncConfig(rawSyncConfig2);
     commerce = wrapCommerceWithEvents(commerce, syncConfig);
   }
 
@@ -2060,10 +2070,15 @@ export function createAgentStreamSession(options = {}) {
 
   const Commerce = getCommerceCtor();
   let commerce = new Commerce(dbPath);
-  const rawSyncConfig = loadSyncConfig();
-  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig !== null;
-  if (shouldEnableSync && rawSyncConfig) {
-    const syncConfig = new SyncConfig(rawSyncConfig);
+  let rawSyncConfig3 = null;
+  try {
+    rawSyncConfig3 = loadSyncConfig();
+  } catch {
+    // No sync config available — standalone mode
+  }
+  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig3 !== null;
+  if (shouldEnableSync && rawSyncConfig3) {
+    const syncConfig = new SyncConfig(rawSyncConfig3);
     commerce = wrapCommerceWithEvents(commerce, syncConfig);
   }
 

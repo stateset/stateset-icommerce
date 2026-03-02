@@ -1,0 +1,26 @@
+{
+  "id": "ch_abc123",
+  "object": "charge",
+  "amount": 5000,
+  "currency": "usd",
+  "status": "succeeded",
+  "customer": "cus_abc123",
+  "payment_intent": "pi_3Q1abc123def456",
+  "payment_method_details": { "type": "card" },
+  "receipt_email": "alice@example.com",
+  "created": 1709251200,
+  "refunds": {
+    "data": [
+      {
+        "id": "re_abc123",
+        "amount": 2500,
+        "currency": "usd",
+        "status": "succeeded",
+        "reason": "requested_by_customer",
+        "payment_intent": "pi_3Q1abc123def456",
+        "charge": "ch_abc123",
+        "created": 1709337600
+      }
+    ]
+  }
+}

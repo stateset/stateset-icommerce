@@ -11,6 +11,29 @@ import { applyRequired } from '../utils/apply-guard.js';
 
 const SHADOW_ENTITIES = ['customers', 'products', 'inventory', 'orders', 'fulfillments'];
 
+/**
+ * Module-level import status store.
+ * Tracks the last import result so import_status can return useful data.
+ */
+let _lastImportResult = null;
+let _lastImportPlatform = null;
+let _lastImportTimestamp = null;
+
+function recordImportResult(platform, result) {
+  _lastImportPlatform = platform;
+  _lastImportResult = result;
+  _lastImportTimestamp = new Date().toISOString();
+}
+
+export function getLastImportStatus() {
+  if (!_lastImportResult) return null;
+  return {
+    platform: _lastImportPlatform,
+    timestamp: _lastImportTimestamp,
+    result: _lastImportResult,
+  };
+}
+
 const getLocalEntityCount = async (commerce, entityType) => {
   try {
     if (entityType === 'fulfillments') {
@@ -113,7 +136,7 @@ export const importTools = [
           filePath: params.filePath,
         });
 
-        return {
+        const output = {
           success: result.success,
           dryRun: result.dryRun,
           durationMs: result.durationMs,
@@ -122,6 +145,8 @@ export const importTools = [
           totalFailed: result.totalFailed,
           entities: result.entities,
         };
+        recordImportResult('shopify', output);
+        return output;
       } catch (err) {
         return { success: false, error: err.message };
       }
@@ -224,10 +249,21 @@ export const importTools = [
     inputSchema: {},
     permission: 'read',
     handler: async () => {
-      // The importer stores its last result in-memory; for now return a placeholder
+      const status = getLastImportStatus();
+      if (!status) {
+        return {
+          success: true,
+          hasResult: false,
+          message:
+            'No import has been run in this session. Use import_shopify_data or import_woocommerce_data to start an import.',
+        };
+      }
       return {
         success: true,
-        message: 'Use import_shopify_data to run an import. Last result is stored per session.',
+        hasResult: true,
+        platform: status.platform,
+        timestamp: status.timestamp,
+        ...status.result,
       };
     },
   },
@@ -307,7 +343,7 @@ export const importTools = [
           filePath: params.filePath,
         });
 
-        return {
+        const output = {
           success: result.success,
           dryRun: result.dryRun,
           totalCreated: result.totalCreated,
@@ -315,6 +351,8 @@ export const importTools = [
           totalFailed: result.totalFailed,
           entities: result.entities,
         };
+        recordImportResult(params.platform || 'csv', output);
+        return output;
       } catch (err) {
         return { success: false, error: err.message };
       }
@@ -360,7 +398,7 @@ export const importTools = [
           filePath: params.filePath,
         });
 
-        return {
+        const output = {
           success: result.success,
           dryRun: result.dryRun,
           totalCreated: result.totalCreated,
@@ -368,6 +406,8 @@ export const importTools = [
           totalFailed: result.totalFailed,
           entities: result.entities,
         };
+        recordImportResult(params.platform || 'json', output);
+        return output;
       } catch (err) {
         return { success: false, error: err.message };
       }
@@ -392,6 +432,169 @@ export const importTools = [
           entityType: params.entityType,
           count: data.length,
           data,
+        };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    },
+  },
+
+  {
+    name: 'import_woocommerce_data',
+    description:
+      'Import data from a WooCommerce store via REST API. Imports customers, products, orders, and inventory in dependency order.',
+    inputSchema: {
+      siteUrl: z.string().url().describe('WooCommerce site URL (e.g., https://mystore.com)'),
+      consumerKey: z.string().min(1).describe('WooCommerce REST API consumer key (ck_...)'),
+      consumerSecret: z.string().min(1).describe('WooCommerce REST API consumer secret (cs_...)'),
+      entities: z
+        .array(z.enum(['customers', 'products', 'orders', 'inventory']))
+        .optional()
+        .default(['customers', 'products', 'orders', 'inventory'])
+        .describe('Entity types to import'),
+      incremental: z.boolean().optional().default(true).describe('Skip records that already exist'),
+      dryRun: z.boolean().optional().default(true).describe('Preview import without writing data'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Import WooCommerce data', {
+          siteUrl: params.siteUrl,
+          entities: params.entities,
+          incremental: params.incremental,
+        });
+      }
+
+      try {
+        const { getAdapter } = await import('../adapters/index.js');
+        const { IdMapStore } = await import('../adapters/id-map-store.js');
+        const { DataImporter } = await import('../adapters/base-importer.js');
+
+        const adapter = await getAdapter('woocommerce', {
+          siteUrl: params.siteUrl,
+          consumerKey: params.consumerKey,
+          consumerSecret: params.consumerSecret,
+        });
+
+        const idMapStore = new IdMapStore(commerce.db || commerce._db);
+        const importer = new DataImporter(adapter, commerce, idMapStore);
+
+        const result = await importer.run({
+          source: 'api',
+          entities: params.entities,
+          incremental: params.incremental,
+          dryRun: params.dryRun,
+        });
+
+        const output = {
+          success: result.success,
+          dryRun: result.dryRun,
+          durationMs: result.durationMs,
+          totalCreated: result.totalCreated,
+          totalSkipped: result.totalSkipped,
+          totalFailed: result.totalFailed,
+          entities: result.entities,
+        };
+        recordImportResult('woocommerce', output);
+        return output;
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    },
+  },
+
+  {
+    name: 'configure_stripe_webhooks',
+    description:
+      'Configure Stripe webhook endpoint in the webhook server. Sets up the Stripe v1 signature verification and registers the webhook source.',
+    inputSchema: {
+      webhookSecret: z.string().min(1).describe('Stripe webhook signing secret (whsec_...)'),
+      port: z.number().int().positive().optional().default(3000).describe('Webhook server port'),
+    },
+    permission: 'write',
+    handler: async ({ params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Configure Stripe webhooks', {
+          port: params.port,
+          hasSecret: !!params.webhookSecret,
+        });
+      }
+
+      try {
+        const { getStripeSourceTemplate, WebhookSource } = await import('../webhooks/server.js');
+        const template = await getStripeSourceTemplate();
+
+        const source = new WebhookSource({
+          ...template,
+          secret: params.webhookSecret,
+        });
+
+        return {
+          success: true,
+          message: `Stripe webhook source configured on ${template.path}`,
+          source: {
+            name: source.name,
+            path: source.path,
+            signatureHeader: source.signatureHeader,
+            eventTypeField: source.eventTypeField,
+            hasCustomVerifier: !!source.customVerifier,
+          },
+          instructions: [
+            `Start the webhook server: stateset-webhooks --stripe-secret ${params.webhookSecret} --port ${params.port}`,
+            `In Stripe Dashboard, set webhook URL to: https://your-server.com${template.path}`,
+            'Select events: payment_intent.succeeded, charge.refunded, customer.created, etc.',
+            'Test with: stripe listen --forward-to localhost:' + params.port + template.path,
+          ],
+        };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    },
+  },
+
+  {
+    name: 'configure_woocommerce_webhooks',
+    description:
+      'Configure WooCommerce webhook endpoint in the webhook server. Sets up HMAC-SHA256 signature verification.',
+    inputSchema: {
+      webhookSecret: z.string().min(1).describe('WooCommerce webhook signing secret'),
+      port: z.number().int().positive().optional().default(3000).describe('Webhook server port'),
+    },
+    permission: 'write',
+    handler: async ({ params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Configure WooCommerce webhooks', {
+          port: params.port,
+          hasSecret: !!params.webhookSecret,
+        });
+      }
+
+      try {
+        const { WebhookSourceTemplates, WebhookSource } = await import('../webhooks/server.js');
+        const template = WebhookSourceTemplates.woocommerce;
+
+        const source = new WebhookSource({
+          ...template,
+          secret: params.webhookSecret,
+        });
+
+        return {
+          success: true,
+          message: `WooCommerce webhook source configured on ${template.path}`,
+          source: {
+            name: source.name,
+            path: source.path,
+            signatureHeader: source.signatureHeader,
+            eventTypeField: source.eventTypeField,
+            hasCustomVerifier: !!source.customVerifier,
+          },
+          instructions: [
+            `Start the webhook server: stateset-webhooks --woocommerce-secret ${params.webhookSecret} --port ${params.port}`,
+            'In WooCommerce Admin → Settings → Advanced → Webhooks:',
+            `  Set Delivery URL to: https://your-server.com${template.path}`,
+            `  Set Secret to: ${params.webhookSecret}`,
+            '  Add topics: order.created, order.updated, product.created, product.updated, customer.created, customer.updated',
+          ],
         };
       } catch (err) {
         return { success: false, error: err.message };

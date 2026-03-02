@@ -1,0 +1,12 @@
+{
+  "id": "dp_abc123",
+  "object": "dispute",
+  "amount": 5000,
+  "currency": "usd",
+  "status": "needs_response",
+  "reason": "fraudulent",
+  "charge": "ch_abc123",
+  "payment_intent": "pi_3Q1abc123def456",
+  "evidence_details": { "due_by": 1710460800 },
+  "created": 1709337600
+}

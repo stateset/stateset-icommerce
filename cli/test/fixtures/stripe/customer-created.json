@@ -1,0 +1,9 @@
+{
+  "id": "cus_abc123",
+  "object": "customer",
+  "name": "Alice Smith",
+  "email": "alice@example.com",
+  "phone": "+1234567890",
+  "metadata": { "source": "website" },
+  "created": 1709251200
+}

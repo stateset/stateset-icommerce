@@ -10,7 +10,7 @@ import { importTools } from '../../src/tools/import.js';
 describe('importTools — module exports', () => {
   it('exports an array of 7 tools', () => {
     assert.ok(Array.isArray(importTools));
-    assert.equal(importTools.length, 7);
+    assert.equal(importTools.length, 10);
   });
 
   it('exports expected tool names', () => {
@@ -23,6 +23,9 @@ describe('importTools — module exports', () => {
       'import_csv',
       'import_json',
       'export_data',
+      'import_woocommerce_data',
+      'configure_stripe_webhooks',
+      'configure_woocommerce_webhooks',
     ]);
   });
 });
@@ -140,13 +143,14 @@ describe('importTools — apply guard', () => {
 describe('importTools — import_status handler', () => {
   const byName = Object.fromEntries(importTools.map((t) => [t.name, t]));
 
-  it('returns success with guidance message', async () => {
+  it('returns hasResult false when no import has run', async () => {
     const result = await byName['import_status'].handler({
       commerce: {},
       params: {},
     });
     assert.equal(result.success, true);
-    assert.ok(result.message.includes('import_shopify_data'));
+    assert.equal(result.hasResult, false);
+    assert.ok(result.message.includes('import'));
   });
 });
 

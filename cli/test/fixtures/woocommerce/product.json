@@ -1,0 +1,69 @@
+{
+  "id": 93,
+  "name": "Premium Widget",
+  "slug": "premium-widget",
+  "permalink": "https://example.com/product/premium-widget",
+  "date_created": "2024-01-10T08:00:00",
+  "date_modified": "2024-02-15T12:00:00",
+  "type": "simple",
+  "status": "publish",
+  "featured": false,
+  "catalog_visibility": "visible",
+  "description": "<p>A high-quality premium widget for all your needs.</p>",
+  "short_description": "<p>Premium widget.</p>",
+  "sku": "WIDGET-001",
+  "price": "29.99",
+  "regular_price": "39.99",
+  "sale_price": "29.99",
+  "on_sale": true,
+  "purchasable": true,
+  "total_sales": 150,
+  "virtual": false,
+  "downloadable": false,
+  "manage_stock": true,
+  "stock_quantity": 75,
+  "stock_status": "instock",
+  "backorders": "no",
+  "weight": "0.5",
+  "dimensions": {
+    "length": "10",
+    "width": "5",
+    "height": "3"
+  },
+  "categories": [
+    {
+      "id": 15,
+      "name": "Widgets",
+      "slug": "widgets"
+    },
+    {
+      "id": 22,
+      "name": "Premium",
+      "slug": "premium"
+    }
+  ],
+  "tags": [
+    {
+      "id": 31,
+      "name": "bestseller",
+      "slug": "bestseller"
+    }
+  ],
+  "images": [
+    {
+      "id": 201,
+      "src": "https://example.com/wp-content/uploads/widget-front.jpg",
+      "name": "widget-front",
+      "alt": "Premium Widget Front"
+    },
+    {
+      "id": 202,
+      "src": "https://example.com/wp-content/uploads/widget-side.jpg",
+      "name": "widget-side",
+      "alt": "Premium Widget Side"
+    }
+  ],
+  "attributes": [],
+  "variations": [],
+  "meta_data": []
+}

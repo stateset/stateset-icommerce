@@ -1,0 +1,14 @@
+{
+  "id": "in_abc123",
+  "object": "invoice",
+  "amount_due": 2999,
+  "amount_paid": 2999,
+  "currency": "usd",
+  "status": "paid",
+  "customer": "cus_abc123",
+  "subscription": "sub_xyz789",
+  "number": "INV-0001",
+  "due_date": 1711929600,
+  "status_transitions": { "paid_at": 1709337600 },
+  "created": 1709251200
+}

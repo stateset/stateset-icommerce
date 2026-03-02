@@ -1,0 +1,37 @@
+{
+  "id": 25,
+  "date_created": "2024-01-15T10:30:00",
+  "date_modified": "2024-02-20T14:45:00",
+  "email": "john.doe@example.com",
+  "first_name": "John",
+  "last_name": "Doe",
+  "role": "customer",
+  "username": "john.doe",
+  "billing": {
+    "first_name": "John",
+    "last_name": "Doe",
+    "company": "Acme Corp",
+    "address_1": "969 Market",
+    "address_2": "Suite 200",
+    "city": "San Francisco",
+    "state": "CA",
+    "postcode": "94103",
+    "country": "US",
+    "email": "john.doe@example.com",
+    "phone": "(555) 555-5555"
+  },
+  "shipping": {
+    "first_name": "John",
+    "last_name": "Doe",
+    "company": "Acme Corp",
+    "address_1": "969 Market",
+    "address_2": "Suite 200",
+    "city": "San Francisco",
+    "state": "CA",
+    "postcode": "94103",
+    "country": "US"
+  },
+  "is_paying_customer": true,
+  "avatar_url": "https://secure.gravatar.com/avatar/abc123",
+  "meta_data": []
+}

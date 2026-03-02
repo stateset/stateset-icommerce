@@ -76,6 +76,9 @@ export const syncTools = [
     inputSchema: {
       batchSize: z
         .number()
+        .int()
+        .positive()
+        .max(1000)
         .optional()
         .describe('Maximum events to push in one batch (default: 100)'),
       dryRun: z.boolean().optional().describe('Show what would be pushed without actually pushing'),
@@ -137,8 +140,19 @@ export const syncTools = [
     name: 'sync_pull',
     description: 'Pull events from the remote sequencer and store them locally.',
     inputSchema: {
-      fromSequence: z.number().optional().describe('Start pulling from this sequence number'),
-      limit: z.number().optional().describe('Maximum events to pull (default: 1000)'),
+      fromSequence: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Start pulling from this sequence number'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(10000)
+        .optional()
+        .describe('Maximum events to pull (default: 1000)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -173,7 +187,13 @@ export const syncTools = [
         .enum(['pending', 'synced', 'failed', 'rejected', 'all'])
         .optional()
         .describe('Filter by status (default: all)'),
-      limit: z.number().optional().describe('Maximum events to return (default: 20)'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(500)
+        .optional()
+        .describe('Maximum events to return (default: 20)'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -285,8 +305,20 @@ export const syncTools = [
     description:
       'Perform a full sync: push pending events then pull new events. Requires --apply flag for push.',
     inputSchema: {
-      pushBatchSize: z.number().optional().describe('Maximum events to push (default: 100)'),
-      pullLimit: z.number().optional().describe('Maximum events to pull (default: 1000)'),
+      pushBatchSize: z
+        .number()
+        .int()
+        .positive()
+        .max(1000)
+        .optional()
+        .describe('Maximum events to push (default: 100)'),
+      pullLimit: z
+        .number()
+        .int()
+        .positive()
+        .max(10000)
+        .optional()
+        .describe('Maximum events to pull (default: 1000)'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -451,6 +483,388 @@ export const syncTools = [
         strategy,
         errors: result.errors,
       };
+    },
+  },
+
+  // ===========================================================================
+  // VES Receipt Verification Tools
+  // ===========================================================================
+
+  {
+    name: 'sync_verify_receipt',
+    description:
+      'Verify the Ed25519 signature on a VES event receipt. Proves the event was signed by the claimed agent.',
+    inputSchema: {
+      envelope: z
+        .object({
+          eventId: z.string().min(1),
+          tenantId: z.string().min(1),
+          storeId: z.string().min(1),
+          sourceAgent: z.string().min(1),
+          agentKeyId: z.number().int(),
+          entityType: z.string().min(1),
+          entityId: z.string().min(1),
+          eventType: z.string().min(1),
+          createdAt: z.string().min(1),
+          payloadPlainHash: z.string().min(1),
+          payloadCipherHash: z.string().min(1),
+          agentSignature: z.string().min(1),
+          vesVersion: z.number().int().positive(),
+        })
+        .describe('VES event envelope with signature fields'),
+      publicKeyHex: z.string().min(1).describe("Agent's Ed25519 public key, hex encoded"),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const { computeEventSigningHash, verifyEventSignature, hexToBuffer } =
+        await import('../sync/crypto.js');
+      const { envelope, publicKeyHex } = params;
+
+      const signingHash = computeEventSigningHash({
+        vesVersion: envelope.vesVersion,
+        tenantId: envelope.tenantId,
+        storeId: envelope.storeId,
+        eventId: envelope.eventId,
+        sourceAgentId: envelope.sourceAgent,
+        agentKeyId: envelope.agentKeyId,
+        entityType: envelope.entityType,
+        entityId: envelope.entityId,
+        eventType: envelope.eventType,
+        createdAt: envelope.createdAt,
+        payloadKind: 0,
+        payloadPlainHash: hexToBuffer(envelope.payloadPlainHash),
+        payloadCipherHash: hexToBuffer(envelope.payloadCipherHash),
+      });
+
+      const valid = verifyEventSignature(
+        signingHash,
+        hexToBuffer(envelope.agentSignature),
+        hexToBuffer(publicKeyHex),
+      );
+
+      return {
+        valid,
+        eventId: envelope.eventId,
+        sourceAgent: envelope.sourceAgent,
+        entityType: envelope.entityType,
+        entityId: envelope.entityId,
+      };
+    },
+  },
+  {
+    name: 'sync_verify_inclusion',
+    description:
+      'Verify a Merkle inclusion proof for a VES event. Proves the event is included in a committed batch.',
+    inputSchema: {
+      envelope: z
+        .object({
+          eventId: z.string().min(1),
+          payloadPlainHash: z.string().min(1),
+          agentSignature: z.string().min(1),
+        })
+        .describe('Partial VES event envelope (eventId, payloadPlainHash, agentSignature)'),
+      proof: z
+        .object({
+          leafIndex: z.number().int().min(0),
+          proofHashes: z.array(z.string()),
+        })
+        .describe('Merkle inclusion proof with leaf index and sibling hashes'),
+      expectedRoot: z.string().min(1).describe('Hex-encoded Merkle root from the commitment'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const { computeNodeHash, hexToBuffer } = await import('../sync/crypto.js');
+      const { envelope, proof, expectedRoot } = params;
+
+      // The leaf hash is H(payloadPlainHash || agentSignature) — simplified for verification
+      const crypto = await import('crypto');
+      const leafHash = crypto
+        .createHash('sha256')
+        .update(hexToBuffer(envelope.payloadPlainHash))
+        .update(hexToBuffer(envelope.agentSignature))
+        .digest();
+
+      // Walk up the proof tree
+      let currentHash = leafHash;
+      let index = proof.leafIndex;
+      for (const siblingHex of proof.proofHashes) {
+        const sibling = hexToBuffer(siblingHex);
+        if (index % 2 === 0) {
+          currentHash = computeNodeHash(currentHash, sibling);
+        } else {
+          currentHash = computeNodeHash(sibling, currentHash);
+        }
+        index = Math.floor(index / 2);
+      }
+
+      const expectedRootBuf = hexToBuffer(expectedRoot);
+      const valid = currentHash.equals(expectedRootBuf);
+
+      return {
+        valid,
+        eventId: envelope.eventId,
+        expectedRoot,
+      };
+    },
+  },
+  {
+    name: 'sync_inspect_commitment',
+    description:
+      'Inspect a VES batch commitment from the sequencer. Shows the Merkle root, sequence range, and event count.',
+    inputSchema: {
+      batchId: z.string().min(1).describe('Batch commitment ID'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const { batchId } = params;
+      if (!isSyncConfigured())
+        return {
+          success: false,
+          error: 'Sync not configured',
+          hint: 'Run "stateset-sync init" to set up sync.',
+        };
+      try {
+        const rawConfig = loadSyncConfig();
+        const config = new SyncConfig(rawConfig);
+        const client = createSequencerClient(config);
+        const commitment = await client.getCommitment(batchId);
+        if (!commitment) {
+          return { success: false, error: `Commitment '${batchId}' not found` };
+        }
+        return {
+          success: true,
+          batchId: commitment.batchId,
+          merkleRoot: commitment.merkleRoot,
+          startSequence: commitment.startSequence,
+          endSequence: commitment.endSequence,
+          eventCount: commitment.eventCount,
+          committedAt: commitment.committedAt,
+        };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+  },
+
+  // ===========================================================================
+  // Agent Key Management Tools
+  // ===========================================================================
+
+  {
+    name: 'agent_key_generate',
+    description:
+      'Generate a new Ed25519 signing or X25519 encryption key pair for an agent. Requires --apply flag.',
+    inputSchema: {
+      agentId: z.string().min(1).describe('Agent identifier'),
+      keyType: z.enum(['signing', 'encryption']).describe('Key type to generate'),
+    },
+    permission: 'write',
+    handler: async ({ params, allowApply }) => {
+      const { agentId, keyType } = params;
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Key generation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable key generation.',
+        };
+      }
+      try {
+        const { AgentKeyManager } = await import('../sync/keys.js');
+        const { bufferToHex } = await import('../sync/crypto.js');
+        const keyManager = new AgentKeyManager();
+        const keyPair =
+          keyType === 'signing'
+            ? await keyManager.generateSigningKey(agentId)
+            : await keyManager.generateEncryptionKey(agentId);
+        return {
+          success: true,
+          agentId,
+          keyType,
+          keyId: keyPair.keyId,
+          publicKeyHex: bufferToHex(keyPair.publicKey),
+          createdAt: keyPair.createdAt,
+        };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+  },
+  {
+    name: 'agent_key_list',
+    description:
+      'List signing and/or encryption keys for an agent. Returns only public metadata — never exposes private keys.',
+    inputSchema: {
+      agentId: z.string().min(1).describe('Agent identifier'),
+      keyType: z.enum(['signing', 'encryption']).optional().describe('Filter by key type'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const { agentId, keyType } = params;
+      try {
+        const { AgentKeyManager } = await import('../sync/keys.js');
+        const { bufferToHex } = await import('../sync/crypto.js');
+        const keyManager = new AgentKeyManager();
+        const results = [];
+        const types = keyType ? [keyType] : ['signing', 'encryption'];
+        for (const kt of types) {
+          const keys =
+            kt === 'signing'
+              ? await keyManager.listSigningKeys(agentId)
+              : await keyManager.listEncryptionKeys(agentId);
+          for (const k of keys) {
+            results.push({
+              keyId: k.keyId,
+              keyType: kt,
+              publicKeyHex: bufferToHex(k.publicKey),
+              createdAt: k.createdAt,
+              revokedAt: k.revokedAt || null,
+            });
+          }
+        }
+        return { success: true, agentId, count: results.length, keys: results };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+  },
+  {
+    name: 'agent_key_info',
+    description:
+      'Get detailed info for a specific agent key. Returns metadata only — no private key.',
+    inputSchema: {
+      agentId: z.string().min(1).describe('Agent identifier'),
+      keyType: z.enum(['signing', 'encryption']).describe('Key type'),
+      keyId: z.number().int().positive().describe('Key ID'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const { agentId, keyType, keyId } = params;
+      try {
+        const { AgentKeyManager } = await import('../sync/keys.js');
+        const { bufferToHex } = await import('../sync/crypto.js');
+        const keyManager = new AgentKeyManager();
+        const key =
+          keyType === 'signing'
+            ? await keyManager.getSigningKey(agentId, keyId)
+            : await keyManager.getEncryptionKey(agentId, keyId);
+        if (!key) {
+          return { success: false, error: `Key ${keyId} not found for agent '${agentId}'` };
+        }
+        return {
+          success: true,
+          agentId,
+          keyType,
+          keyId: key.keyId,
+          publicKeyHex: bufferToHex(key.publicKey),
+          createdAt: key.createdAt,
+          revokedAt: key.revokedAt || null,
+        };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+  },
+  {
+    name: 'agent_key_rotate',
+    description:
+      'Rotate an agent key: generate a new key and revoke the current one. Requires --apply flag.',
+    inputSchema: {
+      agentId: z.string().min(1).describe('Agent identifier'),
+      keyType: z.enum(['signing', 'encryption']).describe('Key type to rotate'),
+    },
+    permission: 'write',
+    handler: async ({ params, allowApply }) => {
+      const { agentId, keyType } = params;
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Key rotation not allowed. The --apply flag must be set.',
+          hint: 'Run with --apply to enable key rotation.',
+        };
+      }
+      try {
+        const { AgentKeyManager } = await import('../sync/keys.js');
+        const { bufferToHex } = await import('../sync/crypto.js');
+        const keyManager = new AgentKeyManager();
+
+        // Get the current key before rotation
+        const currentKey =
+          keyType === 'signing'
+            ? await keyManager.getCurrentSigningKey(agentId)
+            : await keyManager.getCurrentEncryptionKey(agentId);
+        if (!currentKey) {
+          return {
+            success: false,
+            error: `No current ${keyType} key found for agent '${agentId}'`,
+          };
+        }
+
+        // Generate new key
+        const newKey =
+          keyType === 'signing'
+            ? await keyManager.generateSigningKey(agentId)
+            : await keyManager.generateEncryptionKey(agentId);
+
+        // Revoke old key
+        if (keyType === 'signing') {
+          await keyManager.revokeSigningKey(agentId, currentKey.keyId);
+        } else {
+          await keyManager.revokeEncryptionKey(agentId, currentKey.keyId);
+        }
+
+        return {
+          success: true,
+          agentId,
+          keyType,
+          oldKeyId: currentKey.keyId,
+          newKeyId: newKey.keyId,
+          newPublicKeyHex: bufferToHex(newKey.publicKey),
+          createdAt: newKey.createdAt,
+        };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+  },
+  {
+    name: 'agent_key_export',
+    description:
+      'Export an agent public key for sequencer registration. Returns public key only — never the private key.',
+    inputSchema: {
+      agentId: z.string().min(1).describe('Agent identifier'),
+      keyType: z
+        .enum(['signing', 'encryption'])
+        .optional()
+        .default('signing')
+        .describe('Key type (default: signing)'),
+      keyId: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Specific key ID (default: current active key)'),
+    },
+    permission: 'read',
+    handler: async ({ params }) => {
+      const { agentId, keyType, keyId } = params;
+      try {
+        const { AgentKeyManager } = await import('../sync/keys.js');
+        const keyManager = new AgentKeyManager();
+        const exported =
+          keyType === 'signing'
+            ? await keyManager.exportSigningPublicKey(agentId, keyId || null)
+            : await keyManager.exportEncryptionPublicKey(agentId, keyId || null);
+        return {
+          success: true,
+          agentId,
+          keyType,
+          keyId: exported.keyId,
+          publicKeyHex: exported.publicKey,
+          createdAt: exported.createdAt,
+        };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
     },
   },
 ];

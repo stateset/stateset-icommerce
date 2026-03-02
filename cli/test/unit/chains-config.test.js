@@ -346,12 +346,12 @@ describe('listChains', () => {
 });
 
 describe('getRecommendedChain', () => {
-  it('returns set_chain by default', () => {
-    assert.equal(getRecommendedChain(), 'set_chain');
+  it('returns base by default', () => {
+    assert.equal(getRecommendedChain(), 'base');
   });
 
   it('returns testnet when requested', () => {
-    assert.equal(getRecommendedChain({ testnet: true }), 'set_chain_testnet');
+    assert.equal(getRecommendedChain({ testnet: true }), 'solana_devnet');
   });
 
   it('returns set_chain for preferNative', () => {

@@ -242,11 +242,27 @@ export const TOOL_PERMISSIONS = {
   // Import / Export
   import_shopify_data: 'write',
   import_shopify_shadow_data: 'write',
+  import_woocommerce_data: 'write',
   import_status: 'read',
   list_id_mappings: 'read',
   import_csv: 'write',
   import_json: 'write',
   export_data: 'read',
+  configure_stripe_webhooks: 'write',
+  configure_woocommerce_webhooks: 'write',
+
+  // Audit
+  audit_query: 'read',
+  audit_summary: 'read',
+  audit_export: 'admin',
+  audit_retention: 'admin',
+
+  // Policy Engine
+  evaluate_policy: 'read',
+  list_policies: 'read',
+  register_policy_template: 'write',
+  load_policy_file: 'write',
+  explain_policy_denial: 'read',
 
   // WASM Connector Ecosystem
   list_connector_marketplace: 'read',
@@ -284,6 +300,16 @@ export const TOOL_PERMISSIONS = {
   sync_rebase: 'admin',
   sync_resolve: 'admin',
   sync_retry_failed: 'admin',
+  sync_verify_receipt: 'read',
+  sync_verify_inclusion: 'read',
+  sync_inspect_commitment: 'read',
+
+  // Agent Key Management
+  agent_key_generate: 'write',
+  agent_key_list: 'read',
+  agent_key_info: 'read',
+  agent_key_rotate: 'write',
+  agent_key_export: 'read',
 
   // Treasury / Stablecoin Billing
   treasury_balance: 'read',

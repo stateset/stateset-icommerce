@@ -34,6 +34,7 @@ export class WebhookSource {
     retryOnFailure = true,
     maxRetries = 3,
     metadata = {},
+    customVerifier = null, // Optional: (rawBody, signatureHeader, secret) => { valid: boolean, error?: string }
   }) {
     this.id = id;
     this.name = name;
@@ -49,6 +50,7 @@ export class WebhookSource {
     this.retryOnFailure = retryOnFailure;
     this.maxRetries = maxRetries;
     this.metadata = metadata;
+    this.customVerifier = customVerifier;
   }
 
   /**
@@ -56,6 +58,18 @@ export class WebhookSource {
    */
   verifySignature(payload, signature) {
     if (!this.secret) return true; // No secret = no verification
+
+    // Use platform-specific verifier if available (e.g., Stripe v1 scheme)
+    if (typeof this.customVerifier === 'function') {
+      const result = this.customVerifier(payload, signature, this.secret);
+      if (!result.valid) {
+        console.warn(
+          `[webhook] ${this.name} signature verification failed:`,
+          result.error || 'unknown',
+        );
+      }
+      return result.valid;
+    }
 
     const expectedSignature =
       this.signaturePrefix +
@@ -689,16 +703,37 @@ export class WebhookServer extends EventEmitter {
 /**
  * Pre-configured webhook source templates
  */
+/**
+ * Get the Stripe webhook source template with proper v1 signature verification.
+ * @param {object} [opts]
+ * @param {Function} [opts.verifyStripeSignature] - Override for testing
+ * @returns {object} WebhookSource config
+ */
+export async function getStripeSourceTemplate(opts = {}) {
+  let verifyFn = opts.verifyStripeSignature;
+  if (!verifyFn) {
+    const mod = await import('../adapters/stripe/signature.js');
+    verifyFn = mod.verifyStripeSignature;
+  }
+  return {
+    ...WebhookSourceTemplates.stripe,
+    customVerifier: (rawBody, signatureHeader, secret) =>
+      verifyFn(rawBody, signatureHeader, secret),
+  };
+}
+
 export const WebhookSourceTemplates = {
   stripe: {
     name: 'Stripe',
-    description: 'Stripe payment webhooks',
+    description: 'Stripe payment webhooks (v1 signature scheme)',
     path: '/webhooks/stripe',
     signatureHeader: 'stripe-signature',
     signatureAlgorithm: 'sha256',
     signaturePrefix: '',
     eventTypeField: 'type',
     payloadField: 'data.object',
+    // Note: For proper Stripe verification, use getStripeSourceTemplate() which
+    // sets a customVerifier using the v1 timestamp+HMAC scheme.
   },
 
   shopify: {
@@ -709,6 +744,33 @@ export const WebhookSourceTemplates = {
     signatureAlgorithm: 'sha256',
     signaturePrefix: '',
     eventTypeField: 'topic',
+  },
+
+  woocommerce: {
+    name: 'WooCommerce',
+    description: 'WooCommerce store webhooks',
+    path: '/webhooks/woocommerce',
+    signatureHeader: 'x-wc-webhook-signature',
+    signatureAlgorithm: 'sha256',
+    signaturePrefix: '',
+    eventTypeField: 'action',
+    // WooCommerce sends base64-encoded HMAC-SHA256 in x-wc-webhook-signature.
+    // The customVerifier handles the base64 decode for proper comparison.
+    customVerifier: (rawBody, signatureHeader, secret) => {
+      if (!signatureHeader || !secret)
+        return { valid: false, error: 'Missing signature or secret' };
+      try {
+        const expected = createHmac('sha256', secret).update(rawBody, 'utf-8').digest('base64');
+        const sigBuf = Buffer.from(signatureHeader, 'utf-8');
+        const expBuf = Buffer.from(expected, 'utf-8');
+        if (sigBuf.length !== expBuf.length) return { valid: false, error: 'Signature mismatch' };
+        return timingSafeEqual(sigBuf, expBuf)
+          ? { valid: true }
+          : { valid: false, error: 'Signature mismatch' };
+      } catch (err) {
+        return { valid: false, error: err.message };
+      }
+    },
   },
 
   square: {

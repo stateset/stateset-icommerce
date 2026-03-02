@@ -1,0 +1,24 @@
+{
+  "id": "sub_xyz789",
+  "object": "subscription",
+  "status": "active",
+  "customer": "cus_abc123",
+  "currency": "usd",
+  "current_period_start": 1709251200,
+  "current_period_end": 1711929600,
+  "cancel_at_period_end": false,
+  "trial_end": null,
+  "created": 1709251200,
+  "items": {
+    "data": [
+      {
+        "price": {
+          "id": "price_monthly_basic",
+          "nickname": "Basic Monthly",
+          "unit_amount": 2999,
+          "recurring": { "interval": "month", "interval_count": 1 }
+        }
+      }
+    ]
+  }
+}

@@ -1,7 +1,7 @@
 {
   "name": "@stateset/cli",
   "version": "0.7.15",
-  "description": "AI-powered command-line interface for StateSet Commerce",
+  "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
     "ss": "bin/stateset.js",
@@ -49,7 +49,8 @@
     "stateset-x402": "bin/stateset-x402.js",
     "stateset-init": "bin/stateset-init.js",
     "stateset-import": "bin/stateset-import.js",
-    "stateset-setup": "bin/stateset-setup.js"
+    "stateset-setup": "bin/stateset-setup.js",
+    "stateset-webhooks": "bin/stateset-webhooks.js"
   },
   "main": "src/index.js",
   "exports": {
@@ -57,7 +58,8 @@
     "./mcp-server": "./src/mcp-server.js",
     "./x402-mcp-server": "./src/x402-mcp-server.js",
     "./scaffold-server": "./src/scaffold-server.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./standalone": "./src/standalone.js"
   },
   "repository": {
     "type": "git",
@@ -129,7 +131,15 @@
     "stablecoin",
     "payments",
     "subscriptions",
-    "analytics"
+    "analytics",
+    "local-first",
+    "embedded",
+    "ai-commerce",
+    "policy-engine",
+    "stripe",
+    "woocommerce",
+    "shopify",
+    "webhooks"
   ],
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",

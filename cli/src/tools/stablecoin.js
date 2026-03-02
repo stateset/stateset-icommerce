@@ -19,6 +19,7 @@ export const stablecoinTools = [
     inputSchema: {
       chain: z
         .string()
+        .min(1)
         .optional()
         .describe(
           'Blockchain: set_chain, base, ethereum, arbitrum, solana, solana_devnet (default: set_chain)',
@@ -49,10 +50,12 @@ export const stablecoinTools = [
     inputSchema: {
       chain: z
         .string()
+        .min(1)
         .optional()
         .describe('Blockchain: set_chain, base, ethereum, arbitrum, solana (default: set_chain)'),
       token: z
         .string()
+        .min(1)
         .optional()
         .describe('Token symbol: USDC, ssUSD, USDT (default: chain stablecoin)'),
     },
@@ -82,12 +85,17 @@ export const stablecoinTools = [
       amount: z.number().positive().describe('Amount to send (e.g., 50.00)'),
       chain: z
         .string()
+        .min(1)
         .optional()
         .describe('Blockchain: set_chain, base, ethereum, arbitrum, solana (default: set_chain)'),
-      token: z.string().optional().describe('Token: USDC, ssUSD (default: chain stablecoin)'),
-      orderId: z.string().optional().describe('Order ID for audit trail'),
-      customerId: z.string().optional().describe('Customer ID for audit trail'),
-      memo: z.string().optional().describe('Payment memo'),
+      token: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Token: USDC, ssUSD (default: chain stablecoin)'),
+      orderId: z.string().min(1).optional().describe('Order ID for audit trail'),
+      customerId: z.string().min(1).optional().describe('Customer ID for audit trail'),
+      memo: z.string().max(500).optional().describe('Payment memo'),
     },
     permission: 'write',
     handler: async ({

@@ -15,9 +15,9 @@ export const treasuryTools = [
     name: 'treasury_balance',
     description: 'Get treasury balances for an agent.',
     inputSchema: {
-      agentId: z.string().optional().describe('Agent ID (default: default)'),
-      chainId: z.string().optional().describe('Chain ID'),
-      token: z.string().optional().describe('Token symbol (requires chainId)'),
+      agentId: z.string().min(1).optional().describe('Agent ID (default: default)'),
+      chainId: z.string().min(1).optional().describe('Chain ID'),
+      token: z.string().min(1).optional().describe('Token symbol (requires chainId)'),
     },
     permission: 'read',
     handler: async ({ params, treasuryContextOptions }) => {
@@ -71,10 +71,10 @@ export const treasuryTools = [
     description: 'List recent treasury transactions for an agent.',
     inputSchema: {
       agentId: z.string().min(1).describe('Agent ID'),
-      chainId: z.string().optional().describe('Chain ID'),
-      token: z.string().optional().describe('Token symbol'),
-      taskId: z.string().optional().describe('Task id filter'),
-      requestId: z.string().optional().describe('Request id filter'),
+      chainId: z.string().min(1).optional().describe('Chain ID'),
+      token: z.string().min(1).optional().describe('Token symbol'),
+      taskId: z.string().min(1).optional().describe('Task id filter'),
+      requestId: z.string().min(1).optional().describe('Request id filter'),
       limit: z.number().int().min(1).max(500).optional().default(25).describe('Max entries'),
     },
     permission: 'read',
@@ -102,8 +102,8 @@ export const treasuryTools = [
       chainId: z.string().min(1).describe('Chain ID'),
       token: z.string().min(1).describe('Token symbol'),
       amount: z.number().positive().describe('Amount to deposit'),
-      txId: z.string().optional().describe('Transaction hash'),
-      fromAddress: z.string().optional().describe('Sender wallet address'),
+      txId: z.string().min(1).optional().describe('Transaction hash'),
+      fromAddress: z.string().min(1).optional().describe('Sender wallet address'),
     },
     permission: 'write',
     handler: async ({ params, treasuryContextOptions, buildAuditContext, extra }) => {
@@ -136,9 +136,13 @@ export const treasuryTools = [
       chainId: z.string().min(1).describe('Chain ID'),
       toToken: z.string().min(1).describe('Target token symbol'),
       amount: z.number().positive().describe('Stablecoin amount to spend'),
-      fromToken: z.string().optional().describe('Funding token symbol (default: chain stablecoin)'),
-      priceUsd: z.number().optional().describe('Override token price in USD'),
-      slippagePct: z.number().optional().default(1).describe('Slippage percentage'),
+      fromToken: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Funding token symbol (default: chain stablecoin)'),
+      priceUsd: z.number().positive().optional().describe('Override token price in USD'),
+      slippagePct: z.number().min(0).max(100).optional().default(1).describe('Slippage percentage'),
     },
     permission: 'write',
     handler: async ({ params, treasuryContextOptions, buildAuditContext, extra }) => {
@@ -167,7 +171,7 @@ export const treasuryTools = [
     name: 'treasury_list_tokens',
     description: 'List available tokens from chain config and custom registry.',
     inputSchema: {
-      chainId: z.string().optional().describe('Chain ID'),
+      chainId: z.string().min(1).optional().describe('Chain ID'),
     },
     permission: 'read',
     handler: async ({ params, treasuryContextOptions }) => {
@@ -185,10 +189,10 @@ export const treasuryTools = [
     inputSchema: {
       symbol: z.string().min(1).describe('Token symbol'),
       chainId: z.string().min(1).describe('Chain ID'),
-      decimals: z.number().describe('Token decimals'),
-      address: z.string().optional().describe('Token contract address'),
-      priceUsd: z.number().optional().describe('Token price in USD'),
-      issuerAgentId: z.string().optional().describe('Issuing agent ID'),
+      decimals: z.number().int().min(0).max(18).describe('Token decimals'),
+      address: z.string().min(1).optional().describe('Token contract address'),
+      priceUsd: z.number().positive().optional().describe('Token price in USD'),
+      issuerAgentId: z.string().min(1).optional().describe('Issuing agent ID'),
     },
     permission: 'write',
     handler: async ({ params, treasuryContextOptions }) => {

@@ -695,8 +695,9 @@ export function getRecommendedChain(options = {}) {
   if (options.preferNative) {
     return options.testnet ? 'set_chain_testnet' : 'set_chain';
   }
-  // Default to an EVM chain so live settlement paths are available by default.
-  return options.testnet ? 'set_chain_testnet' : 'set_chain';
+  // Default to Base — live liquidity, low fees, USDC available, existing ecosystem.
+  // Standalone users should not need SET Chain to get started.
+  return options.testnet ? 'solana_devnet' : 'base';
 }
 
 // =============================================================================

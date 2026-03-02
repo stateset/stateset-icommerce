@@ -45,6 +45,7 @@ import { supplierTools } from './tools/suppliers.js';
 import { invoiceTools } from './tools/invoices.js';
 import { warrantyTools } from './tools/warranties.js';
 import { importTools } from './tools/import.js';
+import { policyTools } from './tools/policies.js';
 import { giftCardTools } from './tools/gift-cards.js';
 import { storeCreditTools } from './tools/store-credits.js';
 import { segmentTools } from './tools/segments.js';
@@ -54,6 +55,7 @@ import { wishlistTools } from './tools/wishlists.js';
 import { loyaltyTools } from './tools/loyalty.js';
 import { fraudTools } from './tools/fraud.js';
 import { connectorTools } from './tools/connectors.js';
+import { auditTools } from './tools/audit.js';
 
 let toolDiscoveryEngine = null;
 
@@ -478,6 +480,7 @@ const ALL_TOOL_DEFS = [
   ...invoiceTools,
   ...warrantyTools,
   ...importTools,
+  ...policyTools,
   ...vectorTools,
   ...giftCardTools,
   ...storeCreditTools,
@@ -488,6 +491,7 @@ const ALL_TOOL_DEFS = [
   ...loyaltyTools,
   ...fraudTools,
   ...connectorTools,
+  ...auditTools,
   ...AGENTIC_RUNTIME_TOOLS,
 ];
 
@@ -4242,6 +4246,7 @@ export function createStatesetMcpServer({
     simulateMutationToolCall,
     replayMutationToolCall,
     getAgenticReplayLog: listAgenticReplayEvents,
+    policyEngine: policyEngineInstance,
   };
 
   /**

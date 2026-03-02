@@ -1,0 +1,13 @@
+{
+  "id": "pi_3Q1abc123def456",
+  "object": "payment_intent",
+  "amount": 5000,
+  "currency": "usd",
+  "status": "succeeded",
+  "payment_method_types": ["card"],
+  "customer": "cus_abc123",
+  "description": "Order #ORD-001",
+  "metadata": { "order_id": "ORD-001" },
+  "created": 1709251200,
+  "receipt_email": "alice@example.com"
+}

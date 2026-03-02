@@ -58,3 +58,13 @@ registerAdapter('shopify-shadow', async (config) => {
   const { ShopifyShadowAdapter } = await import('./shopify-shadow/index.js');
   return new ShopifyShadowAdapter(config);
 });
+
+registerAdapter('stripe', async (config) => {
+  const { StripeAdapter } = await import('./stripe/index.js');
+  return new StripeAdapter(config);
+});
+
+registerAdapter('woocommerce', async (config) => {
+  const { WooCommerceAdapter } = await import('./woocommerce/index.js');
+  return new WooCommerceAdapter(config);
+});

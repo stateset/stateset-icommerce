@@ -591,14 +591,22 @@ export class TransformAuditEntry {
  * Policy Engine
  */
 export class PolicyEngine extends EventEmitter {
-  constructor({
-    storePath = null,
-    executor = null, // Function to execute actions
-  }) {
+  /**
+   * @param {Object} options
+   * @param {string|null} [options.storePath=null]
+   * @param {Function|null} [options.executor=null] - Function to execute actions
+   * @param {'allow'|'deny'} [options.unknownDomainMode='deny'] - Behavior when no policies match a domain
+   */
+  constructor({ storePath = null, executor = null, unknownDomainMode = 'deny' } = {}) {
     super();
+
+    if (unknownDomainMode !== 'allow' && unknownDomainMode !== 'deny') {
+      throw new Error(`unknownDomainMode must be 'allow' or 'deny', got '${unknownDomainMode}'`);
+    }
 
     this.storePath = storePath;
     this.executor = executor;
+    this.unknownDomainMode = unknownDomainMode;
     this.policySets = new Map();
     this.evaluationHistory = [];
   }
@@ -739,6 +747,51 @@ export class PolicyEngine extends EventEmitter {
     const allResults = [];
     const allActions = [];
     const allExplanations = [];
+
+    // When no policies exist for this domain, consult unknownDomainMode
+    if (policySets.length === 0) {
+      const shouldAllow = this.unknownDomainMode === 'allow';
+
+      if (!dryRun) {
+        this.evaluationHistory.push({
+          timestamp: new Date().toISOString(),
+          domain,
+          context,
+          results: [],
+          explanations: [],
+          unknownDomain: true,
+          mode: this.unknownDomainMode,
+        });
+        if (this.evaluationHistory.length > 1000) {
+          this.evaluationHistory = this.evaluationHistory.slice(-1000);
+        }
+      }
+
+      this.emit('evaluated', {
+        domain,
+        context,
+        results: [],
+        explanations: [],
+        unknownDomain: true,
+        mode: this.unknownDomainMode,
+      });
+
+      return {
+        domain,
+        context: dryRun ? context : undefined,
+        results: [],
+        actions: [],
+        explanations: [],
+        shouldAllow,
+        shouldDeny: !shouldAllow,
+        dryRun,
+        unknownDomain: true,
+        unknownDomainMode: this.unknownDomainMode,
+        reason: shouldAllow
+          ? `No policies for domain '${domain}'; unknownDomainMode='allow' — passing through`
+          : `No policies for domain '${domain}'; unknownDomainMode='deny' — blocking`,
+      };
+    }
 
     for (const policySet of policySets) {
       const evalResult = policySet.evaluate(context);

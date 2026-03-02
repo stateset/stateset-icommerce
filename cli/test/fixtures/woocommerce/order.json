@@ -1,0 +1,83 @@
+{
+  "id": 727,
+  "parent_id": 0,
+  "number": "727",
+  "order_key": "wc_order_abc123def456",
+  "created_via": "checkout",
+  "version": "8.5.1",
+  "status": "processing",
+  "currency": "USD",
+  "date_created": "2024-03-01T14:30:00",
+  "date_modified": "2024-03-01T15:00:00",
+  "discount_total": "0.00",
+  "discount_tax": "0.00",
+  "shipping_total": "5.00",
+  "shipping_tax": "0.00",
+  "cart_tax": "2.40",
+  "total": "37.39",
+  "total_tax": "2.40",
+  "prices_include_tax": false,
+  "customer_id": 25,
+  "customer_ip_address": "203.0.113.42",
+  "customer_note": "Please deliver before noon",
+  "billing": {
+    "first_name": "John",
+    "last_name": "Doe",
+    "company": "Acme Corp",
+    "address_1": "969 Market",
+    "address_2": "Suite 200",
+    "city": "San Francisco",
+    "state": "CA",
+    "postcode": "94103",
+    "country": "US",
+    "email": "john.doe@example.com",
+    "phone": "(555) 555-5555"
+  },
+  "shipping": {
+    "first_name": "John",
+    "last_name": "Doe",
+    "company": "Acme Corp",
+    "address_1": "969 Market",
+    "address_2": "Suite 200",
+    "city": "San Francisco",
+    "state": "CA",
+    "postcode": "94103",
+    "country": "US"
+  },
+  "payment_method": "stripe",
+  "payment_method_title": "Credit Card (Stripe)",
+  "transaction_id": "ch_3abc123",
+  "line_items": [
+    {
+      "id": 315,
+      "name": "Premium Widget",
+      "product_id": 93,
+      "variation_id": 0,
+      "quantity": 1,
+      "tax_class": "",
+      "subtotal": "29.99",
+      "subtotal_tax": "2.40",
+      "total": "29.99",
+      "total_tax": "2.40",
+      "taxes": [],
+      "meta_data": [],
+      "sku": "WIDGET-001",
+      "price": 29.99
+    }
+  ],
+  "tax_lines": [],
+  "shipping_lines": [
+    {
+      "id": 316,
+      "method_title": "Flat rate",
+      "method_id": "flat_rate",
+      "total": "5.00",
+      "total_tax": "0.00"
+    }
+  ],
+  "fee_lines": [],
+  "coupon_lines": [],
+  "refunds": [],
+  "set_paid": true,
+  "meta_data": []
+}

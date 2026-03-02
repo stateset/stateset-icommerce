@@ -1,0 +1,12 @@
+{
+  "id": 93,
+  "name": "Premium Widget",
+  "sku": "WIDGET-001",
+  "manage_stock": true,
+  "stock_quantity": 75,
+  "stock_status": "instock",
+  "backorders": "no",
+  "backorders_allowed": false,
+  "backordered": false,
+  "low_stock_amount": 10
+}

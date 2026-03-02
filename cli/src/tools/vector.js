@@ -17,7 +17,13 @@ export const vectorTools = [
       'Search products using natural language query with hybrid semantic + BM25 ranking. Returns products sorted by relevance score.',
     inputSchema: {
       query: z.string().min(1).describe('Natural language search query'),
-      limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(100)
+        .optional()
+        .describe('Maximum number of results to return (default: 10)'),
     },
   },
   {
@@ -26,7 +32,13 @@ export const vectorTools = [
       'Search customers using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
       query: z.string().min(1).describe('Natural language search query'),
-      limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(100)
+        .optional()
+        .describe('Maximum number of results to return (default: 10)'),
     },
   },
   {
@@ -34,7 +46,13 @@ export const vectorTools = [
     description: 'Search orders using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
       query: z.string().min(1).describe('Natural language search query'),
-      limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(100)
+        .optional()
+        .describe('Maximum number of results to return (default: 10)'),
     },
   },
   {
@@ -43,7 +61,13 @@ export const vectorTools = [
       'Search inventory items using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
       query: z.string().min(1).describe('Natural language search query'),
-      limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(100)
+        .optional()
+        .describe('Maximum number of results to return (default: 10)'),
     },
   },
   {

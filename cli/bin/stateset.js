@@ -95,6 +95,12 @@ if (__savedArgv.includes('--version') || __savedArgv.includes('-v')) {
   process.exit(0);
 }
 
+// Standalone mode: suppress sync-related output
+const __standaloneMode = __savedArgv.includes('--standalone');
+if (__standaloneMode) {
+  process.env.STATESET_STANDALONE = '1';
+}
+
 let runAgentLoopMod = null;
 let configMod = null;
 let outputMod = null;
