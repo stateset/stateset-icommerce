@@ -57,6 +57,32 @@ pub enum A2APaymentStatus {
     Refunded,
 }
 
+impl A2APaymentStatus {
+    /// Return the set of states this status can transition to.
+    #[must_use]
+    pub const fn allowed_transitions(self) -> &'static [Self] {
+        match self {
+            Self::Pending => &[Self::Submitted, Self::Cancelled],
+            Self::Submitted => &[Self::Completed, Self::Failed],
+            Self::Completed => &[Self::Refunded],
+            Self::Failed => &[Self::Pending],
+            Self::Cancelled | Self::Refunded => &[],
+        }
+    }
+
+    /// Check whether a transition to `target` is valid.
+    #[must_use]
+    pub fn can_transition_to(self, target: Self) -> bool {
+        self.allowed_transitions().contains(&target)
+    }
+
+    /// Whether this status is terminal (no further transitions possible).
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Cancelled | Self::Refunded)
+    }
+}
+
 /// A2A Payment - Direct transfer between agents
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct A2APayment {
@@ -257,6 +283,31 @@ pub enum PaymentRequestStatus {
     Cancelled,
 }
 
+impl PaymentRequestStatus {
+    /// Return the set of states this status can transition to.
+    #[must_use]
+    pub const fn allowed_transitions(self) -> &'static [Self] {
+        match self {
+            Self::Pending => &[Self::Viewed, Self::Processing, Self::Declined, Self::Expired, Self::Cancelled],
+            Self::Viewed => &[Self::Processing, Self::Declined, Self::Expired, Self::Cancelled],
+            Self::Processing => &[Self::Paid, Self::Declined],
+            Self::Paid | Self::Declined | Self::Expired | Self::Cancelled => &[],
+        }
+    }
+
+    /// Check whether a transition to `target` is valid.
+    #[must_use]
+    pub fn can_transition_to(self, target: Self) -> bool {
+        self.allowed_transitions().contains(&target)
+    }
+
+    /// Whether this status is terminal.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Paid | Self::Declined | Self::Expired | Self::Cancelled)
+    }
+}
+
 /// Payment Request - Agent requests payment from another agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentRequest {
@@ -442,7 +493,8 @@ impl PaymentRequest {
 // =============================================================================
 
 /// Status of a quote
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum A2AQuoteStatus {
@@ -451,6 +503,8 @@ pub enum A2AQuoteStatus {
     Requested,
     /// Quote provided by seller
     Quoted,
+    /// Counter-offer made by buyer
+    CounterOffered,
     /// Quote accepted by buyer
     Accepted,
     /// Quote declined by buyer
@@ -463,18 +517,114 @@ pub enum A2AQuoteStatus {
     Cancelled,
 }
 
-impl std::fmt::Display for A2AQuoteStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl A2AQuoteStatus {
+    /// Return the set of states this status can transition to.
+    #[must_use]
+    pub const fn allowed_transitions(self) -> &'static [Self] {
         match self {
-            Self::Requested => write!(f, "requested"),
-            Self::Quoted => write!(f, "quoted"),
-            Self::Accepted => write!(f, "accepted"),
-            Self::Declined => write!(f, "declined"),
-            Self::Expired => write!(f, "expired"),
-            Self::Fulfilled => write!(f, "fulfilled"),
-            Self::Cancelled => write!(f, "cancelled"),
+            Self::Requested => &[Self::Quoted, Self::Cancelled, Self::Expired],
+            Self::Quoted => &[Self::Accepted, Self::CounterOffered, Self::Declined, Self::Expired, Self::Cancelled],
+            Self::CounterOffered => &[Self::Quoted, Self::Accepted, Self::Declined, Self::Expired, Self::Cancelled],
+            Self::Accepted => &[Self::Fulfilled, Self::Cancelled],
+            Self::Declined | Self::Expired | Self::Fulfilled | Self::Cancelled => &[],
         }
     }
+
+    /// Check whether a transition to `target` is valid.
+    #[must_use]
+    pub fn can_transition_to(self, target: Self) -> bool {
+        self.allowed_transitions().contains(&target)
+    }
+
+    /// Whether this status is terminal.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Declined | Self::Expired | Self::Fulfilled | Self::Cancelled)
+    }
+
+    /// Whether this status allows negotiation (counter-offers).
+    #[must_use]
+    pub const fn allows_negotiation(self) -> bool {
+        matches!(self, Self::Quoted | Self::CounterOffered)
+    }
+}
+
+// =============================================================================
+// Negotiation Types
+// =============================================================================
+
+/// Type of negotiation action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum NegotiationType {
+    /// Initial quote from seller.
+    InitialQuote,
+    /// Counter-offer from buyer.
+    CounterOffer,
+    /// Revised quote from seller (in response to counter).
+    Revision,
+    /// Acceptance.
+    Acceptance,
+    /// Decline.
+    Decline,
+}
+
+/// A single entry in the negotiation history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NegotiationEntry {
+    /// Round number (1-based).
+    pub round: u32,
+    /// Who initiated this action (address).
+    pub initiated_by: String,
+    /// Type of negotiation action.
+    pub negotiation_type: NegotiationType,
+    /// Proposed total amount.
+    pub proposed_total: u64,
+    /// Optional message.
+    pub message: Option<String>,
+    /// Timestamp.
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Input for counter-offering a quote.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CounterA2AQuote {
+    /// Quote ID to counter.
+    pub quote_id: Uuid,
+    /// Counter-proposed total.
+    pub proposed_total: u64,
+    /// Counter-proposed fees.
+    pub proposed_fees: Option<u64>,
+    /// Message to seller.
+    pub message: Option<String>,
+}
+
+/// Input for revising a quote (seller response to counter-offer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviseA2AQuote {
+    /// Quote ID to revise.
+    pub quote_id: Uuid,
+    /// Revised total.
+    pub revised_total: u64,
+    /// Revised fees.
+    pub revised_fees: Option<u64>,
+    /// Revised tax.
+    pub revised_tax: Option<u64>,
+    /// Expiry (hours from now).
+    pub expires_in_hours: Option<i64>,
+    /// Message to buyer.
+    pub message: Option<String>,
+}
+
+/// Input for declining a quote.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeclineA2AQuote {
+    /// Quote ID to decline.
+    pub quote_id: Uuid,
+    /// Reason for declining.
+    pub reason: Option<String>,
 }
 
 /// A2A Quote - Price quote between agents
@@ -559,6 +709,21 @@ pub struct A2AQuote {
     pub payment_request_id: Option<Uuid>,
 
     // =========================================================================
+    // Negotiation
+    // =========================================================================
+    /// Number of counter-offers made.
+    pub counter_count: u32,
+
+    /// Maximum negotiation rounds allowed (default: 5).
+    pub max_rounds: u32,
+
+    /// Negotiation history entries.
+    pub negotiation_history: Vec<NegotiationEntry>,
+
+    /// Associated escrow ID (if escrow-backed).
+    pub escrow_id: Option<Uuid>,
+
+    // =========================================================================
     // Metadata
     // =========================================================================
     /// Request message from buyer
@@ -621,6 +786,10 @@ impl A2AQuote {
             fulfillment_instructions: None,
             payment_id: None,
             payment_request_id: None,
+            counter_count: 0,
+            max_rounds: 5,
+            negotiation_history: Vec::new(),
+            escrow_id: None,
             request_message: None,
             response_message: None,
             metadata: None,
@@ -664,6 +833,91 @@ impl A2AQuote {
         self.status = A2AQuoteStatus::Fulfilled;
         self.fulfilled_at = Some(Utc::now());
         self.updated_at = Utc::now();
+    }
+
+    // =========================================================================
+    // Negotiation Methods
+    // =========================================================================
+
+    /// Set maximum negotiation rounds.
+    pub const fn with_max_rounds(mut self, max_rounds: u32) -> Self {
+        self.max_rounds = max_rounds;
+        self
+    }
+
+    /// Link this quote to an escrow.
+    pub const fn with_escrow(mut self, escrow_id: Uuid) -> Self {
+        self.escrow_id = Some(escrow_id);
+        self
+    }
+
+    /// Buyer counter-offers on the quote.
+    ///
+    /// Returns `false` if the round limit would be exceeded or the status
+    /// doesn't allow negotiation.
+    pub fn counter_offer(&mut self, proposed_total: u64, message: Option<String>) -> bool {
+        if !self.status.allows_negotiation() {
+            return false;
+        }
+        if self.counter_count >= self.max_rounds {
+            return false;
+        }
+
+        self.counter_count += 1;
+        self.negotiation_history.push(NegotiationEntry {
+            round: self.counter_count,
+            initiated_by: self.buyer_address.clone(),
+            negotiation_type: NegotiationType::CounterOffer,
+            proposed_total,
+            message,
+            timestamp: Utc::now(),
+        });
+        self.status = A2AQuoteStatus::CounterOffered;
+        self.updated_at = Utc::now();
+        true
+    }
+
+    /// Seller revises the quote in response to a counter-offer.
+    pub fn revise(&mut self, revised_total: u64, fees: u64, tax: u64, expires_in_hours: i64, message: Option<String>) {
+        let decimals = self.asset.decimals();
+        let divisor = 10u64.pow(decimals as u32);
+
+        self.negotiation_history.push(NegotiationEntry {
+            round: self.counter_count,
+            initiated_by: self.seller_address.clone(),
+            negotiation_type: NegotiationType::Revision,
+            proposed_total: revised_total,
+            message,
+            timestamp: Utc::now(),
+        });
+
+        self.fees = fees;
+        self.tax = tax;
+        self.total = revised_total;
+        self.total_decimal = Decimal::from(revised_total) / Decimal::from(divisor);
+        self.status = A2AQuoteStatus::Quoted;
+        self.expires_at = Utc::now() + Duration::hours(expires_in_hours);
+        self.updated_at = Utc::now();
+    }
+
+    /// Decline the quote with an optional reason.
+    pub fn decline(&mut self, reason: Option<String>) {
+        self.negotiation_history.push(NegotiationEntry {
+            round: self.counter_count,
+            initiated_by: self.buyer_address.clone(),
+            negotiation_type: NegotiationType::Decline,
+            proposed_total: self.total,
+            message: reason,
+            timestamp: Utc::now(),
+        });
+        self.status = A2AQuoteStatus::Declined;
+        self.updated_at = Utc::now();
+    }
+
+    /// Check if the negotiation round limit has been reached.
+    #[must_use]
+    pub const fn is_negotiation_limit_reached(&self) -> bool {
+        self.counter_count >= self.max_rounds
     }
 }
 
@@ -1044,5 +1298,267 @@ mod tests {
         // Buyer accepts
         quote.accept();
         assert_eq!(quote.status, A2AQuoteStatus::Accepted);
+    }
+
+    // =========================================================================
+    // A2APaymentStatus state machine
+    // =========================================================================
+
+    #[test]
+    fn payment_pending_can_go_to_submitted() {
+        assert!(A2APaymentStatus::Pending.can_transition_to(A2APaymentStatus::Submitted));
+    }
+
+    #[test]
+    fn payment_pending_can_go_to_cancelled() {
+        assert!(A2APaymentStatus::Pending.can_transition_to(A2APaymentStatus::Cancelled));
+    }
+
+    #[test]
+    fn payment_submitted_can_go_to_completed() {
+        assert!(A2APaymentStatus::Submitted.can_transition_to(A2APaymentStatus::Completed));
+    }
+
+    #[test]
+    fn payment_submitted_can_go_to_failed() {
+        assert!(A2APaymentStatus::Submitted.can_transition_to(A2APaymentStatus::Failed));
+    }
+
+    #[test]
+    fn payment_completed_can_go_to_refunded() {
+        assert!(A2APaymentStatus::Completed.can_transition_to(A2APaymentStatus::Refunded));
+    }
+
+    #[test]
+    fn payment_failed_can_retry() {
+        assert!(A2APaymentStatus::Failed.can_transition_to(A2APaymentStatus::Pending));
+    }
+
+    #[test]
+    fn payment_cancelled_is_terminal() {
+        assert!(A2APaymentStatus::Cancelled.is_terminal());
+        assert!(A2APaymentStatus::Cancelled.allowed_transitions().is_empty());
+    }
+
+    #[test]
+    fn payment_refunded_is_terminal() {
+        assert!(A2APaymentStatus::Refunded.is_terminal());
+    }
+
+    #[test]
+    fn payment_pending_is_not_terminal() {
+        assert!(!A2APaymentStatus::Pending.is_terminal());
+    }
+
+    // =========================================================================
+    // PaymentRequestStatus state machine
+    // =========================================================================
+
+    #[test]
+    fn request_pending_can_go_to_viewed() {
+        assert!(PaymentRequestStatus::Pending.can_transition_to(PaymentRequestStatus::Viewed));
+    }
+
+    #[test]
+    fn request_viewed_can_go_to_processing() {
+        assert!(PaymentRequestStatus::Viewed.can_transition_to(PaymentRequestStatus::Processing));
+    }
+
+    #[test]
+    fn request_processing_can_go_to_paid() {
+        assert!(PaymentRequestStatus::Processing.can_transition_to(PaymentRequestStatus::Paid));
+    }
+
+    #[test]
+    fn request_paid_is_terminal() {
+        assert!(PaymentRequestStatus::Paid.is_terminal());
+    }
+
+    #[test]
+    fn request_declined_is_terminal() {
+        assert!(PaymentRequestStatus::Declined.is_terminal());
+    }
+
+    #[test]
+    fn request_expired_is_terminal() {
+        assert!(PaymentRequestStatus::Expired.is_terminal());
+    }
+
+    #[test]
+    fn request_cancelled_is_terminal() {
+        assert!(PaymentRequestStatus::Cancelled.is_terminal());
+    }
+
+    // =========================================================================
+    // A2AQuoteStatus state machine
+    // =========================================================================
+
+    #[test]
+    fn quote_requested_can_go_to_quoted() {
+        assert!(A2AQuoteStatus::Requested.can_transition_to(A2AQuoteStatus::Quoted));
+    }
+
+    #[test]
+    fn quote_quoted_can_go_to_counter_offered() {
+        assert!(A2AQuoteStatus::Quoted.can_transition_to(A2AQuoteStatus::CounterOffered));
+    }
+
+    #[test]
+    fn quote_counter_offered_can_go_to_quoted() {
+        assert!(A2AQuoteStatus::CounterOffered.can_transition_to(A2AQuoteStatus::Quoted));
+    }
+
+    #[test]
+    fn quote_counter_offered_can_go_to_accepted() {
+        assert!(A2AQuoteStatus::CounterOffered.can_transition_to(A2AQuoteStatus::Accepted));
+    }
+
+    #[test]
+    fn quote_accepted_can_go_to_fulfilled() {
+        assert!(A2AQuoteStatus::Accepted.can_transition_to(A2AQuoteStatus::Fulfilled));
+    }
+
+    #[test]
+    fn quote_declined_is_terminal() {
+        assert!(A2AQuoteStatus::Declined.is_terminal());
+    }
+
+    #[test]
+    fn quote_fulfilled_is_terminal() {
+        assert!(A2AQuoteStatus::Fulfilled.is_terminal());
+    }
+
+    #[test]
+    fn quote_allows_negotiation() {
+        assert!(A2AQuoteStatus::Quoted.allows_negotiation());
+        assert!(A2AQuoteStatus::CounterOffered.allows_negotiation());
+        assert!(!A2AQuoteStatus::Requested.allows_negotiation());
+        assert!(!A2AQuoteStatus::Accepted.allows_negotiation());
+    }
+
+    #[test]
+    fn quote_counter_offered_display() {
+        assert_eq!(A2AQuoteStatus::CounterOffered.to_string(), "counter_offered");
+    }
+
+    // =========================================================================
+    // Negotiation flow
+    // =========================================================================
+
+    #[test]
+    fn negotiation_counter_offer() {
+        let items = vec![A2AQuoteItem::new("Widget", 1, 1_000_000)];
+        let mut quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc);
+
+        // Seller quotes
+        quote.provide_quote(1_100_000, 50_000, 50_000, 24);
+        assert_eq!(quote.status, A2AQuoteStatus::Quoted);
+
+        // Buyer counter-offers
+        assert!(quote.counter_offer(900_000, Some("Too expensive".into())));
+        assert_eq!(quote.status, A2AQuoteStatus::CounterOffered);
+        assert_eq!(quote.counter_count, 1);
+        assert_eq!(quote.negotiation_history.len(), 1);
+        assert_eq!(
+            quote.negotiation_history[0].negotiation_type,
+            NegotiationType::CounterOffer
+        );
+    }
+
+    #[test]
+    fn negotiation_revise() {
+        let items = vec![A2AQuoteItem::new("Service", 1, 500_000)];
+        let mut quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc);
+
+        quote.provide_quote(600_000, 50_000, 50_000, 24);
+        quote.counter_offer(500_000, None);
+
+        // Seller revises
+        quote.revise(550_000, 25_000, 25_000, 24, Some("Meet in the middle".into()));
+        assert_eq!(quote.status, A2AQuoteStatus::Quoted);
+        assert_eq!(quote.total, 550_000);
+        assert_eq!(quote.negotiation_history.len(), 2);
+    }
+
+    #[test]
+    fn negotiation_decline() {
+        let items = vec![A2AQuoteItem::new("Data", 1, 100_000)];
+        let mut quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc);
+
+        quote.provide_quote(200_000, 0, 0, 24);
+        quote.decline(Some("Price too high".into()));
+        assert_eq!(quote.status, A2AQuoteStatus::Declined);
+        assert!(quote.status.is_terminal());
+    }
+
+    #[test]
+    fn negotiation_round_limit() {
+        let items = vec![A2AQuoteItem::new("Item", 1, 100)];
+        let mut quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc)
+            .with_max_rounds(2);
+
+        quote.provide_quote(200, 0, 0, 24);
+
+        // Round 1
+        assert!(quote.counter_offer(150, None));
+        quote.revise(175, 0, 0, 24, None);
+
+        // Round 2
+        assert!(quote.counter_offer(160, None));
+
+        // Round 3 — should fail
+        quote.revise(165, 0, 0, 24, None);
+        assert!(!quote.counter_offer(163, None));
+        assert!(quote.is_negotiation_limit_reached());
+    }
+
+    #[test]
+    fn negotiation_not_allowed_in_wrong_state() {
+        let items = vec![A2AQuoteItem::new("Item", 1, 100)];
+        let mut quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc);
+
+        // Can't counter-offer on a Requested quote (not yet Quoted)
+        assert!(!quote.counter_offer(50, None));
+    }
+
+    #[test]
+    fn with_escrow() {
+        let items = vec![A2AQuoteItem::new("Item", 1, 100)];
+        let escrow_id = Uuid::new_v4();
+        let quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc)
+            .with_escrow(escrow_id);
+        assert_eq!(quote.escrow_id, Some(escrow_id));
+    }
+
+    #[test]
+    fn default_max_rounds() {
+        let items = vec![A2AQuoteItem::new("Item", 1, 100)];
+        let quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc);
+        assert_eq!(quote.max_rounds, 5);
+    }
+
+    #[test]
+    fn full_negotiation_flow_to_acceptance() {
+        let items = vec![A2AQuoteItem::new("Consulting", 1, 10_000_000)];
+        let mut quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc);
+
+        // Seller quotes
+        quote.provide_quote(12_000_000, 500_000, 500_000, 48);
+
+        // Buyer counters
+        quote.counter_offer(10_500_000, Some("Budget limited".into()));
+
+        // Seller revises
+        quote.revise(11_000_000, 300_000, 200_000, 24, Some("Final offer".into()));
+
+        // Buyer accepts
+        quote.accept();
+        assert_eq!(quote.status, A2AQuoteStatus::Accepted);
+        assert_eq!(quote.negotiation_history.len(), 2); // counter + revision
+
+        // Seller fulfills
+        quote.fulfill();
+        assert_eq!(quote.status, A2AQuoteStatus::Fulfilled);
+        assert!(quote.status.is_terminal());
     }
 }

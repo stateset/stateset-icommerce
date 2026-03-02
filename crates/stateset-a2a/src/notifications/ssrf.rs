@@ -57,7 +57,7 @@ impl UrlValidationOptions {
 /// - Non-HTTP(S) protocols
 /// - Hostname bypass patterns (`userinfo@host`, malformed host/port)
 /// - Local/internal hostnames (`localhost`, `.internal`, `.local`, etc.)
-/// - Loopback/private/link-local/reserved IP ranges (IPv4 + IPv6)
+/// - Loopback/private/link-local/reserved IP ranges (`IPv4` + `IPv6`)
 /// - Hostnames that DNS-resolve to blocked IP ranges
 ///
 /// # Errors

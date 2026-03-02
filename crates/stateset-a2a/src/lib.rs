@@ -12,7 +12,9 @@
 //!
 //! This crate provides the business logic for multi-party split payments,
 //! recurring subscriptions, conditional escrow, HMAC-signed webhooks,
-//! SSRF protection, and SSE event stream filtering.
+//! SSRF protection, SSE event stream filtering, dispute resolution,
+//! reputation scoring, circuit breakers, SLA compliance, marketplace RFQs,
+//! and agent card management.
 //!
 //! ## Modules
 //!
@@ -21,6 +23,12 @@
 //! - [`escrow`] — Conditional fund holding with four condition types.
 //! - [`notifications`] — HMAC-SHA256 webhook signing and SSRF URL validation.
 //! - [`events`] — Event type filtering with wildcard/prefix matching.
+//! - [`disputes`] — Dispute resolution with evidence hashing and deadline management.
+//! - [`reputation`] — Trust scoring with dimension-based evaluation and tier promotion.
+//! - [`circuit_breaker`] — Transaction safety with spending limits and failure rate tracking.
+//! - [`sla`] — Service level agreements with compliance checking and penalty calculation.
+//! - [`marketplace`] — Multi-party RFQ with scoring and response ranking.
+//! - [`agent_cards`] — Agent card validation and discovery filtering.
 //!
 //! ## Example: Percentage Split
 //!
@@ -47,10 +55,16 @@
 //! assert!(verify_webhook(b"whsec_abc123", b"{\"event\":\"payment.completed\"}", &signature));
 //! ```
 
+pub mod agent_cards;
+pub mod circuit_breaker;
+pub mod disputes;
 pub mod error;
 pub mod escrow;
 pub mod events;
+pub mod marketplace;
 pub mod notifications;
+pub mod reputation;
+pub mod sla;
 pub mod splits;
 pub mod subscriptions;
 

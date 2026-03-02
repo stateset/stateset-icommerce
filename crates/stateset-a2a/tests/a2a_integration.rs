@@ -752,3 +752,391 @@ fn integration_event_filter_realistic_patterns() {
     assert!(!matches_event_filter("subscription.paused", &filters));
     assert!(!matches_event_filter("payment.completed", &filters));
 }
+
+// ===========================================================================
+// 8. DISPUTE LIFECYCLE
+// ===========================================================================
+
+#[test]
+fn dispute_full_lifecycle_to_resolution() {
+    use stateset_a2a::disputes::{DisputeStatus, DisputeTransition, DisputeCategory, DisputeRecord, ResolutionType, resolution_to_escrow_action};
+
+    // File a dispute
+    let record = DisputeRecord::new(
+        Uuid::new_v4(),
+        "0xBuyer",
+        "0xSeller",
+        DisputeCategory::NonDelivery,
+        "Item was never shipped",
+    ).with_amount(dec!(100));
+
+    assert_eq!(record.status, DisputeStatus::Filed);
+    assert_eq!(record.amount, Some(dec!(100)));
+
+    // Transition through the lifecycle
+    let t1 = DisputeTransition::new(DisputeStatus::Filed, DisputeStatus::EvidencePeriod).unwrap();
+    let t2 = DisputeTransition::new(t1.to, DisputeStatus::UnderReview).unwrap();
+    let t3 = DisputeTransition::new(t2.to, DisputeStatus::Resolved).unwrap();
+    assert_eq!(t3.to, DisputeStatus::Resolved);
+
+    // Resolution maps to escrow action
+    let action = resolution_to_escrow_action(ResolutionType::FullRefund, dec!(100));
+    assert_eq!(action.refund_amount, Some(dec!(100)));
+    assert_eq!(action.release_amount, None);
+}
+
+#[test]
+fn dispute_evidence_hashing_and_verification() {
+    use stateset_a2a::disputes::{Evidence, hash_evidence, evidence::verify_evidence_hash};
+    use stateset_a2a::disputes::EvidenceType;
+
+    let content = b"Transaction log: payment of 100 USDC on 2026-02-15";
+    let evidence = Evidence::new(
+        Uuid::new_v4(),
+        "0xBuyer",
+        EvidenceType::TransactionLog,
+        "Payment proof",
+        content,
+    );
+
+    // Hash is deterministic and verifiable
+    assert_eq!(evidence.content_hash, hash_evidence(content));
+    assert!(verify_evidence_hash(content, &evidence.content_hash));
+    assert!(!verify_evidence_hash(b"tampered content", &evidence.content_hash));
+}
+
+#[test]
+fn dispute_escalation_path() {
+    use stateset_a2a::disputes::{DisputeStatus, DisputeTransition, ResolutionType, resolution_to_escrow_action};
+
+    // Dispute can be escalated from under_review
+    let t1 = DisputeTransition::new(DisputeStatus::Filed, DisputeStatus::EvidencePeriod).unwrap();
+    let t2 = DisputeTransition::new(t1.to, DisputeStatus::UnderReview).unwrap();
+    let t3 = DisputeTransition::new(t2.to, DisputeStatus::Escalated).unwrap();
+    assert!(t3.to.is_terminal());
+
+    // Escalated resolution holds funds
+    let action = resolution_to_escrow_action(ResolutionType::Escalated, dec!(500));
+    assert!(action.hold);
+    assert_eq!(action.refund_amount, None);
+    assert_eq!(action.release_amount, None);
+}
+
+// ===========================================================================
+// 9. REPUTATION AND TRUST TIERS
+// ===========================================================================
+
+#[test]
+fn reputation_scoring_and_tier_promotion() {
+    use stateset_a2a::reputation::scoring::{FeedbackEntry, aggregate_feedback, validate_score};
+    use stateset_a2a::reputation::tiers::TrustTier;
+
+    // Validate score boundaries
+    assert!(validate_score(dec!(1)).is_ok());
+    assert!(validate_score(dec!(5)).is_ok());
+    assert!(validate_score(dec!(0)).is_err());
+    assert!(validate_score(dec!(6)).is_err());
+
+    // Build up reputation: 6 good transactions → standard tier
+    let entries: Vec<FeedbackEntry> = (0..6)
+        .map(|_| FeedbackEntry { score: dec!(4), dimensions: None, revoked: false })
+        .collect();
+    let summary = aggregate_feedback(&entries);
+    assert_eq!(summary.trust_tier, TrustTier::Standard);
+    assert_eq!(summary.total_transactions, 6);
+    assert_eq!(summary.average_score, dec!(4));
+}
+
+#[test]
+fn reputation_tier_progression() {
+    use stateset_a2a::reputation::tiers::TrustTier;
+
+    // Sandbox → Standard (5 txns, 3.5 avg)
+    assert_eq!(TrustTier::compute_tier(5, dec!(3.5), 0, Decimal::ZERO), TrustTier::Standard);
+
+    // Standard → Verified (25 txns, 4.0 avg, 0 disputes)
+    assert_eq!(TrustTier::compute_tier(25, dec!(4.0), 0, Decimal::ZERO), TrustTier::Verified);
+
+    // Verified → Enterprise (100 txns, 4.5 avg, <2% disputes)
+    assert_eq!(TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.01)), TrustTier::Enterprise);
+
+    // Enterprise blocked by high dispute rate
+    assert_ne!(TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.05)), TrustTier::Enterprise);
+}
+
+// ===========================================================================
+// 10. CIRCUIT BREAKER
+// ===========================================================================
+
+#[test]
+fn circuit_breaker_lifecycle() {
+    use stateset_a2a::circuit_breaker::{CircuitState, CircuitTransition, CircuitBreakerConfig};
+    use stateset_a2a::circuit_breaker::limits::{SpendingLimits, check_spending_limits, LimitCheckResult};
+
+    // Normal operation
+    let cfg = CircuitBreakerConfig::default();
+    let spending = SpendingLimits::default();
+    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(100), &spending, Decimal::ZERO);
+    assert_eq!(result, LimitCheckResult::Allowed);
+
+    // Circuit trips on failure rate
+    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(100), &spending, dec!(0.35));
+    assert_eq!(result, LimitCheckResult::FailureRateExceeded);
+
+    // Open state blocks all transactions
+    let result = check_spending_limits(&cfg, CircuitState::Open, dec!(100), &spending, Decimal::ZERO);
+    assert_eq!(result, LimitCheckResult::CircuitOpen);
+
+    // Recovery: open → half_open → closed
+    let t1 = CircuitTransition::new(CircuitState::Open, CircuitState::HalfOpen).unwrap();
+    let t2 = CircuitTransition::new(t1.to, CircuitState::Closed).unwrap();
+    assert_eq!(t2.to, CircuitState::Closed);
+}
+
+#[test]
+fn circuit_breaker_spending_limits() {
+    use stateset_a2a::circuit_breaker::{CircuitState, CircuitBreakerConfig};
+    use stateset_a2a::circuit_breaker::limits::{SpendingLimits, check_spending_limits, LimitCheckResult};
+
+    let cfg = CircuitBreakerConfig::default();
+
+    // Per-transaction limit: 1000 (default)
+    let result = check_spending_limits(
+        &cfg, CircuitState::Closed, dec!(1001), &SpendingLimits::default(), Decimal::ZERO);
+    assert_eq!(result, LimitCheckResult::PerTransactionExceeded);
+
+    // Daily limit: 10000 (default)
+    let spending = SpendingLimits { daily_spent: dec!(9500), monthly_spent: dec!(9500) };
+    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(600), &spending, Decimal::ZERO);
+    assert_eq!(result, LimitCheckResult::DailyLimitExceeded);
+
+    // Monthly limit: 100000 (default)
+    let spending = SpendingLimits { daily_spent: Decimal::ZERO, monthly_spent: dec!(99500) };
+    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(600), &spending, Decimal::ZERO);
+    assert_eq!(result, LimitCheckResult::MonthlyLimitExceeded);
+}
+
+// ===========================================================================
+// 11. SLA COMPLIANCE
+// ===========================================================================
+
+#[test]
+fn sla_compliance_all_pass() {
+    use stateset_a2a::sla::{SlaDefinition, check_compliance};
+    use stateset_a2a::sla::compliance::ActualMetrics;
+
+    let sla = SlaDefinition::new(Uuid::new_v4())
+        .with_response_time(dec!(500))
+        .with_uptime(dec!(99));
+
+    let actual = ActualMetrics {
+        avg_response_time_ms: Some(dec!(400)),
+        success_rate: Some(dec!(0.995)),
+        ..ActualMetrics::default()
+    };
+
+    let result = check_compliance(&sla, &actual, dec!(100)).unwrap();
+    assert!(result.compliant);
+    assert!(result.violations.is_empty());
+}
+
+#[test]
+fn sla_compliance_violations_and_penalties() {
+    use stateset_a2a::sla::{SlaDefinition, SlaMetricType, check_compliance};
+    use stateset_a2a::sla::compliance::ActualMetrics;
+
+    let sla = SlaDefinition::new(Uuid::new_v4())
+        .with_response_time(dec!(500))
+        .with_uptime(dec!(99))
+        .with_penalty_percent(dec!(10));
+
+    let actual = ActualMetrics {
+        avg_response_time_ms: Some(dec!(800)),
+        success_rate: Some(dec!(0.90)),
+        ..ActualMetrics::default()
+    };
+
+    let result = check_compliance(&sla, &actual, dec!(200)).unwrap();
+    assert!(!result.compliant);
+    assert_eq!(result.violations.len(), 2);
+    assert_eq!(result.violations[0].metric, SlaMetricType::ResponseTimeMs);
+    assert_eq!(result.violations[1].metric, SlaMetricType::UptimePercent);
+
+    // Each violation: 200 * 10% = 20, total = 40
+    assert_eq!(result.total_penalty, dec!(40));
+}
+
+// ===========================================================================
+// 12. MARKETPLACE / RFQ
+// ===========================================================================
+
+#[test]
+fn marketplace_rfq_scoring_and_ranking() {
+    use stateset_a2a::marketplace::{ScoringCriteria, RfqResponse, rank_responses};
+
+    let responses = vec![
+        RfqResponse::new("Expensive", dec!(300)).with_reputation(dec!(5)),
+        RfqResponse::new("Cheap", dec!(100)).with_reputation(dec!(3)),
+        RfqResponse::new("Medium", dec!(200)).with_reputation(dec!(4)),
+    ];
+
+    // Cheapest: cheapest seller wins
+    let ranked = rank_responses(&responses, ScoringCriteria::Cheapest);
+    assert_eq!(ranked[0].seller, "Cheap");
+    assert_eq!(ranked[0].rank, Some(1));
+
+    // Best value: blended price + reputation
+    let ranked = rank_responses(&responses, ScoringCriteria::BestValue);
+    // The cheap one with decent rep should still be top due to 60% price weight
+    assert!(ranked[0].score > ranked[1].score);
+}
+
+#[test]
+fn marketplace_rfq_state_machine() {
+    use stateset_a2a::marketplace::{RfqStatus, RfqTransition};
+
+    // Open → Awarded
+    let t = RfqTransition::new(RfqStatus::Open, RfqStatus::Awarded).unwrap();
+    assert_eq!(t.to, RfqStatus::Awarded);
+    assert!(RfqStatus::Awarded.is_terminal());
+
+    // Open → Expired
+    let t = RfqTransition::new(RfqStatus::Open, RfqStatus::Expired).unwrap();
+    assert!(t.to.is_terminal());
+
+    // Terminal state cannot transition
+    assert!(RfqTransition::new(RfqStatus::Awarded, RfqStatus::Open).is_err());
+}
+
+// ===========================================================================
+// 13. AGENT CARDS
+// ===========================================================================
+
+#[test]
+fn agent_card_validation_and_discovery() {
+    use stateset_a2a::agent_cards::{AgentCard, AgentSkill, DiscoveryFilter, validate_agent_card};
+    use stateset_a2a::agent_cards::types::filter_agents;
+    use stateset_a2a::reputation::TrustTier;
+
+    // Valid card
+    let card = AgentCard::new("TestBot", "0xABC123", "An AI commerce agent");
+    assert!(validate_agent_card(&card).is_ok());
+
+    // Invalid card (empty name)
+    let mut bad_card = card;
+    bad_card.name = String::new();
+    assert!(validate_agent_card(&bad_card).is_err());
+
+    // Discovery filtering
+    let cards = vec![
+        AgentCard::new("Alice", "0x1", "desc")
+            .with_trust_tier(TrustTier::Verified)
+            .with_skills(vec![AgentSkill::Sell, AgentSkill::Quote]),
+        AgentCard::new("Bob", "0x2", "desc")
+            .with_trust_tier(TrustTier::Standard)
+            .with_skills(vec![AgentSkill::Buy]),
+    ];
+
+    // Filter by skill
+    let filter = DiscoveryFilter { skill: Some(AgentSkill::Sell), ..Default::default() };
+    let results = filter_agents(&cards, &filter);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "Alice");
+
+    // Filter by trust tier
+    let filter = DiscoveryFilter {
+        min_trust_tier: Some(TrustTier::Verified),
+        ..Default::default()
+    };
+    let results = filter_agents(&cards, &filter);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "Alice");
+}
+
+// ===========================================================================
+// 14. CROSS-MODULE INTEGRATION: DISPUTE + REPUTATION + CIRCUIT BREAKER
+// ===========================================================================
+
+#[test]
+fn cross_module_dispute_impacts_reputation() {
+    use stateset_a2a::reputation::scoring::{FeedbackEntry, aggregate_feedback};
+    use stateset_a2a::reputation::TrustTier;
+
+    // Agent has mostly good transactions but one dispute
+    let mut entries: Vec<FeedbackEntry> = (0..24)
+        .map(|_| FeedbackEntry { score: dec!(4.5), dimensions: None, revoked: false })
+        .collect();
+    // One disputed transaction
+    entries.push(FeedbackEntry { score: dec!(1), dimensions: None, revoked: false });
+
+    let summary = aggregate_feedback(&entries);
+    assert_eq!(summary.total_transactions, 25);
+    assert_eq!(summary.disputed_transactions, 1); // score <= 2
+    assert!(summary.average_score > dec!(4)); // Still high overall
+
+    // With 1 unresolved dispute, can't reach Verified (requires 0)
+    let tier = TrustTier::compute_tier(25, summary.average_score, 1, Decimal::ZERO);
+    assert_eq!(tier, TrustTier::Standard); // Blocked by unresolved dispute
+
+    // After resolving the dispute
+    let tier = TrustTier::compute_tier(25, summary.average_score, 0, Decimal::ZERO);
+    assert_eq!(tier, TrustTier::Verified);
+}
+
+#[test]
+fn cross_module_circuit_breaker_blocks_then_recovers() {
+    use stateset_a2a::circuit_breaker::{CircuitState, CircuitTransition, CircuitBreakerConfig};
+    use stateset_a2a::circuit_breaker::limits::{SpendingLimits, check_spending_limits, LimitCheckResult};
+
+    let cfg = CircuitBreakerConfig::default();
+    let spending = SpendingLimits::default();
+
+    // Normal operation
+    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(500), &spending, Decimal::ZERO);
+    assert!(result.is_allowed());
+
+    // Failure rate spikes — would trip to open
+    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(500), &spending, dec!(0.4));
+    assert_eq!(result, LimitCheckResult::FailureRateExceeded);
+
+    // Now in open state — blocked
+    let result = check_spending_limits(&cfg, CircuitState::Open, dec!(100), &spending, Decimal::ZERO);
+    assert!(!result.is_allowed());
+
+    // Cooldown passes → half_open
+    let t1 = CircuitTransition::new(CircuitState::Open, CircuitState::HalfOpen).unwrap();
+
+    // Half-open allows limited transactions
+    let result = check_spending_limits(&cfg, t1.to, dec!(100), &spending, Decimal::ZERO);
+    assert!(result.is_allowed());
+
+    // Successes in half-open → close
+    let t2 = CircuitTransition::new(CircuitState::HalfOpen, CircuitState::Closed).unwrap();
+    assert!(t2.to.is_normal());
+}
+
+#[test]
+fn cross_module_sla_violation_with_penalty() {
+    use stateset_a2a::sla::{SlaDefinition, SlaMetricType, check_compliance};
+    use stateset_a2a::sla::compliance::ActualMetrics;
+    use stateset_a2a::sla::violations::ViolationSeverity;
+
+    let sla = SlaDefinition::new(Uuid::new_v4())
+        .with_response_time(dec!(500))
+        .with_quality(dec!(4.0))
+        .with_penalty_percent(dec!(5));
+
+    // Severe quality violation (< 80% of target)
+    let actual = ActualMetrics {
+        avg_response_time_ms: Some(dec!(400)), // OK
+        avg_quality_score: Some(dec!(2.0)),     // 2.0/4.0 = 50% → critical
+        ..ActualMetrics::default()
+    };
+
+    let result = check_compliance(&sla, &actual, dec!(1000)).unwrap();
+    assert!(!result.compliant);
+    assert_eq!(result.violations.len(), 1);
+    assert_eq!(result.violations[0].metric, SlaMetricType::QualityMinScore);
+    assert_eq!(result.violations[0].severity, ViolationSeverity::Critical);
+    assert_eq!(result.violations[0].penalty_amount, dec!(50)); // 1000 * 5%
+}
