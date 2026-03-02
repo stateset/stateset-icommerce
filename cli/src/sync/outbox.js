@@ -305,8 +305,6 @@ export class Outbox {
       // Encrypt payload per VES-ENC-1
       const encrypted = encryptPayload(
         event.payload,
-        encryptionKey.privateKey,
-        options.recipientPublicKey,
         {
           eventId,
           tenantId: event.tenantId,
@@ -315,6 +313,7 @@ export class Outbox {
           entityId: event.entityId,
           eventType: event.eventType,
         },
+        [{ kid: 0, publicKey: options.recipientPublicKey }],
       );
 
       payloadKind = 1;

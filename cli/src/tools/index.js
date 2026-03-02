@@ -42,6 +42,11 @@ const TOOL_MODULES = {
   invoices: () => import('./invoices.js').then((m) => m.default),
   warranties: () => import('./warranties.js').then((m) => m.default),
   connectors: () => import('./connectors.js').then((m) => m.default),
+  proofs: () => import('./proofs.js').then((m) => m.default),
+  'circuit-breaker': () => import('./circuit-breaker.js').then((m) => m.default),
+  checkout: () => import('./checkout.js').then((m) => m.default),
+  compliance: () => import('./compliance.js').then((m) => m.default),
+  catalog: () => import('./catalog.js').then((m) => m.default),
 };
 
 /**
@@ -237,7 +242,7 @@ export const AGENT_TOOL_CATEGORIES = {
   warranties: ['warranties', 'products', 'orders'],
   currency: ['currency'],
   tax: ['tax', 'currency'],
-  sync: ['sync'],
+  sync: ['sync', 'proofs'],
   stablecoin: ['stablecoin'],
   x402: ['x402', 'agent-cards', 'a2a'],
   'agent-cards': ['agent-cards', 'a2a'],

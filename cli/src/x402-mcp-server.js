@@ -305,6 +305,7 @@ export function createX402McpServer({
     (resolvePolicyStorePath
       ? new PolicyEngine({
           storePath: resolvePolicyStorePath,
+          unknownDomainMode: 'allow',
         })
       : null);
   const policyLoad =

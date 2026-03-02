@@ -586,9 +586,9 @@ export function decryptPayload(
   const jsonBytes = plaintext.subarray(SALT_SIZE);
   const payload = JSON.parse(jsonBytes.toString('utf8'));
 
-  // Verify payload_plain_hash
+  // Verify payload_plain_hash (timing-safe comparison)
   const computedHash = computePayloadPlainHash(payload, salt);
-  if (!computedHash.equals(expectedPlainHash)) {
+  if (!crypto.timingSafeEqual(computedHash, expectedPlainHash)) {
     throw new Error('Payload hash mismatch');
   }
 
@@ -774,6 +774,45 @@ export function computeReceiptHash(params) {
   hasher.update(eventSigningHash);
 
   return hasher.digest();
+}
+
+// =============================================================================
+// Merkle Root Computation
+// =============================================================================
+
+/**
+ * Compute Merkle root from an array of leaf hashes per VES v1.0 Section 10.
+ * Pads to next power of 2 with pad_leaf, then bottom-up pairwise hashing.
+ * @param {Buffer[]} leaves - Array of 32-byte leaf hashes
+ * @returns {Buffer} - 32-byte Merkle root
+ */
+export function computeMerkleRoot(leaves) {
+  // Delegate to native if available
+  if (_native?.merkleRoot) {
+    return Buffer.from(_native.merkleRoot(leaves.map((l) => Buffer.from(l))));
+  }
+
+  if (leaves.length === 0) return computePadLeaf();
+  if (leaves.length === 1) return Buffer.from(leaves[0]);
+
+  // Pad to next power of 2
+  let nextPow2 = 1;
+  while (nextPow2 < leaves.length) nextPow2 <<= 1;
+  const padLeaf = computePadLeaf();
+  const layer = leaves.map((l) => Buffer.from(l));
+  while (layer.length < nextPow2) layer.push(padLeaf);
+
+  // Bottom-up merge
+  while (layer.length > 1) {
+    const nextLayer = [];
+    for (let i = 0; i < layer.length; i += 2) {
+      nextLayer.push(computeNodeHash(layer[i], layer[i + 1]));
+    }
+    layer.length = 0;
+    layer.push(...nextLayer);
+  }
+
+  return layer[0];
 }
 
 // =============================================================================

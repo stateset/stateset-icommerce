@@ -26,6 +26,7 @@ const UPDATABLE_COLUMNS = {
     'tx_hash',
     'block_number',
     'metadata',
+    'updated_at',
     'completed_at',
   ]),
   a2a_payment_requests: new Set([
@@ -36,6 +37,7 @@ const UPDATABLE_COLUMNS = {
     'payment_ids',
     'allow_partial',
     'metadata',
+    'updated_at',
     'paid_at',
   ]),
   a2a_quotes: new Set([
@@ -52,11 +54,14 @@ const UPDATABLE_COLUMNS = {
     'fulfillment_instructions',
     'payment_id',
     'payment_request_id',
+    'request_message',
     'response_message',
     'metadata',
+    'expires_at',
     'quoted_at',
     'accepted_at',
     'fulfilled_at',
+    'updated_at',
     'counter_count',
     'negotiation_history',
     'max_rounds',
@@ -73,6 +78,8 @@ const UPDATABLE_COLUMNS = {
     'auto_release_after',
     'metadata',
     'intent_id',
+    'updated_at',
+    'expires_at',
   ]),
   a2a_disputes: new Set([
     'status',
@@ -138,6 +145,71 @@ const UPDATABLE_COLUMNS = {
     'status',
   ]),
   a2a_event_subscriptions: new Set(['event_types', 'active', 'last_event_id']),
+  a2a_rfqs: new Set([
+    'status',
+    'buyer_agent_id',
+    'seller_filter',
+    'max_responses',
+    'deadline',
+    'scoring_criteria',
+    'winning_quote_id',
+    'metadata',
+    'updated_at',
+    'awarded_at',
+    'closed_at',
+  ]),
+  a2a_rfq_responses: new Set(['score', 'rank', 'status']),
+  a2a_sla_definitions: new Set([
+    'response_time_ms',
+    'uptime_percent',
+    'quality_min_score',
+    'throughput_rps',
+    'penalty_percent',
+    'penalty_type',
+    'active',
+    'metadata',
+    'updated_at',
+  ]),
+  a2a_sla_violations: new Set([
+    'severity',
+    'penalty_amount',
+    'resolved',
+    'metadata',
+    'resolved_at',
+  ]),
+  a2a_workflows: new Set([
+    'status',
+    'total_cost',
+    'current_step',
+    'error',
+    'metadata',
+    'updated_at',
+    'started_at',
+    'completed_at',
+  ]),
+  a2a_workflow_steps: new Set([
+    'status',
+    'agent_address',
+    'result',
+    'cost',
+    'error',
+    'started_at',
+    'completed_at',
+  ]),
+  agent_cards: new Set([
+    'name',
+    'wallet_address',
+    'public_key',
+    'supported_networks',
+    'supported_assets',
+    'a2a_skills',
+    'endpoint_url',
+    'description',
+    'trust_level',
+    'active',
+    'suspended_at',
+    'updated_at',
+  ]),
 };
 
 const A2A_SCHEMA = `
@@ -510,6 +582,144 @@ CREATE TABLE IF NOT EXISTS a2a_event_log (
 CREATE INDEX IF NOT EXISTS idx_a2a_evt_log_agent ON a2a_event_log(agent_address);
 CREATE INDEX IF NOT EXISTS idx_a2a_evt_log_type ON a2a_event_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_a2a_evt_log_created ON a2a_event_log(created_at);
+
+-- Agent Cards (A2A agent identity & capability registration)
+CREATE TABLE IF NOT EXISTS agent_cards (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  wallet_address TEXT UNIQUE NOT NULL,
+  public_key TEXT,
+  supported_networks TEXT DEFAULT '["set_chain"]',
+  supported_assets TEXT DEFAULT '["USDC"]',
+  a2a_skills TEXT DEFAULT '["buy","sell","quote"]',
+  endpoint_url TEXT,
+  description TEXT,
+  trust_level TEXT DEFAULT 'sandbox',
+  active INTEGER DEFAULT 1,
+  suspended_at TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_cards_wallet ON agent_cards(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_agent_cards_active ON agent_cards(active);
+CREATE INDEX IF NOT EXISTS idx_agent_cards_trust ON agent_cards(trust_level);
+
+-- RFQ Broadcasts
+CREATE TABLE IF NOT EXISTS a2a_rfqs (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'open',
+  buyer_address TEXT NOT NULL,
+  buyer_agent_id TEXT,
+  items TEXT NOT NULL DEFAULT '[]',
+  seller_filter TEXT,
+  max_responses INTEGER NOT NULL DEFAULT 10,
+  deadline TEXT NOT NULL,
+  scoring_criteria TEXT NOT NULL DEFAULT 'cheapest',
+  winning_quote_id TEXT,
+  metadata TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  awarded_at TEXT,
+  closed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_a2a_rfqs_buyer ON a2a_rfqs(buyer_address);
+CREATE INDEX IF NOT EXISTS idx_a2a_rfqs_status ON a2a_rfqs(status);
+CREATE INDEX IF NOT EXISTS idx_a2a_rfqs_deadline ON a2a_rfqs(deadline);
+
+-- RFQ Responses
+CREATE TABLE IF NOT EXISTS a2a_rfq_responses (
+  id TEXT PRIMARY KEY,
+  rfq_id TEXT NOT NULL,
+  seller_address TEXT NOT NULL,
+  quote_id TEXT NOT NULL,
+  score REAL,
+  rank INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_a2a_rfq_responses_rfq ON a2a_rfq_responses(rfq_id);
+CREATE INDEX IF NOT EXISTS idx_a2a_rfq_responses_seller ON a2a_rfq_responses(seller_address);
+
+-- SLA Definitions
+CREATE TABLE IF NOT EXISTS a2a_sla_definitions (
+  id TEXT PRIMARY KEY,
+  service_id TEXT NOT NULL,
+  response_time_ms INTEGER,
+  uptime_percent REAL,
+  quality_min_score REAL,
+  throughput_rps INTEGER,
+  penalty_percent REAL NOT NULL DEFAULT 5.0,
+  penalty_type TEXT NOT NULL DEFAULT 'credit',
+  active INTEGER NOT NULL DEFAULT 1,
+  metadata TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_a2a_sla_defs_service ON a2a_sla_definitions(service_id);
+CREATE INDEX IF NOT EXISTS idx_a2a_sla_defs_active ON a2a_sla_definitions(active);
+
+-- SLA Violations
+CREATE TABLE IF NOT EXISTS a2a_sla_violations (
+  id TEXT PRIMARY KEY,
+  sla_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  violation_type TEXT NOT NULL,
+  expected_value REAL NOT NULL,
+  actual_value REAL NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'warning',
+  penalty_amount REAL,
+  resolved INTEGER NOT NULL DEFAULT 0,
+  metadata TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_a2a_sla_violations_sla ON a2a_sla_violations(sla_id);
+CREATE INDEX IF NOT EXISTS idx_a2a_sla_violations_service ON a2a_sla_violations(service_id);
+CREATE INDEX IF NOT EXISTS idx_a2a_sla_violations_resolved ON a2a_sla_violations(resolved);
+
+-- Workflows
+CREATE TABLE IF NOT EXISTS a2a_workflows (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  definition TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  total_cost REAL NOT NULL DEFAULT 0,
+  current_step TEXT,
+  error TEXT,
+  metadata TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_a2a_workflows_status ON a2a_workflows(status);
+
+-- Workflow Steps
+CREATE TABLE IF NOT EXISTS a2a_workflow_steps (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL,
+  step_name TEXT NOT NULL,
+  step_type TEXT NOT NULL DEFAULT 'quote_request',
+  agent_address TEXT,
+  params TEXT,
+  depends_on TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending',
+  result TEXT,
+  cost REAL NOT NULL DEFAULT 0,
+  error TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_a2a_wf_steps_workflow ON a2a_workflow_steps(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_a2a_wf_steps_status ON a2a_workflow_steps(status);
 `;
 
 export function defaultA2ADbPath() {
@@ -2390,6 +2600,614 @@ export class A2AStore {
     return this.db
       .prepare(`SELECT * FROM a2a_event_log ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
       .all(...params, limit, offset);
+  }
+
+  // ===========================================================================
+  // Agent Cards
+  // ===========================================================================
+
+  registerAgent(card) {
+    this.init();
+    const id = card.id || randomUUID();
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO agent_cards (
+          id, name, wallet_address, public_key, supported_networks,
+          supported_assets, a2a_skills, endpoint_url, description,
+          trust_level, active, suspended_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        card.name,
+        card.wallet_address,
+        card.public_key || null,
+        typeof card.supported_networks === 'object'
+          ? JSON.stringify(card.supported_networks)
+          : card.supported_networks || '["set_chain"]',
+        typeof card.supported_assets === 'object'
+          ? JSON.stringify(card.supported_assets)
+          : card.supported_assets || '["USDC"]',
+        typeof card.a2a_skills === 'object'
+          ? JSON.stringify(card.a2a_skills)
+          : card.a2a_skills || '["buy","sell","quote"]',
+        card.endpoint_url || null,
+        card.description || null,
+        card.trust_level || 'sandbox',
+        card.active !== undefined ? (card.active ? 1 : 0) : 1,
+        card.suspended_at || null,
+        card.created_at || now,
+        card.updated_at || now,
+      );
+
+    return this.getAgent(id);
+  }
+
+  getAgent(id) {
+    this.init();
+    return this.db.prepare('SELECT * FROM agent_cards WHERE id = ?').get(id) || null;
+  }
+
+  getAgentByWallet(address) {
+    this.init();
+    return (
+      this.db.prepare('SELECT * FROM agent_cards WHERE wallet_address = ?').get(address) || null
+    );
+  }
+
+  listAgents(filter = {}) {
+    this.init();
+    const conditions = [];
+    const params = [];
+
+    if (filter.active !== undefined) {
+      conditions.push('active = ?');
+      params.push(filter.active ? 1 : 0);
+    }
+    if (filter.trust_level) {
+      conditions.push('trust_level = ?');
+      params.push(filter.trust_level);
+    }
+    if (filter.name) {
+      conditions.push('name LIKE ?');
+      params.push(`%${filter.name}%`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = filter.limit || 100;
+    const offset = filter.offset || 0;
+
+    return this.db
+      .prepare(`SELECT * FROM agent_cards ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset);
+  }
+
+  discoverAgents(filter = {}) {
+    this.init();
+    const conditions = ['active = 1'];
+    const params = [];
+
+    if (filter.network) {
+      conditions.push("supported_networks LIKE '%' || ? || '%'");
+      params.push(filter.network);
+    }
+    if (filter.asset) {
+      conditions.push("supported_assets LIKE '%' || ? || '%'");
+      params.push(filter.asset);
+    }
+    if (filter.skill) {
+      conditions.push("a2a_skills LIKE '%' || ? || '%'");
+      params.push(filter.skill);
+    }
+    if (filter.trust_level) {
+      conditions.push('trust_level = ?');
+      params.push(filter.trust_level);
+    }
+    if (filter.category) {
+      conditions.push('description LIKE ?');
+      params.push(`%${filter.category}%`);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const limit = filter.limit || 50;
+
+    return this.db
+      .prepare(`SELECT * FROM agent_cards ${where} ORDER BY trust_level DESC, name ASC LIMIT ?`)
+      .all(...params, limit);
+  }
+
+  verifyAgent(id) {
+    this.init();
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE agent_cards SET trust_level = ?, updated_at = ? WHERE id = ?')
+      .run('verified', now, id);
+    return this.getAgent(id);
+  }
+
+  updateAgent(id, updates) {
+    this.init();
+    this._validateUpdateKeys('agent_cards', Object.keys(updates));
+    const fields = [];
+    const values = [];
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+      }
+    }
+
+    if (fields.length === 0) return this.getAgent(id);
+
+    fields.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    this.db.prepare(`UPDATE agent_cards SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return this.getAgent(id);
+  }
+
+  // ===========================================================================
+  // RFQs
+  // ===========================================================================
+
+  createRFQ(rfq) {
+    this.init();
+    const id = rfq.id || randomUUID();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO a2a_rfqs (id, status, buyer_address, buyer_agent_id, items, seller_filter, max_responses, deadline, scoring_criteria, winning_quote_id, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        rfq.status || 'open',
+        rfq.buyer_address,
+        rfq.buyer_agent_id || null,
+        typeof rfq.items === 'string' ? rfq.items : JSON.stringify(rfq.items || []),
+        rfq.seller_filter || null,
+        rfq.max_responses ?? 10,
+        rfq.deadline,
+        rfq.scoring_criteria || 'cheapest',
+        rfq.winning_quote_id || null,
+        typeof rfq.metadata === 'string'
+          ? rfq.metadata
+          : rfq.metadata
+            ? JSON.stringify(rfq.metadata)
+            : null,
+        now,
+        now,
+      );
+    return this.getRFQ(id);
+  }
+
+  getRFQ(id) {
+    this.init();
+    return this.db.prepare('SELECT * FROM a2a_rfqs WHERE id = ?').get(id) || null;
+  }
+
+  updateRFQ(id, updates) {
+    this.init();
+    this._validateUpdateKeys('a2a_rfqs', Object.keys(updates));
+    const fields = [];
+    const values = [];
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+      }
+    }
+    if (fields.length === 0) return this.getRFQ(id);
+    fields.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+    this.db.prepare(`UPDATE a2a_rfqs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return this.getRFQ(id);
+  }
+
+  listRFQs(filter = {}) {
+    this.init();
+    const clauses = [];
+    const params = [];
+    if (filter.buyer_address) {
+      clauses.push('buyer_address = ?');
+      params.push(filter.buyer_address);
+    }
+    if (filter.status) {
+      clauses.push('status = ?');
+      params.push(filter.status);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = filter.limit ? `LIMIT ${Math.min(Number(filter.limit), 1000)}` : 'LIMIT 100';
+    return this.db
+      .prepare(`SELECT * FROM a2a_rfqs ${where} ORDER BY created_at DESC ${limit}`)
+      .all(...params);
+  }
+
+  // ===========================================================================
+  // RFQ Responses
+  // ===========================================================================
+
+  createRFQResponse(resp) {
+    this.init();
+    const id = resp.id || randomUUID();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO a2a_rfq_responses (id, rfq_id, seller_address, quote_id, score, rank, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        resp.rfq_id,
+        resp.seller_address,
+        resp.quote_id,
+        resp.score ?? null,
+        resp.rank ?? null,
+        resp.status || 'pending',
+        now,
+      );
+    return this.getRFQResponse(id);
+  }
+
+  getRFQResponse(id) {
+    this.init();
+    return this.db.prepare('SELECT * FROM a2a_rfq_responses WHERE id = ?').get(id) || null;
+  }
+
+  updateRFQResponse(id, updates) {
+    this.init();
+    this._validateUpdateKeys('a2a_rfq_responses', Object.keys(updates));
+    const fields = [];
+    const values = [];
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+      }
+    }
+    if (fields.length === 0) return this.getRFQResponse(id);
+    values.push(id);
+    this.db
+      .prepare(`UPDATE a2a_rfq_responses SET ${fields.join(', ')} WHERE id = ?`)
+      .run(...values);
+    return this.getRFQResponse(id);
+  }
+
+  listRFQResponses(filter = {}) {
+    this.init();
+    const clauses = [];
+    const params = [];
+    if (filter.rfq_id) {
+      clauses.push('rfq_id = ?');
+      params.push(filter.rfq_id);
+    }
+    if (filter.seller_address) {
+      clauses.push('seller_address = ?');
+      params.push(filter.seller_address);
+    }
+    if (filter.status) {
+      clauses.push('status = ?');
+      params.push(filter.status);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    return this.db
+      .prepare(`SELECT * FROM a2a_rfq_responses ${where} ORDER BY score DESC NULLS LAST`)
+      .all(...params);
+  }
+
+  // ===========================================================================
+  // SLA Definitions
+  // ===========================================================================
+
+  createSLADefinition(sla) {
+    this.init();
+    const id = sla.id || randomUUID();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO a2a_sla_definitions (id, service_id, response_time_ms, uptime_percent, quality_min_score, throughput_rps, penalty_percent, penalty_type, active, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        sla.service_id,
+        sla.response_time_ms ?? null,
+        sla.uptime_percent ?? null,
+        sla.quality_min_score ?? null,
+        sla.throughput_rps ?? null,
+        sla.penalty_percent ?? 5.0,
+        sla.penalty_type || 'credit',
+        sla.active ?? 1,
+        typeof sla.metadata === 'string'
+          ? sla.metadata
+          : sla.metadata
+            ? JSON.stringify(sla.metadata)
+            : null,
+        now,
+        now,
+      );
+    return this.getSLADefinition(id);
+  }
+
+  getSLADefinition(id) {
+    this.init();
+    return this.db.prepare('SELECT * FROM a2a_sla_definitions WHERE id = ?').get(id) || null;
+  }
+
+  updateSLADefinition(id, updates) {
+    this.init();
+    this._validateUpdateKeys('a2a_sla_definitions', Object.keys(updates));
+    const fields = [];
+    const values = [];
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+      }
+    }
+    if (fields.length === 0) return this.getSLADefinition(id);
+    fields.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+    this.db
+      .prepare(`UPDATE a2a_sla_definitions SET ${fields.join(', ')} WHERE id = ?`)
+      .run(...values);
+    return this.getSLADefinition(id);
+  }
+
+  listSLADefinitions(filter = {}) {
+    this.init();
+    const clauses = [];
+    const params = [];
+    if (filter.service_id) {
+      clauses.push('service_id = ?');
+      params.push(filter.service_id);
+    }
+    if (filter.active !== undefined) {
+      clauses.push('active = ?');
+      params.push(filter.active);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    return this.db
+      .prepare(`SELECT * FROM a2a_sla_definitions ${where} ORDER BY created_at DESC`)
+      .all(...params);
+  }
+
+  // ===========================================================================
+  // SLA Violations
+  // ===========================================================================
+
+  createSLAViolation(v) {
+    this.init();
+    const id = v.id || randomUUID();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO a2a_sla_violations (id, sla_id, service_id, violation_type, expected_value, actual_value, severity, penalty_amount, resolved, metadata, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        v.sla_id,
+        v.service_id,
+        v.violation_type,
+        v.expected_value,
+        v.actual_value,
+        v.severity || 'warning',
+        v.penalty_amount ?? null,
+        v.resolved ?? 0,
+        typeof v.metadata === 'string'
+          ? v.metadata
+          : v.metadata
+            ? JSON.stringify(v.metadata)
+            : null,
+        now,
+      );
+    return this.getSLAViolation(id);
+  }
+
+  getSLAViolation(id) {
+    this.init();
+    return this.db.prepare('SELECT * FROM a2a_sla_violations WHERE id = ?').get(id) || null;
+  }
+
+  updateSLAViolation(id, updates) {
+    this.init();
+    this._validateUpdateKeys('a2a_sla_violations', Object.keys(updates));
+    const fields = [];
+    const values = [];
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+      }
+    }
+    if (fields.length === 0) return this.getSLAViolation(id);
+    values.push(id);
+    this.db
+      .prepare(`UPDATE a2a_sla_violations SET ${fields.join(', ')} WHERE id = ?`)
+      .run(...values);
+    return this.getSLAViolation(id);
+  }
+
+  listSLAViolations(filter = {}) {
+    this.init();
+    const clauses = [];
+    const params = [];
+    if (filter.sla_id) {
+      clauses.push('sla_id = ?');
+      params.push(filter.sla_id);
+    }
+    if (filter.service_id) {
+      clauses.push('service_id = ?');
+      params.push(filter.service_id);
+    }
+    if (filter.resolved !== undefined) {
+      clauses.push('resolved = ?');
+      params.push(filter.resolved);
+    }
+    if (filter.severity) {
+      clauses.push('severity = ?');
+      params.push(filter.severity);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    return this.db
+      .prepare(`SELECT * FROM a2a_sla_violations ${where} ORDER BY created_at DESC`)
+      .all(...params);
+  }
+
+  // ===========================================================================
+  // Workflows
+  // ===========================================================================
+
+  createWorkflow(wf) {
+    this.init();
+    const id = wf.id || randomUUID();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO a2a_workflows (id, name, definition, status, total_cost, current_step, error, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        wf.name,
+        typeof wf.definition === 'string' ? wf.definition : JSON.stringify(wf.definition || {}),
+        wf.status || 'pending',
+        wf.total_cost ?? 0,
+        wf.current_step || null,
+        wf.error || null,
+        typeof wf.metadata === 'string'
+          ? wf.metadata
+          : wf.metadata
+            ? JSON.stringify(wf.metadata)
+            : null,
+        now,
+        now,
+      );
+    return this.getWorkflow(id);
+  }
+
+  getWorkflow(id) {
+    this.init();
+    return this.db.prepare('SELECT * FROM a2a_workflows WHERE id = ?').get(id) || null;
+  }
+
+  updateWorkflow(id, updates) {
+    this.init();
+    this._validateUpdateKeys('a2a_workflows', Object.keys(updates));
+    const fields = [];
+    const values = [];
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+      }
+    }
+    if (fields.length === 0) return this.getWorkflow(id);
+    fields.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+    this.db.prepare(`UPDATE a2a_workflows SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return this.getWorkflow(id);
+  }
+
+  listWorkflows(filter = {}) {
+    this.init();
+    const clauses = [];
+    const params = [];
+    if (filter.status) {
+      clauses.push('status = ?');
+      params.push(filter.status);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = filter.limit ? `LIMIT ${Math.min(Number(filter.limit), 1000)}` : 'LIMIT 100';
+    return this.db
+      .prepare(`SELECT * FROM a2a_workflows ${where} ORDER BY created_at DESC ${limit}`)
+      .all(...params);
+  }
+
+  // ===========================================================================
+  // Workflow Steps
+  // ===========================================================================
+
+  createWorkflowStep(step) {
+    this.init();
+    const id = step.id || randomUUID();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO a2a_workflow_steps (id, workflow_id, step_name, step_type, agent_address, params, depends_on, status, result, cost, error, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        step.workflow_id,
+        step.step_name,
+        step.step_type || 'quote_request',
+        step.agent_address || null,
+        typeof step.params === 'string'
+          ? step.params
+          : step.params
+            ? JSON.stringify(step.params)
+            : null,
+        typeof step.depends_on === 'string'
+          ? step.depends_on
+          : JSON.stringify(step.depends_on || []),
+        step.status || 'pending',
+        step.result || null,
+        step.cost ?? 0,
+        step.error || null,
+        now,
+      );
+    return this.getWorkflowStep(id);
+  }
+
+  getWorkflowStep(id) {
+    this.init();
+    return this.db.prepare('SELECT * FROM a2a_workflow_steps WHERE id = ?').get(id) || null;
+  }
+
+  updateWorkflowStep(id, updates) {
+    this.init();
+    this._validateUpdateKeys('a2a_workflow_steps', Object.keys(updates));
+    const fields = [];
+    const values = [];
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+      }
+    }
+    if (fields.length === 0) return this.getWorkflowStep(id);
+    values.push(id);
+    this.db
+      .prepare(`UPDATE a2a_workflow_steps SET ${fields.join(', ')} WHERE id = ?`)
+      .run(...values);
+    return this.getWorkflowStep(id);
+  }
+
+  listWorkflowSteps(filter = {}) {
+    this.init();
+    const clauses = [];
+    const params = [];
+    if (filter.workflow_id) {
+      clauses.push('workflow_id = ?');
+      params.push(filter.workflow_id);
+    }
+    if (filter.status) {
+      clauses.push('status = ?');
+      params.push(filter.status);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    return this.db
+      .prepare(`SELECT * FROM a2a_workflow_steps ${where} ORDER BY created_at ASC`)
+      .all(...params);
   }
 }
 

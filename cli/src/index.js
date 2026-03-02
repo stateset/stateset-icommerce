@@ -250,6 +250,14 @@ export {
   decodePaymentHeader,
   decodeReceiptHeader,
   verifyPaymentHeader,
+  BudgetExceededError,
+  createBudgetState,
+  getDefaultBudgetStateFile,
+  getDefaultX402ConfigPath,
+  loadX402Config,
+  saveX402Config,
+  resolveX402ConfigPath,
+  pickConfigValue,
 } from './x402/index.js';
 
 // Tutorial System
@@ -289,3 +297,47 @@ export { createNotificationService } from './a2a/notifications.js';
 export { createA2ASubscriptionService } from './a2a/subscriptions.js';
 export { createSplitPaymentService } from './a2a/splits.js';
 export { createEventStreamService } from './a2a/event-stream.js';
+
+// A2A Agent Runtime & Strategies
+export { createAgentRuntime, makeCommerceProxy } from './a2a/agent-runtime.js';
+export {
+  createAlwaysAcceptStrategy,
+  createBudgetGatedStrategy,
+  createNegotiatorStrategy,
+  createBestOfNStrategy,
+  createReputationAwareStrategy,
+  createDynamicPricingStrategy,
+} from './a2a/strategies.js';
+
+// A2A Marketplace, SLA, Workflows
+export { createMarketplaceService } from './a2a/marketplace.js';
+export { createSLAService } from './a2a/sla.js';
+export { createWorkflowService } from './a2a/workflows.js';
+
+// A2A Event Wiring
+export { wireRuntimeEvents, createWiredAgentRuntime, EVENT_MAP } from './a2a/event-wiring.js';
+
+// A2A Demo Scenarios
+export { runDemoScenario, DEMO_SCENARIOS } from './a2a/demo-scenarios.js';
+
+// A2A Settlement (On-Chain)
+export { createSettlementService } from './a2a/settlement.js';
+
+// A2A Circuit Breakers
+export { createCircuitBreaker } from './a2a/circuit-breaker.js';
+
+// ============================================================================
+// Competitive Moat Features
+// ============================================================================
+
+// Verifiable Commerce Proofs
+export { createProofGenerator } from './sync/proof-generator.js';
+
+// Express Checkout & Payment Links
+export { createExpressCheckout } from './checkout/express.js';
+
+// Compliance & Regulatory Exports
+export { createComplianceService } from './compliance/exports.js';
+
+// Machine-Readable Agent Catalog
+export { createAgentCatalog } from './catalog/agent-catalog.js';

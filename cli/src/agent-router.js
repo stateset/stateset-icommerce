@@ -367,6 +367,33 @@ const AGENT_KEYWORDS_WEIGHTED = {
     jpy: 1,
   },
 
+  agents: {
+    // Strong indicators
+    'create agent': 3,
+    'agent runtime': 3,
+    'multi-agent': 3,
+    'agent card': 3,
+    'register agent': 3,
+    'discover agents': 3,
+    'agent marketplace': 3,
+    'agent negotiation': 3,
+    'agent budget': 3,
+    'agent strategy': 3,
+    'start agent': 3,
+    'stop agent': 3,
+    'agent service': 3,
+    // Moderate indicators
+    'a2a commerce': 2,
+    autonomous: 2,
+    'agent loop': 2,
+    runtime: 2,
+    negotiate: 2,
+    orchestrat: 2,
+    // Weak indicators
+    agent: 1,
+    bot: 1,
+  },
+
   tax: {
     // Strong indicators
     'sales tax': 3,
@@ -399,6 +426,7 @@ const NEGATIVE_KEYWORDS = {
   payments: ['subscription', 'billing cycle', 'return'],
   shipments: ['order status', 'inventory'],
   subscriptions: ['one-time', 'single purchase'],
+  agents: ['customer service', 'order', 'return', 'cart', 'checkout', 'invoice', 'warranty'],
 };
 
 /**

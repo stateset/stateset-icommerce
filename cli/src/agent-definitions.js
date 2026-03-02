@@ -896,6 +896,99 @@ Manage exchange rates, currency conversions, and multi-currency store settings.
 If --apply is not set, write operations show a preview instead of executing.`,
   },
 
+  // Agents specialist (multi-agent orchestration)
+  agents: {
+    name: 'Agents Agent',
+    description: 'Multi-agent runtime orchestration, A2A commerce, and agent lifecycle management',
+    tools: [
+      // Agent runtime tools (17)
+      'mcp__stateset-commerce__agent_create_runtime',
+      'mcp__stateset-commerce__agent_destroy_runtime',
+      'mcp__stateset-commerce__agent_list_runtimes',
+      'mcp__stateset-commerce__agent_get_status',
+      'mcp__stateset-commerce__agent_set_strategy',
+      'mcp__stateset-commerce__agent_get_budget',
+      'mcp__stateset-commerce__agent_tick',
+      'mcp__stateset-commerce__agent_start_loop',
+      'mcp__stateset-commerce__agent_stop_loop',
+      'mcp__stateset-commerce__agent_register_service',
+      'mcp__stateset-commerce__agent_discover_services',
+      'mcp__stateset-commerce__agent_create_escrow_deal',
+      'mcp__stateset-commerce__agent_subscribe_to_service',
+      'mcp__stateset-commerce__agent_rate_counterparty',
+      'mcp__stateset-commerce__agent_get_reputation',
+      'mcp__stateset-commerce__agent_create_split_deal',
+      'mcp__stateset-commerce__agent_get_event_history',
+      // Agent card tools (5)
+      'mcp__stateset-commerce__register_agent_card',
+      'mcp__stateset-commerce__discover_agents',
+      'mcp__stateset-commerce__get_agent_card',
+      'mcp__stateset-commerce__verify_agent',
+      'mcp__stateset-commerce__list_agent_cards',
+      // Key A2A tools (17)
+      'mcp__stateset-commerce__a2a_pay',
+      'mcp__stateset-commerce__a2a_request_quote',
+      'mcp__stateset-commerce__a2a_provide_quote',
+      'mcp__stateset-commerce__a2a_accept_quote',
+      'mcp__stateset-commerce__a2a_decline_quote',
+      'mcp__stateset-commerce__a2a_counter_quote',
+      'mcp__stateset-commerce__a2a_fulfill_quote',
+      'mcp__stateset-commerce__a2a_list_quotes',
+      'mcp__stateset-commerce__a2a_create_escrow',
+      'mcp__stateset-commerce__a2a_release_escrow',
+      'mcp__stateset-commerce__a2a_get_escrow',
+      'mcp__stateset-commerce__a2a_rate_agent',
+      'mcp__stateset-commerce__a2a_get_reputation',
+      'mcp__stateset-commerce__a2a_register_service',
+      'mcp__stateset-commerce__a2a_list_services',
+      'mcp__stateset-commerce__a2a_create_split_payment',
+      'mcp__stateset-commerce__a2a_subscribe_events',
+    ],
+    systemPrompt: `You are a multi-agent orchestration specialist for StateSet Commerce.
+
+## Your Role
+Create, manage, and coordinate autonomous AI agent runtimes that negotiate, pay, and transact with each other in the A2A marketplace.
+
+## Key Concepts
+- **Agent Runtime**: An autonomous agent with a wallet, budget, and negotiation strategy
+- **Agent Card**: An agent's public identity and capabilities in the marketplace
+- **Strategy**: How the agent negotiates (always-accept, budget-gated, negotiator, best-of-n, reputation-aware)
+- **Service**: A capability an agent offers in the marketplace
+
+## Common Workflows
+
+### Create and Register an Agent
+1. agent_create_runtime — Create a runtime with strategy and budget
+2. register_agent_card — Register the agent's identity card
+3. agent_register_service — Register services the agent offers
+
+### Multi-Agent Negotiation
+1. Create multiple agent runtimes (buyer + sellers)
+2. Register services for sellers
+3. Use a2a_request_quote from buyer
+4. Run agent_tick on seller to auto-respond
+5. Run agent_tick on buyer to evaluate and accept/counter
+
+### Marketplace Discovery
+1. discover_agents — Find agents with specific capabilities
+2. a2a_list_services — Browse available services
+3. agent_discover_services — Discover from agent context
+
+### Escrow + Reputation
+1. agent_create_escrow_deal — Create escrowed payment
+2. agent_rate_counterparty — Rate after transaction
+3. agent_get_reputation — Check trust scores
+
+## Safety Rules
+1. Always set budget limits when creating runtimes
+2. Start with sandbox trust level for new agents
+3. Use escrow for high-value transactions
+4. Review reputation before engaging unknown agents
+5. Monitor agent_get_budget to prevent overspending
+
+If --apply is not set, write operations show a preview instead of executing.`,
+  },
+
   // Tax specialist
   tax: {
     name: 'Tax Agent',

@@ -40,6 +40,7 @@ import { erc8004Tools } from './tools/erc8004.js';
 import { x402Tools } from './tools/x402.js';
 import { agentCardTools } from './tools/agent-cards.js';
 import { a2aTools } from './tools/a2a.js';
+import { agentRuntimeTools } from './tools/agent-runtime.js';
 import { shipmentTools } from './tools/shipments.js';
 import { supplierTools } from './tools/suppliers.js';
 import { invoiceTools } from './tools/invoices.js';
@@ -56,6 +57,11 @@ import { loyaltyTools } from './tools/loyalty.js';
 import { fraudTools } from './tools/fraud.js';
 import { connectorTools } from './tools/connectors.js';
 import { auditTools } from './tools/audit.js';
+import { proofTools } from './tools/proofs.js';
+import { circuitBreakerTools } from './tools/circuit-breaker.js';
+import { checkoutTools } from './tools/checkout.js';
+import { complianceTools } from './tools/compliance.js';
+import { catalogTools } from './tools/catalog.js';
 
 let toolDiscoveryEngine = null;
 
@@ -475,6 +481,7 @@ const ALL_TOOL_DEFS = [
   ...x402Tools,
   ...agentCardTools,
   ...a2aTools,
+  ...agentRuntimeTools,
   ...shipmentTools,
   ...supplierTools,
   ...invoiceTools,
@@ -492,6 +499,11 @@ const ALL_TOOL_DEFS = [
   ...fraudTools,
   ...connectorTools,
   ...auditTools,
+  ...proofTools,
+  ...circuitBreakerTools,
+  ...checkoutTools,
+  ...complianceTools,
+  ...catalogTools,
   ...AGENTIC_RUNTIME_TOOLS,
 ];
 
@@ -1327,6 +1339,36 @@ export function createStatesetMcpServer({
       createEventLog: (e) => a2aStore.createEventLog(e),
       getEventLog: (id) => a2aStore.getEventLog(id),
       listEventLog: (f) => a2aStore.listEventLog(f),
+
+      // RFQ methods (marketplace)
+      createRFQ: (r) => a2aStore.createRFQ(r),
+      getRFQ: (id) => a2aStore.getRFQ(id),
+      updateRFQ: (id, u) => a2aStore.updateRFQ(id, u),
+      listRFQs: (f) => a2aStore.listRFQs(f),
+      createRFQResponse: (r) => a2aStore.createRFQResponse(r),
+      getRFQResponse: (id) => a2aStore.getRFQResponse(id),
+      updateRFQResponse: (id, u) => a2aStore.updateRFQResponse(id, u),
+      listRFQResponses: (f) => a2aStore.listRFQResponses(f),
+
+      // SLA methods
+      createSLADefinition: (s) => a2aStore.createSLADefinition(s),
+      getSLADefinition: (id) => a2aStore.getSLADefinition(id),
+      updateSLADefinition: (id, u) => a2aStore.updateSLADefinition(id, u),
+      listSLADefinitions: (f) => a2aStore.listSLADefinitions(f),
+      createSLAViolation: (v) => a2aStore.createSLAViolation(v),
+      getSLAViolation: (id) => a2aStore.getSLAViolation(id),
+      updateSLAViolation: (id, u) => a2aStore.updateSLAViolation(id, u),
+      listSLAViolations: (f) => a2aStore.listSLAViolations(f),
+
+      // Workflow methods
+      createWorkflow: (w) => a2aStore.createWorkflow(w),
+      getWorkflow: (id) => a2aStore.getWorkflow(id),
+      updateWorkflow: (id, u) => a2aStore.updateWorkflow(id, u),
+      listWorkflows: (f) => a2aStore.listWorkflows(f),
+      createWorkflowStep: (s) => a2aStore.createWorkflowStep(s),
+      getWorkflowStep: (id) => a2aStore.getWorkflowStep(id),
+      updateWorkflowStep: (id, u) => a2aStore.updateWorkflowStep(id, u),
+      listWorkflowSteps: (f) => a2aStore.listWorkflowSteps(f),
     }),
   };
   // ---------------------------------------------------------------------------
@@ -1499,7 +1541,10 @@ export function createStatesetMcpServer({
     policyStorePath || (dbPath ? path.join(path.dirname(path.resolve(dbPath)), '.stateset') : null);
 
   const policyEngineInstance =
-    policyEngine || (resolvePolicyPath ? new PolicyEngine({ storePath: resolvePolicyPath }) : null);
+    policyEngine ||
+    (resolvePolicyPath
+      ? new PolicyEngine({ storePath: resolvePolicyPath, unknownDomainMode: 'allow' })
+      : null);
 
   const policyLoad =
     policyEngineInstance && !policyEngine

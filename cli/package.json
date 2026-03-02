@@ -50,7 +50,8 @@
     "stateset-init": "bin/stateset-init.js",
     "stateset-import": "bin/stateset-import.js",
     "stateset-setup": "bin/stateset-setup.js",
-    "stateset-webhooks": "bin/stateset-webhooks.js"
+    "stateset-webhooks": "bin/stateset-webhooks.js",
+    "stateset-agents": "bin/stateset-agents.js"
   },
   "main": "src/index.js",
   "exports": {

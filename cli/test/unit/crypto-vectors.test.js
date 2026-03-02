@@ -328,7 +328,61 @@ describe('cross-lang: recipients hash', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 11. Native module status
+// 11. Merkle root computation
+// ---------------------------------------------------------------------------
+import { computeMerkleRoot } from '../../src/sync/crypto.js';
+
+describe('cross-lang: computeMerkleRoot', () => {
+  it('empty tree returns pad_leaf', () => {
+    const root = computeMerkleRoot([]);
+    const padLeaf = computePadLeaf();
+    assert.equal(bufferToHex(root), bufferToHex(padLeaf));
+  });
+
+  it('single leaf returns leaf itself', () => {
+    const leaf = Buffer.alloc(32, 42);
+    const root = computeMerkleRoot([leaf]);
+    assert.equal(bufferToHex(root), bufferToHex(leaf));
+  });
+
+  it('two leaves = node_hash(a, b)', () => {
+    const a = Buffer.alloc(32, 1);
+    const b = Buffer.alloc(32, 2);
+    const root = computeMerkleRoot([a, b]);
+    const expected = computeNodeHash(a, b);
+    assert.equal(bufferToHex(root), bufferToHex(expected));
+  });
+
+  it('three leaves pads to four', () => {
+    const a = Buffer.alloc(32, 1);
+    const b = Buffer.alloc(32, 2);
+    const c = Buffer.alloc(32, 3);
+    const pad = computePadLeaf();
+    const root = computeMerkleRoot([a, b, c]);
+    const expected = computeNodeHash(computeNodeHash(a, b), computeNodeHash(c, pad));
+    assert.equal(bufferToHex(root), bufferToHex(expected));
+  });
+
+  it('four leaves', () => {
+    const a = Buffer.alloc(32, 1);
+    const b = Buffer.alloc(32, 2);
+    const c = Buffer.alloc(32, 3);
+    const d = Buffer.alloc(32, 4);
+    const root = computeMerkleRoot([a, b, c, d]);
+    const expected = computeNodeHash(computeNodeHash(a, b), computeNodeHash(c, d));
+    assert.equal(bufferToHex(root), bufferToHex(expected));
+  });
+
+  it('is deterministic', () => {
+    const leaves = Array.from({ length: 7 }, (_, i) => Buffer.alloc(32, i + 1));
+    const root1 = computeMerkleRoot(leaves);
+    const root2 = computeMerkleRoot(leaves);
+    assert.equal(bufferToHex(root1), bufferToHex(root2));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 12. Native module status
 // ---------------------------------------------------------------------------
 describe('cross-lang: native module', () => {
   it('isNativeAvailable() returns a boolean', () => {
