@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -95,45 +96,20 @@ pub struct PutAway {
 // ============================================================================
 
 /// Type of receipt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ReceiptType {
     #[default]
+    #[strum(serialize = "purchase_order", serialize = "purchaseorder", serialize = "po")]
     PurchaseOrder,
     Transfer,
+    #[strum(serialize = "return", serialize = "returns")]
     Return,
     Adjustment,
     Production,
     Other,
-}
-
-impl std::fmt::Display for ReceiptType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::PurchaseOrder => write!(f, "purchase_order"),
-            Self::Transfer => write!(f, "transfer"),
-            Self::Return => write!(f, "return"),
-            Self::Adjustment => write!(f, "adjustment"),
-            Self::Production => write!(f, "production"),
-            Self::Other => write!(f, "other"),
-        }
-    }
-}
-
-impl FromStr for ReceiptType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "purchase_order" | "purchaseorder" | "po" => Ok(Self::PurchaseOrder),
-            "transfer" => Ok(Self::Transfer),
-            "return" | "returns" => Ok(Self::Return),
-            "adjustment" => Ok(Self::Adjustment),
-            "production" => Ok(Self::Production),
-            "other" => Ok(Self::Other),
-            _ => Err(format!("Unknown receipt type: {}", s)),
-        }
-    }
 }
 
 /// Status of a receipt.
@@ -176,84 +152,36 @@ impl FromStr for ReceiptStatus {
 }
 
 /// Status of a receipt line item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ReceiptItemStatus {
     #[default]
     Pending,
+    #[strum(serialize = "partially_received", serialize = "partiallyreceived")]
     PartiallyReceived,
     Received,
     Inspecting,
     Rejected,
+    #[strum(serialize = "put_away", serialize = "putaway")]
     PutAway,
 }
 
-impl std::fmt::Display for ReceiptItemStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::PartiallyReceived => write!(f, "partially_received"),
-            Self::Received => write!(f, "received"),
-            Self::Inspecting => write!(f, "inspecting"),
-            Self::Rejected => write!(f, "rejected"),
-            Self::PutAway => write!(f, "put_away"),
-        }
-    }
-}
-
-impl FromStr for ReceiptItemStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "partially_received" | "partiallyreceived" => Ok(Self::PartiallyReceived),
-            "received" => Ok(Self::Received),
-            "inspecting" => Ok(Self::Inspecting),
-            "rejected" => Ok(Self::Rejected),
-            "put_away" | "putaway" => Ok(Self::PutAway),
-            _ => Err(format!("Unknown receipt item status: {}", s)),
-        }
-    }
-}
-
 /// Status of a put-away task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PutAwayStatus {
     #[default]
     Pending,
     Assigned,
+    #[strum(serialize = "in_progress", serialize = "inprogress")]
     InProgress,
     Completed,
+    #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
-}
-
-impl std::fmt::Display for PutAwayStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Assigned => write!(f, "assigned"),
-            Self::InProgress => write!(f, "in_progress"),
-            Self::Completed => write!(f, "completed"),
-            Self::Cancelled => write!(f, "cancelled"),
-        }
-    }
-}
-
-impl FromStr for PutAwayStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "assigned" => Ok(Self::Assigned),
-            "in_progress" | "inprogress" => Ok(Self::InProgress),
-            "completed" => Ok(Self::Completed),
-            "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown put-away status: {}", s)),
-        }
-    }
 }
 
 // ============================================================================

@@ -8,10 +8,11 @@ use rust_decimal::Decimal;
 use stateset_core::{
     AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CommerceError,
     ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode,
-    CreatePromotion, CreatePromotionCondition, CustomerId, DiscountTier, OrderId, Promotion,
-    PromotionCondition, PromotionFilter, PromotionId, PromotionRepository, PromotionStatus,
-    PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion,
-    RejectionReason, Result, StackingBehavior, UpdatePromotion, generate_promotion_code,
+    CreatePromotion, CreatePromotionCondition, CurrencyCode, CustomerId, DiscountTier, OrderId,
+    Promotion, PromotionCondition, PromotionFilter, PromotionId, PromotionRepository,
+    PromotionStatus, PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage,
+    RejectedPromotion, RejectionReason, Result, StackingBehavior, UpdatePromotion,
+    generate_promotion_code,
 };
 use uuid::Uuid;
 
@@ -113,7 +114,7 @@ impl SqlitePromotionRepository {
                     .unwrap_or_default(),
                 serde_json::to_string(&input.eligible_customer_groups.unwrap_or_default())
                     .unwrap_or_default(),
-                input.currency.unwrap_or_else(|| "USD".to_string()),
+                input.currency.unwrap_or_default(),
                 input.priority.unwrap_or(0),
                 input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
                 now.to_rfc3339(),
@@ -979,7 +980,7 @@ impl SqlitePromotionRepository {
             order_id,
             cart_id,
             discount_amount,
-            currency: currency.to_string(),
+            currency: currency.parse::<CurrencyCode>().unwrap_or_default(),
             used_at: now,
         })
     }

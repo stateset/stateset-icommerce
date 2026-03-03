@@ -5,7 +5,9 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::CurrencyCode;
 use std::str::FromStr;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -31,7 +33,7 @@ pub struct Bill {
     pub total_amount: Decimal,
     pub amount_paid: Decimal,
     pub amount_due: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub reference_number: Option<String>,
     pub memo: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -64,7 +66,7 @@ pub struct BillPayment {
     pub payment_date: DateTime<Utc>,
     pub payment_method: PaymentMethodAP,
     pub amount: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub reference_number: Option<String>,
     pub bank_account: Option<String>,
     pub check_number: Option<String>,
@@ -142,7 +144,8 @@ impl FromStr for BillStatus {
 }
 
 /// AP payment method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentMethodAP {
@@ -150,37 +153,10 @@ pub enum PaymentMethodAP {
     Check,
     Ach,
     Wire,
+    #[strum(serialize = "credit_card", serialize = "creditcard")]
     CreditCard,
     Cash,
     Other,
-}
-
-impl std::fmt::Display for PaymentMethodAP {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Check => write!(f, "check"),
-            Self::Ach => write!(f, "ach"),
-            Self::Wire => write!(f, "wire"),
-            Self::CreditCard => write!(f, "credit_card"),
-            Self::Cash => write!(f, "cash"),
-            Self::Other => write!(f, "other"),
-        }
-    }
-}
-
-impl FromStr for PaymentMethodAP {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "check" => Ok(Self::Check),
-            "ach" => Ok(Self::Ach),
-            "wire" => Ok(Self::Wire),
-            "credit_card" | "creditcard" => Ok(Self::CreditCard),
-            "cash" => Ok(Self::Cash),
-            "other" => Ok(Self::Other),
-            _ => Err(format!("Unknown payment method: {}", s)),
-        }
-    }
 }
 
 /// AP payment status.
@@ -290,7 +266,7 @@ pub struct CreateBill {
     pub bill_date: Option<DateTime<Utc>>,
     pub due_date: DateTime<Utc>,
     pub payment_terms: Option<String>,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub reference_number: Option<String>,
     pub memo: Option<String>,
     pub items: Vec<CreateBillItem>,
@@ -323,7 +299,7 @@ pub struct CreateBillPayment {
     pub payment_date: Option<DateTime<Utc>>,
     pub payment_method: PaymentMethodAP,
     pub amount: Decimal,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub reference_number: Option<String>,
     pub bank_account: Option<String>,
     pub check_number: Option<String>,

@@ -89,7 +89,7 @@ impl SqliteSubscriptionRepository {
                     input.custom_interval_days,
                     input.price.to_string(),
                     input.setup_fee.map(|d| d.to_string()),
-                    input.currency.unwrap_or_else(|| "USD".to_string()),
+                    input.currency.unwrap_or_default(),
                     input.trial_days.unwrap_or(0),
                     input.trial_requires_payment_method.unwrap_or(true) as i32,
                     input.min_cycles,

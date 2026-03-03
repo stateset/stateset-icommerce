@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CartId, CustomerId, OrderId, PaymentId, ProductId};
+use stateset_primitives::{CartId, CurrencyCode, CustomerId, OrderId, PaymentId, ProductId};
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -20,7 +20,7 @@ pub struct Cart {
     pub cart_number: String,
     pub customer_id: Option<CustomerId>,
     pub status: CartStatus,
-    pub currency: String,
+    pub currency: CurrencyCode,
 
     // Items
     pub items: Vec<CartItem>,
@@ -178,6 +178,7 @@ pub struct SetCartX402Payment {
 
 /// Result of x402 checkout attempt
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum X402CheckoutResult {
     /// Payment is required - return HTTP 402 with this data
     PaymentRequired(X402PaymentRequiredData),
@@ -286,7 +287,7 @@ impl Default for CartPaymentStatus {
 }
 
 /// Fulfillment type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
@@ -314,7 +315,7 @@ pub struct ShippingRate {
     pub service: String,
     pub description: Option<String>,
     pub price: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub estimated_days: Option<i32>,
     pub estimated_delivery: Option<DateTime<Utc>>,
 }
@@ -325,7 +326,7 @@ pub struct CreateCart {
     pub customer_id: Option<CustomerId>,
     pub customer_email: Option<String>,
     pub customer_name: Option<String>,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub items: Option<Vec<AddCartItem>>,
     pub shipping_address: Option<CartAddress>,
     pub billing_address: Option<CartAddress>,
@@ -444,7 +445,7 @@ pub struct CheckoutResult {
     pub order_number: String,
     pub payment_id: Option<PaymentId>,
     pub total_charged: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
 }
 
 impl Cart {
@@ -563,7 +564,7 @@ mod tests {
             cart_number: "CART-001".to_string(),
             customer_id: Some(CustomerId::new()),
             status: CartStatus::Active,
-            currency: "USD".to_string(),
+            currency: CurrencyCode::USD,
             items: vec![CartItem {
                 id: Uuid::new_v4(),
                 cart_id: CartId::new(),
@@ -685,7 +686,7 @@ mod tests {
             cart_number: "CART-002".to_string(),
             customer_id: None,
             status: CartStatus::Active,
-            currency: "USD".to_string(),
+            currency: CurrencyCode::USD,
             items: vec![CartItem {
                 id: Uuid::new_v4(),
                 cart_id: CartId::new(),

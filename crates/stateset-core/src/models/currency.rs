@@ -12,6 +12,7 @@ use uuid::Uuid;
 /// ISO 4217 Currency codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "UPPERCASE")]
+#[non_exhaustive]
 pub enum Currency {
     /// US Dollar
     #[default]
@@ -624,6 +625,7 @@ impl Default for StoreCurrencySettings {
 /// Rounding mode for currency conversions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RoundingMode {
     /// Round half up (standard)
     #[default]

@@ -49,7 +49,7 @@ workspace = true
 
 [features]
 default = ["sqlite", "events"]
-sqlite = ["stateset-db/sqlite"]
+sqlite = ["stateset-db/sqlite", "stateset-core/rusqlite"]
 postgres = ["stateset-db/postgres", "sqlx"]
 events = ["reqwest/rustls-tls", "hmac", "sha2", "hex"]
 sqlite-events = ["events", "r2d2", "r2d2_sqlite", "rusqlite"]

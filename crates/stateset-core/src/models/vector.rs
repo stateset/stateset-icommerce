@@ -26,6 +26,7 @@ impl<T> VectorSearchResult<T> {
 /// Entity types that support vector embeddings
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EntityType {
     Product,
     Customer,

@@ -80,7 +80,7 @@ pub fn compute_payload_cipher_hash(params: Option<&PayloadCipherParams<'_>>) -> 
 }
 
 /// Parameters for event signing hash
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct EventSigningParams<'a> {
     /// VES protocol version
     pub ves_version: u32,

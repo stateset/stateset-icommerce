@@ -6,6 +6,7 @@ use stateset_embedded::{
     CreatePaymentMethod, CreateRefund, CustomerId, OrderId, Payment, PaymentFilter, PaymentId,
     PaymentMethodType, PaymentTransactionStatus, RefundStatus, UpdatePayment,
 };
+use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================
@@ -59,7 +60,7 @@ fn create_test_payment(
             customer_id,
             payment_method: PaymentMethodType::CreditCard,
             amount: dec!(99.99),
-            currency: Some("USD".into()),
+            currency: Some(CurrencyCode::USD),
             card_brand: Some(CardBrand::Visa),
             card_last4: Some("4242".into()),
             billing_email: Some("test@example.com".into()),
@@ -85,7 +86,7 @@ fn test_create_payment() {
             customer_id: Some(customer_id),
             payment_method: PaymentMethodType::CreditCard,
             amount: dec!(99.99),
-            currency: Some("USD".into()),
+            currency: Some(CurrencyCode::USD),
             card_brand: Some(CardBrand::Visa),
             card_last4: Some("4242".into()),
             billing_email: Some("payment@example.com".into()),
@@ -102,7 +103,7 @@ fn test_create_payment() {
     assert_eq!(payment.status, PaymentTransactionStatus::Pending);
     assert_eq!(payment.payment_method, PaymentMethodType::CreditCard);
     assert_eq!(payment.amount, dec!(99.99));
-    assert_eq!(payment.currency, "USD");
+    assert_eq!(payment.currency, CurrencyCode::USD);
     assert_eq!(payment.card_brand, Some(CardBrand::Visa));
     assert_eq!(payment.card_last4, Some("4242".into()));
 }
@@ -177,7 +178,7 @@ fn test_create_payment_default_currency() {
         })
         .expect("Failed to create payment");
 
-    assert_eq!(payment.currency, "USD");
+    assert_eq!(payment.currency, CurrencyCode::USD);
 }
 
 // ============================================================================
@@ -1121,7 +1122,7 @@ fn test_payment_with_different_currencies() {
         .create(CreatePayment {
             payment_method: PaymentMethodType::CreditCard,
             amount: dec!(100.00),
-            currency: Some("USD".into()),
+            currency: Some(CurrencyCode::USD),
             ..Default::default()
         })
         .expect("Failed to create USD payment");
@@ -1131,7 +1132,7 @@ fn test_payment_with_different_currencies() {
         .create(CreatePayment {
             payment_method: PaymentMethodType::CreditCard,
             amount: dec!(85.00),
-            currency: Some("EUR".into()),
+            currency: Some(CurrencyCode::EUR),
             ..Default::default()
         })
         .expect("Failed to create EUR payment");
@@ -1141,14 +1142,14 @@ fn test_payment_with_different_currencies() {
         .create(CreatePayment {
             payment_method: PaymentMethodType::CreditCard,
             amount: dec!(75.00),
-            currency: Some("GBP".into()),
+            currency: Some(CurrencyCode::GBP),
             ..Default::default()
         })
         .expect("Failed to create GBP payment");
 
-    assert_eq!(usd_payment.currency, "USD");
-    assert_eq!(eur_payment.currency, "EUR");
-    assert_eq!(gbp_payment.currency, "GBP");
+    assert_eq!(usd_payment.currency, CurrencyCode::USD);
+    assert_eq!(eur_payment.currency, CurrencyCode::EUR);
+    assert_eq!(gbp_payment.currency, CurrencyCode::GBP);
 }
 
 #[test]
@@ -1270,7 +1271,7 @@ fn test_full_payment_flow() {
             customer_id: Some(customer_id),
             payment_method: PaymentMethodType::CreditCard,
             amount: dec!(59.98), // Order total
-            currency: Some("USD".into()),
+            currency: Some(CurrencyCode::USD),
             card_brand: Some(CardBrand::Visa),
             card_last4: Some("4242".into()),
             card_exp_month: Some(12),

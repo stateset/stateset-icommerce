@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{ShippingMethodId, ShippingZoneId};
+use stateset_primitives::{CurrencyCode, ShippingMethodId, ShippingZoneId};
 use strum::{Display, EnumString};
 
 /// Shipping method pricing type
@@ -70,7 +70,7 @@ pub struct ZoneShippingMethod {
     /// Base rate (used for Flat; minimum for weight/price-based)
     pub base_rate: Decimal,
     /// Currency code
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Estimated minimum delivery days
     pub min_delivery_days: Option<i32>,
     /// Estimated maximum delivery days
@@ -146,7 +146,7 @@ pub struct CreateZoneShippingMethod {
     /// Base rate
     pub base_rate: Decimal,
     /// Currency code
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Min delivery days
     pub min_delivery_days: Option<i32>,
     /// Max delivery days
@@ -199,7 +199,7 @@ pub struct ZoneShippingRateRequest {
     /// Total order price
     pub order_total: Option<Decimal>,
     /// Currency
-    pub currency: String,
+    pub currency: CurrencyCode,
 }
 
 /// Calculated shipping rate result
@@ -214,7 +214,7 @@ pub struct ZoneShippingRate {
     /// Calculated rate
     pub rate: Decimal,
     /// Currency
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Estimated min delivery days
     pub min_delivery_days: Option<i32>,
     /// Estimated max delivery days
@@ -260,7 +260,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use rust_decimal_macros::dec;
-    use stateset_primitives::{ShippingMethodId, ShippingZoneId};
+    use stateset_primitives::{CurrencyCode, ShippingMethodId, ShippingZoneId};
 
     fn make_method(
         method_type: ShippingMethodType,
@@ -274,7 +274,7 @@ mod tests {
             carrier: Some("USPS".to_string()),
             method_type,
             base_rate,
-            currency: "USD".to_string(),
+            currency: CurrencyCode::USD,
             min_delivery_days: Some(3),
             max_delivery_days: Some(7),
             conditions,

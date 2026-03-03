@@ -5,7 +5,8 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{ProductId, PurchaseOrderId};
+use stateset_primitives::{CurrencyCode, ProductId, PurchaseOrderId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// Purchase order status
@@ -58,7 +59,8 @@ impl std::str::FromStr for PurchaseOrderStatus {
 }
 
 /// Payment terms for purchase orders
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentTerms {
@@ -66,60 +68,31 @@ pub enum PaymentTerms {
     #[default]
     DueOnReceipt,
     /// Net 15 days
+    #[strum(serialize = "net_15", serialize = "net15")]
     Net15,
     /// Net 30 days
+    #[strum(serialize = "net_30", serialize = "net30")]
     Net30,
     /// Net 45 days
+    #[strum(serialize = "net_45", serialize = "net45")]
     Net45,
     /// Net 60 days
+    #[strum(serialize = "net_60", serialize = "net60")]
     Net60,
     /// Net 90 days
+    #[strum(serialize = "net_90", serialize = "net90")]
     Net90,
     /// 2% discount if paid in 10 days, net 30
+    #[strum(serialize = "2_10_net_30", serialize = "2/10_net_30")]
     TwoTenNet30,
     /// Prepaid
     Prepaid,
     /// Cash on delivery
+    #[strum(serialize = "cash_on_delivery", serialize = "cod")]
     CashOnDelivery,
     /// Letter of credit
+    #[strum(serialize = "letter_of_credit", serialize = "lc")]
     LetterOfCredit,
-}
-
-impl std::fmt::Display for PaymentTerms {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DueOnReceipt => write!(f, "due_on_receipt"),
-            Self::Net15 => write!(f, "net_15"),
-            Self::Net30 => write!(f, "net_30"),
-            Self::Net45 => write!(f, "net_45"),
-            Self::Net60 => write!(f, "net_60"),
-            Self::Net90 => write!(f, "net_90"),
-            Self::TwoTenNet30 => write!(f, "2_10_net_30"),
-            Self::Prepaid => write!(f, "prepaid"),
-            Self::CashOnDelivery => write!(f, "cash_on_delivery"),
-            Self::LetterOfCredit => write!(f, "letter_of_credit"),
-        }
-    }
-}
-
-impl std::str::FromStr for PaymentTerms {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "due_on_receipt" => Ok(Self::DueOnReceipt),
-            "net_15" | "net15" => Ok(Self::Net15),
-            "net_30" | "net30" => Ok(Self::Net30),
-            "net_45" | "net45" => Ok(Self::Net45),
-            "net_60" | "net60" => Ok(Self::Net60),
-            "net_90" | "net90" => Ok(Self::Net90),
-            "2_10_net_30" | "2/10_net_30" => Ok(Self::TwoTenNet30),
-            "prepaid" => Ok(Self::Prepaid),
-            "cash_on_delivery" | "cod" => Ok(Self::CashOnDelivery),
-            "letter_of_credit" | "lc" => Ok(Self::LetterOfCredit),
-            _ => Err(format!("Unknown payment terms: {}", s)),
-        }
-    }
 }
 
 /// A supplier/vendor
@@ -154,7 +127,7 @@ pub struct Supplier {
     /// Default payment terms
     pub payment_terms: PaymentTerms,
     /// Default currency
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Lead time in days
     pub lead_time_days: Option<i32>,
     /// Minimum order amount
@@ -199,7 +172,7 @@ pub struct CreateSupplier {
     /// Payment terms
     pub payment_terms: Option<PaymentTerms>,
     /// Currency (defaults to USD)
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     /// Lead time in days
     pub lead_time_days: Option<i32>,
     /// Minimum order amount
@@ -236,7 +209,7 @@ pub struct UpdateSupplier {
     /// Update payment terms
     pub payment_terms: Option<PaymentTerms>,
     /// Update currency
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     /// Update lead time
     pub lead_time_days: Option<i32>,
     /// Update minimum order
@@ -292,7 +265,7 @@ pub struct PurchaseOrder {
     /// Payment terms
     pub payment_terms: PaymentTerms,
     /// Currency
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Subtotal (sum of line items)
     pub subtotal: Decimal,
     /// Tax amount
@@ -386,7 +359,7 @@ pub struct CreatePurchaseOrder {
     /// Payment terms (defaults to supplier's terms)
     pub payment_terms: Option<PaymentTerms>,
     /// Currency (defaults to supplier's currency)
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     /// Tax amount
     pub tax_amount: Option<Decimal>,
     /// Shipping cost
@@ -509,5 +482,6 @@ pub fn generate_supplier_code() -> String {
 /// Generate a unique purchase order number
 pub fn generate_po_number() -> String {
     let now = chrono::Utc::now();
-    format!("PO-{}", now.format("%Y%m%d%H%M%S%3f"))
+    let short_id = &uuid::Uuid::new_v4().to_string()[..8];
+    format!("PO-{}-{}", now.format("%Y%m%d%H%M%S"), short_id)
 }

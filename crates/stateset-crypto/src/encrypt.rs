@@ -35,7 +35,7 @@ pub struct RecipientKey {
 }
 
 /// Result of payload encryption
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EncryptionResult {
     /// The encrypted payload structure (serializable to JSON)
     pub payload_encrypted: serde_json::Value,

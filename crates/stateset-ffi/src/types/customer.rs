@@ -13,8 +13,8 @@ use super::ids::FfiUuid;
 ///
 /// String fields (`name`, `email`) are **owned** C strings allocated by the FFI
 /// layer. The caller must free the entire struct (including its string pointers)
-/// via [`stateset_customer_free`] or free each string individually with
-/// [`stateset_string_free`].
+/// via `stateset_customer_free` or free each string individually with
+/// `stateset_string_free`.
 #[repr(C)]
 #[derive(Debug)]
 pub struct FfiCustomer {

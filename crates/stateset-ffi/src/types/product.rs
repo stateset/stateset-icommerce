@@ -13,7 +13,7 @@ use super::money::FfiMoney;
 /// ABI-safe product summary.
 ///
 /// String fields (`name`) are **owned** C strings. The caller must free the
-/// struct via [`stateset_product_free`].
+/// struct via `stateset_product_free`.
 #[repr(C)]
 #[derive(Debug)]
 pub struct FfiProduct {

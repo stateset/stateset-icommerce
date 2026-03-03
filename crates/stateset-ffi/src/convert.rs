@@ -155,7 +155,7 @@ mod tests {
             status: OrderStatus::Pending,
             order_date: now,
             total_amount: dec!(100),
-            currency: "USD".to_string(),
+            currency: stateset_primitives::CurrencyCode::USD,
             payment_status: PaymentStatus::Pending,
             fulfillment_status: FulfillmentStatus::Unfulfilled,
             payment_method: None,
@@ -305,11 +305,4 @@ mod tests {
         assert_eq!(err, FfiErrorCode::InvalidArgument);
     }
 
-    #[test]
-    fn try_order_into_ffi_rejects_invalid_currency() {
-        let mut order = make_order();
-        order.currency = "USDX".to_string();
-        let err = order.try_into_ffi().unwrap_err();
-        assert_eq!(err, FfiErrorCode::InvalidArgument);
-    }
 }

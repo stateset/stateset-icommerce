@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CustomerId, InvoiceId, OrderId, OrderItemId, ProductId};
+use stateset_primitives::{CurrencyCode, CustomerId, InvoiceId, OrderId, OrderItemId, ProductId};
 use uuid::Uuid;
 
 /// Invoice status
@@ -113,7 +113,7 @@ pub struct Invoice {
     /// Payment terms description
     pub payment_terms: Option<String>,
     /// Currency code
-    pub currency: String,
+    pub currency: CurrencyCode,
 
     // Billing information
     /// Billing name
@@ -251,7 +251,7 @@ pub struct CreateInvoice {
     /// Payment terms description
     pub payment_terms: Option<String>,
     /// Currency (defaults to USD)
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
 
     // Billing info
     /// Billing name

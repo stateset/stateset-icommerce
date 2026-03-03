@@ -87,7 +87,7 @@ fn snapshot_create_order_input() {
             discount: Some(dec!(5.00)),
             tax_amount: Some(dec!(4.50)),
         }],
-        currency: Some("USD".into()),
+        currency: Some(stateset_primitives::CurrencyCode::USD),
         shipping_address: Some(Address {
             line1: "123 Main St".into(),
             line2: Some("Apt 4B".into()),
@@ -114,7 +114,7 @@ fn snapshot_order() {
         status: OrderStatus::Confirmed,
         order_date: ts,
         total_amount: dec!(65.47),
-        currency: "USD".into(),
+        currency: stateset_primitives::CurrencyCode::USD,
         payment_status: PaymentStatus::Paid,
         fulfillment_status: FulfillmentStatus::Unfulfilled,
         payment_method: Some("credit_card".into()),

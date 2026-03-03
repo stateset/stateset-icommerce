@@ -14,6 +14,7 @@ use stateset_embedded::{
     PaymentTransactionStatus, RefundStatus, ReturnReason, ReturnStatus, ShipmentStatus,
     ShippingCarrier, ShippingMethod, UpdateReturn,
 };
+use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================
@@ -116,7 +117,7 @@ fn test_full_commerce_lifecycle() {
             customer_id: Some(customer.id),
             payment_method: PaymentMethodType::CreditCard,
             amount: dec!(99.98), // 2 x 49.99
-            currency: Some("USD".into()),
+            currency: Some(CurrencyCode::USD),
             card_brand: Some(stateset_embedded::CardBrand::Visa),
             card_last4: Some("4242".into()),
             ..Default::default()

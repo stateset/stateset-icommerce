@@ -10,8 +10,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::str::FromStr;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -19,53 +18,36 @@ use uuid::Uuid;
 // ============================================================================
 
 /// AR aging bucket classification
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AgingBucket {
     #[default]
     Current,
+    #[strum(to_string = "1_30", serialize = "days_1_to_30")]
     Days1To30,
+    #[strum(to_string = "31_60", serialize = "days_31_to_60")]
     Days31To60,
+    #[strum(to_string = "61_90", serialize = "days_61_to_90")]
     Days61To90,
+    #[strum(to_string = "over_90", serialize = "days_over_90")]
     DaysOver90,
 }
 
-impl fmt::Display for AgingBucket {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Current => write!(f, "current"),
-            Self::Days1To30 => write!(f, "1_30"),
-            Self::Days31To60 => write!(f, "31_60"),
-            Self::Days61To90 => write!(f, "61_90"),
-            Self::DaysOver90 => write!(f, "over_90"),
-        }
-    }
-}
-
-impl FromStr for AgingBucket {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "current" => Ok(Self::Current),
-            "1_30" | "days_1_to_30" => Ok(Self::Days1To30),
-            "31_60" | "days_31_to_60" => Ok(Self::Days31To60),
-            "61_90" | "days_61_to_90" => Ok(Self::Days61To90),
-            "over_90" | "days_over_90" => Ok(Self::DaysOver90),
-            _ => Err(format!("Unknown aging bucket: {}", s)),
-        }
-    }
-}
-
 /// Collection status for an invoice
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CollectionStatus {
     #[default]
     None,
+    #[strum(serialize = "reminder_1_sent")]
     Reminder1Sent,
+    #[strum(serialize = "reminder_2_sent")]
     Reminder2Sent,
+    #[strum(serialize = "reminder_3_sent")]
     Reminder3Sent,
     InCollections,
     SentToAgency,
@@ -74,81 +56,26 @@ pub enum CollectionStatus {
     PaymentPlan,
 }
 
-impl fmt::Display for CollectionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::None => write!(f, "none"),
-            Self::Reminder1Sent => write!(f, "reminder_1_sent"),
-            Self::Reminder2Sent => write!(f, "reminder_2_sent"),
-            Self::Reminder3Sent => write!(f, "reminder_3_sent"),
-            Self::InCollections => write!(f, "in_collections"),
-            Self::SentToAgency => write!(f, "sent_to_agency"),
-            Self::WrittenOff => write!(f, "written_off"),
-            Self::PromiseToPay => write!(f, "promise_to_pay"),
-            Self::PaymentPlan => write!(f, "payment_plan"),
-        }
-    }
-}
-
-impl FromStr for CollectionStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "none" => Ok(Self::None),
-            "reminder_1_sent" => Ok(Self::Reminder1Sent),
-            "reminder_2_sent" => Ok(Self::Reminder2Sent),
-            "reminder_3_sent" => Ok(Self::Reminder3Sent),
-            "in_collections" => Ok(Self::InCollections),
-            "sent_to_agency" => Ok(Self::SentToAgency),
-            "written_off" => Ok(Self::WrittenOff),
-            "promise_to_pay" => Ok(Self::PromiseToPay),
-            "payment_plan" => Ok(Self::PaymentPlan),
-            _ => Err(format!("Unknown collection status: {}", s)),
-        }
-    }
-}
-
 /// Dunning letter template type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DunningLetterType {
     #[default]
+    #[strum(serialize = "reminder_1")]
     Reminder1,
+    #[strum(serialize = "reminder_2")]
     Reminder2,
+    #[strum(serialize = "reminder_3")]
     Reminder3,
     DemandLetter,
     CollectionNotice,
 }
 
-impl fmt::Display for DunningLetterType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Reminder1 => write!(f, "reminder_1"),
-            Self::Reminder2 => write!(f, "reminder_2"),
-            Self::Reminder3 => write!(f, "reminder_3"),
-            Self::DemandLetter => write!(f, "demand_letter"),
-            Self::CollectionNotice => write!(f, "collection_notice"),
-        }
-    }
-}
-
-impl FromStr for DunningLetterType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "reminder_1" => Ok(Self::Reminder1),
-            "reminder_2" => Ok(Self::Reminder2),
-            "reminder_3" => Ok(Self::Reminder3),
-            "demand_letter" => Ok(Self::DemandLetter),
-            "collection_notice" => Ok(Self::CollectionNotice),
-            _ => Err(format!("Unknown dunning letter type: {}", s)),
-        }
-    }
-}
-
 /// Write-off reason code
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WriteOffReason {
@@ -162,38 +89,9 @@ pub enum WriteOffReason {
     Other,
 }
 
-impl fmt::Display for WriteOffReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Uncollectible => write!(f, "uncollectible"),
-            Self::Bankruptcy => write!(f, "bankruptcy"),
-            Self::CustomerDispute => write!(f, "customer_dispute"),
-            Self::SmallBalance => write!(f, "small_balance"),
-            Self::AccountClosed => write!(f, "account_closed"),
-            Self::Deceased => write!(f, "deceased"),
-            Self::Other => write!(f, "other"),
-        }
-    }
-}
-
-impl FromStr for WriteOffReason {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "uncollectible" => Ok(Self::Uncollectible),
-            "bankruptcy" => Ok(Self::Bankruptcy),
-            "customer_dispute" => Ok(Self::CustomerDispute),
-            "small_balance" => Ok(Self::SmallBalance),
-            "account_closed" => Ok(Self::AccountClosed),
-            "deceased" => Ok(Self::Deceased),
-            "other" => Ok(Self::Other),
-            _ => Err(format!("Unknown write-off reason: {}", s)),
-        }
-    }
-}
-
 /// Credit memo reason
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditMemoReason {
@@ -207,38 +105,9 @@ pub enum CreditMemoReason {
     Other,
 }
 
-impl fmt::Display for CreditMemoReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ReturnedGoods => write!(f, "returned_goods"),
-            Self::PricingError => write!(f, "pricing_error"),
-            Self::Overpayment => write!(f, "overpayment"),
-            Self::Damaged => write!(f, "damaged"),
-            Self::ServiceCredit => write!(f, "service_credit"),
-            Self::GoodwillAdjustment => write!(f, "goodwill_adjustment"),
-            Self::Other => write!(f, "other"),
-        }
-    }
-}
-
-impl FromStr for CreditMemoReason {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "returned_goods" => Ok(Self::ReturnedGoods),
-            "pricing_error" => Ok(Self::PricingError),
-            "overpayment" => Ok(Self::Overpayment),
-            "damaged" => Ok(Self::Damaged),
-            "service_credit" => Ok(Self::ServiceCredit),
-            "goodwill_adjustment" => Ok(Self::GoodwillAdjustment),
-            "other" => Ok(Self::Other),
-            _ => Err(format!("Unknown credit memo reason: {}", s)),
-        }
-    }
-}
-
 /// Credit memo status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditMemoStatus {
@@ -249,32 +118,9 @@ pub enum CreditMemoStatus {
     Voided,
 }
 
-impl fmt::Display for CreditMemoStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Open => write!(f, "open"),
-            Self::PartiallyApplied => write!(f, "partially_applied"),
-            Self::FullyApplied => write!(f, "fully_applied"),
-            Self::Voided => write!(f, "voided"),
-        }
-    }
-}
-
-impl FromStr for CreditMemoStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "open" => Ok(Self::Open),
-            "partially_applied" => Ok(Self::PartiallyApplied),
-            "fully_applied" => Ok(Self::FullyApplied),
-            "voided" => Ok(Self::Voided),
-            _ => Err(format!("Unknown credit memo status: {}", s)),
-        }
-    }
-}
-
 /// Collection activity type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CollectionActivityType {
@@ -292,46 +138,9 @@ pub enum CollectionActivityType {
     Note,
 }
 
-impl fmt::Display for CollectionActivityType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DunningLetterSent => write!(f, "dunning_letter_sent"),
-            Self::PhoneCall => write!(f, "phone_call"),
-            Self::Email => write!(f, "email"),
-            Self::InPersonVisit => write!(f, "in_person_visit"),
-            Self::PromiseToPay => write!(f, "promise_to_pay"),
-            Self::PaymentPlanCreated => write!(f, "payment_plan_created"),
-            Self::SentToCollections => write!(f, "sent_to_collections"),
-            Self::WriteOffApproved => write!(f, "write_off_approved"),
-            Self::DisputeLogged => write!(f, "dispute_logged"),
-            Self::DisputeResolved => write!(f, "dispute_resolved"),
-            Self::Note => write!(f, "note"),
-        }
-    }
-}
-
-impl FromStr for CollectionActivityType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "dunning_letter_sent" => Ok(Self::DunningLetterSent),
-            "phone_call" => Ok(Self::PhoneCall),
-            "email" => Ok(Self::Email),
-            "in_person_visit" => Ok(Self::InPersonVisit),
-            "promise_to_pay" => Ok(Self::PromiseToPay),
-            "payment_plan_created" => Ok(Self::PaymentPlanCreated),
-            "sent_to_collections" => Ok(Self::SentToCollections),
-            "write_off_approved" => Ok(Self::WriteOffApproved),
-            "dispute_logged" => Ok(Self::DisputeLogged),
-            "dispute_resolved" => Ok(Self::DisputeResolved),
-            "note" => Ok(Self::Note),
-            _ => Err(format!("Unknown collection activity type: {}", s)),
-        }
-    }
-}
-
 /// Statement transaction type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum StatementTransactionType {
@@ -340,18 +149,6 @@ pub enum StatementTransactionType {
     CreditMemo,
     WriteOff,
     Adjustment,
-}
-
-impl fmt::Display for StatementTransactionType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Invoice => write!(f, "invoice"),
-            Self::Payment => write!(f, "payment"),
-            Self::CreditMemo => write!(f, "credit_memo"),
-            Self::WriteOff => write!(f, "write_off"),
-            Self::Adjustment => write!(f, "adjustment"),
-        }
-    }
 }
 
 // ============================================================================

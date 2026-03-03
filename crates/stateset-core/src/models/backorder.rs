@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -96,7 +97,8 @@ impl FromStr for BackorderStatus {
 }
 
 /// Backorder priority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BackorderPriority {
@@ -107,68 +109,23 @@ pub enum BackorderPriority {
     Critical,
 }
 
-impl std::fmt::Display for BackorderPriority {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Low => write!(f, "low"),
-            Self::Normal => write!(f, "normal"),
-            Self::High => write!(f, "high"),
-            Self::Critical => write!(f, "critical"),
-        }
-    }
-}
-
-impl FromStr for BackorderPriority {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "low" => Ok(Self::Low),
-            "normal" => Ok(Self::Normal),
-            "high" => Ok(Self::High),
-            "critical" => Ok(Self::Critical),
-            _ => Err(format!("Unknown backorder priority: {}", s)),
-        }
-    }
-}
-
 /// Source type for fulfillment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum FulfillmentSourceType {
     #[default]
     Inventory,
+    #[strum(serialize = "purchase_order", serialize = "purchaseorder", serialize = "po")]
     PurchaseOrder,
     Transfer,
     Production,
 }
 
-impl std::fmt::Display for FulfillmentSourceType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Inventory => write!(f, "inventory"),
-            Self::PurchaseOrder => write!(f, "purchase_order"),
-            Self::Transfer => write!(f, "transfer"),
-            Self::Production => write!(f, "production"),
-        }
-    }
-}
-
-impl FromStr for FulfillmentSourceType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "inventory" => Ok(Self::Inventory),
-            "purchase_order" | "purchaseorder" | "po" => Ok(Self::PurchaseOrder),
-            "transfer" => Ok(Self::Transfer),
-            "production" => Ok(Self::Production),
-            _ => Err(format!("Unknown fulfillment source type: {}", s)),
-        }
-    }
-}
-
 /// Allocation status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AllocationStatus {
@@ -177,30 +134,6 @@ pub enum AllocationStatus {
     Confirmed,
     Released,
     Expired,
-}
-
-impl std::fmt::Display for AllocationStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Reserved => write!(f, "reserved"),
-            Self::Confirmed => write!(f, "confirmed"),
-            Self::Released => write!(f, "released"),
-            Self::Expired => write!(f, "expired"),
-        }
-    }
-}
-
-impl FromStr for AllocationStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "reserved" => Ok(Self::Reserved),
-            "confirmed" => Ok(Self::Confirmed),
-            "released" => Ok(Self::Released),
-            "expired" => Ok(Self::Expired),
-            _ => Err(format!("Unknown allocation status: {}", s)),
-        }
-    }
 }
 
 // ============================================================================

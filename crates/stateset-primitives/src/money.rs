@@ -154,6 +154,13 @@ impl fmt::Display for Money {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CurrencyCode([u8; 3]);
 
+impl Default for CurrencyCode {
+    /// Defaults to USD — the most common commerce currency.
+    fn default() -> Self {
+        Self::USD
+    }
+}
+
 impl CurrencyCode {
     // Common currency code constants
     /// United States Dollar
@@ -191,9 +198,12 @@ impl CurrencyCode {
     /// Get the currency code as a string slice.
     #[inline]
     #[must_use]
-    pub fn as_str(&self) -> &str {
-        // SAFETY: We validate ASCII uppercase in all constructors.
-        std::str::from_utf8(&self.0).expect("CurrencyCode is always valid ASCII")
+    #[allow(unsafe_code)]
+    pub const fn as_str(&self) -> &str {
+        // SAFETY: All constructors (`from_bytes`, `from_str`) validate that the
+        // contents are ASCII uppercase letters, so UTF-8 validity is guaranteed.
+        // Using `from_utf8_unchecked` avoids a panic path in production.
+        unsafe { std::str::from_utf8_unchecked(&self.0) }
     }
 }
 
@@ -248,6 +258,28 @@ pub enum CurrencyCodeError {
     /// Currency code must contain only ASCII letters.
     #[error("currency code must contain only ASCII letters")]
     InvalidCharacters,
+}
+
+// ---------------------------------------------------------------------------
+// rusqlite integration
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "rusqlite")]
+impl rusqlite::types::FromSql for CurrencyCode {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let s = value.as_str()?;
+        s.parse::<CurrencyCode>()
+            .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))
+    }
+}
+
+#[cfg(feature = "rusqlite")]
+impl rusqlite::types::ToSql for CurrencyCode {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(
+            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
+        ))
+    }
 }
 
 #[cfg(test)]

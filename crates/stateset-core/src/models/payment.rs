@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CustomerId, OrderId, PaymentId};
+use stateset_primitives::{CurrencyCode, CustomerId, OrderId, PaymentId};
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -279,7 +279,7 @@ pub struct Payment {
     /// Payment amount
     pub amount: Decimal,
     /// Currency code (ISO 4217)
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Amount refunded
     pub amount_refunded: Decimal,
     /// External payment processor ID (e.g., Stripe payment intent ID)
@@ -356,7 +356,7 @@ pub struct CreatePayment {
     /// Payment amount
     pub amount: Decimal,
     /// Currency code (defaults to USD)
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     /// External payment processor ID
     pub external_id: Option<String>,
     /// Idempotency key for safely retrying payment creation
@@ -439,7 +439,7 @@ pub struct PaymentFilter {
     /// Filter by processor
     pub processor: Option<String>,
     /// Filter by currency
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     /// Filter by minimum amount
     pub min_amount: Option<Decimal>,
     /// Filter by maximum amount
@@ -468,7 +468,7 @@ pub struct Refund {
     /// Refund amount
     pub amount: Decimal,
     /// Currency code
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Reason for refund
     pub reason: Option<String>,
     /// External refund ID from processor

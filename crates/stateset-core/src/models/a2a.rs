@@ -1034,6 +1034,7 @@ pub enum A2AServiceCategory {
 /// Pricing models for services
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "model", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum A2APricing {
     /// Fixed price per unit/call
     Fixed { amount: u64, asset: X402Asset, unit: String },

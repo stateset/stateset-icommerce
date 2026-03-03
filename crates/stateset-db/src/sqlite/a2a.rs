@@ -14,8 +14,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use stateset_core::{
     A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CommerceError, CreateA2APurchase,
-    CreateA2AQuote, PurchaseStatus, QuoteStatus, Result, SkillQuote, SkillQuoteFilter, X402Asset,
-    X402Network,
+    CreateA2AQuote, CurrencyCode, PurchaseStatus, QuoteStatus, Result, SkillQuote,
+    SkillQuoteFilter, X402Asset, X402Network,
 };
 use uuid::Uuid;
 
@@ -567,13 +567,8 @@ impl SqliteA2ARepository {
         Ok(())
     }
 
-    fn normalize_currency(raw: Option<String>) -> String {
-        raw.unwrap_or_else(|| "USD".to_string())
-            .trim()
-            .to_ascii_uppercase()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect()
+    fn normalize_currency(raw: Option<CurrencyCode>) -> CurrencyCode {
+        raw.unwrap_or_default()
     }
 
     fn ensure_quote_for_purchase(
@@ -819,7 +814,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             if quote.valid_until <= Utc::now() {
                 return Err(CommerceError::ValidationError("quote has expired".to_string()));
             }
-            if quote.currency != Self::normalize_currency(input.currency.clone()) {
+            if quote.currency != Self::normalize_currency(input.currency.clone()).as_str() {
                 return Err(CommerceError::ValidationError(
                     "purchase currency does not match quote currency".to_string(),
                 ));

@@ -56,3 +56,4 @@ metrics = ["dep:once_cell", "dep:prometheus"]
 ## Expose test helpers (for use in downstream integration tests)
 test-utils = []
 sqlx-postgres = ["stateset-primitives/sqlx-postgres"]
+rusqlite = ["stateset-primitives/rusqlite"]

@@ -7,6 +7,7 @@ use stateset_embedded::{
     CreateCouponCode, CreateCustomer, CreatePromotion, PromotionType, SetCartPayment,
     SetCartShipping, UpdateCart, UpdateCartItem,
 };
+use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================
@@ -131,12 +132,12 @@ fn test_create_cart_with_currency() {
         .carts()
         .create(CreateCart {
             customer_email: Some("test@example.com".into()),
-            currency: Some("EUR".into()),
+            currency: Some(CurrencyCode::EUR),
             ..Default::default()
         })
         .expect("Failed to create cart");
 
-    assert_eq!(cart.currency, "EUR");
+    assert_eq!(cart.currency, CurrencyCode::EUR);
 }
 
 #[test]
@@ -152,7 +153,7 @@ fn test_create_cart_default_currency() {
         .expect("Failed to create cart");
 
     // Default currency should be USD
-    assert_eq!(cart.currency, "USD");
+    assert_eq!(cart.currency, CurrencyCode::USD);
 }
 
 #[test]

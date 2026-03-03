@@ -109,7 +109,7 @@ impl From<FfiUuid> for ProductId {
 
 /// Format an [`FfiUuid`] as a hyphenated string (e.g. `550e8400-e29b-41d4-a716-446655440000`).
 ///
-/// The caller **must** free the returned pointer with [`stateset_string_free`].
+/// The caller **must** free the returned pointer with `stateset_string_free`.
 ///
 /// Returns `NULL` on allocation failure (should never happen in practice).
 #[unsafe(no_mangle)]

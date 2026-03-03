@@ -6,9 +6,9 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use rust_decimal_macros::dec;
 use stateset_core::{
     CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct,
-    CustomerFilter, CustomerId, CustomerRepository, FulfillmentStatus, InventoryRepository,
-    OrderFilter, OrderRepository, OrderStatus, PaymentStatus, ProductFilter, ProductId,
-    ProductRepository, ReserveInventory, UpdateOrder,
+    CurrencyCode, CustomerFilter, CustomerId, CustomerRepository, FulfillmentStatus,
+    InventoryRepository, OrderFilter, OrderRepository, OrderStatus, PaymentStatus, ProductFilter,
+    ProductId, ProductRepository, ReserveInventory, UpdateOrder,
 };
 use stateset_db::{DatabaseConfig, SqliteDatabase};
 use std::sync::Arc;
@@ -97,7 +97,7 @@ fn create_test_order_item(idx: usize) -> CreateOrderItem {
 fn create_test_order(customer_id: CustomerId, item_count: usize) -> CreateOrder {
     CreateOrder {
         customer_id,
-        currency: Some("USD".to_string()),
+        currency: Some(CurrencyCode::USD),
         shipping_address: None,
         billing_address: None,
         payment_method: Some("credit_card".to_string()),

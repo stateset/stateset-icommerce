@@ -3,7 +3,7 @@
 use stateset_core::models::order::{Order, OrderStatus};
 use stateset_primitives::CurrencyCode;
 
-use crate::error::{FfiErrorCode, set_last_error};
+use crate::error::FfiErrorCode;
 
 use super::ids::FfiUuid;
 use super::money::{FfiMoney, decimal_to_minor_units_for_currency};
@@ -88,11 +88,7 @@ pub struct FfiOrder {
 impl FfiOrder {
     /// Fallible conversion from domain [`Order`] into [`FfiOrder`].
     pub(crate) fn try_from_order(order: &Order) -> Result<Self, FfiErrorCode> {
-        let parsed_currency = order.currency.parse::<CurrencyCode>().map_err(|err| {
-            set_last_error(&format!("invalid order.currency `{}`: {err}", order.currency));
-            FfiErrorCode::InvalidArgument
-        })?;
-        let currency_code = parsed_currency.as_str();
+        let currency_code = order.currency.as_str();
         let cents = decimal_to_minor_units_for_currency(
             order.total_amount,
             currency_code,
@@ -158,7 +154,7 @@ mod tests {
             status,
             order_date: now,
             total_amount: dec!(64.78),
-            currency: "USD".to_string(),
+            currency: CurrencyCode::USD,
             payment_status: PaymentStatus::Pending,
             fulfillment_status: FulfillmentStatus::Unfulfilled,
             payment_method: None,
@@ -292,7 +288,7 @@ mod tests {
     #[test]
     fn ffi_order_uses_currency_specific_minor_units() {
         let mut order = make_test_order(OrderStatus::Pending);
-        order.currency = "JPY".to_string();
+        order.currency = CurrencyCode::JPY;
         order.total_amount = dec!(1500);
         let ffi = FfiOrder::from(&order);
         assert_eq!(ffi.total.amount_cents, 1500);
@@ -300,21 +296,10 @@ mod tests {
     }
 
     #[test]
-    fn ffi_order_normalizes_currency_code_case() {
-        let mut order = make_test_order(OrderStatus::Pending);
-        order.currency = "usd".to_string();
+    fn ffi_order_currency_is_always_uppercase() {
+        // CurrencyCode guarantees uppercase at construction time
+        let order = make_test_order(OrderStatus::Pending);
         let ffi = FfiOrder::from(&order);
         assert_eq!(&ffi.total.currency, b"USD");
-    }
-
-    #[test]
-    fn ffi_order_invalid_currency_is_rejected() {
-        let mut order = make_test_order(OrderStatus::Pending);
-        order.currency = "USDX".to_string();
-        clear_last_error();
-        let err = FfiOrder::try_from_order(&order).unwrap_err();
-        assert_eq!(err, FfiErrorCode::InvalidArgument);
-        let msg = last_error_as_str().unwrap();
-        assert!(msg.contains("order.currency"));
     }
 }

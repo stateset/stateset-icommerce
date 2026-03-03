@@ -687,7 +687,7 @@ fn test_promotions_coupon_codes() {
 fn test_promotions_fixed_amount() {
     use rust_decimal_macros::dec;
     use stateset_core::{
-        ApplyPromotionsRequest, CreatePromotion, PromotionLineItem, PromotionTarget,
+        ApplyPromotionsRequest, CreatePromotion, CurrencyCode, PromotionLineItem, PromotionTarget,
         PromotionTrigger, PromotionType, StackingBehavior,
     };
 
@@ -744,7 +744,7 @@ fn test_promotions_fixed_amount() {
             shipping_amount: dec!(5.00),
             shipping_country: None,
             shipping_state: None,
-            currency: "USD".into(),
+            currency: CurrencyCode::USD,
             coupon_codes: vec![],
             line_items: vec![PromotionLineItem {
                 id: "item-1".into(),

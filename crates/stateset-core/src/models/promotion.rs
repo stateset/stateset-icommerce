@@ -13,7 +13,8 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CartId, CustomerId, OrderId, ProductId, PromotionId};
+use stateset_primitives::{CartId, CurrencyCode, CustomerId, OrderId, ProductId, PromotionId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -21,78 +22,41 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Type of promotion
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PromotionType {
     /// Percentage off (e.g., 20% off)
     #[default]
+    #[strum(serialize = "percentage_off", serialize = "percentageoff")]
     PercentageOff,
     /// Fixed amount off (e.g., $10 off)
+    #[strum(serialize = "fixed_amount_off", serialize = "fixedamountoff")]
     FixedAmountOff,
     /// Buy X get Y free or discounted
+    #[strum(serialize = "buy_x_get_y", serialize = "buyxgety")]
     BuyXGetY,
     /// Free shipping
+    #[strum(serialize = "free_shipping", serialize = "freeshipping")]
     FreeShipping,
     /// Tiered discount based on cart value
+    #[strum(serialize = "tiered_discount", serialize = "tiereddiscount")]
     TieredDiscount,
     /// Bundle discount (buy together and save)
+    #[strum(serialize = "bundle_discount", serialize = "bundlediscount")]
     BundleDiscount,
     /// First-time customer discount
+    #[strum(serialize = "first_order_discount", serialize = "firstorderdiscount")]
     FirstOrderDiscount,
     /// Gift with purchase
+    #[strum(serialize = "gift_with_purchase", serialize = "giftwithpurchase")]
     GiftWithPurchase,
 }
 
-impl std::fmt::Display for PromotionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::PercentageOff => write!(f, "percentage_off"),
-            Self::FixedAmountOff => write!(f, "fixed_amount_off"),
-            Self::BuyXGetY => write!(f, "buy_x_get_y"),
-            Self::FreeShipping => write!(f, "free_shipping"),
-            Self::TieredDiscount => write!(f, "tiered_discount"),
-            Self::BundleDiscount => write!(f, "bundle_discount"),
-            Self::FirstOrderDiscount => write!(f, "first_order_discount"),
-            Self::GiftWithPurchase => write!(f, "gift_with_purchase"),
-        }
-    }
-}
-
-impl std::str::FromStr for PromotionType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "percentage_off" => Ok(Self::PercentageOff),
-            "fixed_amount_off" => Ok(Self::FixedAmountOff),
-            "buy_x_get_y" => Ok(Self::BuyXGetY),
-            "free_shipping" => Ok(Self::FreeShipping),
-            "tiered_discount" => Ok(Self::TieredDiscount),
-            "bundle_discount" => Ok(Self::BundleDiscount),
-            "first_order_discount" => Ok(Self::FirstOrderDiscount),
-            "gift_with_purchase" => Ok(Self::GiftWithPurchase),
-            _ => {
-                let compact = value.replace(['_', '-'], "");
-                match compact.as_str() {
-                    "percentageoff" => Ok(Self::PercentageOff),
-                    "fixedamountoff" => Ok(Self::FixedAmountOff),
-                    "buyxgety" => Ok(Self::BuyXGetY),
-                    "freeshipping" => Ok(Self::FreeShipping),
-                    "tiereddiscount" => Ok(Self::TieredDiscount),
-                    "bundlediscount" => Ok(Self::BundleDiscount),
-                    "firstorderdiscount" => Ok(Self::FirstOrderDiscount),
-                    "giftwithpurchase" => Ok(Self::GiftWithPurchase),
-                    _ => Err(format!("Unknown promotion type: {}", s)),
-                }
-            }
-        }
-    }
-}
-
 /// Status of a promotion
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PromotionStatus {
@@ -113,39 +77,9 @@ pub enum PromotionStatus {
     Archived,
 }
 
-impl std::fmt::Display for PromotionStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Draft => write!(f, "draft"),
-            Self::Scheduled => write!(f, "scheduled"),
-            Self::Active => write!(f, "active"),
-            Self::Paused => write!(f, "paused"),
-            Self::Expired => write!(f, "expired"),
-            Self::Exhausted => write!(f, "exhausted"),
-            Self::Archived => write!(f, "archived"),
-        }
-    }
-}
-
-impl std::str::FromStr for PromotionStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "draft" => Ok(Self::Draft),
-            "scheduled" => Ok(Self::Scheduled),
-            "active" => Ok(Self::Active),
-            "paused" => Ok(Self::Paused),
-            "expired" => Ok(Self::Expired),
-            "exhausted" => Ok(Self::Exhausted),
-            "archived" => Ok(Self::Archived),
-            _ => Err(format!("Unknown promotion status: {}", s)),
-        }
-    }
-}
-
 /// How the promotion is triggered
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PromotionTrigger {
@@ -153,43 +87,15 @@ pub enum PromotionTrigger {
     #[default]
     Automatic,
     /// Requires a coupon code
+    #[strum(serialize = "coupon_code", serialize = "couponcode")]
     CouponCode,
     /// Both - can be auto or with code
     Both,
 }
 
-impl std::fmt::Display for PromotionTrigger {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Automatic => write!(f, "automatic"),
-            Self::CouponCode => write!(f, "coupon_code"),
-            Self::Both => write!(f, "both"),
-        }
-    }
-}
-
-impl std::str::FromStr for PromotionTrigger {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "automatic" => Ok(Self::Automatic),
-            "coupon_code" => Ok(Self::CouponCode),
-            "both" => Ok(Self::Both),
-            _ => {
-                let compact = value.replace(['_', '-'], "");
-                match compact.as_str() {
-                    "couponcode" => Ok(Self::CouponCode),
-                    _ => Err(format!("Unknown promotion trigger: {}", s)),
-                }
-            }
-        }
-    }
-}
-
 /// What the promotion applies to
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PromotionTarget {
@@ -203,45 +109,13 @@ pub enum PromotionTarget {
     /// Applies to shipping
     Shipping,
     /// Applies to specific line items
+    #[strum(serialize = "line_item", serialize = "lineitem")]
     LineItem,
 }
 
-impl std::fmt::Display for PromotionTarget {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Order => write!(f, "order"),
-            Self::Product => write!(f, "product"),
-            Self::Category => write!(f, "category"),
-            Self::Shipping => write!(f, "shipping"),
-            Self::LineItem => write!(f, "line_item"),
-        }
-    }
-}
-
-impl std::str::FromStr for PromotionTarget {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "order" => Ok(Self::Order),
-            "product" => Ok(Self::Product),
-            "category" => Ok(Self::Category),
-            "shipping" => Ok(Self::Shipping),
-            "line_item" => Ok(Self::LineItem),
-            _ => {
-                let compact = value.replace(['_', '-'], "");
-                match compact.as_str() {
-                    "lineitem" => Ok(Self::LineItem),
-                    _ => Err(format!("Unknown promotion target: {}", s)),
-                }
-            }
-        }
-    }
-}
-
 /// Stacking behavior with other promotions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum StackingBehavior {
@@ -251,201 +125,82 @@ pub enum StackingBehavior {
     /// Cannot be combined with any other promotion
     Exclusive,
     /// Can only stack with specific promotions
+    #[strum(serialize = "selective_stack", serialize = "selectivestack")]
     SelectiveStack,
 }
 
-impl std::fmt::Display for StackingBehavior {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Stackable => write!(f, "stackable"),
-            Self::Exclusive => write!(f, "exclusive"),
-            Self::SelectiveStack => write!(f, "selective_stack"),
-        }
-    }
-}
-
-impl std::str::FromStr for StackingBehavior {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "stackable" => Ok(Self::Stackable),
-            "exclusive" => Ok(Self::Exclusive),
-            "selective_stack" => Ok(Self::SelectiveStack),
-            _ => {
-                let compact = value.replace(['_', '-'], "");
-                match compact.as_str() {
-                    "selectivestack" => Ok(Self::SelectiveStack),
-                    _ => Err(format!("Unknown stacking behavior: {}", s)),
-                }
-            }
-        }
-    }
-}
-
 /// Condition operator for rules
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ConditionOperator {
     #[default]
     Equals,
+    #[strum(serialize = "not_equals", serialize = "notequals")]
     NotEquals,
+    #[strum(serialize = "greater_than", serialize = "greaterthan")]
     GreaterThan,
+    #[strum(serialize = "greater_than_or_equal", serialize = "greaterthanorequal")]
     GreaterThanOrEqual,
+    #[strum(serialize = "less_than", serialize = "lessthan")]
     LessThan,
+    #[strum(serialize = "less_than_or_equal", serialize = "lessthanorequal")]
     LessThanOrEqual,
     Contains,
+    #[strum(serialize = "not_contains", serialize = "notcontains")]
     NotContains,
     In,
+    #[strum(serialize = "not_in", serialize = "notin")]
     NotIn,
 }
 
-impl std::fmt::Display for ConditionOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Equals => write!(f, "equals"),
-            Self::NotEquals => write!(f, "not_equals"),
-            Self::GreaterThan => write!(f, "greater_than"),
-            Self::GreaterThanOrEqual => write!(f, "greater_than_or_equal"),
-            Self::LessThan => write!(f, "less_than"),
-            Self::LessThanOrEqual => write!(f, "less_than_or_equal"),
-            Self::Contains => write!(f, "contains"),
-            Self::NotContains => write!(f, "not_contains"),
-            Self::In => write!(f, "in"),
-            Self::NotIn => write!(f, "not_in"),
-        }
-    }
-}
-
-impl std::str::FromStr for ConditionOperator {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "equals" => Ok(Self::Equals),
-            "not_equals" => Ok(Self::NotEquals),
-            "greater_than" => Ok(Self::GreaterThan),
-            "greater_than_or_equal" => Ok(Self::GreaterThanOrEqual),
-            "less_than" => Ok(Self::LessThan),
-            "less_than_or_equal" => Ok(Self::LessThanOrEqual),
-            "contains" => Ok(Self::Contains),
-            "not_contains" => Ok(Self::NotContains),
-            "in" => Ok(Self::In),
-            "not_in" => Ok(Self::NotIn),
-            _ => {
-                let compact = value.replace(['_', '-'], "");
-                match compact.as_str() {
-                    "notequals" => Ok(Self::NotEquals),
-                    "greaterthan" => Ok(Self::GreaterThan),
-                    "greaterthanorequal" => Ok(Self::GreaterThanOrEqual),
-                    "lessthan" => Ok(Self::LessThan),
-                    "lessthanorequal" => Ok(Self::LessThanOrEqual),
-                    "notcontains" => Ok(Self::NotContains),
-                    "notin" => Ok(Self::NotIn),
-                    _ => Err(format!("Unknown condition operator: {}", s)),
-                }
-            }
-        }
-    }
-}
-
 /// Type of condition
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ConditionType {
     /// Minimum cart subtotal
     #[default]
+    #[strum(serialize = "minimum_subtotal", serialize = "minimumsubtotal")]
     MinimumSubtotal,
     /// Minimum quantity of items
+    #[strum(serialize = "minimum_quantity", serialize = "minimumquantity")]
     MinimumQuantity,
     /// Specific products in cart
+    #[strum(serialize = "product_in_cart", serialize = "productincart")]
     ProductInCart,
     /// Specific categories in cart
+    #[strum(serialize = "category_in_cart", serialize = "categoryincart")]
     CategoryInCart,
     /// Specific SKUs in cart
+    #[strum(serialize = "sku_in_cart", serialize = "skuincart")]
     SkuInCart,
     /// Customer is in specific group
+    #[strum(serialize = "customer_group", serialize = "customergroup")]
     CustomerGroup,
     /// Customer's first order
+    #[strum(serialize = "first_order", serialize = "firstorder")]
     FirstOrder,
     /// Customer email domain
+    #[strum(serialize = "customer_email_domain", serialize = "customeremaildomain")]
     CustomerEmailDomain,
     /// Shipping destination country
+    #[strum(serialize = "shipping_country", serialize = "shippingcountry")]
     ShippingCountry,
     /// Shipping destination state
+    #[strum(serialize = "shipping_state", serialize = "shippingstate")]
     ShippingState,
     /// Payment method
+    #[strum(serialize = "payment_method", serialize = "paymentmethod")]
     PaymentMethod,
     /// Cart item count
+    #[strum(serialize = "cart_item_count", serialize = "cartitemcount")]
     CartItemCount,
     /// Specific customer IDs
+    #[strum(serialize = "customer_id", serialize = "customerid")]
     CustomerId,
-}
-
-impl std::fmt::Display for ConditionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MinimumSubtotal => write!(f, "minimum_subtotal"),
-            Self::MinimumQuantity => write!(f, "minimum_quantity"),
-            Self::ProductInCart => write!(f, "product_in_cart"),
-            Self::CategoryInCart => write!(f, "category_in_cart"),
-            Self::SkuInCart => write!(f, "sku_in_cart"),
-            Self::CustomerGroup => write!(f, "customer_group"),
-            Self::FirstOrder => write!(f, "first_order"),
-            Self::CustomerEmailDomain => write!(f, "customer_email_domain"),
-            Self::ShippingCountry => write!(f, "shipping_country"),
-            Self::ShippingState => write!(f, "shipping_state"),
-            Self::PaymentMethod => write!(f, "payment_method"),
-            Self::CartItemCount => write!(f, "cart_item_count"),
-            Self::CustomerId => write!(f, "customer_id"),
-        }
-    }
-}
-
-impl std::str::FromStr for ConditionType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "minimum_subtotal" => Ok(Self::MinimumSubtotal),
-            "minimum_quantity" => Ok(Self::MinimumQuantity),
-            "product_in_cart" => Ok(Self::ProductInCart),
-            "category_in_cart" => Ok(Self::CategoryInCart),
-            "sku_in_cart" => Ok(Self::SkuInCart),
-            "customer_group" => Ok(Self::CustomerGroup),
-            "first_order" => Ok(Self::FirstOrder),
-            "customer_email_domain" => Ok(Self::CustomerEmailDomain),
-            "shipping_country" => Ok(Self::ShippingCountry),
-            "shipping_state" => Ok(Self::ShippingState),
-            "payment_method" => Ok(Self::PaymentMethod),
-            "cart_item_count" => Ok(Self::CartItemCount),
-            "customer_id" => Ok(Self::CustomerId),
-            _ => {
-                let compact = value.replace(['_', '-'], "");
-                match compact.as_str() {
-                    "minimumsubtotal" => Ok(Self::MinimumSubtotal),
-                    "minimumquantity" => Ok(Self::MinimumQuantity),
-                    "productincart" => Ok(Self::ProductInCart),
-                    "categoryincart" => Ok(Self::CategoryInCart),
-                    "skuincart" => Ok(Self::SkuInCart),
-                    "customergroup" => Ok(Self::CustomerGroup),
-                    "firstorder" => Ok(Self::FirstOrder),
-                    "customeremaildomain" => Ok(Self::CustomerEmailDomain),
-                    "shippingcountry" => Ok(Self::ShippingCountry),
-                    "shippingstate" => Ok(Self::ShippingState),
-                    "paymentmethod" => Ok(Self::PaymentMethod),
-                    "cartitemcount" => Ok(Self::CartItemCount),
-                    "customerid" => Ok(Self::CustomerId),
-                    _ => Err(format!("Unknown condition type: {}", s)),
-                }
-            }
-        }
-    }
 }
 
 // ============================================================================
@@ -532,7 +287,7 @@ pub struct Promotion {
     pub eligible_customer_groups: Vec<String>,
 
     // Currency
-    pub currency: String,
+    pub currency: CurrencyCode,
 
     // Priority (lower = applied first)
     pub priority: i32,
@@ -650,7 +405,7 @@ pub struct PromotionUsage {
 
     /// Discount amount applied
     pub discount_amount: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
 
     pub used_at: DateTime<Utc>,
 }
@@ -670,7 +425,7 @@ pub struct ApplyPromotionsRequest {
     pub shipping_amount: Decimal,
     pub shipping_country: Option<String>,
     pub shipping_state: Option<String>,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub is_first_order: bool,
 }
 
@@ -819,7 +574,7 @@ pub struct CreatePromotion {
     pub eligible_customer_ids: Option<Vec<CustomerId>>,
     pub eligible_customer_groups: Option<Vec<String>>,
 
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub priority: Option<i32>,
     pub metadata: Option<serde_json::Value>,
 }

@@ -76,7 +76,7 @@ impl Carts {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, CreateCart, AddCartItem};
+    /// use stateset_embedded::{Commerce, CreateCart, AddCartItem, CurrencyCode};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
     ///
@@ -98,7 +98,7 @@ impl Carts {
     /// // Authenticated customer checkout
     /// let cart = commerce.carts().create(CreateCart {
     ///     customer_id: Some(Uuid::new_v4().into()),
-    ///     currency: Some("USD".into()),
+    ///     currency: Some(CurrencyCode::USD),
     ///     expires_in_minutes: Some(60),
     ///     ..Default::default()
     /// })?;

@@ -10,7 +10,8 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::ProductId;
+use stateset_primitives::{CurrencyCode, ProductId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -18,7 +19,8 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Types of taxes supported
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TaxType {
@@ -57,32 +59,9 @@ impl TaxType {
     }
 }
 
-impl std::fmt::Display for TaxType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for TaxType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "sales_tax" => Ok(Self::SalesTax),
-            "vat" => Ok(Self::Vat),
-            "gst" => Ok(Self::Gst),
-            "hst" => Ok(Self::Hst),
-            "pst" => Ok(Self::Pst),
-            "qst" => Ok(Self::Qst),
-            "consumption_tax" => Ok(Self::ConsumptionTax),
-            "custom" => Ok(Self::Custom),
-            _ => Err(format!("Unknown tax type: {}", s)),
-        }
-    }
-}
-
 /// Tax calculation method
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TaxCalculationMethod {
@@ -91,27 +70,6 @@ pub enum TaxCalculationMethod {
     Exclusive,
     /// Tax is included in the price (EU VAT style)
     Inclusive,
-}
-
-impl std::fmt::Display for TaxCalculationMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Exclusive => f.write_str("exclusive"),
-            Self::Inclusive => f.write_str("inclusive"),
-        }
-    }
-}
-
-impl std::str::FromStr for TaxCalculationMethod {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "exclusive" => Ok(Self::Exclusive),
-            "inclusive" => Ok(Self::Inclusive),
-            _ => Err(format!("Unknown tax calculation method: {}", s)),
-        }
-    }
 }
 
 /// How to apply multiple tax rates
@@ -152,7 +110,8 @@ impl std::str::FromStr for TaxCompoundMethod {
 }
 
 /// Product tax category
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ProductTaxCategory {
@@ -199,34 +158,6 @@ impl ProductTaxCategory {
             Self::Medical => "medical",
             Self::Educational => "educational",
             Self::Luxury => "luxury",
-        }
-    }
-}
-
-impl std::fmt::Display for ProductTaxCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for ProductTaxCategory {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "standard" => Ok(Self::Standard),
-            "reduced" => Ok(Self::Reduced),
-            "super_reduced" => Ok(Self::SuperReduced),
-            "zero_rated" => Ok(Self::ZeroRated),
-            "exempt" => Ok(Self::Exempt),
-            "digital" => Ok(Self::Digital),
-            "clothing" => Ok(Self::Clothing),
-            "food" => Ok(Self::Food),
-            "prepared_food" => Ok(Self::PreparedFood),
-            "medical" => Ok(Self::Medical),
-            "educational" => Ok(Self::Educational),
-            "luxury" => Ok(Self::Luxury),
-            _ => Err(format!("Unknown product tax category: {}", s)),
         }
     }
 }
@@ -461,15 +392,15 @@ pub struct TaxCalculationRequest {
     pub shipping_amount: Option<Decimal>,
     /// Currency code
     #[serde(default = "default_currency")]
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Transaction date (for rate lookup)
     pub transaction_date: Option<NaiveDate>,
     /// Whether prices include tax
     pub prices_include_tax: bool,
 }
 
-fn default_currency() -> String {
-    "USD".to_string()
+fn default_currency() -> CurrencyCode {
+    CurrencyCode::USD
 }
 
 /// A line item for tax calculation

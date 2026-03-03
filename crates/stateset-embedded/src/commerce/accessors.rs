@@ -1408,7 +1408,7 @@ impl Commerce {
                 None, // order_id - will be set when order is created
                 Some(cart_id),
                 applied.discount_amount,
-                &cart.currency,
+                cart.currency.as_str(),
             );
         }
 

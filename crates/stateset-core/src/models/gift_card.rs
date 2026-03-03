@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{GiftCardId, GiftCardTransactionId};
+use stateset_primitives::{CurrencyCode, GiftCardId, GiftCardTransactionId};
 use strum::{Display, EnumString};
 
 /// Gift card status
@@ -56,7 +56,7 @@ pub struct GiftCard {
     /// Current remaining balance
     pub current_balance: Decimal,
     /// Currency code (e.g. "USD")
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Gift card status
     pub status: GiftCardStatus,
     /// Recipient email address
@@ -117,7 +117,7 @@ pub struct CreateGiftCard {
     /// Initial balance
     pub initial_balance: Decimal,
     /// Currency code
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Recipient email address
     pub recipient_email: Option<String>,
     /// Name of the sender
@@ -165,7 +165,7 @@ mod tests {
             code: "TEST-1234".to_string(),
             initial_balance: dec!(100.00),
             current_balance: dec!(100.00),
-            currency: "USD".to_string(),
+            currency: CurrencyCode::USD,
             status: GiftCardStatus::Active,
             recipient_email: None,
             sender_name: None,

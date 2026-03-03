@@ -5,7 +5,8 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use stateset_primitives::CurrencyCode;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -24,7 +25,7 @@ pub struct ItemCost {
     pub material_cost: Decimal,
     pub labor_cost: Decimal,
     pub overhead_cost: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub effective_date: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -121,46 +122,24 @@ pub struct CostRollup {
 // ============================================================================
 
 /// Inventory costing method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostMethod {
     #[default]
+    #[strum(serialize = "average", serialize = "avg")]
     Average,
     Fifo,
     Lifo,
+    #[strum(serialize = "standard", serialize = "std")]
     Standard,
     Specific,
 }
 
-impl std::fmt::Display for CostMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Average => write!(f, "average"),
-            Self::Fifo => write!(f, "fifo"),
-            Self::Lifo => write!(f, "lifo"),
-            Self::Standard => write!(f, "standard"),
-            Self::Specific => write!(f, "specific"),
-        }
-    }
-}
-
-impl FromStr for CostMethod {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "average" | "avg" => Ok(Self::Average),
-            "fifo" => Ok(Self::Fifo),
-            "lifo" => Ok(Self::Lifo),
-            "standard" | "std" => Ok(Self::Standard),
-            "specific" => Ok(Self::Specific),
-            _ => Err(format!("Unknown cost method: {}", s)),
-        }
-    }
-}
-
 /// Source of a cost layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostLayerSource {
@@ -169,37 +148,13 @@ pub enum CostLayerSource {
     Production,
     Transfer,
     Adjustment,
+    #[strum(serialize = "opening", serialize = "opening_balance")]
     Opening,
 }
 
-impl std::fmt::Display for CostLayerSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Purchase => write!(f, "purchase"),
-            Self::Production => write!(f, "production"),
-            Self::Transfer => write!(f, "transfer"),
-            Self::Adjustment => write!(f, "adjustment"),
-            Self::Opening => write!(f, "opening"),
-        }
-    }
-}
-
-impl FromStr for CostLayerSource {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "purchase" => Ok(Self::Purchase),
-            "production" => Ok(Self::Production),
-            "transfer" => Ok(Self::Transfer),
-            "adjustment" => Ok(Self::Adjustment),
-            "opening" | "opening_balance" => Ok(Self::Opening),
-            _ => Err(format!("Unknown cost layer source: {}", s)),
-        }
-    }
-}
-
 /// Cost transaction type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostTransactionType {
@@ -211,34 +166,9 @@ pub enum CostTransactionType {
     Revaluation,
 }
 
-impl std::fmt::Display for CostTransactionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Receipt => write!(f, "receipt"),
-            Self::Issue => write!(f, "issue"),
-            Self::Adjustment => write!(f, "adjustment"),
-            Self::Transfer => write!(f, "transfer"),
-            Self::Revaluation => write!(f, "revaluation"),
-        }
-    }
-}
-
-impl FromStr for CostTransactionType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "receipt" => Ok(Self::Receipt),
-            "issue" => Ok(Self::Issue),
-            "adjustment" => Ok(Self::Adjustment),
-            "transfer" => Ok(Self::Transfer),
-            "revaluation" => Ok(Self::Revaluation),
-            _ => Err(format!("Unknown cost transaction type: {}", s)),
-        }
-    }
-}
-
 /// Variance type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum VarianceType {
@@ -251,72 +181,24 @@ pub enum VarianceType {
     Volume,
 }
 
-impl std::fmt::Display for VarianceType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Purchase => write!(f, "purchase"),
-            Self::Material => write!(f, "material"),
-            Self::Labor => write!(f, "labor"),
-            Self::Overhead => write!(f, "overhead"),
-            Self::Efficiency => write!(f, "efficiency"),
-            Self::Volume => write!(f, "volume"),
-        }
-    }
-}
-
-impl FromStr for VarianceType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "purchase" => Ok(Self::Purchase),
-            "material" => Ok(Self::Material),
-            "labor" => Ok(Self::Labor),
-            "overhead" => Ok(Self::Overhead),
-            "efficiency" => Ok(Self::Efficiency),
-            "volume" => Ok(Self::Volume),
-            _ => Err(format!("Unknown variance type: {}", s)),
-        }
-    }
-}
-
 /// Cost adjustment type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostAdjustmentType {
     #[default]
+    #[strum(serialize = "standard_cost_update", serialize = "standardcostupdate")]
     StandardCostUpdate,
     Revaluation,
+    #[strum(serialize = "write_off", serialize = "writeoff")]
     WriteOff,
     Correction,
 }
 
-impl std::fmt::Display for CostAdjustmentType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::StandardCostUpdate => write!(f, "standard_cost_update"),
-            Self::Revaluation => write!(f, "revaluation"),
-            Self::WriteOff => write!(f, "write_off"),
-            Self::Correction => write!(f, "correction"),
-        }
-    }
-}
-
-impl FromStr for CostAdjustmentType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "standard_cost_update" | "standardcostupdate" => Ok(Self::StandardCostUpdate),
-            "revaluation" => Ok(Self::Revaluation),
-            "write_off" | "writeoff" => Ok(Self::WriteOff),
-            "correction" => Ok(Self::Correction),
-            _ => Err(format!("Unknown cost adjustment type: {}", s)),
-        }
-    }
-}
-
 /// Cost adjustment status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostAdjustmentStatus {
@@ -325,30 +207,6 @@ pub enum CostAdjustmentStatus {
     Approved,
     Applied,
     Rejected,
-}
-
-impl std::fmt::Display for CostAdjustmentStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Approved => write!(f, "approved"),
-            Self::Applied => write!(f, "applied"),
-            Self::Rejected => write!(f, "rejected"),
-        }
-    }
-}
-
-impl FromStr for CostAdjustmentStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "approved" => Ok(Self::Approved),
-            "applied" => Ok(Self::Applied),
-            "rejected" => Ok(Self::Rejected),
-            _ => Err(format!("Unknown cost adjustment status: {}", s)),
-        }
-    }
 }
 
 // ============================================================================
@@ -364,7 +222,7 @@ pub struct SetItemCost {
     pub material_cost: Option<Decimal>,
     pub labor_cost: Option<Decimal>,
     pub overhead_cost: Option<Decimal>,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
 }
 
 /// Input for creating a cost layer.
@@ -510,6 +368,7 @@ pub fn generate_cost_adjustment_number() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_cost_method_from_str() {

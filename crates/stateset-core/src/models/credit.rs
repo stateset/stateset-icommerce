@@ -5,8 +5,8 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CreditId, CustomerId, OrderId};
-use std::str::FromStr;
+use stateset_primitives::{CreditId, CurrencyCode, CustomerId, OrderId};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -22,7 +22,7 @@ pub struct CreditAccount {
     pub available_credit: Decimal,
     pub current_balance: Decimal,
     pub hold_amount: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub status: CreditAccountStatus,
     pub payment_terms: Option<String>,
     pub risk_rating: Option<RiskRating>,
@@ -107,35 +107,24 @@ pub struct CreditCheckResult {
 // ============================================================================
 
 /// Credit account status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditAccountStatus {
     #[default]
     Active,
     Suspended,
+    #[strum(serialize = "on_hold", serialize = "onhold")]
     OnHold,
     Closed,
+    #[strum(serialize = "pending_review", serialize = "pendingreview")]
     PendingReview,
 }
 
-impl FromStr for CreditAccountStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "active" => Ok(Self::Active),
-            "suspended" => Ok(Self::Suspended),
-            "on_hold" | "onhold" => Ok(Self::OnHold),
-            "closed" => Ok(Self::Closed),
-            "pending_review" | "pendingreview" => Ok(Self::PendingReview),
-            _ => Err(format!("Unknown credit account status: {}", s)),
-        }
-    }
-}
-
 /// Risk rating.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RiskRating {
@@ -146,71 +135,27 @@ pub enum RiskRating {
     Critical,
 }
 
-impl std::fmt::Display for RiskRating {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Low => write!(f, "low"),
-            Self::Medium => write!(f, "medium"),
-            Self::High => write!(f, "high"),
-            Self::Critical => write!(f, "critical"),
-        }
-    }
-}
-
-impl FromStr for RiskRating {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "low" => Ok(Self::Low),
-            "medium" => Ok(Self::Medium),
-            "high" => Ok(Self::High),
-            "critical" => Ok(Self::Critical),
-            _ => Err(format!("Unknown risk rating: {}", s)),
-        }
-    }
-}
-
 /// Credit hold type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditHoldType {
     #[default]
+    #[strum(serialize = "over_limit", serialize = "overlimit")]
     OverLimit,
+    #[strum(serialize = "past_due", serialize = "pastdue")]
     PastDue,
     Manual,
+    #[strum(serialize = "new_customer", serialize = "newcustomer")]
     NewCustomer,
+    #[strum(serialize = "high_risk", serialize = "highrisk")]
     HighRisk,
 }
 
-impl std::fmt::Display for CreditHoldType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::OverLimit => write!(f, "over_limit"),
-            Self::PastDue => write!(f, "past_due"),
-            Self::Manual => write!(f, "manual"),
-            Self::NewCustomer => write!(f, "new_customer"),
-            Self::HighRisk => write!(f, "high_risk"),
-        }
-    }
-}
-
-impl FromStr for CreditHoldType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "over_limit" | "overlimit" => Ok(Self::OverLimit),
-            "past_due" | "pastdue" => Ok(Self::PastDue),
-            "manual" => Ok(Self::Manual),
-            "new_customer" | "newcustomer" => Ok(Self::NewCustomer),
-            "high_risk" | "highrisk" => Ok(Self::HighRisk),
-            _ => Err(format!("Unknown credit hold type: {}", s)),
-        }
-    }
-}
-
 /// Credit hold status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditHoldStatus {
@@ -220,110 +165,40 @@ pub enum CreditHoldStatus {
     Expired,
 }
 
-impl std::fmt::Display for CreditHoldStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Active => write!(f, "active"),
-            Self::Released => write!(f, "released"),
-            Self::Expired => write!(f, "expired"),
-        }
-    }
-}
-
-impl FromStr for CreditHoldStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "active" => Ok(Self::Active),
-            "released" => Ok(Self::Released),
-            "expired" => Ok(Self::Expired),
-            _ => Err(format!("Unknown credit hold status: {}", s)),
-        }
-    }
-}
-
 /// Credit application status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditApplicationStatus {
     #[default]
     Pending,
+    #[strum(serialize = "under_review", serialize = "underreview")]
     UnderReview,
     Approved,
+    #[strum(serialize = "denied", serialize = "rejected")]
     Denied,
+    #[strum(serialize = "more_info_needed", serialize = "moreinfoneeded", serialize = "info_needed")]
     MoreInfoNeeded,
     Withdrawn,
 }
 
-impl std::fmt::Display for CreditApplicationStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::UnderReview => write!(f, "under_review"),
-            Self::Approved => write!(f, "approved"),
-            Self::Denied => write!(f, "denied"),
-            Self::MoreInfoNeeded => write!(f, "more_info_needed"),
-            Self::Withdrawn => write!(f, "withdrawn"),
-        }
-    }
-}
-
-impl FromStr for CreditApplicationStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "under_review" | "underreview" => Ok(Self::UnderReview),
-            "approved" => Ok(Self::Approved),
-            "denied" | "rejected" => Ok(Self::Denied),
-            "more_info_needed" | "moreinfoneeded" | "info_needed" => Ok(Self::MoreInfoNeeded),
-            "withdrawn" => Ok(Self::Withdrawn),
-            _ => Err(format!("Unknown credit application status: {}", s)),
-        }
-    }
-}
-
 /// Credit transaction type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditTransactionType {
     #[default]
     Charge,
     Payment,
+    #[strum(serialize = "credit_memo", serialize = "creditmemo")]
     CreditMemo,
     Adjustment,
+    #[strum(serialize = "write_off", serialize = "writeoff")]
     WriteOff,
+    #[strum(serialize = "limit_change", serialize = "limitchange")]
     LimitChange,
-}
-
-impl std::fmt::Display for CreditTransactionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Charge => write!(f, "charge"),
-            Self::Payment => write!(f, "payment"),
-            Self::CreditMemo => write!(f, "credit_memo"),
-            Self::Adjustment => write!(f, "adjustment"),
-            Self::WriteOff => write!(f, "write_off"),
-            Self::LimitChange => write!(f, "limit_change"),
-        }
-    }
-}
-
-impl FromStr for CreditTransactionType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "charge" => Ok(Self::Charge),
-            "payment" => Ok(Self::Payment),
-            "credit_memo" | "creditmemo" => Ok(Self::CreditMemo),
-            "adjustment" => Ok(Self::Adjustment),
-            "write_off" | "writeoff" => Ok(Self::WriteOff),
-            "limit_change" | "limitchange" => Ok(Self::LimitChange),
-            _ => Err(format!("Unknown credit transaction type: {}", s)),
-        }
-    }
 }
 
 // ============================================================================
@@ -335,7 +210,7 @@ impl FromStr for CreditTransactionType {
 pub struct CreateCreditAccount {
     pub customer_id: CustomerId,
     pub credit_limit: Decimal,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub payment_terms: Option<String>,
     pub risk_rating: Option<RiskRating>,
     pub notes: Option<String>,
@@ -493,6 +368,7 @@ pub fn generate_credit_application_number() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_credit_account_status_from_str() {

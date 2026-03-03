@@ -273,7 +273,7 @@ impl Customers {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "customer");
 
-        let customer = commerce.customers().get(uuid).map_err(|e| {
+        let customer = commerce.customers().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to get customer: {}", e))
         })?;
 
@@ -514,7 +514,7 @@ impl Orders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "order");
 
-        let order = commerce.orders().get(uuid).map_err(|e| {
+        let order = commerce.orders().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to get order: {}", e))
         })?;
 
@@ -759,7 +759,7 @@ impl Products {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "product");
 
-        let product = commerce.products().get(uuid).map_err(|e| {
+        let product = commerce.products().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to get product: {}", e))
         })?;
 
@@ -1059,7 +1059,7 @@ impl Returns {
             .parse::<stateset_core::ReturnReason>()
             .unwrap_or(stateset_core::ReturnReason::Other);
 
-        let order = commerce.orders().get(uuid).map_err(|e| {
+        let order = commerce.orders().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to fetch order: {}", e))
         })?;
 
@@ -1109,7 +1109,7 @@ impl Returns {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "return");
 
-        let ret = commerce.returns().get(uuid).map_err(|e| {
+        let ret = commerce.returns().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to get return: {}", e))
         })?;
 
@@ -1296,7 +1296,7 @@ impl Shipments {
     fn get(&self, id: String) -> Result<Option<Shipment>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "shipment");
-        let shipment = commerce.shipments().get(uuid).map_err(|e| {
+        let shipment = commerce.shipments().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to get shipment: {}", e))
         })?;
         Ok(shipment.map(|s| s.into()))
@@ -2642,7 +2642,7 @@ impl Carts {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "cart");
 
-        let cart = commerce.carts().get(uuid).map_err(|e| {
+        let cart = commerce.carts().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to get cart: {}", e))
         })?;
 
@@ -3105,7 +3105,7 @@ impl Subscriptions {
     fn get(&self, id: String) -> Result<Option<Subscription>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "subscription");
-        let sub = commerce.subscriptions().get(uuid).map_err(|e| {
+        let sub = commerce.subscriptions().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to get subscription: {}", e))
         })?;
         Ok(sub.map(|s| s.into()))
@@ -3302,7 +3302,7 @@ impl Promotions {
     fn get(&self, id: String) -> Result<Option<Promotion>, Error> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
-        let promo = commerce.promotions().get(uuid).map_err(|e| {
+        let promo = commerce.promotions().get(uuid.into()).map_err(|e| {
             Error::new(exception::runtime_error(), format!("Failed to get promotion: {}", e))
         })?;
         Ok(promo.map(|p| p.into()))

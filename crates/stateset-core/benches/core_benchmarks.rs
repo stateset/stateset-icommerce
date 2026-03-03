@@ -14,7 +14,7 @@ use stateset_core::models::{
     InventoryReservation, Order, OrderItem, OrderStatus, PaymentStatus, ReservationStatus,
 };
 use stateset_core::{BatchResult, CommerceError};
-use stateset_primitives::{CartId, CustomerId, OrderId, OrderItemId, ProductId};
+use stateset_primitives::{CartId, CurrencyCode, CustomerId, OrderId, OrderItemId, ProductId};
 
 fn create_test_order_item(idx: usize) -> OrderItem {
     OrderItem {
@@ -43,7 +43,7 @@ fn create_test_order(item_count: usize) -> Order {
         status: OrderStatus::Pending,
         order_date: Utc::now(),
         total_amount: total,
-        currency: "USD".to_string(),
+        currency: CurrencyCode::USD,
         payment_status: PaymentStatus::Pending,
         fulfillment_status: FulfillmentStatus::Unfulfilled,
         payment_method: Some("credit_card".to_string()),
@@ -103,7 +103,7 @@ fn create_test_cart(item_count: usize) -> Cart {
         cart_number: "CART-2024-001".to_string(),
         customer_id: Some(CustomerId::from(Uuid::new_v4())),
         status: CartStatus::Active,
-        currency: "USD".to_string(),
+        currency: CurrencyCode::USD,
         items,
         subtotal,
         tax_amount: tax,

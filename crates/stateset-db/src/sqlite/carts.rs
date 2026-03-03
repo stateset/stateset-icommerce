@@ -15,11 +15,12 @@ use rust_decimal::Decimal;
 use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
-    CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, CustomerRepository, OrderId,
-    OrderRepository, OrderStatus, PaymentStatus, ProductId, PromotionType, Result, SetCartPayment,
-    SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem, UpdateOrder,
-    X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData, X402IntentStatus,
-    X402PaymentRequiredData, validate_batch_size, validate_currency_code, validate_price,
+    CreateCustomer, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, CustomerRepository,
+    OrderId, OrderRepository, OrderStatus, PaymentStatus, ProductId, PromotionType, Result,
+    SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem,
+    UpdateOrder, X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData,
+    X402IntentStatus, X402PaymentRequiredData, validate_batch_size, validate_currency_code,
+    validate_price,
 };
 use uuid::Uuid;
 
@@ -438,7 +439,7 @@ impl CartRepository for SqliteCartRepository {
     fn create(&self, input: CreateCart) -> Result<Cart> {
         // Validate currency if provided
         if let Some(ref currency) = input.currency {
-            validate_currency_code(currency)?;
+            validate_currency_code(currency.as_str())?;
         }
 
         let mut conn = self.conn()?;
@@ -446,7 +447,7 @@ impl CartRepository for SqliteCartRepository {
         let id = CartId::new();
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
-        let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+        let currency = input.currency.clone().unwrap_or_default();
 
         let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
@@ -1004,7 +1005,7 @@ impl CartRepository for SqliteCartRepository {
                 service: "Ground".to_string(),
                 description: Some("Standard shipping (5-7 business days)".to_string()),
                 price: Decimal::new(599, 2), // $5.99
-                currency: "USD".to_string(),
+                currency: CurrencyCode::default(),
                 estimated_days: Some(7),
                 estimated_delivery: None,
             },
@@ -1014,7 +1015,7 @@ impl CartRepository for SqliteCartRepository {
                 service: "Express".to_string(),
                 description: Some("Express shipping (2-3 business days)".to_string()),
                 price: Decimal::new(1499, 2), // $14.99
-                currency: "USD".to_string(),
+                currency: CurrencyCode::default(),
                 estimated_days: Some(3),
                 estimated_delivery: None,
             },
@@ -1024,7 +1025,7 @@ impl CartRepository for SqliteCartRepository {
                 service: "Overnight".to_string(),
                 description: Some("Next business day delivery".to_string()),
                 price: Decimal::new(2999, 2), // $29.99
-                currency: "USD".to_string(),
+                currency: CurrencyCode::default(),
                 estimated_days: Some(1),
                 estimated_delivery: None,
             },
@@ -1563,7 +1564,7 @@ impl CartRepository for SqliteCartRepository {
             let id = CartId::new();
             let cart_number = Self::generate_cart_number();
             let now = Utc::now();
-            let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+            let currency = input.currency.clone().unwrap_or_default();
 
             let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 

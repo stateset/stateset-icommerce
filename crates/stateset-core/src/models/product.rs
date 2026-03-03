@@ -43,38 +43,32 @@ pub struct ProductVariant {
 }
 
 /// Product status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
 pub enum ProductStatus {
+    #[default]
     Draft,
     Active,
     Archived,
 }
 
-impl Default for ProductStatus {
-    fn default() -> Self {
-        Self::Draft
-    }
-}
-
 /// Product type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
 pub enum ProductType {
+    #[default]
     Simple,
     Variable,
     Bundle,
     Digital,
-}
-
-impl Default for ProductType {
-    fn default() -> Self {
-        Self::Simple
-    }
 }
 
 /// Product attribute

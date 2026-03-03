@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CustomerId, OrderId, OrderItemId, ProductId};
+use stateset_primitives::{CurrencyCode, CustomerId, OrderId, OrderItemId, ProductId};
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -16,7 +16,7 @@ pub struct Order {
     pub status: OrderStatus,
     pub order_date: DateTime<Utc>,
     pub total_amount: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub payment_status: PaymentStatus,
     pub fulfillment_status: FulfillmentStatus,
     pub payment_method: Option<String>,
@@ -62,11 +62,14 @@ pub struct Address {
 /// Order status enumeration.
 ///
 /// Uses [`strum`] derives for `Display` (`snake_case`) and `FromStr` (case-insensitive).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
 pub enum OrderStatus {
+    #[default]
     Pending,
     Confirmed,
     Processing,
@@ -75,12 +78,6 @@ pub enum OrderStatus {
     #[strum(serialize = "cancelled", serialize = "canceled")]
     Cancelled,
     Refunded,
-}
-
-impl Default for OrderStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 impl OrderStatus {
@@ -104,11 +101,14 @@ impl OrderStatus {
 /// Payment status enumeration.
 ///
 /// Uses [`strum`] derives for `Display` (`snake_case`) and `FromStr` (case-insensitive).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
 pub enum PaymentStatus {
+    #[default]
     Pending,
     Authorized,
     Paid,
@@ -120,20 +120,17 @@ pub enum PaymentStatus {
     Failed,
 }
 
-impl Default for PaymentStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
-}
-
 /// Fulfillment status enumeration.
 ///
 /// Uses [`strum`] derives for `Display` (`snake_case`) and `FromStr` (case-insensitive).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
 pub enum FulfillmentStatus {
+    #[default]
     Unfulfilled,
     #[strum(serialize = "partially_fulfilled", serialize = "partiallyfulfilled")]
     PartiallyFulfilled,
@@ -142,18 +139,12 @@ pub enum FulfillmentStatus {
     Delivered,
 }
 
-impl Default for FulfillmentStatus {
-    fn default() -> Self {
-        Self::Unfulfilled
-    }
-}
-
 /// Input for creating a new order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateOrder {
     pub customer_id: CustomerId,
     pub items: Vec<CreateOrderItem>,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub shipping_address: Option<Address>,
     pub billing_address: Option<Address>,
     pub notes: Option<String>,
@@ -316,7 +307,7 @@ mod tests {
             status,
             order_date: now,
             total_amount: total,
-            currency: "USD".to_string(),
+            currency: CurrencyCode::USD,
             payment_status,
             fulfillment_status: FulfillmentStatus::Unfulfilled,
             payment_method: Some("credit_card".to_string()),

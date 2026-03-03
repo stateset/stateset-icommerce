@@ -323,7 +323,7 @@ impl Customers {
 
         let customer = commerce
             .customers()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get customer: {}", e)))?;
 
         Ok(customer.map(|c| c.into()))
@@ -607,7 +607,7 @@ impl Orders {
 
         let order = commerce
             .orders()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get order: {}", e)))?;
 
         Ok(order.map(|o| o.into()))
@@ -892,7 +892,7 @@ impl Products {
 
         let product = commerce
             .products()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get product: {}", e)))?;
 
         Ok(product.map(|p| p.into()))
@@ -1238,7 +1238,7 @@ impl Returns {
 
         let ret = commerce
             .returns()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get return: {}", e)))?;
 
         Ok(ret.map(|r| r.into()))
@@ -1484,7 +1484,7 @@ impl Carts {
 
         let cart = commerce
             .carts()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get cart: {}", e)))?;
 
         Ok(cart.map(|c| c.into()))
@@ -1729,7 +1729,7 @@ impl Shipments {
 
         let shipment = commerce
             .shipments()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get shipment: {}", e)))?;
 
         Ok(shipment.map(|s| s.into()))
@@ -3530,7 +3530,7 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get subscription: {}", e)))?;
 
         Ok(subscription.map(|s| s.into()))
@@ -3768,7 +3768,7 @@ impl Promotions {
 
         let promotion = commerce
             .promotions()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::default(format!("Failed to get promotion: {}", e)))?;
 
         Ok(promotion.map(|p| p.into()))
@@ -4499,14 +4499,14 @@ impl Fulfillment {
         priority: i32,
     ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
-        let uuids: Result<Vec<_>, _> = order_ids.iter().map(|id| id.parse()).collect();
+        let uuids: Result<Vec<uuid::Uuid>, _> = order_ids.iter().map(|id| id.parse()).collect();
         let uuids = uuids.map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
 
         let wave = commerce
             .fulfillment()
             .create_wave(stateset_core::CreateWave {
                 warehouse_id,
-                order_ids: uuids,
+                order_ids: uuids.into_iter().map(|u| u.into()).collect(),
                 priority,
                 ..Default::default()
             })

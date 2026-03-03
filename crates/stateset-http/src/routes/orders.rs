@@ -46,7 +46,7 @@ pub(crate) async fn create_order(
     let input = CreateOrder {
         customer_id: req.customer_id,
         items: req.items.into_iter().map(into_core_order_item).collect(),
-        currency: req.currency,
+        currency: req.currency.map(|c| c.parse().unwrap_or_default()),
         shipping_address: req.shipping_address.map(Address::from),
         billing_address: req.billing_address.map(Address::from),
         notes: req.notes,

@@ -41,6 +41,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use strum::{Display, EnumString};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -65,30 +66,38 @@ pub const X402_DEFAULT_VALIDITY_SECONDS: u64 = 3600;
 // =============================================================================
 
 /// Supported blockchain networks for x402 payments
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum X402Network {
     /// Set Chain L2 (StateSet native) - primary network
     #[default]
+    #[strum(serialize = "set_chain", serialize = "set", serialize = "ssc")]
     SetChain,
     /// Set Chain testnet
+    #[strum(serialize = "set_chain_testnet", serialize = "set_testnet")]
     SetChainTestnet,
     /// Base L2 (Coinbase)
     Base,
     /// Arc L2 (Circle stablecoin-native)
     Arc,
     /// Arc testnet
+    #[strum(serialize = "arc_testnet", serialize = "arc-testnet")]
     ArcTestnet,
     /// Base Sepolia testnet
     BaseSepolia,
     /// Ethereum mainnet
+    #[strum(serialize = "ethereum", serialize = "eth", serialize = "mainnet")]
     Ethereum,
     /// Ethereum Sepolia testnet
+    #[strum(serialize = "ethereum_sepolia", serialize = "sepolia")]
     EthereumSepolia,
     /// Arbitrum One
+    #[strum(serialize = "arbitrum", serialize = "arb")]
     Arbitrum,
     /// Optimism
+    #[strum(serialize = "optimism", serialize = "op")]
     Optimism,
 }
 
@@ -118,62 +127,33 @@ impl X402Network {
     }
 }
 
-impl std::fmt::Display for X402Network {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SetChain => write!(f, "set_chain"),
-            Self::SetChainTestnet => write!(f, "set_chain_testnet"),
-            Self::Arc => write!(f, "arc"),
-            Self::ArcTestnet => write!(f, "arc_testnet"),
-            Self::Base => write!(f, "base"),
-            Self::BaseSepolia => write!(f, "base_sepolia"),
-            Self::Ethereum => write!(f, "ethereum"),
-            Self::EthereumSepolia => write!(f, "ethereum_sepolia"),
-            Self::Arbitrum => write!(f, "arbitrum"),
-            Self::Optimism => write!(f, "optimism"),
-        }
-    }
-}
-
-impl std::str::FromStr for X402Network {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "set_chain" | "set" | "ssc" => Ok(Self::SetChain),
-            "set_chain_testnet" | "set_testnet" => Ok(Self::SetChainTestnet),
-            "arc" => Ok(Self::Arc),
-            "arc_testnet" | "arc-testnet" => Ok(Self::ArcTestnet),
-            "base" => Ok(Self::Base),
-            "base_sepolia" => Ok(Self::BaseSepolia),
-            "ethereum" | "eth" | "mainnet" => Ok(Self::Ethereum),
-            "ethereum_sepolia" | "sepolia" => Ok(Self::EthereumSepolia),
-            "arbitrum" | "arb" => Ok(Self::Arbitrum),
-            "optimism" | "op" => Ok(Self::Optimism),
-            _ => Err(format!("Unknown x402 network: {}", s)),
-        }
-    }
-}
 
 /// Supported payment assets for x402
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum X402Asset {
     /// USD Coin (USDC) - primary stablecoin
     #[default]
+    #[strum(serialize = "USDC")]
     Usdc,
     /// Tether (USDT)
+    #[strum(serialize = "USDT", serialize = "TETHER")]
     Usdt,
     /// StateSet USD (ssUSD) - yield-bearing stablecoin
     #[serde(rename = "ssusd", alias = "ss_usd")]
+    #[strum(serialize = "ssUSD", serialize = "SSUSD", serialize = "SS_USD")]
     SsUsd,
     /// Wrapped StateSet USD (ERC-4626)
     #[serde(rename = "wssusd", alias = "wss_usd")]
+    #[strum(serialize = "wssUSD", serialize = "WSSUSD", serialize = "WSS_USD")]
     WssUsd,
     /// DAI stablecoin
+    #[strum(serialize = "DAI")]
     Dai,
     /// Native ETH (for gas)
+    #[strum(serialize = "ETH", serialize = "ETHER")]
     Eth,
 }
 
@@ -217,34 +197,6 @@ impl X402Asset {
     }
 }
 
-impl std::fmt::Display for X402Asset {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Usdc => write!(f, "USDC"),
-            Self::Usdt => write!(f, "USDT"),
-            Self::SsUsd => write!(f, "ssUSD"),
-            Self::WssUsd => write!(f, "wssUSD"),
-            Self::Dai => write!(f, "DAI"),
-            Self::Eth => write!(f, "ETH"),
-        }
-    }
-}
-
-impl std::str::FromStr for X402Asset {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "USDC" => Ok(Self::Usdc),
-            "USDT" | "TETHER" => Ok(Self::Usdt),
-            "SSUSD" | "SS_USD" => Ok(Self::SsUsd),
-            "WSSUSD" | "WSS_USD" => Ok(Self::WssUsd),
-            "DAI" => Ok(Self::Dai),
-            "ETH" | "ETHER" => Ok(Self::Eth),
-            _ => Err(format!("Unknown x402 asset: {}", s)),
-        }
-    }
-}
 
 // =============================================================================
 // x402 Payment Intent (Off-Chain Signed Payment Request)
@@ -294,33 +246,15 @@ impl std::str::FromStr for X402IntentStatus {
 }
 
 /// Direction of x402 credit ledger entries
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum X402CreditDirection {
+    #[strum(serialize = "credit", serialize = "cr")]
     Credit,
+    #[strum(serialize = "debit", serialize = "dr")]
     Debit,
-}
-
-impl std::fmt::Display for X402CreditDirection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Credit => write!(f, "credit"),
-            Self::Debit => write!(f, "debit"),
-        }
-    }
-}
-
-impl std::str::FromStr for X402CreditDirection {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "credit" | "cr" => Ok(Self::Credit),
-            "debit" | "dr" => Ok(Self::Debit),
-            _ => Err(format!("Unknown x402 credit direction: {}", s)),
-        }
-    }
 }
 
 /// x402 Payment Intent - A signed off-chain payment request
@@ -1170,6 +1104,7 @@ pub fn from_smallest_unit(amount: u64, asset: X402Asset) -> Decimal {
 // =============================================================================
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum X402CryptoError {
     #[error("missing field: {0}")]
     MissingField(&'static str),

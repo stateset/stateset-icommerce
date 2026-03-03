@@ -10,8 +10,10 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::CurrencyCode;
 use std::fmt;
 use std::str::FromStr;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -19,7 +21,8 @@ use uuid::Uuid;
 // ============================================================================
 
 /// GL Account type (follows standard accounting)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AccountType {
@@ -28,32 +31,6 @@ pub enum AccountType {
     Equity,
     Revenue,
     Expense,
-}
-
-impl fmt::Display for AccountType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Asset => write!(f, "asset"),
-            Self::Liability => write!(f, "liability"),
-            Self::Equity => write!(f, "equity"),
-            Self::Revenue => write!(f, "revenue"),
-            Self::Expense => write!(f, "expense"),
-        }
-    }
-}
-
-impl FromStr for AccountType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "asset" => Ok(Self::Asset),
-            "liability" => Ok(Self::Liability),
-            "equity" => Ok(Self::Equity),
-            "revenue" => Ok(Self::Revenue),
-            "expense" => Ok(Self::Expense),
-            _ => Err(format!("Unknown account type: {}", s)),
-        }
-    }
 }
 
 impl AccountType {
@@ -77,7 +54,8 @@ impl AccountType {
 }
 
 /// Balance side (debit or credit)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BalanceSide {
@@ -86,28 +64,9 @@ pub enum BalanceSide {
     Credit,
 }
 
-impl fmt::Display for BalanceSide {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Debit => write!(f, "debit"),
-            Self::Credit => write!(f, "credit"),
-        }
-    }
-}
-
-impl FromStr for BalanceSide {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "debit" => Ok(Self::Debit),
-            "credit" => Ok(Self::Credit),
-            _ => Err(format!("Unknown balance side: {}", s)),
-        }
-    }
-}
-
 /// Account sub-types for more granular classification
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AccountSubType {
@@ -146,82 +105,6 @@ pub enum AccountSubType {
     InterestExpense,
     TaxExpense,
     OtherExpense,
-}
-
-impl fmt::Display for AccountSubType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Cash => write!(f, "cash"),
-            Self::AccountsReceivable => write!(f, "accounts_receivable"),
-            Self::Inventory => write!(f, "inventory"),
-            Self::PrepaidExpense => write!(f, "prepaid_expense"),
-            Self::FixedAsset => write!(f, "fixed_asset"),
-            Self::AccumulatedDepreciation => write!(f, "accumulated_depreciation"),
-            Self::OtherCurrentAsset => write!(f, "other_current_asset"),
-            Self::OtherNonCurrentAsset => write!(f, "other_non_current_asset"),
-            Self::AccountsPayable => write!(f, "accounts_payable"),
-            Self::AccruedLiabilities => write!(f, "accrued_liabilities"),
-            Self::UnearnedRevenue => write!(f, "unearned_revenue"),
-            Self::ShortTermDebt => write!(f, "short_term_debt"),
-            Self::LongTermDebt => write!(f, "long_term_debt"),
-            Self::OtherCurrentLiability => write!(f, "other_current_liability"),
-            Self::OtherNonCurrentLiability => write!(f, "other_non_current_liability"),
-            Self::CommonStock => write!(f, "common_stock"),
-            Self::RetainedEarnings => write!(f, "retained_earnings"),
-            Self::OtherEquity => write!(f, "other_equity"),
-            Self::SalesRevenue => write!(f, "sales_revenue"),
-            Self::ServiceRevenue => write!(f, "service_revenue"),
-            Self::OtherRevenue => write!(f, "other_revenue"),
-            Self::CostOfGoodsSold => write!(f, "cost_of_goods_sold"),
-            Self::OperatingExpense => write!(f, "operating_expense"),
-            Self::Payroll => write!(f, "payroll"),
-            Self::RentExpense => write!(f, "rent_expense"),
-            Self::UtilitiesExpense => write!(f, "utilities_expense"),
-            Self::DepreciationExpense => write!(f, "depreciation_expense"),
-            Self::InterestExpense => write!(f, "interest_expense"),
-            Self::TaxExpense => write!(f, "tax_expense"),
-            Self::OtherExpense => write!(f, "other_expense"),
-        }
-    }
-}
-
-impl FromStr for AccountSubType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "cash" => Ok(Self::Cash),
-            "accounts_receivable" => Ok(Self::AccountsReceivable),
-            "inventory" => Ok(Self::Inventory),
-            "prepaid_expense" => Ok(Self::PrepaidExpense),
-            "fixed_asset" => Ok(Self::FixedAsset),
-            "accumulated_depreciation" => Ok(Self::AccumulatedDepreciation),
-            "other_current_asset" => Ok(Self::OtherCurrentAsset),
-            "other_non_current_asset" => Ok(Self::OtherNonCurrentAsset),
-            "accounts_payable" => Ok(Self::AccountsPayable),
-            "accrued_liabilities" => Ok(Self::AccruedLiabilities),
-            "unearned_revenue" => Ok(Self::UnearnedRevenue),
-            "short_term_debt" => Ok(Self::ShortTermDebt),
-            "long_term_debt" => Ok(Self::LongTermDebt),
-            "other_current_liability" => Ok(Self::OtherCurrentLiability),
-            "other_non_current_liability" => Ok(Self::OtherNonCurrentLiability),
-            "common_stock" => Ok(Self::CommonStock),
-            "retained_earnings" => Ok(Self::RetainedEarnings),
-            "other_equity" => Ok(Self::OtherEquity),
-            "sales_revenue" => Ok(Self::SalesRevenue),
-            "service_revenue" => Ok(Self::ServiceRevenue),
-            "other_revenue" => Ok(Self::OtherRevenue),
-            "cost_of_goods_sold" => Ok(Self::CostOfGoodsSold),
-            "operating_expense" => Ok(Self::OperatingExpense),
-            "payroll" => Ok(Self::Payroll),
-            "rent_expense" => Ok(Self::RentExpense),
-            "utilities_expense" => Ok(Self::UtilitiesExpense),
-            "depreciation_expense" => Ok(Self::DepreciationExpense),
-            "interest_expense" => Ok(Self::InterestExpense),
-            "tax_expense" => Ok(Self::TaxExpense),
-            "other_expense" => Ok(Self::OtherExpense),
-            _ => Err(format!("Unknown account sub-type: {}", s)),
-        }
-    }
 }
 
 /// Account status
@@ -443,7 +326,7 @@ pub struct GlAccount {
     pub is_header: bool,
     pub is_posting: bool,
     pub normal_balance: BalanceSide,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub status: AccountStatus,
     pub current_balance: Decimal,
     pub created_at: DateTime<Utc>,
@@ -569,7 +452,7 @@ pub struct JournalEntryLine {
     pub description: Option<String>,
     pub debit_amount: Decimal,
     pub credit_amount: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub reference_type: Option<String>,
     pub reference_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
@@ -724,7 +607,7 @@ pub struct CreateGlAccount {
     pub parent_account_id: Option<Uuid>,
     pub is_header: Option<bool>,
     pub is_posting: Option<bool>,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
 }
 
 /// Input for updating a general ledger account

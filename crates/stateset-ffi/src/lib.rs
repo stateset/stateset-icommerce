@@ -47,7 +47,7 @@
 //!
 //! ## ABI Versioning
 //!
-//! Call [`stateset_abi_version`] at load time and compare against the version
+//! Call `stateset_abi_version` at load time and compare against the version
 //! your bindings were generated for. See [`version`] module for details.
 
 pub mod api;

@@ -4,6 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -121,7 +122,8 @@ pub struct SerialHistory {
 }
 
 /// Type of serial number event
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SerialEventType {
@@ -154,71 +156,6 @@ pub enum SerialEventType {
 impl Default for SerialEventType {
     fn default() -> Self {
         Self::Created
-    }
-}
-
-impl std::fmt::Display for SerialEventType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Created => write!(f, "created"),
-            Self::Received => write!(f, "received"),
-            Self::LocationChanged => write!(f, "location_changed"),
-            Self::Reserved => write!(f, "reserved"),
-            Self::Released => write!(f, "released"),
-            Self::Picked => write!(f, "picked"),
-            Self::Packed => write!(f, "packed"),
-            Self::Shipped => write!(f, "shipped"),
-            Self::Delivered => write!(f, "delivered"),
-            Self::Sold => write!(f, "sold"),
-            Self::Activated => write!(f, "activated"),
-            Self::Returned => write!(f, "returned"),
-            Self::Repaired => write!(f, "repaired"),
-            Self::Serviced => write!(f, "serviced"),
-            Self::WarrantyClaimed => write!(f, "warranty_claimed"),
-            Self::Quarantined => write!(f, "quarantined"),
-            Self::QuarantineReleased => write!(f, "quarantine_released"),
-            Self::Scrapped => write!(f, "scrapped"),
-            Self::Recalled => write!(f, "recalled"),
-            Self::Lost => write!(f, "lost"),
-            Self::Found => write!(f, "found"),
-            Self::Transferred => write!(f, "transferred"),
-            Self::StatusChanged => write!(f, "status_changed"),
-            Self::AttributeUpdated => write!(f, "attribute_updated"),
-        }
-    }
-}
-
-impl std::str::FromStr for SerialEventType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "created" => Ok(Self::Created),
-            "received" => Ok(Self::Received),
-            "location_changed" => Ok(Self::LocationChanged),
-            "reserved" => Ok(Self::Reserved),
-            "released" => Ok(Self::Released),
-            "picked" => Ok(Self::Picked),
-            "packed" => Ok(Self::Packed),
-            "shipped" => Ok(Self::Shipped),
-            "delivered" => Ok(Self::Delivered),
-            "sold" => Ok(Self::Sold),
-            "activated" => Ok(Self::Activated),
-            "returned" => Ok(Self::Returned),
-            "repaired" => Ok(Self::Repaired),
-            "serviced" => Ok(Self::Serviced),
-            "warranty_claimed" => Ok(Self::WarrantyClaimed),
-            "quarantined" => Ok(Self::Quarantined),
-            "quarantine_released" => Ok(Self::QuarantineReleased),
-            "scrapped" => Ok(Self::Scrapped),
-            "recalled" => Ok(Self::Recalled),
-            "lost" => Ok(Self::Lost),
-            "found" => Ok(Self::Found),
-            "transferred" => Ok(Self::Transferred),
-            "status_changed" => Ok(Self::StatusChanged),
-            "attribute_updated" => Ok(Self::AttributeUpdated),
-            _ => Err(format!("Unknown serial event type: {}", s)),
-        }
     }
 }
 

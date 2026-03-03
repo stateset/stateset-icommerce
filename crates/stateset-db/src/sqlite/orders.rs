@@ -169,7 +169,7 @@ impl SqliteOrderRepository {
         validate_required_uuid("order.customer_id", input.customer_id.into_uuid())?;
 
         if let Some(ref currency) = input.currency {
-            validate_currency_code(currency)?;
+            validate_currency_code(currency.as_str())?;
         }
 
         if input.items.is_empty() {
@@ -292,7 +292,7 @@ impl SqliteOrderRepository {
         let id = OrderId::new();
         let order_number = Self::generate_order_number();
         let now = Utc::now();
-        let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+        let currency = input.currency.clone().unwrap_or_default();
 
         // Calculate total
         let total: Decimal = input
@@ -1099,7 +1099,7 @@ impl OrderRepository for SqliteOrderRepository {
             let id = OrderId::new();
             let order_number = Self::generate_order_number();
             let now = Utc::now();
-            let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+            let currency = input.currency.clone().unwrap_or_default();
 
             let total: Decimal = input
                 .items

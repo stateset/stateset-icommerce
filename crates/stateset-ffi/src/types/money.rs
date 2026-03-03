@@ -77,7 +77,7 @@ impl TryFrom<FfiMoney> for Money {
 /// Currently supports `USD` (`$`), `EUR` (`\u{20ac}`), `GBP` (`\u{00a3}`), and falls
 /// back to `"12.34 XYZ"` for other currencies.
 ///
-/// The caller **must** free the returned pointer with [`stateset_string_free`].
+/// The caller **must** free the returned pointer with `stateset_string_free`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub extern "C" fn stateset_money_format(money: FfiMoney) -> *mut c_char {

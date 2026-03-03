@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 /// Errors that can occur during VES cryptographic operations
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CryptoError {
     /// JCS does not support Infinity or `NaN` values
     #[error("JCS does not support Infinity or NaN")]

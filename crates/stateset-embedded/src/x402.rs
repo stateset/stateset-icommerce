@@ -624,7 +624,7 @@ impl X402 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stateset_core::{A2ASkill, ItemAvailability, QuotedItem};
+    use stateset_core::{A2ASkill, CurrencyCode, ItemAvailability, QuotedItem};
 
     fn setup_commerce() -> crate::Commerce {
         crate::Commerce::in_memory().unwrap()
@@ -970,7 +970,7 @@ mod tests {
                 }],
                 subtotal: rust_decimal_macros::dec!(19.99),
                 total: rust_decimal_macros::dec!(19.99),
-                currency: Some("USD".to_string()),
+                currency: Some(CurrencyCode::USD),
                 tax_amount: Some(rust_decimal::Decimal::ZERO),
                 shipping_amount: Some(rust_decimal::Decimal::ZERO),
                 discount_amount: Some(rust_decimal::Decimal::ZERO),
@@ -1130,7 +1130,7 @@ mod tests {
                 }],
                 subtotal: rust_decimal_macros::dec!(30.00),
                 total: rust_decimal_macros::dec!(30.00),
-                currency: Some("USD".to_string()),
+                currency: Some(CurrencyCode::USD),
                 tax_amount: Some(rust_decimal::Decimal::ZERO),
                 shipping_amount: Some(rust_decimal::Decimal::ZERO),
                 discount_amount: Some(rust_decimal::Decimal::ZERO),
@@ -1155,7 +1155,7 @@ mod tests {
                     quote_id: Some(quoted.id),
                     items: quoted.items.clone(),
                     total: quoted.total,
-                    currency: Some("USD".to_string()),
+                    currency: Some(CurrencyCode::USD),
                     fulfillment_type: Some("digital".to_string()),
                     notes: Some("mismatched seller".into()),
                     metadata: None,
@@ -1173,7 +1173,7 @@ mod tests {
                     quote_id: Some(quoted.id),
                     items: quoted.items.clone(),
                     total: quoted.total,
-                    currency: Some("EUR".to_string()),
+                    currency: Some(CurrencyCode::EUR),
                     fulfillment_type: Some("digital".to_string()),
                     notes: Some("mismatched currency".into()),
                     metadata: None,
@@ -1191,7 +1191,7 @@ mod tests {
                     quote_id: Some(quoted.id),
                     items: quoted.items.clone(),
                     total: quoted.total + rust_decimal::Decimal::ONE,
-                    currency: Some("USD".to_string()),
+                    currency: Some(CurrencyCode::USD),
                     fulfillment_type: Some("digital".to_string()),
                     notes: Some("mismatched total".into()),
                     metadata: None,
@@ -1268,7 +1268,7 @@ mod tests {
                     }],
                     subtotal: rust_decimal_macros::dec!(15.00),
                     total: rust_decimal_macros::dec!(15.00),
-                    currency: Some("USD".to_string()),
+                    currency: Some(CurrencyCode::USD),
                     tax_amount: Some(rust_decimal::Decimal::ZERO),
                     shipping_amount: Some(rust_decimal::Decimal::ZERO),
                     discount_amount: Some(rust_decimal::Decimal::ZERO),
@@ -1298,7 +1298,7 @@ mod tests {
                 }],
                 subtotal: rust_decimal_macros::dec!(15.00),
                 total: rust_decimal_macros::dec!(15.00),
-                currency: Some("USD".to_string()),
+                currency: Some(CurrencyCode::USD),
                 tax_amount: Some(rust_decimal::Decimal::ZERO),
                 shipping_amount: Some(rust_decimal::Decimal::ZERO),
                 discount_amount: Some(rust_decimal::Decimal::ZERO),
@@ -1374,7 +1374,7 @@ mod tests {
             shipping_amount: Some(rust_decimal::Decimal::ZERO),
             discount_amount: Some(rust_decimal::Decimal::ZERO),
             total: rust_decimal_macros::dec!(12.00),
-            currency: Some("USD".to_string()),
+            currency: Some(CurrencyCode::USD),
             payment_network: Some(X402Network::SetChain),
             payment_asset: Some(X402Asset::Usdc),
             shipping_address: None,

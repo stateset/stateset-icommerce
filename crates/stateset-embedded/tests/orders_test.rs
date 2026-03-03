@@ -7,6 +7,7 @@ use stateset_embedded::{
     CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderStatus, PaymentStatus,
     ReservationStatus, UpdateOrder,
 };
+use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================
@@ -241,12 +242,12 @@ fn test_create_order_with_currency() {
                 unit_price: dec!(29.99),
                 ..Default::default()
             }],
-            currency: Some("EUR".into()),
+            currency: Some(CurrencyCode::EUR),
             ..Default::default()
         })
         .expect("Failed to create order");
 
-    assert_eq!(order.currency, "EUR");
+    assert_eq!(order.currency, CurrencyCode::EUR);
 }
 
 #[test]
@@ -1061,7 +1062,7 @@ fn test_create_order_default_currency() {
         .expect("Failed to create order");
 
     // Default currency should be USD
-    assert_eq!(order.currency, "USD");
+    assert_eq!(order.currency, CurrencyCode::USD);
 }
 
 #[test]

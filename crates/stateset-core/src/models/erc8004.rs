@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 /// ERC-8004 registration file type URL (v1)
@@ -55,33 +56,14 @@ pub struct AgentRegistrationFile {
 // =============================================================================
 
 /// Type of proof used to set or update agent wallet ownership.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AgentWalletProofType {
+    #[strum(serialize = "eip712", serialize = "eip_712")]
     Eip712,
+    #[strum(serialize = "erc1271", serialize = "erc_1271")]
     Erc1271,
-}
-
-impl std::fmt::Display for AgentWalletProofType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Eip712 => write!(f, "eip712"),
-            Self::Erc1271 => write!(f, "erc1271"),
-        }
-    }
-}
-
-impl std::str::FromStr for AgentWalletProofType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "eip712" | "eip_712" => Ok(Self::Eip712),
-            "erc1271" | "erc_1271" => Ok(Self::Erc1271),
-            _ => Err(format!("Unknown agent wallet proof type: {}", s)),
-        }
-    }
 }
 
 /// Identity record for an on-chain ERC-8004 agent.

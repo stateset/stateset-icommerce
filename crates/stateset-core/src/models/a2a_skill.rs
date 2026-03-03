@@ -6,6 +6,8 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::CurrencyCode;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 use super::agent_card::TrustLevel;
@@ -131,7 +133,7 @@ pub struct RequestQuoteOutput {
     /// Total amount
     pub total: Decimal,
     /// Currency code
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Payment network for this quote
     pub payment_network: X402Network,
     /// Payment asset for this quote
@@ -166,7 +168,8 @@ pub struct QuotedItem {
 }
 
 /// Quote status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum QuoteStatus {
@@ -183,19 +186,6 @@ pub enum QuoteStatus {
     Expired,
     /// Quote was converted to purchase
     Purchased,
-}
-
-impl std::fmt::Display for QuoteStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Quoted => write!(f, "quoted"),
-            Self::Accepted => write!(f, "accepted"),
-            Self::Rejected => write!(f, "rejected"),
-            Self::Expired => write!(f, "expired"),
-            Self::Purchased => write!(f, "purchased"),
-        }
-    }
 }
 
 /// Item availability status
@@ -347,7 +337,7 @@ pub struct A2AQuote {
     pub shipping_amount: Decimal,
     pub discount_amount: Decimal,
     pub total: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub payment_network: Option<X402Network>,
     pub payment_asset: Option<X402Asset>,
     pub shipping_address: Option<CartAddress>,
@@ -378,7 +368,7 @@ pub struct A2APurchase {
     pub payment_intent_id: Option<Uuid>,
     pub items: Vec<QuotedItem>,
     pub total: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     pub fulfillment_type: Option<String>,
     pub tracking_info: Option<String>,
     pub delivered_at: Option<DateTime<Utc>>,
@@ -409,7 +399,7 @@ pub struct CreateA2AQuote {
     pub shipping_amount: Option<Decimal>,
     pub discount_amount: Option<Decimal>,
     pub total: Decimal,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub payment_network: Option<X402Network>,
     pub payment_asset: Option<X402Asset>,
     pub shipping_address: Option<CartAddress>,
@@ -427,7 +417,7 @@ pub struct CreateA2APurchase {
     pub payment_intent_id: Option<Uuid>,
     pub items: Vec<QuotedItem>,
     pub total: Decimal,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub fulfillment_type: Option<String>,
     pub notes: Option<String>,
     pub metadata: Option<String>,

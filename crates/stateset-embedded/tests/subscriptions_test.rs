@@ -6,6 +6,7 @@ use stateset_embedded::{
     CreateSubscriptionPlan, CustomerId, PauseSubscription, PlanStatus, SkipBillingCycle,
     SubscriptionFilter, SubscriptionPlanFilter, SubscriptionStatus, UpdateSubscriptionPlan,
 };
+use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================
@@ -22,7 +23,7 @@ fn test_create_subscription_plan() {
             name: "Monthly Coffee Box".into(),
             billing_interval: BillingInterval::Monthly,
             price: dec!(29.99),
-            currency: Some("USD".into()),
+            currency: Some(CurrencyCode::USD),
             trial_days: Some(14),
             description: Some("Fresh roasted coffee delivered monthly".into()),
             ..Default::default()
@@ -34,7 +35,7 @@ fn test_create_subscription_plan() {
     assert_eq!(plan.name, "Monthly Coffee Box");
     assert_eq!(plan.billing_interval, BillingInterval::Monthly);
     assert_eq!(plan.price, dec!(29.99));
-    assert_eq!(plan.currency, "USD");
+    assert_eq!(plan.currency, CurrencyCode::USD);
     assert_eq!(plan.trial_days, 14);
     assert_eq!(plan.status, PlanStatus::Draft);
 }

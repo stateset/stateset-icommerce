@@ -8,6 +8,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -15,7 +16,8 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Type of warehouse
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WarehouseType {
@@ -27,6 +29,7 @@ pub enum WarehouseType {
     /// Retail store with inventory
     Retail,
     /// Third-party logistics provider
+    #[strum(serialize = "third_party", serialize = "thirdparty")]
     ThirdParty,
     /// Consignment warehouse
     Consignment,
@@ -34,39 +37,9 @@ pub enum WarehouseType {
     Returns,
 }
 
-impl std::fmt::Display for WarehouseType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Distribution => write!(f, "distribution"),
-            Self::Manufacturing => write!(f, "manufacturing"),
-            Self::Retail => write!(f, "retail"),
-            Self::ThirdParty => write!(f, "third_party"),
-            Self::Consignment => write!(f, "consignment"),
-            Self::Returns => write!(f, "returns"),
-        }
-    }
-}
-
-impl std::str::FromStr for WarehouseType {
-    type Err = crate::CommerceError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "distribution" => Ok(Self::Distribution),
-            "manufacturing" => Ok(Self::Manufacturing),
-            "retail" => Ok(Self::Retail),
-            "third_party" | "thirdparty" => Ok(Self::ThirdParty),
-            "consignment" => Ok(Self::Consignment),
-            "returns" => Ok(Self::Returns),
-            _ => {
-                Err(crate::CommerceError::ValidationError(format!("Invalid warehouse type: {}", s)))
-            }
-        }
-    }
-}
-
 /// Type of location within a warehouse
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum LocationType {
@@ -90,46 +63,8 @@ pub enum LocationType {
     /// Packing station
     Packing,
     /// Cross-docking area
+    #[strum(serialize = "cross_dock", serialize = "crossdock")]
     CrossDock,
-}
-
-impl std::fmt::Display for LocationType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Bulk => write!(f, "bulk"),
-            Self::Pick => write!(f, "pick"),
-            Self::Staging => write!(f, "staging"),
-            Self::Receiving => write!(f, "receiving"),
-            Self::Shipping => write!(f, "shipping"),
-            Self::Quarantine => write!(f, "quarantine"),
-            Self::Returns => write!(f, "returns"),
-            Self::Production => write!(f, "production"),
-            Self::Packing => write!(f, "packing"),
-            Self::CrossDock => write!(f, "cross_dock"),
-        }
-    }
-}
-
-impl std::str::FromStr for LocationType {
-    type Err = crate::CommerceError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "bulk" => Ok(Self::Bulk),
-            "pick" => Ok(Self::Pick),
-            "staging" => Ok(Self::Staging),
-            "receiving" => Ok(Self::Receiving),
-            "shipping" => Ok(Self::Shipping),
-            "quarantine" => Ok(Self::Quarantine),
-            "returns" => Ok(Self::Returns),
-            "production" => Ok(Self::Production),
-            "packing" => Ok(Self::Packing),
-            "cross_dock" | "crossdock" => Ok(Self::CrossDock),
-            _ => {
-                Err(crate::CommerceError::ValidationError(format!("Invalid location type: {}", s)))
-            }
-        }
-    }
 }
 
 // ============================================================================

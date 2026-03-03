@@ -11,7 +11,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CustomerId, OrderId, ProductId, SubscriptionId};
+use stateset_primitives::{CurrencyCode, CustomerId, OrderId, ProductId, SubscriptionId};
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -247,7 +247,7 @@ pub struct SubscriptionPlan {
     pub price: Decimal,
     /// Setup/activation fee (charged once)
     pub setup_fee: Option<Decimal>,
-    pub currency: String,
+    pub currency: CurrencyCode,
 
     // Trial configuration
     /// Trial period in days (0 = no trial)
@@ -318,7 +318,7 @@ pub struct Subscription {
     pub custom_interval_days: Option<i32>,
     /// Current price per cycle
     pub price: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Payment method ID (from payment provider)
     pub payment_method_id: Option<String>,
 
@@ -407,7 +407,7 @@ pub struct BillingCycle {
     pub discount: Decimal,
     pub tax: Decimal,
     pub total: Decimal,
-    pub currency: String,
+    pub currency: CurrencyCode,
 
     // Payment
     /// Payment ID from payment provider
@@ -459,7 +459,7 @@ pub struct CreateSubscriptionPlan {
     pub custom_interval_days: Option<i32>,
     pub price: Decimal,
     pub setup_fee: Option<Decimal>,
-    pub currency: Option<String>,
+    pub currency: Option<CurrencyCode>,
     pub trial_days: Option<i32>,
     pub trial_requires_payment_method: Option<bool>,
     pub min_cycles: Option<i32>,

@@ -377,7 +377,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 input.country,
                 input.tax_id,
                 input.payment_terms.unwrap_or_default().to_string(),
-                input.currency.unwrap_or_else(|| "USD".to_string()),
+                input.currency.unwrap_or_default(),
                 input.lead_time_days,
                 input.minimum_order.map(|d| d.to_string()),
                 1,

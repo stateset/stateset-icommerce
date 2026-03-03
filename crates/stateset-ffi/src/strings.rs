@@ -1,7 +1,7 @@
 //! FFI-safe string handling.
 //!
 //! All string-returning functions in the C API return `*mut c_char` that the
-//! caller **must** free with [`stateset_string_free`]. This module provides
+//! caller **must** free with `stateset_string_free`. This module provides
 //! the allocation and conversion helpers.
 
 use std::ffi::{CStr, CString};
@@ -16,7 +16,7 @@ use crate::error::{FfiErrorCode, catch_ffi_void, set_last_error};
 /// Allocate a new C string from a Rust `&str`.
 ///
 /// The caller owns the returned pointer and **must** free it with
-/// [`stateset_string_free`].
+/// `stateset_string_free`.
 ///
 /// Returns `null` if the string contains interior null bytes (which would
 /// be a bug in our domain types).

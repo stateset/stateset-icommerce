@@ -393,6 +393,7 @@ pub use stateset_core::{
     // Currency types
     ConversionResult,
     ConvertCurrency,
+    CurrencyCode,
     // Cost Accounting types
     CostAdjustment,
     CostAdjustmentFilter,

@@ -64,7 +64,7 @@ impl GeneralLedger {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateGlAccount, AccountType, AccountSubType};
+    /// use stateset_embedded::{Commerce, CreateGlAccount, AccountType, AccountSubType, CurrencyCode};
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
@@ -75,7 +75,7 @@ impl GeneralLedger {
     ///     account_type: AccountType::Asset,
     ///     account_sub_type: Some(AccountSubType::Cash),
     ///     is_posting: Some(true),
-    ///     currency: Some("USD".into()),
+    ///     currency: Some(CurrencyCode::USD),
     ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())

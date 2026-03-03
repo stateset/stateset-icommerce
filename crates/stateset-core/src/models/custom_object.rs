@@ -10,52 +10,28 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 use crate::{CommerceError, Result, validate_required_text, validate_sku};
 
 /// Custom object field type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CustomFieldType {
     String,
+    #[strum(serialize = "integer", serialize = "int")]
     Integer,
+    #[strum(serialize = "decimal", serialize = "number")]
     Decimal,
+    #[strum(serialize = "boolean", serialize = "bool")]
     Boolean,
+    #[strum(serialize = "date_time", serialize = "datetime")]
     DateTime,
     Uuid,
     Json,
-}
-
-impl std::fmt::Display for CustomFieldType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::String => write!(f, "string"),
-            Self::Integer => write!(f, "integer"),
-            Self::Decimal => write!(f, "decimal"),
-            Self::Boolean => write!(f, "boolean"),
-            Self::DateTime => write!(f, "date_time"),
-            Self::Uuid => write!(f, "uuid"),
-            Self::Json => write!(f, "json"),
-        }
-    }
-}
-
-impl std::str::FromStr for CustomFieldType {
-    type Err = String;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "string" => Ok(Self::String),
-            "integer" | "int" => Ok(Self::Integer),
-            "decimal" | "number" => Ok(Self::Decimal),
-            "boolean" | "bool" => Ok(Self::Boolean),
-            "date_time" | "datetime" => Ok(Self::DateTime),
-            "uuid" => Ok(Self::Uuid),
-            "json" => Ok(Self::Json),
-            _ => Err(format!("Unknown custom field type: {}", s)),
-        }
-    }
 }
 
 /// Field definition inside a custom object type.

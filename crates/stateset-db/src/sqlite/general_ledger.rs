@@ -218,7 +218,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     input.is_header.unwrap_or(false) as i32,
                     input.is_posting.unwrap_or(true) as i32,
                     normal_balance.to_string(),
-                    input.currency.unwrap_or_else(|| "USD".to_string()),
+                    input.currency.unwrap_or_default(),
                     AccountStatus::Active.to_string(),
                     "0",
                     now.to_rfc3339(),

@@ -1,8 +1,8 @@
 use chrono::Utc;
 use rust_decimal_macros::dec;
 use stateset_core::{
-    JournalEntry, JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType,
-    ReceivePurchaseOrderItem,
+    CurrencyCode, JournalEntry, JournalEntryLine, JournalEntrySource, JournalEntryStatus,
+    JournalEntryType, ReceivePurchaseOrderItem,
 };
 use stateset_embedded::{
     Commerce, CostLayerSource, CreateBill, CreateBillItem, CreateCostLayer, CreatePurchaseOrder,
@@ -180,7 +180,7 @@ fn create_journal_entry_rejects_line_with_debit_and_credit() {
         description: Some("Invalid line".into()),
         debit_amount: dec!(50),
         credit_amount: dec!(50),
-        currency: "USD".into(),
+        currency: CurrencyCode::USD,
         reference_type: None,
         reference_id: None,
         created_at: now,

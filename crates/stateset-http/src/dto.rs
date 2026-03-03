@@ -324,7 +324,7 @@ impl From<stateset_core::Order> for OrderResponse {
             customer_id: o.customer_id,
             status: o.status.to_string(),
             total_amount: o.total_amount,
-            currency: o.currency,
+            currency: o.currency.to_string(),
             payment_status: o.payment_status.to_string(),
             fulfillment_status: o.fulfillment_status.to_string(),
             items: o.items.into_iter().map(OrderItemResponse::from).collect(),

@@ -47,38 +47,32 @@ pub struct CustomerAddress {
 }
 
 /// Customer status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
 pub enum CustomerStatus {
+    #[default]
     Active,
     Inactive,
     Suspended,
     Deleted,
 }
 
-impl Default for CustomerStatus {
-    fn default() -> Self {
-        Self::Active
-    }
-}
-
 /// Address type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[non_exhaustive]
 pub enum AddressType {
     Shipping,
     Billing,
+    #[default]
     Both,
-}
-
-impl Default for AddressType {
-    fn default() -> Self {
-        Self::Both
-    }
 }
 
 /// Input for creating a customer

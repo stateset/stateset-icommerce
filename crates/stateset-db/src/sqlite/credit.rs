@@ -245,7 +245,7 @@ impl CreditRepository for SqliteCreditRepository {
     fn create_credit_account(&self, input: CreateCreditAccount) -> Result<CreditAccount> {
         let id = CreditId::new();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or_else(|| "USD".to_string());
+        let currency = input.currency.unwrap_or_default();
 
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;

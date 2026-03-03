@@ -63,7 +63,7 @@ impl Payments {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use stateset_embedded::{Commerce, CreatePayment, PaymentMethodType, CardBrand, OrderId};
+    /// use stateset_embedded::{Commerce, CreatePayment, PaymentMethodType, CardBrand, OrderId, CurrencyCode};
     /// use rust_decimal_macros::dec;
     ///
     /// let commerce = Commerce::new("./store.db")?;
@@ -72,7 +72,7 @@ impl Payments {
     ///     order_id: Some(OrderId::new()),
     ///     payment_method: PaymentMethodType::CreditCard,
     ///     amount: dec!(149.99),
-    ///     currency: Some("USD".into()),
+    ///     currency: Some(CurrencyCode::USD),
     ///     card_brand: Some(CardBrand::Visa),
     ///     card_last4: Some("4242".into()),
     ///     billing_email: Some("customer@example.com".into()),

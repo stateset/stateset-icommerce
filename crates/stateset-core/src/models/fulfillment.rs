@@ -7,6 +7,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::{FulfillmentId, OrderId, OrderItemId, ShipmentId};
 use std::str::FromStr;
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -14,7 +15,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// A wave groups multiple orders for efficient picking.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wave {
     pub id: FulfillmentId,
     pub wave_number: String,
@@ -33,7 +34,7 @@ pub struct Wave {
 }
 
 /// A pick task for retrieving items from warehouse locations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PickTask {
     pub id: Uuid,
     pub wave_id: Option<FulfillmentId>,
@@ -61,7 +62,7 @@ pub struct PickTask {
 }
 
 /// A pack task for packaging picked items.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackTask {
     pub id: Uuid,
     pub order_id: OrderId,
@@ -79,7 +80,7 @@ pub struct PackTask {
 }
 
 /// A carton/package within a pack task.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Carton {
     pub id: Uuid,
     pub pack_task_id: Uuid,
@@ -95,7 +96,7 @@ pub struct Carton {
 }
 
 /// Item in a carton.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CartonItem {
     pub id: Uuid,
     pub carton_id: Uuid,
@@ -106,7 +107,7 @@ pub struct CartonItem {
 }
 
 /// A ship task for final shipping handoff.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShipTask {
     pub id: Uuid,
     pub order_id: OrderId,
@@ -130,7 +131,7 @@ pub struct ShipTask {
 // ============================================================================
 
 /// Status of a wave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -158,7 +159,7 @@ impl FromStr for WaveStatus {
 }
 
 /// Status of a pick task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -188,7 +189,7 @@ impl FromStr for PickStatus {
 }
 
 /// Status of a pack task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -218,7 +219,7 @@ impl FromStr for PackStatus {
 }
 
 /// Status of a ship task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ShipStatus {
@@ -257,7 +258,8 @@ impl FromStr for ShipStatus {
 }
 
 /// Package type for cartons.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PackageType {
@@ -269,34 +271,9 @@ pub enum PackageType {
     Custom,
 }
 
-impl std::fmt::Display for PackageType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Box => write!(f, "box"),
-            Self::Envelope => write!(f, "envelope"),
-            Self::Tube => write!(f, "tube"),
-            Self::Pallet => write!(f, "pallet"),
-            Self::Custom => write!(f, "custom"),
-        }
-    }
-}
-
-impl FromStr for PackageType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "box" => Ok(Self::Box),
-            "envelope" => Ok(Self::Envelope),
-            "tube" => Ok(Self::Tube),
-            "pallet" => Ok(Self::Pallet),
-            "custom" => Ok(Self::Custom),
-            _ => Err(format!("Unknown package type: {}", s)),
-        }
-    }
-}
-
 /// Type of wave for order grouping
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WaveType {
@@ -308,31 +285,8 @@ pub enum WaveType {
     /// Zone-based wave planning
     Zone,
     /// Single order waves
+    #[strum(serialize = "single", serialize = "single_order", serialize = "singleorder")]
     Single,
-}
-
-impl std::fmt::Display for WaveType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Batch => write!(f, "batch"),
-            Self::Priority => write!(f, "priority"),
-            Self::Zone => write!(f, "zone"),
-            Self::Single => write!(f, "single"),
-        }
-    }
-}
-
-impl FromStr for WaveType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "batch" => Ok(Self::Batch),
-            "priority" => Ok(Self::Priority),
-            "zone" => Ok(Self::Zone),
-            "single" | "single_order" | "singleorder" => Ok(Self::Single),
-            _ => Err(format!("Unknown wave type: {}", s)),
-        }
-    }
 }
 
 // ============================================================================

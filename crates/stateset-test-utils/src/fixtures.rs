@@ -10,6 +10,7 @@
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::CustomerId;
+use stateset_primitives::CurrencyCode;
 use uuid::Uuid;
 
 use stateset_core::{OrderId, OrderItemId, ProductId};
@@ -132,13 +133,13 @@ pub fn create_order_item_with(sku: &str, quantity: i32, unit_price: Decimal) -> 
 /// ```rust
 /// let order = stateset_test_utils::fixtures::create_order_input(stateset_core::CustomerId::new());
 /// assert_eq!(order.items.len(), 1);
-/// assert_eq!(order.currency, Some("USD".to_string()));
+/// assert_eq!(order.currency, Some(stateset_primitives::CurrencyCode::USD));
 /// ```
 pub fn create_order_input(customer_id: CustomerId) -> CreateOrder {
     CreateOrder {
         customer_id,
         items: vec![create_order_item_input()],
-        currency: Some("USD".into()),
+        currency: Some(CurrencyCode::USD),
         shipping_address: Some(test_address()),
         billing_address: None,
         notes: None,
@@ -155,7 +156,7 @@ pub fn create_order_with_items(
     CreateOrder {
         customer_id,
         items,
-        currency: Some("USD".into()),
+        currency: Some(CurrencyCode::USD),
         shipping_address: Some(test_address()),
         billing_address: None,
         notes: None,
@@ -251,13 +252,13 @@ pub fn create_inventory_with(sku: &str, quantity: Decimal) -> CreateInventoryIte
 ///
 /// ```rust
 /// let input = stateset_test_utils::fixtures::create_gift_card_input();
-/// assert_eq!(input.currency, "USD");
+/// assert_eq!(input.currency, stateset_primitives::CurrencyCode::USD);
 /// ```
 pub fn create_gift_card_input() -> CreateGiftCard {
     CreateGiftCard {
         code: None,
         initial_balance: dec!(100.00),
-        currency: "USD".to_string(),
+        currency: CurrencyCode::USD,
         recipient_email: Some("recipient@example.com".to_string()),
         sender_name: Some("Test Sender".to_string()),
         message: Some("Happy Birthday!".to_string()),
@@ -273,13 +274,13 @@ pub fn create_gift_card_input() -> CreateGiftCard {
 ///
 /// ```rust
 /// let input = stateset_test_utils::fixtures::create_store_credit_input(stateset_core::CustomerId::new());
-/// assert_eq!(input.currency, "USD");
+/// assert_eq!(input.currency, stateset_primitives::CurrencyCode::USD);
 /// ```
 pub fn create_store_credit_input(customer_id: CustomerId) -> CreateStoreCredit {
     CreateStoreCredit {
         customer_id,
         amount: dec!(50.00),
-        currency: "USD".to_string(),
+        currency: CurrencyCode::USD,
         reason: StoreCreditReason::Return,
         reference_id: Some("RET-001".to_string()),
         note: Some("Refund for returned item".to_string()),
@@ -440,7 +441,7 @@ pub fn create_payment_input(order_id: OrderId) -> CreatePayment {
         customer_id: Some(CustomerId::new()),
         payment_method: PaymentMethodType::CreditCard,
         amount: dec!(59.98),
-        currency: Some("USD".into()),
+        currency: Some(CurrencyCode::USD),
         processor: Some("stripe".into()),
         description: Some("Test payment".into()),
         ..Default::default()
@@ -532,7 +533,7 @@ pub fn create_subscription_plan_input() -> CreateSubscriptionPlan {
         custom_interval_days: None,
         price: dec!(29.99),
         setup_fee: None,
-        currency: Some("USD".into()),
+        currency: Some(CurrencyCode::USD),
         trial_days: Some(14),
         trial_requires_payment_method: Some(true),
         min_cycles: None,
@@ -581,7 +582,7 @@ pub fn create_subscription_input(customer_id: CustomerId, plan_id: Uuid) -> Crea
 ///
 /// ```rust
 /// let input = stateset_test_utils::fixtures::create_cart_input(None);
-/// assert_eq!(input.currency, Some("USD".to_string()));
+/// assert_eq!(input.currency, Some(stateset_primitives::CurrencyCode::USD));
 /// ```
 pub fn create_cart_input(customer_id: Option<CustomerId>) -> CreateCart {
     CreateCart {
@@ -592,7 +593,7 @@ pub fn create_cart_input(customer_id: Option<CustomerId>) -> CreateCart {
             None
         },
         customer_name: if customer_id.is_none() { Some("Guest User".into()) } else { None },
-        currency: Some("USD".into()),
+        currency: Some(CurrencyCode::USD),
         items: Some(vec![AddCartItem {
             product_id: Some(ProductId::new()),
             variant_id: None,
@@ -704,7 +705,7 @@ mod tests {
     #[test]
     fn gift_card_input_is_valid() {
         let gc = create_gift_card_input();
-        assert_eq!(gc.currency, "USD");
+        assert_eq!(gc.currency, stateset_primitives::CurrencyCode::USD);
         assert_eq!(gc.initial_balance, dec!(100.00));
         assert_eq!(gc.recipient_email.as_deref(), Some("recipient@example.com"));
         assert!(gc.code.is_none(), "code should be auto-generated");
@@ -715,7 +716,7 @@ mod tests {
         let customer_id = CustomerId::new();
         let sc = create_store_credit_input(customer_id);
         assert_eq!(sc.customer_id, customer_id);
-        assert_eq!(sc.currency, "USD");
+        assert_eq!(sc.currency, stateset_primitives::CurrencyCode::USD);
         assert_eq!(sc.amount, dec!(50.00));
     }
 
@@ -784,7 +785,7 @@ mod tests {
         let payment = create_payment_input(order_id);
         assert_eq!(payment.order_id, Some(order_id));
         assert_eq!(payment.amount, dec!(59.98));
-        assert_eq!(payment.currency, Some("USD".to_string()));
+        assert_eq!(payment.currency, Some(stateset_primitives::CurrencyCode::USD));
         assert_eq!(payment.payment_method, PaymentMethodType::CreditCard);
         assert!(payment.customer_id.is_some());
     }
@@ -819,7 +820,7 @@ mod tests {
         assert_eq!(plan.price, dec!(29.99));
         assert_eq!(plan.billing_interval, BillingInterval::Monthly);
         assert_eq!(plan.trial_days, Some(14));
-        assert_eq!(plan.currency, Some("USD".to_string()));
+        assert_eq!(plan.currency, Some(stateset_primitives::CurrencyCode::USD));
         assert!(plan.code.is_some());
     }
 
@@ -839,7 +840,7 @@ mod tests {
         let customer_id = CustomerId::new();
         let cart = create_cart_input(Some(customer_id));
         assert_eq!(cart.customer_id, Some(customer_id));
-        assert_eq!(cart.currency, Some("USD".to_string()));
+        assert_eq!(cart.currency, Some(stateset_primitives::CurrencyCode::USD));
         assert!(cart.items.is_some());
         assert_eq!(cart.items.as_ref().unwrap().len(), 1);
         assert_eq!(cart.items.as_ref().unwrap()[0].sku, "CART-SKU-001");

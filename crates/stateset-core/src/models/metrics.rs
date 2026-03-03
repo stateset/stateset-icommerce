@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use strum::{Display, EnumString};
 
 // ============================================================================
 // Metric Types
@@ -416,7 +417,8 @@ impl Default for CommerceMetrics {
 // ============================================================================
 
 /// Log level for structured logging
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum LogLevel {
@@ -430,18 +432,6 @@ pub enum LogLevel {
 impl Default for LogLevel {
     fn default() -> Self {
         Self::Info
-    }
-}
-
-impl std::fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Trace => write!(f, "trace"),
-            Self::Debug => write!(f, "debug"),
-            Self::Info => write!(f, "info"),
-            Self::Warn => write!(f, "warn"),
-            Self::Error => write!(f, "error"),
-        }
     }
 }
 

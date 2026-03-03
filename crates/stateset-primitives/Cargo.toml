@@ -21,6 +21,7 @@ rust_decimal = { workspace = true }
 thiserror = { workspace = true }
 proptest = { version = "1.4", optional = true }
 sqlx = { workspace = true, optional = true, default-features = false, features = ["postgres", "uuid"] }
+rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -33,3 +34,4 @@ default = ["std"]
 std = []
 arbitrary = ["dep:proptest"]
 sqlx-postgres = ["dep:sqlx"]
+rusqlite = ["dep:rusqlite"]

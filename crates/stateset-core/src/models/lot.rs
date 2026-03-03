@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 // ============================================================================
@@ -102,7 +103,8 @@ pub struct LotTransaction {
 }
 
 /// Type of lot transaction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum LotTransactionType {
@@ -138,47 +140,6 @@ impl Default for LotTransactionType {
     }
 }
 
-impl std::fmt::Display for LotTransactionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Received => write!(f, "received"),
-            Self::Consumed => write!(f, "consumed"),
-            Self::Adjusted => write!(f, "adjusted"),
-            Self::Reserved => write!(f, "reserved"),
-            Self::Released => write!(f, "released"),
-            Self::Quarantined => write!(f, "quarantined"),
-            Self::QuarantineReleased => write!(f, "quarantine_released"),
-            Self::Transferred => write!(f, "transferred"),
-            Self::Scrapped => write!(f, "scrapped"),
-            Self::Returned => write!(f, "returned"),
-            Self::Split => write!(f, "split"),
-            Self::Merged => write!(f, "merged"),
-        }
-    }
-}
-
-impl std::str::FromStr for LotTransactionType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "received" => Ok(Self::Received),
-            "consumed" => Ok(Self::Consumed),
-            "adjusted" => Ok(Self::Adjusted),
-            "reserved" => Ok(Self::Reserved),
-            "released" => Ok(Self::Released),
-            "quarantined" => Ok(Self::Quarantined),
-            "quarantine_released" => Ok(Self::QuarantineReleased),
-            "transferred" => Ok(Self::Transferred),
-            "scrapped" => Ok(Self::Scrapped),
-            "returned" => Ok(Self::Returned),
-            "split" => Ok(Self::Split),
-            "merged" => Ok(Self::Merged),
-            _ => Err(format!("Unknown lot transaction type: {}", s)),
-        }
-    }
-}
-
 // ============================================================================
 // Lot Certificate Types
 // ============================================================================
@@ -199,7 +160,8 @@ pub struct LotCertificate {
 }
 
 /// Type of certificate
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CertificateType {
@@ -224,39 +186,6 @@ pub enum CertificateType {
 impl Default for CertificateType {
     fn default() -> Self {
         Self::Coa
-    }
-}
-
-impl std::fmt::Display for CertificateType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Coa => write!(f, "coa"),
-            Self::Coc => write!(f, "coc"),
-            Self::Msds => write!(f, "msds"),
-            Self::Sds => write!(f, "sds"),
-            Self::TestReport => write!(f, "test_report"),
-            Self::InspectionReport => write!(f, "inspection_report"),
-            Self::CountryOfOrigin => write!(f, "country_of_origin"),
-            Self::Other => write!(f, "other"),
-        }
-    }
-}
-
-impl std::str::FromStr for CertificateType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "coa" => Ok(Self::Coa),
-            "coc" => Ok(Self::Coc),
-            "msds" => Ok(Self::Msds),
-            "sds" => Ok(Self::Sds),
-            "test_report" => Ok(Self::TestReport),
-            "inspection_report" => Ok(Self::InspectionReport),
-            "country_of_origin" => Ok(Self::CountryOfOrigin),
-            "other" => Ok(Self::Other),
-            _ => Err(format!("Unknown certificate type: {}", s)),
-        }
     }
 }
 

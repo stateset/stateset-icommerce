@@ -3,7 +3,7 @@
 //! All exported functions are `extern "C"`, prefixed with `stateset_`, and
 //! documented with safety requirements. Each function:
 //!
-//! 1. Clears the thread-local error via [`clear_last_error`].
+//! 1. Clears the thread-local error via `clear_last_error`.
 //! 2. Validates input pointers.
 //! 3. Delegates to a safe Rust helper.
 //! 4. On failure, stores the error message and returns an error code.
@@ -453,7 +453,7 @@ pub unsafe extern "C" fn stateset_order_get(
 /// must be valid, null-terminated C strings.
 ///
 /// The returned [`FfiCustomer`] owns its string fields. Free it with
-/// [`stateset_customer_free`].
+/// `stateset_customer_free`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn stateset_customer_create(
@@ -497,7 +497,7 @@ pub unsafe extern "C" fn stateset_customer_create(
 ///
 /// `engine` must be a valid handle.
 ///
-/// Free the returned [`FfiCustomer`] with [`stateset_customer_free`].
+/// Free the returned [`FfiCustomer`] with `stateset_customer_free`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn stateset_customer_get(
@@ -530,7 +530,7 @@ pub unsafe extern "C" fn stateset_customer_get(
 ///
 /// `engine` must be a valid handle. `name` must be a valid C string.
 ///
-/// Free the returned [`FfiProduct`] with [`stateset_product_free`].
+/// Free the returned [`FfiProduct`] with `stateset_product_free`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn stateset_product_create(
@@ -564,7 +564,7 @@ pub unsafe extern "C" fn stateset_product_create(
 ///
 /// `engine` must be a valid handle.
 ///
-/// Free the returned [`FfiProduct`] with [`stateset_product_free`].
+/// Free the returned [`FfiProduct`] with `stateset_product_free`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn stateset_product_get(

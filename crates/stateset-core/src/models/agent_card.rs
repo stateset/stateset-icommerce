@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
 use uuid::Uuid;
 
 use super::x402::{X402Asset, X402Network};
@@ -226,18 +227,22 @@ impl AgentCard {
 /// Trust level for agent cards
 ///
 /// Higher trust levels enable higher transaction limits and more capabilities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TrustLevel {
     /// Sandbox - for testing only, no real transactions
+    #[strum(serialize = "sandbox", serialize = "test")]
     Sandbox,
     /// Standard - default level for new agents
     #[default]
+    #[strum(serialize = "standard", serialize = "default")]
     Standard,
     /// Verified - identity verified, higher limits
     Verified,
     /// Enterprise - business verified, highest limits
+    #[strum(serialize = "enterprise", serialize = "business")]
     Enterprise,
 }
 
@@ -273,97 +278,45 @@ impl TrustLevel {
     }
 }
 
-impl std::fmt::Display for TrustLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sandbox => write!(f, "sandbox"),
-            Self::Standard => write!(f, "standard"),
-            Self::Verified => write!(f, "verified"),
-            Self::Enterprise => write!(f, "enterprise"),
-        }
-    }
-}
-
-impl std::str::FromStr for TrustLevel {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "sandbox" | "test" => Ok(Self::Sandbox),
-            "standard" | "default" => Ok(Self::Standard),
-            "verified" => Ok(Self::Verified),
-            "enterprise" | "business" => Ok(Self::Enterprise),
-            _ => Err(format!("Unknown trust level: {}", s)),
-        }
-    }
-}
-
 // =============================================================================
 // A2A Skills
 // =============================================================================
 
 /// A2A commerce skills that an agent can advertise
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum A2ASkill {
     /// Can sell products/services
+    #[strum(serialize = "commerce.sell", serialize = "sell")]
     Sell,
     /// Can buy products/services
+    #[strum(serialize = "commerce.buy", serialize = "buy")]
     Buy,
     /// Can provide price quotes
+    #[strum(serialize = "commerce.quote", serialize = "quote")]
     Quote,
     /// Can request price quotes
+    #[strum(serialize = "commerce.request_quote", serialize = "request_quote")]
     RequestQuote,
     /// Can fulfill orders
+    #[strum(serialize = "commerce.fulfill", serialize = "fulfill")]
     Fulfill,
     /// Can ship physical goods
+    #[strum(serialize = "commerce.ship", serialize = "ship")]
     Ship,
     /// Can provide digital delivery
+    #[strum(serialize = "commerce.digital_deliver", serialize = "digital_deliver")]
     DigitalDeliver,
     /// Can process returns
+    #[strum(serialize = "commerce.process_return", serialize = "process_return")]
     ProcessReturn,
     /// Can issue refunds
+    #[strum(serialize = "commerce.refund", serialize = "refund")]
     Refund,
     /// Can provide customer support
+    #[strum(serialize = "commerce.support", serialize = "support")]
     Support,
-}
-
-impl std::fmt::Display for A2ASkill {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sell => write!(f, "commerce.sell"),
-            Self::Buy => write!(f, "commerce.buy"),
-            Self::Quote => write!(f, "commerce.quote"),
-            Self::RequestQuote => write!(f, "commerce.request_quote"),
-            Self::Fulfill => write!(f, "commerce.fulfill"),
-            Self::Ship => write!(f, "commerce.ship"),
-            Self::DigitalDeliver => write!(f, "commerce.digital_deliver"),
-            Self::ProcessReturn => write!(f, "commerce.process_return"),
-            Self::Refund => write!(f, "commerce.refund"),
-            Self::Support => write!(f, "commerce.support"),
-        }
-    }
-}
-
-impl std::str::FromStr for A2ASkill {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().replace('.', "_").as_str() {
-            "commerce_sell" | "sell" => Ok(Self::Sell),
-            "commerce_buy" | "buy" => Ok(Self::Buy),
-            "commerce_quote" | "quote" => Ok(Self::Quote),
-            "commerce_request_quote" | "request_quote" => Ok(Self::RequestQuote),
-            "commerce_fulfill" | "fulfill" => Ok(Self::Fulfill),
-            "commerce_ship" | "ship" => Ok(Self::Ship),
-            "commerce_digital_deliver" | "digital_deliver" => Ok(Self::DigitalDeliver),
-            "commerce_process_return" | "process_return" => Ok(Self::ProcessReturn),
-            "commerce_refund" | "refund" => Ok(Self::Refund),
-            "commerce_support" | "support" => Ok(Self::Support),
-            _ => Err(format!("Unknown A2A skill: {}", s)),
-        }
-    }
 }
 
 // =============================================================================

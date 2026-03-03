@@ -391,7 +391,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                 let material_cost = material_cost.unwrap_or_default();
                 let labor_cost = labor_cost.unwrap_or_default();
                 let overhead_cost = overhead_cost.unwrap_or_default();
-                let currency = currency.unwrap_or_else(|| "USD".to_string());
+                let currency = currency.unwrap_or_default();
 
                 conn.execute(
                     "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,

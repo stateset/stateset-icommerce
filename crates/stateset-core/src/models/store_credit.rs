@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CustomerId, StoreCreditId, StoreCreditTransactionId};
+use stateset_primitives::{CurrencyCode, CustomerId, StoreCreditId, StoreCreditTransactionId};
 use strum::{Display, EnumString};
 
 /// Store credit status
@@ -83,7 +83,7 @@ pub struct StoreCredit {
     /// Current remaining balance
     pub current_balance: Decimal,
     /// Currency code (ISO 4217)
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Current status
     pub status: StoreCreditStatus,
     /// Reason the credit was issued
@@ -127,7 +127,7 @@ pub struct CreateStoreCredit {
     /// Amount to issue
     pub amount: Decimal,
     /// Currency code
-    pub currency: String,
+    pub currency: CurrencyCode,
     /// Reason for issuing
     pub reason: StoreCreditReason,
     /// Optional reference
@@ -201,7 +201,7 @@ mod tests {
             customer_id: CustomerId::new(),
             original_balance: dec!(50.00),
             current_balance,
-            currency: "USD".to_string(),
+            currency: CurrencyCode::USD,
             status,
             reason: StoreCreditReason::Return,
             reference_id: None,
