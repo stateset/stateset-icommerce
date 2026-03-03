@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! Procedural macros for StateSet iCommerce.
 //!
 //! Provides derive macros to reduce boilerplate in domain model definitions:

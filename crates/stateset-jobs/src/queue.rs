@@ -91,7 +91,7 @@ impl JobQueue {
         self.count = 0;
     }
 
-    /// Cancel a job by ID, marking it as [`JobStatus::Cancelled`].
+    /// Cancel a job by ID, marking it as [`Cancelled`](crate::state::JobStatus::Cancelled).
     ///
     /// Returns `true` if the job was found and cancelled.
     pub fn cancel(&mut self, job_id: Uuid) -> bool {

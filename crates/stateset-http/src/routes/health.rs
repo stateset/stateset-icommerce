@@ -11,19 +11,38 @@ pub fn router() -> Router<AppState> {
 }
 
 /// `GET /health` — simple liveness probe.
-async fn health() -> Json<HealthResponse> {
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "health",
+    responses(
+        (status = 200, description = "Service is alive", body = HealthResponse),
+    )
+)]
+#[tracing::instrument]
+pub(crate) async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
 /// `GET /health/ready` — readiness probe that checks DB connectivity.
-async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
+#[utoipa::path(
+    get,
+    path = "/health/ready",
+    tag = "health",
+    responses(
+        (status = 200, description = "Service is ready", body = ReadyResponse),
+        (status = 503, description = "Service is not ready", body = ReadyResponse),
+    )
+)]
+#[tracing::instrument(skip(state))]
+pub(crate) async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
     // Try a lightweight operation to verify DB is reachable.
     let database_connected = state.commerce().orders().count(Default::default()).is_ok();
     let (status, body) = readiness_response(database_connected);
     (status, Json(body))
 }
 
-fn readiness_response(database_connected: bool) -> (StatusCode, ReadyResponse) {
+const fn readiness_response(database_connected: bool) -> (StatusCode, ReadyResponse) {
     if database_connected {
         (StatusCode::OK, ReadyResponse { status: "ok", database: "connected" })
     } else {

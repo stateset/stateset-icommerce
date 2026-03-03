@@ -493,6 +493,7 @@ export class WorkflowEngine extends EventEmitter {
         this.emit('error', { type: 'timeout-transition', instanceId: instance.id, error });
       }
     }, timeoutMs);
+    if (instance.timeoutTimer.unref) instance.timeoutTimer.unref();
   }
 
   /**

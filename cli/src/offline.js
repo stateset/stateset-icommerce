@@ -23,10 +23,10 @@ export async function checkApiAvailability(apiKey, options = {}) {
 
   const timeout = options.timeout || 5000;
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
+  try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -68,6 +68,7 @@ export async function checkApiAvailability(apiKey, options = {}) {
       message: `API returned status ${response.status}`,
     };
   } catch (error) {
+    clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
       return {
         available: false,

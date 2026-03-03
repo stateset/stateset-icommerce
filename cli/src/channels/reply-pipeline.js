@@ -110,6 +110,9 @@ export class ReplyPipeline {
     /** @type {Map<string, NodeJS.Timeout>} - TargetId -> buffer flush timer */
     this._bufferTimers = new Map();
 
+    /** @type {Set<NodeJS.Timeout>} - Hard timeout timers (for cleanup) */
+    this._hardTimeoutTimers = new Set();
+
     /** @type {Map<string, number>} - TargetId -> last send timestamp */
     this._lastSend = new Map();
 
@@ -121,6 +124,7 @@ export class ReplyPipeline {
 
     // Cleanup old dedup keys periodically
     this._cleanupInterval = setInterval(() => this._cleanupSeen(), this._dedupWindowMs * 2);
+    if (this._cleanupInterval.unref) this._cleanupInterval.unref();
   }
 
   /**
@@ -236,9 +240,12 @@ export class ReplyPipeline {
 
       // Also set a hard timeout
       if (this._timeoutMs > 0) {
-        setTimeout(() => {
+        const hardTimer = setTimeout(() => {
+          this._hardTimeoutTimers.delete(hardTimer);
           this._flushBuffer(targetId, opts);
         }, this._timeoutMs);
+        if (hardTimer.unref) hardTimer.unref();
+        this._hardTimeoutTimers.add(hardTimer);
       }
     }
 
@@ -383,6 +390,12 @@ export class ReplyPipeline {
       clearTimeout(timer);
     }
     this._bufferTimers.clear();
+
+    for (const timer of this._hardTimeoutTimers) {
+      clearTimeout(timer);
+    }
+    this._hardTimeoutTimers.clear();
+
     this._buffer.clear();
     this._seen.clear();
     this._lastSend.clear();
@@ -432,6 +445,7 @@ class StreamSession {
 
     const interval = pipeline._coalescing?.flushIntervalMs || 500;
     this._flushTimer = setInterval(() => this._periodicFlush(), interval);
+    if (this._flushTimer.unref) this._flushTimer.unref();
   }
 
   /**

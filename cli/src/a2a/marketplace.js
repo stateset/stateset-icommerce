@@ -173,8 +173,8 @@ export function createMarketplaceService(store, a2aService) {
       let reputation = null;
       try {
         reputation = store.getReputationScore(resp.seller_address);
-      } catch {
-        // Reputation may not exist yet
+      } catch (repErr) {
+        console.debug('reputation lookup skipped:', repErr.message);
       }
 
       const score = scoringFn(quote, reputation);
@@ -336,8 +336,8 @@ export function createMarketplaceService(store, a2aService) {
     try {
       const disputes = store.listDisputes({ filed_against: service.agent_address });
       disputeRate = total > 0 ? disputes.length / total : 0;
-    } catch {
-      // listDisputes may not support filed_against filter
+    } catch (disputeErr) {
+      console.debug('dispute lookup failed:', disputeErr.message);
     }
 
     return {
@@ -365,8 +365,8 @@ export function createMarketplaceService(store, a2aService) {
     let reputation = null;
     try {
       reputation = store.getReputationScore(agentAddress);
-    } catch {
-      // May not exist
+    } catch (repErr) {
+      console.debug('reputation lookup skipped:', repErr.message);
     }
 
     const activeRFQs = store.listRFQResponses({ seller_address: agentAddress, status: 'pending' });

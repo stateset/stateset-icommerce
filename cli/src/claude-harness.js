@@ -572,8 +572,8 @@ export async function runAgentLoop({
   let rawSyncConfig = null;
   try {
     rawSyncConfig = loadSyncConfig();
-  } catch {
-    // No sync config available — standalone mode
+  } catch (syncErr) {
+    console.debug('sync config not available (standalone mode):', syncErr.message);
   }
   const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig !== null;
 
@@ -1742,8 +1742,8 @@ export async function* runAgentStream({
   let rawSyncConfig2 = null;
   try {
     rawSyncConfig2 = loadSyncConfig();
-  } catch {
-    // No sync config available — standalone mode
+  } catch (syncErr) {
+    console.debug('sync config not available (standalone mode):', syncErr.message);
   }
   const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig2 !== null;
 
@@ -2073,8 +2073,8 @@ export function createAgentStreamSession(options = {}) {
   let rawSyncConfig3 = null;
   try {
     rawSyncConfig3 = loadSyncConfig();
-  } catch {
-    // No sync config available — standalone mode
+  } catch (syncErr) {
+    console.debug('sync config not available (standalone mode):', syncErr.message);
   }
   const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig3 !== null;
   if (shouldEnableSync && rawSyncConfig3) {

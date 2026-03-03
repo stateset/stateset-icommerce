@@ -636,6 +636,7 @@ export class SyncEngine extends EventEmitter {
         this.emit('error', error);
       }
     }, interval);
+    if (this._backgroundInterval.unref) this._backgroundInterval.unref();
 
     this.emit('backgroundSyncStarted', { interval });
   }

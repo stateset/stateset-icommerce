@@ -107,14 +107,14 @@ describe('TutorialRunner.run', () => {
   beforeEach(() => {
     logs = [];
     errors = [];
-    originalLog = console.log;
+    originalLog = console.info;
     originalError = console.error;
-    console.log = (...args) => logs.push(args.join(' '));
+    console.info = (...args) => logs.push(args.join(' '));
     console.error = (...args) => errors.push(args.join(' '));
   });
 
   afterEach(() => {
-    console.log = originalLog;
+    console.info = originalLog;
     console.error = originalError;
   });
 
@@ -167,16 +167,16 @@ describe('TutorialRunner.run', () => {
 
 describe('TutorialRunner.listTutorials', () => {
   let logs;
-  let originalLog;
+  let originalInfo;
 
   beforeEach(() => {
     logs = [];
-    originalLog = console.log;
-    console.log = (...args) => logs.push(args.join(' '));
+    originalInfo = console.info;
+    console.info = (...args) => logs.push(args.join(' '));
   });
 
   afterEach(() => {
-    console.log = originalLog;
+    console.info = originalInfo;
   });
 
   it('outputs Available Tutorials header', () => {
@@ -225,16 +225,16 @@ describe('createTutorialRunner', () => {
 
 describe('showWelcome', () => {
   let logs;
-  let originalLog;
+  let originalInfo;
 
   beforeEach(() => {
     logs = [];
-    originalLog = console.log;
-    console.log = (...args) => logs.push(args.join(' '));
+    originalInfo = console.info;
+    console.info = (...args) => logs.push(args.join(' '));
   });
 
   afterEach(() => {
-    console.log = originalLog;
+    console.info = originalInfo;
   });
 
   it('outputs welcome message with key phrases', () => {

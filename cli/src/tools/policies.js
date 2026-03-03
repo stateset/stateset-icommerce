@@ -39,6 +39,7 @@ export const policyTools = [
       readOnlyHint: true,
       openWorldHint: false,
     },
+    permission: 'read',
     handler: async ({ params, policyEngine }) => {
       if (!policyEngine) {
         return { success: false, error: 'Policy engine not initialized' };
@@ -81,6 +82,7 @@ export const policyTools = [
       readOnlyHint: true,
       openWorldHint: false,
     },
+    permission: 'read',
     handler: async ({ params, policyEngine }) => {
       if (!policyEngine) {
         return { success: false, error: 'Policy engine not initialized' };
@@ -128,6 +130,7 @@ export const policyTools = [
       readOnlyHint: false,
       openWorldHint: false,
     },
+    permission: 'write',
     handler: async ({ params, policyEngine }) => {
       if (!policyEngine) {
         return { success: false, error: 'Policy engine not initialized' };
@@ -168,6 +171,7 @@ export const policyTools = [
       readOnlyHint: false,
       openWorldHint: false,
     },
+    permission: 'write',
     handler: async ({ params, policyEngine }) => {
       if (!policyEngine) {
         return { success: false, error: 'Policy engine not initialized' };
@@ -231,6 +235,7 @@ export const policyTools = [
       readOnlyHint: true,
       openWorldHint: false,
     },
+    permission: 'read',
     handler: async ({ params, policyEngine }) => {
       if (!policyEngine) {
         return { success: false, error: 'Policy engine not initialized' };

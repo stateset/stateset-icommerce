@@ -322,15 +322,17 @@ export async function startWhatsAppGateway({
     const check = setInterval(() => {
       if (stopped) {
         clearInterval(check);
+        clearTimeout(timeout);
         reject(new Error('Gateway stopped before connecting'));
       }
       if (currentSock?.user) {
         clearInterval(check);
+        clearTimeout(timeout);
         resolve();
       }
     }, 200);
 
-    setTimeout(() => {
+    const timeout = setTimeout(() => {
       clearInterval(check);
       if (!currentSock?.user) {
         reject(

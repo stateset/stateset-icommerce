@@ -20,8 +20,8 @@ function validateSessionId(sessionId) {
 async function chmodIfSupported(targetPath, mode) {
   try {
     await fs.chmod(targetPath, mode);
-  } catch {
-    // ignore platforms/filesystems that do not support chmod
+  } catch (chmodErr) {
+    console.debug('chmod not supported on this platform:', chmodErr.message);
   }
 }
 

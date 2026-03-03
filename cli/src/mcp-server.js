@@ -1595,7 +1595,9 @@ export function createStatesetMcpServer({
 
   const persistAgenticReplayEvent = async (event) => {
     pendingReplayAppend = pendingReplayAppend
-      .catch(() => {})
+      .catch((err) => {
+        console.debug('replay log append failed:', err.message);
+      })
       .then(async () => {
         await fs.mkdir(path.dirname(agenticReplayLogPath), { recursive: true });
         await fs.appendFile(agenticReplayLogPath, `${JSON.stringify(event)}\n`);

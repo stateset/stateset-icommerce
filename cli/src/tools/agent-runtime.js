@@ -56,8 +56,11 @@ async function resolveStrategy(strategyName, options = {}) {
         if (mod.createReputationAwareStrategy) {
           return mod.createReputationAwareStrategy(options);
         }
-      } catch {
-        /* fallback */
+      } catch (stratErr) {
+        console.debug(
+          'reputation-aware strategy unavailable, using budget-gated:',
+          stratErr.message,
+        );
       }
       return createBudgetGatedStrategy(options);
     }
@@ -67,8 +70,11 @@ async function resolveStrategy(strategyName, options = {}) {
         if (mod.createDynamicPricingStrategy) {
           return mod.createDynamicPricingStrategy(options);
         }
-      } catch {
-        /* fallback */
+      } catch (stratErr) {
+        console.debug(
+          'dynamic-pricing strategy unavailable, using budget-gated:',
+          stratErr.message,
+        );
       }
       return createBudgetGatedStrategy(options);
     }
@@ -603,7 +609,7 @@ export const agentRuntimeTools = [
         )
         .min(2)
         .describe('Recipients with percentage shares (must sum to 100)'),
-      memo: z.string().optional().describe('Split payment memo'),
+      memo: z.string().max(500).optional().describe('Split payment memo'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -731,7 +737,7 @@ export const agentRuntimeTools = [
       let address = null;
       try {
         address = await settlement.getAddress();
-      } catch (_err) {
+      } catch {
         // Address derivation may fail without key material — non-fatal
       }
 

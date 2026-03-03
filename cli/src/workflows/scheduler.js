@@ -888,6 +888,7 @@ export class Scheduler extends EventEmitter {
     this.tickTimer = setInterval(() => {
       this.tick();
     }, this.tickInterval);
+    if (this.tickTimer.unref) this.tickTimer.unref();
   }
 
   /**

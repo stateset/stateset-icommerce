@@ -11,6 +11,7 @@ no-default-features = false
 # Keep `cargo deny` strict (don't ignore advisories here). The CI `cargo audit`
 # step separately ignores RUSTSEC-2023-0071 (sqlx-mysql/rsa) because MySQL isn't
 # supported by this workspace and there is no upstream fix available.
+yanked = "warn"
 
 [licenses]
 confidence-threshold = 0.8
@@ -35,9 +36,6 @@ exceptions = []
 ignore = false
 registries = []
 
-[advisories]
-yanked = "warn"
-
 [bans]
 multiple-versions = "warn"
 wildcards = "warn"
@@ -45,10 +43,21 @@ highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
-# Ban openssl — we use rustls for TLS to keep container images minimal.
-deny = [{ name = "openssl" }, { name = "openssl-sys" }]
+# Ban direct openssl usage — we use rustls for TLS to keep container images
+# minimal. Allow it as a transitive dep of native-tls (pulled by optional
+# features we don't enable).
+deny = [
+  { name = "openssl", wrappers = ["native-tls"] },
+  { name = "openssl-sys", wrappers = ["openssl", "native-tls"] },
+]
 skip = []
-skip-tree = []
+skip-tree = [
+  # OpenSSL is pulled transitively by some optional deps (e.g., native-tls)
+  # but never compiled in our workspace since we use rustls. Skip the tree
+  # to avoid false positives.
+  { name = "openssl" },
+  { name = "openssl-sys" },
+]
 
 [sources]
 unknown-registry = "deny"

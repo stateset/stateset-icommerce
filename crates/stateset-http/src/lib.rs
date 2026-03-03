@@ -54,6 +54,7 @@
 mod dto;
 mod error;
 mod middleware;
+mod openapi;
 pub mod routes;
 mod server;
 mod state;

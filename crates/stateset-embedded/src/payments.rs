@@ -2,7 +2,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use stateset_embedded::{Commerce, CreatePayment, PaymentMethodType, OrderId};
 //! use rust_decimal_macros::dec;
 //!

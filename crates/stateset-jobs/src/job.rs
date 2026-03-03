@@ -151,7 +151,7 @@ fn next_cron_occurrence(expr: &str, from: DateTime<Utc>) -> Option<DateTime<Utc>
         if cron_matches(&parts, candidate) {
             return Some(candidate);
         }
-        candidate = candidate + chrono::Duration::minutes(1);
+        candidate += chrono::Duration::minutes(1);
     }
 
     None

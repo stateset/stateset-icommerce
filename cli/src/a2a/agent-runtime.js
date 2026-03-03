@@ -963,8 +963,8 @@ export function createAgentRuntime(params) {
         // Also expire any open RFQs
         try {
           getMarketplaceSvc().expireRFQs();
-        } catch {
-          // May not be available
+        } catch (expireErr) {
+          console.debug('marketplace expireRFQs not available:', expireErr.message);
         }
       } catch (slaErr) {
         if (!slaErr.message?.includes('not a function')) {
@@ -988,6 +988,7 @@ export function createAgentRuntime(params) {
         emitter.emit('loop:error', { error: err, context: 'interval' });
       });
     }, pollIntervalMs);
+    if (loopTimer.unref) loopTimer.unref();
     logger(`[${name}] Service loop started (${pollIntervalMs}ms interval)`);
   }
 

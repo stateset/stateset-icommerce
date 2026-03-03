@@ -525,7 +525,7 @@ impl SqliteSubscriptionRepository {
                 )));
             }
 
-            for item in items_to_create.clone() {
+            for item in items_to_create {
                 self.create_subscription_item_with_conn(&tx, id, item, &plan)?;
             }
 

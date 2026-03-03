@@ -310,7 +310,10 @@ export function createX402McpServer({
       : null);
   const policyLoad =
     policyEngineInstance && !policyEngine
-      ? policyEngineInstance.load().catch(() => null)
+      ? policyEngineInstance.load().catch((err) => {
+          console.debug('x402 policy load failed:', err.message);
+          return null;
+        })
       : Promise.resolve();
 
   const evaluatePolicy = async (toolName, params, extra = {}) => {

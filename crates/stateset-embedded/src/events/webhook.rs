@@ -995,7 +995,7 @@ fn is_public_ipv4(addr: Ipv4Addr) -> bool {
     true
 }
 
-fn is_public_ipv6(addr: Ipv6Addr) -> bool {
+const fn is_public_ipv6(addr: Ipv6Addr) -> bool {
     if addr.to_ipv4_mapped().is_some() {
         return false;
     }

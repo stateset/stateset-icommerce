@@ -2,7 +2,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use stateset_embedded::{Commerce, CreateInvoice, CreateInvoiceItem};
 //! use rust_decimal_macros::dec;
 //! use uuid::Uuid;

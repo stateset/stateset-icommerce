@@ -8,7 +8,7 @@ use axum::{
 };
 
 use crate::dto::{CreateCustomerRequest, CustomerListResponse, CustomerResponse, PaginationParams};
-use crate::error::HttpError;
+use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{CreateCustomer, CustomerFilter, CustomerId};
 
@@ -20,7 +20,18 @@ pub fn router() -> Router<AppState> {
 }
 
 /// `POST /api/v1/customers`
-async fn create_customer(
+#[utoipa::path(
+    post,
+    path = "/api/v1/customers",
+    tag = "customers",
+    request_body = CreateCustomerRequest,
+    responses(
+        (status = 201, description = "Customer created", body = CustomerResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_customer(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<CreateCustomerRequest>,
@@ -42,7 +53,18 @@ async fn create_customer(
 }
 
 /// `GET /api/v1/customers/:id`
-async fn get_customer(
+#[utoipa::path(
+    get,
+    path = "/api/v1/customers/{id}",
+    tag = "customers",
+    params(("id" = String, Path, description = "Customer ID (UUID)")),
+    responses(
+        (status = 200, description = "Customer details", body = CustomerResponse),
+        (status = 404, description = "Customer not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn get_customer(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<CustomerId>,
@@ -57,7 +79,17 @@ async fn get_customer(
 }
 
 /// `GET /api/v1/customers`
-async fn list_customers(
+#[utoipa::path(
+    get,
+    path = "/api/v1/customers",
+    tag = "customers",
+    params(PaginationParams),
+    responses(
+        (status = 200, description = "List of customers", body = CustomerListResponse),
+    )
+)]
+#[tracing::instrument(skip(state, headers, params))]
+pub(crate) async fn list_customers(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<PaginationParams>,

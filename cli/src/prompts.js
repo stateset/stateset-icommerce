@@ -43,7 +43,7 @@ export async function prompt(question, options = {}) {
         if (options.validate) {
           const validation = await options.validate(value);
           if (validation !== true) {
-            console.log(`  \x1b[31m${validation || 'Invalid input'}\x1b[0m`);
+            console.warn(`  \x1b[31m${validation || 'Invalid input'}\x1b[0m`);
             ask();
             return;
           }
@@ -51,7 +51,7 @@ export async function prompt(question, options = {}) {
 
         // Check required
         if (options.required && !value) {
-          console.log('  \x1b[31mThis field is required\x1b[0m');
+          console.warn('  \x1b[31mThis field is required\x1b[0m');
           ask();
           return;
         }
@@ -86,11 +86,11 @@ export async function confirm(question, defaultValue = false) {
  * @returns {Promise<string>} Selected value
  */
 export async function select(question, choices) {
-  console.log(`\n${question}\n`);
+  process.stderr.write(`\n${question}\n\n`);
 
   choices.forEach((choice, i) => {
     const label = typeof choice === 'string' ? choice : choice.label;
-    console.log(`  ${i + 1}) ${label}`);
+    process.stderr.write(`  ${i + 1}) ${label}\n`);
   });
 
   const answer = await prompt('\nSelect option', {
@@ -169,7 +169,7 @@ export const InteractivePrompts = {
     }
 
     if (!result.items || result.items.length === 0) {
-      console.log('\nAdd order items (empty SKU to finish):');
+      console.info('\nAdd order items (empty SKU to finish):');
       result.items = [];
 
       while (true) {
@@ -187,7 +187,7 @@ export const InteractivePrompts = {
         });
 
         result.items.push({ sku, name, quantity, unitPrice });
-        console.log('  Item added.\n');
+        console.info('  Item added.\n');
       }
     }
 
@@ -236,10 +236,10 @@ export const InteractivePrompts = {
    * Confirm high-value operation
    */
   async confirmHighValue(operation, details) {
-    console.log(`\n\x1b[33mHigh-value operation: ${operation}\x1b[0m`);
+    console.warn(`\n\x1b[33mHigh-value operation: ${operation}\x1b[0m`);
 
     for (const [key, value] of Object.entries(details)) {
-      console.log(`  ${key}: ${value}`);
+      console.warn(`  ${key}: ${value}`);
     }
 
     return confirm('\nProceed with this operation?', false);
@@ -249,9 +249,9 @@ export const InteractivePrompts = {
    * Confirm destructive operation
    */
   async confirmDestructive(operation, identifier) {
-    console.log(`\n\x1b[31mDestructive operation: ${operation}\x1b[0m`);
-    console.log(`  Target: ${identifier}`);
-    console.log('  This action cannot be undone.\n');
+    console.warn(`\n\x1b[31mDestructive operation: ${operation}\x1b[0m`);
+    console.warn(`  Target: ${identifier}`);
+    console.warn('  This action cannot be undone.\n');
 
     const confirmation = await prompt('Type the identifier to confirm');
     return confirmation === identifier;

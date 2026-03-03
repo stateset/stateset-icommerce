@@ -309,8 +309,8 @@ export function createSLAService(store) {
         const totalScore = feedback.reduce((sum, f) => sum + (f.score || 0), 0);
         avgQualityScore = Math.round((totalScore / feedback.length) * 100) / 100;
       }
-    } catch {
-      // Feedback may not be available
+    } catch (fbErr) {
+      console.debug('feedback lookup skipped:', fbErr.message);
     }
 
     // Throughput (transactions per second over the service lifetime)

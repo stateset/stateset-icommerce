@@ -104,8 +104,8 @@ function parseRow(row) {
     if (typeof parsed[field] === 'string') {
       try {
         parsed[field] = JSON.parse(parsed[field]);
-      } catch {
-        /* keep string */
+      } catch (parseErr) {
+        console.debug(`agent-catalog field "${field}" kept as string:`, parseErr.message);
       }
     }
   }

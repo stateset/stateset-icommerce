@@ -166,7 +166,7 @@ impl Drop for OperationTimer {
 // Metrics Macros
 // ============================================================================
 
-/// Extract the domain label if present (format: "domain:<value>")
+/// Extract the domain label if present (format: `domain:<value>`)
 pub fn domain_from_labels(labels: &[String]) -> &str {
     labels
         .iter()

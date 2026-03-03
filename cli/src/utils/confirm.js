@@ -76,8 +76,8 @@ export function createConfirmHandler({
       try {
         const ui = await import('../ui.js');
         return await ui.confirm(message);
-      } catch {
-        // @clack unavailable — fall through to readline below
+      } catch (clackErr) {
+        console.debug('@clack/prompts unavailable for confirm, using readline:', clackErr.message);
       }
 
       // Readline fallback
@@ -87,7 +87,7 @@ export function createConfirmHandler({
       if (details) display += `   Details: ${details}\n`;
       if (amount !== null) display += `   Amount: ${style.bold('$' + amount.toFixed(2))}\n`;
       display += `\n   Proceed?`;
-      console.log(display);
+      console.info(display);
       return await prompt('');
     };
   }
@@ -102,7 +102,7 @@ export function createConfirmHandler({
     if (amount !== null) message += `   Amount: ${style.bold('$' + amount.toFixed(2))}\n`;
     message += `\n   Proceed?`;
 
-    console.log(message);
+    console.info(message);
     return await prompt('');
   };
 }

@@ -5,6 +5,89 @@ All notable changes to `@stateset/cli` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.17] - 2026-03-02
+
+### Added
+- A2A Rust crates elevation: 6 new modules (negotiation, task delegation, capability discovery, trust verification, message routing, protocol handshake)
+- OpenAPI 3.1 spec generation via utoipa (`GET /api/v1/openapi.json`) with full schema coverage for 19 REST endpoints
+- Technical whitepaper for StateSet iCommerce platform
+- Token bucket HTTP rate limiting middleware (no new deps, configurable RPS + burst)
+- Centralized env validation (`cli/src/env.js`) — Zod-validated schema for 40+ environment variables
+- `#[tracing::instrument]` on 19 HTTP route handlers for production observability
+- `#[deny(unsafe_code)]` on `stateset-crypto` and `stateset-macros` crates
+- `cargo deny` policy: licenses, advisories, bans (openssl via native-tls wrappers only), sources
+
+### Fixed
+- 22 silent catch blocks across 14 CLI files — all now log with `console.debug()`
+- 17 timer leaks across 14 CLI files — stored refs + `.unref()` on long-lived intervals
+- deny.toml duplicate `[advisories]` section merged
+
+## [0.7.15] - 2026-02-28
+
+### Added
+- A-grade Rust crate elevation: 226 new integration tests (pricing, policy, authz, a2a, http)
+- 21 property-based tests (pricing + crypto) via proptest
+- `[lints] workspace = true` enforced on all binding crates
+
+### Fixed
+- ~200+ clippy warnings eliminated: `use_self`, `missing_const_for_fn`, `doc_markdown`, `redundant_clone`
+- Zero clippy warnings on `cargo clippy --all-targets`
+
+## [0.7.14] - 2026-02-27
+
+### Added
+- Agentic hardening round: `.int()`, `.positive()`, `.min()`, `.max()` on 100+ Zod string ID fields
+- `#[must_use]` on Money arithmetic, ID types, ForecastingEngine, LogEntry builder
+- Magic number extraction to named constants across 7 CLI files
+- ~110 `console.log` migrated to `console.info`/`debug`/`warn` across 21 production files
+
+## [0.7.12] - 2026-02-26
+
+### Added
+- Production hardening: state machine methods (`can_transition_to`, `is_terminal`) on 5 status enums
+- Atomic database transactions for payment operations
+- Crypto hardening: `zeroize` on keys, `subtle::ConstantTimeEq` for hash comparison
+- Money safety: `checked_mul_scalar`, `checked_div_scalar`, `abs`, `negate`, fixed `is_negative` for -0
+- 9 agentic commerce observability counters + `LatencyHistogram` (p50/p95/p99)
+- 7 new test fixture builders (payment, shipment, return, subscription, cart, warranty)
+
+## [0.7.9] - 2026-02-22
+
+### Fixed
+- Webhook SSRF hardening, crypto decode safety, ID derive macro fixes
+- Removed panic paths in db/jobs/pricing behavior
+- FFI safety hardening, HTTP readiness contract fixes
+- A2A validation and protocol integrity semantics
+
+## [0.7.5] - 2026-02-18
+
+### Added
+- Env validation test sandbox safety
+- Lifecycle, config, and update workflow hardening
+- Sync, scheduler, HTTP, and migrator updates
+
+## [0.7.0] - 2026-02-15
+
+### Added
+- Typed IDs with SQLx encoding support
+- WASM systems integration
+- Financial crates with test coverage
+- FFI, HTTP, jobs, and migrations crate updates
+
+### Changed
+- API call sites updated for typed ID system
+
+## [0.6.0] - 2026-02-10
+
+### Added
+- Standalone iCommerce adoption wedge
+- Stripe adapter with webhook verification
+- WooCommerce adapter with template scaffolding
+- Policy engine with file watcher and YAML authoring
+- `configure_stripe` and `configure_woocommerce` MCP tools
+- `--quickstart` flag for zero-config setup
+- 607 new tests across adapters and policy engine
+
 ## [0.5.0] - 2026-02-02
 
 ### Changed

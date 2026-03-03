@@ -7,7 +7,7 @@ use stateset_embedded::Commerce;
 use uuid::Uuid;
 
 use crate::error::HttpError;
-use crate::middleware;
+use crate::middleware::{self, RateLimitConfig};
 use crate::routes;
 use crate::state::AppState;
 
@@ -40,6 +40,7 @@ pub struct ServerBuilder {
     api_bearer_token: Option<String>,
     bound_tenant_id: Option<String>,
     generated_default_token: bool,
+    rate_limit: Option<RateLimitConfig>,
 }
 
 impl fmt::Debug for ServerBuilder {
@@ -52,6 +53,7 @@ impl fmt::Debug for ServerBuilder {
             .field("api_bearer_token", &self.api_bearer_token.as_ref().map(|_| "<redacted>"))
             .field("bound_tenant_id", &self.bound_tenant_id.as_ref().map(|_| "<redacted>"))
             .field("generated_default_token", &self.generated_default_token)
+            .field("rate_limit", &self.rate_limit)
             .finish()
     }
 }
@@ -70,6 +72,7 @@ impl ServerBuilder {
             api_bearer_token: Some(Uuid::new_v4().to_string()),
             bound_tenant_id: None,
             generated_default_token: true,
+            rate_limit: None,
         }
     }
 
@@ -142,6 +145,17 @@ impl ServerBuilder {
         self
     }
 
+    /// Enable global rate limiting with a token bucket.
+    ///
+    /// `requests_per_second` controls steady-state throughput; `burst_size`
+    /// controls how many requests can be served in a burst before throttling.
+    /// Requests exceeding the limit receive HTTP 429.
+    #[must_use]
+    pub const fn with_rate_limit(mut self, requests_per_second: u64, burst_size: u64) -> Self {
+        self.rate_limit = Some(RateLimitConfig { requests_per_second, burst_size });
+        self
+    }
+
     /// Return the configured bearer token, if auth is enabled.
     #[must_use]
     pub fn bearer_auth_token(&self) -> Option<&str> {
@@ -154,7 +168,13 @@ impl ServerBuilder {
     pub fn build(self) -> Router {
         let auth_config = self.api_bearer_token.map(|token| (token, self.bound_tenant_id));
         let router = routes::api_router().with_state(self.state);
-        middleware::apply_middleware(router, self.enable_cors, self.enable_request_id, auth_config)
+        middleware::apply_middleware(
+            router,
+            self.enable_cors,
+            self.enable_request_id,
+            auth_config,
+            self.rate_limit,
+        )
     }
 
     /// Build the router and start serving HTTP requests.

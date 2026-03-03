@@ -66,7 +66,9 @@ export function installShutdownHandlers(name, options = {}) {
   const { cleanup } = options;
 
   // Pre-load error hints so they're ready when needed
-  loadErrorHint().catch(() => {});
+  loadErrorHint().catch((err) => {
+    console.debug('error-hint preload failed:', err.message);
+  });
 
   process.on('unhandledRejection', (reason) => {
     formatFatalError(name, reason, { verbose: true });
@@ -112,7 +114,9 @@ export function runMain(name, mainFn, options = {}) {
 
   Promise.resolve(mainFn()).catch(async (err) => {
     // Ensure hints are loaded before formatting
-    await loadErrorHint().catch(() => {});
+    await loadErrorHint().catch((hintErr) => {
+      console.debug('error-hint load failed:', hintErr.message);
+    });
 
     formatFatalError(name, err, {
       verbose: options.verbose || process.argv.includes('--verbose'),

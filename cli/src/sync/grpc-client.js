@@ -281,6 +281,7 @@ export class GrpcSequencerClient extends EventEmitter {
         });
       }
     }, this.config.keepaliveMs);
+    if (this.heartbeatInterval.unref) this.heartbeatInterval.unref();
   }
 
   _stopHeartbeat() {

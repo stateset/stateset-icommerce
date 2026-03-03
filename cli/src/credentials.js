@@ -26,8 +26,8 @@ const PBKDF2_DIGEST = 'sha256';
 function setPermissionIfSupported(targetPath, mode) {
   try {
     fs.chmodSync(targetPath, mode);
-  } catch {
-    // ignore platforms/filesystems that do not support chmod
+  } catch (chmodErr) {
+    console.debug('chmod not supported on this platform:', chmodErr.message);
   }
 }
 

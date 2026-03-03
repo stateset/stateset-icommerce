@@ -243,7 +243,7 @@ impl SqliteAccountsPayableRepository {
 
         let payment_params: [&dyn rusqlite::ToSql; 1] = [&bill_id_param];
         let paid = sum_decimal_query(
-            &conn,
+            conn,
             "SELECT a.amount
              FROM ap_payment_allocations a
              JOIN ap_payments p ON p.id = a.payment_id

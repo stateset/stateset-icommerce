@@ -509,6 +509,7 @@ export class ApprovalQueue extends EventEmitter {
     request.timeoutTimer = setTimeout(() => {
       this.handleTimeout(request);
     }, timeRemaining);
+    if (request.timeoutTimer.unref) request.timeoutTimer.unref();
   }
 
   /**
@@ -937,6 +938,7 @@ export class ApprovalQueue extends EventEmitter {
         }
       }
     }, this.checkInterval);
+    if (this.checkTimer.unref) this.checkTimer.unref();
 
     this.emit('started');
   }

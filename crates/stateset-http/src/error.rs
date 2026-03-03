@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use stateset_core::CommerceError;
+use utoipa::ToSchema;
 
 /// HTTP error wrapper that maps domain errors to appropriate HTTP responses.
 #[derive(Debug, thiserror::Error)]
@@ -36,18 +37,22 @@ pub enum HttpError {
     /// Validation error with field-level detail (HTTP 422).
     #[error("Validation error: {0}")]
     ValidationError(String),
+
+    /// Too many requests (HTTP 429).
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
 }
 
 /// JSON body for error responses.
-#[derive(Debug, Serialize)]
-struct ErrorBody {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ErrorBody {
     error: ErrorDetail,
 }
 
 /// Inner detail of the error response.
-#[derive(Debug, Serialize)]
-struct ErrorDetail {
-    code: &'static str,
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ErrorDetail {
+    code: String,
     message: String,
 }
 
@@ -63,6 +68,7 @@ impl HttpError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::ValidationError(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
         }
     }
 
@@ -77,6 +83,7 @@ impl HttpError {
             Self::Unauthorized(_) => "unauthorized",
             Self::Forbidden(_) => "forbidden",
             Self::ValidationError(_) => "validation_error",
+            Self::TooManyRequests(_) => "too_many_requests",
         }
     }
 }
@@ -84,8 +91,9 @@ impl HttpError {
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         let status = self.status_code();
-        let body =
-            ErrorBody { error: ErrorDetail { code: self.code(), message: self.to_string() } };
+        let body = ErrorBody {
+            error: ErrorDetail { code: self.code().to_string(), message: self.to_string() },
+        };
         (status, axum::Json(body)).into_response()
     }
 }
@@ -185,6 +193,13 @@ mod tests {
     }
 
     #[test]
+    fn too_many_requests_status() {
+        let err = HttpError::TooManyRequests("rate limit exceeded".into());
+        assert_eq!(err.status_code(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(err.code(), "too_many_requests");
+    }
+
+    #[test]
     fn commerce_not_found_maps_to_not_found() {
         let ce = CommerceError::OrderNotFound(uuid::Uuid::nil());
         let he: HttpError = ce.into();
@@ -250,7 +265,7 @@ mod tests {
     #[test]
     fn error_body_json_structure() {
         let body = super::ErrorBody {
-            error: super::ErrorDetail { code: "not_found", message: "Order not found".into() },
+            error: super::ErrorDetail { code: "not_found".into(), message: "Order not found".into() },
         };
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(json["error"]["code"], "not_found");

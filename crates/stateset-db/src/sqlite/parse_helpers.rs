@@ -45,7 +45,7 @@ pub(crate) fn parse_uuid(s: &str, entity: &str, field: &str) -> Result<Uuid> {
     })
 }
 
-/// Parse an optional UUID from an Option<String>.
+/// Parse an optional UUID from an `Option<String>`.
 ///
 /// Returns Ok(None) if the input is None or empty.
 pub(crate) fn parse_uuid_opt(s: Option<String>, entity: &str, field: &str) -> Result<Option<Uuid>> {
@@ -126,7 +126,7 @@ pub(crate) fn parse_decimal(s: &str, entity: &str, field: &str) -> Result<Decima
     })
 }
 
-/// Parse an optional Decimal from an Option<String>.
+/// Parse an optional Decimal from an `Option<String>`.
 ///
 /// Returns Ok(None) if the input is None or empty.
 pub(crate) fn parse_decimal_opt(
@@ -159,7 +159,7 @@ pub(crate) fn parse_json<T: DeserializeOwned>(s: &str, entity: &str, field: &str
     })
 }
 
-/// Parse optional JSON from an Option<String>.
+/// Parse optional JSON from an `Option<String>`.
 ///
 /// Returns Ok(None) if the input is None or empty.
 #[allow(dead_code)]
@@ -210,7 +210,7 @@ where
     })
 }
 
-/// Parse an optional enum from an Option<String>.
+/// Parse an optional enum from an `Option<String>`.
 #[allow(dead_code)]
 pub(crate) fn parse_enum_opt<T>(s: Option<String>, entity: &str, field: &str) -> Result<Option<T>>
 where

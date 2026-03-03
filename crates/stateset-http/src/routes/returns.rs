@@ -8,7 +8,7 @@ use axum::{
 };
 
 use crate::dto::{CreateReturnRequest, ReturnResponse};
-use crate::error::HttpError;
+use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{
     CreateReturn, CreateReturnItem, ItemCondition, OrderItemId, ReturnId, ReturnReason,
@@ -24,7 +24,18 @@ pub fn router() -> Router<AppState> {
 }
 
 /// `POST /api/v1/returns`
-async fn create_return(
+#[utoipa::path(
+    post,
+    path = "/api/v1/returns",
+    tag = "returns",
+    request_body = CreateReturnRequest,
+    responses(
+        (status = 201, description = "Return created", body = ReturnResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_return(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<CreateReturnRequest>,
@@ -66,7 +77,18 @@ async fn create_return(
 }
 
 /// `GET /api/v1/returns/:id`
-async fn get_return(
+#[utoipa::path(
+    get,
+    path = "/api/v1/returns/{id}",
+    tag = "returns",
+    params(("id" = String, Path, description = "Return ID (UUID)")),
+    responses(
+        (status = 200, description = "Return details", body = ReturnResponse),
+        (status = 404, description = "Return not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn get_return(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<ReturnId>,
@@ -81,7 +103,19 @@ async fn get_return(
 }
 
 /// `PATCH /api/v1/returns/:id/approve`
-async fn approve_return(
+#[utoipa::path(
+    patch,
+    path = "/api/v1/returns/{id}/approve",
+    tag = "returns",
+    params(("id" = String, Path, description = "Return ID (UUID)")),
+    responses(
+        (status = 200, description = "Return approved", body = ReturnResponse),
+        (status = 400, description = "Return cannot be approved", body = ErrorBody),
+        (status = 404, description = "Return not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn approve_return(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<ReturnId>,

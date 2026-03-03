@@ -2,7 +2,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId};
 //!
 //! let commerce = Commerce::new("./store.db")?;

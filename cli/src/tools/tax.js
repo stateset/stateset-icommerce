@@ -748,7 +748,10 @@ export const taxTools = [
     description: 'List provider-backed tax transactions with optional filtering.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z.string().optional().describe('Filter by transaction status'),
+      status: z
+        .enum(['pending', 'committed', 'voided'])
+        .optional()
+        .describe('Filter by transaction status'),
       quoteId: z.string().optional().describe('Filter by quote ID'),
       reference: z.string().optional().describe('Filter by external reference'),
       limit: z.number().int().min(1).max(500).optional().describe('Maximum transactions to return'),

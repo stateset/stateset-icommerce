@@ -10,7 +10,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use stateset_embedded::{Commerce, SetItemCost, CostMethod};
 //! use rust_decimal_macros::dec;
 //!

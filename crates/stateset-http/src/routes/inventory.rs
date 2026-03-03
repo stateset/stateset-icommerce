@@ -8,7 +8,7 @@ use axum::{
 };
 
 use crate::dto::{InventoryAdjustRequest, InventoryResponse};
-use crate::error::HttpError;
+use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 
 /// Build the inventory sub-router.
@@ -19,7 +19,18 @@ pub fn router() -> Router<AppState> {
 }
 
 /// `GET /api/v1/inventory/:sku`
-async fn get_stock(
+#[utoipa::path(
+    get,
+    path = "/api/v1/inventory/{sku}",
+    tag = "inventory",
+    params(("sku" = String, Path, description = "Product SKU")),
+    responses(
+        (status = 200, description = "Stock levels", body = InventoryResponse),
+        (status = 404, description = "SKU not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn get_stock(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(sku): Path<String>,
@@ -34,7 +45,20 @@ async fn get_stock(
 }
 
 /// `POST /api/v1/inventory/:sku/adjust`
-async fn adjust_stock(
+#[utoipa::path(
+    post,
+    path = "/api/v1/inventory/{sku}/adjust",
+    tag = "inventory",
+    params(("sku" = String, Path, description = "Product SKU")),
+    request_body = InventoryAdjustRequest,
+    responses(
+        (status = 200, description = "Stock adjusted", body = InventoryResponse),
+        (status = 404, description = "SKU not found", body = ErrorBody),
+        (status = 422, description = "Validation error", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn adjust_stock(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(sku): Path<String>,

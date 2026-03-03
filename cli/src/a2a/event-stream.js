@@ -354,6 +354,7 @@ export function createEventStreamService(store) {
         console.warn('Failed to send SSE heartbeat:', err.message);
       }
     }, SSE_HEARTBEAT_INTERVAL_MS);
+    if (heartbeatInterval.unref) heartbeatInterval.unref();
 
     /**
      * Clean up this SSE connection: remove from registry, clear heartbeat.

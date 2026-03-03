@@ -887,9 +887,9 @@ mod tests {
         let p50 = h.percentile(0.50);
         let p95 = h.percentile(0.95);
         let p99 = h.percentile(0.99);
-        assert!(p50 >= 49.0 && p50 <= 51.0, "p50 was {p50}");
-        assert!(p95 >= 94.0 && p95 <= 96.0, "p95 was {p95}");
-        assert!(p99 >= 98.0 && p99 <= 100.0, "p99 was {p99}");
+        assert!((49.0..=51.0).contains(&p50), "p50 was {p50}");
+        assert!((94.0..=96.0).contains(&p95), "p95 was {p95}");
+        assert!((98.0..=100.0).contains(&p99), "p99 was {p99}");
     }
 
     #[test]

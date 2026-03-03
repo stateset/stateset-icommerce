@@ -8,7 +8,7 @@ use axum::{
 };
 
 use crate::dto::{CreateProductRequest, PaginationParams, ProductListResponse, ProductResponse};
-use crate::error::HttpError;
+use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{CreateProduct, ProductFilter, ProductId, ProductType};
 use std::str::FromStr;
@@ -21,7 +21,18 @@ pub fn router() -> Router<AppState> {
 }
 
 /// `POST /api/v1/products`
-async fn create_product(
+#[utoipa::path(
+    post,
+    path = "/api/v1/products",
+    tag = "products",
+    request_body = CreateProductRequest,
+    responses(
+        (status = 201, description = "Product created", body = ProductResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_product(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<CreateProductRequest>,
@@ -48,7 +59,18 @@ async fn create_product(
 }
 
 /// `GET /api/v1/products/:id`
-async fn get_product(
+#[utoipa::path(
+    get,
+    path = "/api/v1/products/{id}",
+    tag = "products",
+    params(("id" = String, Path, description = "Product ID (UUID)")),
+    responses(
+        (status = 200, description = "Product details", body = ProductResponse),
+        (status = 404, description = "Product not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn get_product(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<ProductId>,
@@ -63,7 +85,17 @@ async fn get_product(
 }
 
 /// `GET /api/v1/products`
-async fn list_products(
+#[utoipa::path(
+    get,
+    path = "/api/v1/products",
+    tag = "products",
+    params(PaginationParams),
+    responses(
+        (status = 200, description = "List of products", body = ProductListResponse),
+    )
+)]
+#[tracing::instrument(skip(state, headers, params))]
+pub(crate) async fn list_products(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<PaginationParams>,

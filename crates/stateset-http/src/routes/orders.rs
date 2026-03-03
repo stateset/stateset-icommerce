@@ -10,7 +10,7 @@ use axum::{
 use crate::dto::{
     CreateOrderItemRequest, CreateOrderRequest, OrderListResponse, OrderResponse, PaginationParams,
 };
-use crate::error::HttpError;
+use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{Address, CreateOrder, CreateOrderItem, OrderFilter, OrderId};
 
@@ -24,7 +24,18 @@ pub fn router() -> Router<AppState> {
 }
 
 /// `POST /api/v1/orders`
-async fn create_order(
+#[utoipa::path(
+    post,
+    path = "/api/v1/orders",
+    tag = "orders",
+    request_body = CreateOrderRequest,
+    responses(
+        (status = 201, description = "Order created", body = OrderResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_order(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<CreateOrderRequest>,
@@ -47,7 +58,18 @@ async fn create_order(
 }
 
 /// `GET /api/v1/orders/:id`
-async fn get_order(
+#[utoipa::path(
+    get,
+    path = "/api/v1/orders/{id}",
+    tag = "orders",
+    params(("id" = String, Path, description = "Order ID (UUID)")),
+    responses(
+        (status = 200, description = "Order details", body = OrderResponse),
+        (status = 404, description = "Order not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn get_order(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<OrderId>,
@@ -62,7 +84,17 @@ async fn get_order(
 }
 
 /// `GET /api/v1/orders`
-async fn list_orders(
+#[utoipa::path(
+    get,
+    path = "/api/v1/orders",
+    tag = "orders",
+    params(PaginationParams),
+    responses(
+        (status = 200, description = "List of orders", body = OrderListResponse),
+    )
+)]
+#[tracing::instrument(skip(state, headers, params))]
+pub(crate) async fn list_orders(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<PaginationParams>,
@@ -85,7 +117,19 @@ async fn list_orders(
 }
 
 /// `PATCH /api/v1/orders/:id/cancel`
-async fn cancel_order(
+#[utoipa::path(
+    patch,
+    path = "/api/v1/orders/{id}/cancel",
+    tag = "orders",
+    params(("id" = String, Path, description = "Order ID (UUID)")),
+    responses(
+        (status = 200, description = "Order cancelled", body = OrderResponse),
+        (status = 400, description = "Order cannot be cancelled", body = ErrorBody),
+        (status = 404, description = "Order not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn cancel_order(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<OrderId>,
@@ -97,7 +141,19 @@ async fn cancel_order(
 }
 
 /// `PATCH /api/v1/orders/:id/ship`
-async fn ship_order(
+#[utoipa::path(
+    patch,
+    path = "/api/v1/orders/{id}/ship",
+    tag = "orders",
+    params(("id" = String, Path, description = "Order ID (UUID)")),
+    responses(
+        (status = 200, description = "Order shipped", body = OrderResponse),
+        (status = 400, description = "Order cannot be shipped", body = ErrorBody),
+        (status = 404, description = "Order not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn ship_order(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<OrderId>,

@@ -217,7 +217,10 @@ export const paymentTools = [
     description: 'List provider-backed payment intents with optional filtering.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z.string().optional().describe('Filter by intent status'),
+      status: z
+        .enum(['pending', 'requires_action', 'succeeded', 'failed', 'cancelled'])
+        .optional()
+        .describe('Filter by intent status'),
       orderId: z.string().optional().describe('Filter by order ID'),
       customerId: z.string().optional().describe('Filter by customer ID'),
       limit: z.number().int().min(1).max(500).optional().describe('Maximum intents to return'),
@@ -244,7 +247,10 @@ export const paymentTools = [
     description: 'List settlement records produced by provider payout reconciliation.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z.string().optional().describe('Filter by settlement status'),
+      status: z
+        .enum(['pending', 'completed', 'failed'])
+        .optional()
+        .describe('Filter by settlement status'),
       batchId: z.string().optional().describe('Filter by settlement batch ID'),
       payoutReference: z.string().optional().describe('Filter by payout reference ID'),
       intentId: z.string().optional().describe('Filter by payment intent ID'),
@@ -277,7 +283,10 @@ export const paymentTools = [
     description: 'List provider payout batches generated from settlement runs.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z.string().optional().describe('Filter by batch status'),
+      status: z
+        .enum(['pending', 'processing', 'completed', 'failed'])
+        .optional()
+        .describe('Filter by batch status'),
       payoutReference: z.string().optional().describe('Filter by payout reference ID'),
       limit: z.number().int().min(1).max(500).optional().describe('Maximum batches to return'),
     },
@@ -353,7 +362,10 @@ export const paymentTools = [
       'Reconcile payment intents against settlement records to find pending settlement or over-settlement drift.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z.string().optional().describe('Filter by payment intent status'),
+      status: z
+        .enum(['pending', 'requires_action', 'succeeded', 'failed', 'cancelled'])
+        .optional()
+        .describe('Filter by payment intent status'),
       orderId: z.string().optional().describe('Filter by order ID'),
       customerId: z.string().optional().describe('Filter by customer ID'),
       intentId: z.string().optional().describe('Filter by intent ID'),

@@ -106,7 +106,7 @@ export function createSessionManager({ store, channel } = {}) {
   }
 
   function startCleanup() {
-    return setInterval(
+    const handle = setInterval(
       () => {
         const now = Date.now();
         for (const [id, session] of sessions) {
@@ -121,6 +121,8 @@ export function createSessionManager({ store, channel } = {}) {
       },
       5 * 60 * 1000,
     );
+    if (handle.unref) handle.unref();
+    return handle;
   }
 
   function stopCleanup(handle) {

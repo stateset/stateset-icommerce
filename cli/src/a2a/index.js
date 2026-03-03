@@ -424,7 +424,9 @@ export function createA2AService(commerce, config) {
         payment_id: paymentResult.payment.id,
         amount: amountToPay,
         total_paid: newAmountPaid,
-      }).catch(() => {}); // Fire and forget
+      }).catch((err) => {
+        console.debug('callback trigger failed:', err.message);
+      }); // Fire and forget
     }
 
     return {

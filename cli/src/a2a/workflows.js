@@ -206,8 +206,8 @@ export function createWorkflowService(store, a2aService) {
         if (step.result) {
           try {
             stepResults[stepName] = JSON.parse(step.result);
-          } catch {
-            /* ignore */
+          } catch (parseErr) {
+            console.debug('step result JSON parse failed:', parseErr.message);
           }
         }
         continue;

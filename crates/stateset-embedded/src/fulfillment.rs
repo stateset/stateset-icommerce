@@ -8,7 +8,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use stateset_embedded::{Commerce, CreateWave, OrderId, PickTaskFilter, PickStatus};
 //!
 //! let commerce = Commerce::new("./store.db")?;

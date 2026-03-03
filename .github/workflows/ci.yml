@@ -273,7 +273,27 @@ jobs:
       - name: Build docs
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --all-features --no-deps --document-private-items
+        # Build docs for each crate with its supported features.
+        # stateset-embedded with postgres triggers an sqlx Executor<'_>
+        # lifetime issue in doc compilation, so build it without postgres.
+        run: |
+          cargo doc --no-deps --document-private-items \
+            -p stateset-primitives --all-features
+          cargo doc --no-deps --document-private-items \
+            -p stateset-core --all-features
+          cargo doc --no-deps --document-private-items \
+            -p stateset-crypto
+          cargo doc --no-deps --document-private-items \
+            -p stateset-db --all-features
+          cargo doc --no-deps --document-private-items \
+            -p stateset-embedded
+          cargo doc --no-deps --document-private-items \
+            -p stateset-observability --all-features
+          cargo doc --no-deps --document-private-items \
+            -p stateset-policy -p stateset-a2a -p stateset-authz \
+            -p stateset-jobs -p stateset-http -p stateset-pricing \
+            -p stateset-macros -p stateset-test-utils \
+            -p stateset-sync -p stateset-migrations
 
   docs:
     name: Docs
@@ -583,6 +603,32 @@ jobs:
         working-directory: admin
         run: npm test
 
+  admin-coverage:
+    name: Admin Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ hashFiles('admin/package.json') != '' }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        working-directory: admin
+        run: npm ci
+
+      - name: Test with coverage
+        working-directory: admin
+        run: npm test -- --coverage
+
   go-bindings:
     name: Go Bindings
     runs-on: ubuntu-latest
@@ -881,6 +927,7 @@ jobs:
       - cli
       - ruby-bindings
       - admin
+      - admin-coverage
       - go-bindings
       - dotnet-bindings
       - jvm-bindings

@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::{CustomerId, OrderId, ProductId, ReturnId};
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 // ============================================================================
@@ -11,7 +12,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Query parameters for paginated list endpoints.
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, IntoParams)]
 pub struct PaginationParams {
     /// Maximum number of results to return (default: 50).
     pub limit: Option<u32>,
@@ -43,9 +44,10 @@ impl PaginationParams {
 // ============================================================================
 
 /// Request body for `POST /api/v1/orders`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateOrderRequest {
     /// The customer placing the order.
+    #[schema(value_type = String, format = "uuid")]
     pub customer_id: CustomerId,
     /// Line items for the order.
     pub items: Vec<CreateOrderItemRequest>,
@@ -64,20 +66,24 @@ pub struct CreateOrderRequest {
 }
 
 /// A single line item in a create-order request.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateOrderItemRequest {
+    #[schema(value_type = String, format = "uuid")]
     pub product_id: ProductId,
     pub variant_id: Option<Uuid>,
     pub sku: String,
     pub name: String,
     pub quantity: i32,
+    #[schema(value_type = String)]
     pub unit_price: Decimal,
+    #[schema(value_type = Option<String>)]
     pub discount: Option<Decimal>,
+    #[schema(value_type = Option<String>)]
     pub tax_amount: Option<Decimal>,
 }
 
 /// Address DTO shared by orders and customers.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct AddressDto {
     pub line1: String,
     pub line2: Option<String>,
@@ -88,12 +94,15 @@ pub struct AddressDto {
 }
 
 /// Response body for a single order.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderResponse {
+    #[schema(value_type = String, format = "uuid")]
     pub id: OrderId,
     pub order_number: String,
+    #[schema(value_type = String, format = "uuid")]
     pub customer_id: CustomerId,
     pub status: String,
+    #[schema(value_type = String)]
     pub total_amount: Decimal,
     pub currency: String,
     pub payment_status: String,
@@ -104,19 +113,22 @@ pub struct OrderResponse {
 }
 
 /// A single line item in an order response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OrderItemResponse {
     pub id: Uuid,
+    #[schema(value_type = String, format = "uuid")]
     pub product_id: ProductId,
     pub sku: String,
     pub name: String,
     pub quantity: i32,
+    #[schema(value_type = String)]
     pub unit_price: Decimal,
+    #[schema(value_type = String)]
     pub total: Decimal,
 }
 
 /// Response body for `GET /api/v1/orders` (list).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct OrderListResponse {
     pub orders: Vec<OrderResponse>,
     pub total: usize,
@@ -129,7 +141,7 @@ pub struct OrderListResponse {
 // ============================================================================
 
 /// Request body for `POST /api/v1/customers`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateCustomerRequest {
     pub email: String,
     pub first_name: String,
@@ -137,12 +149,14 @@ pub struct CreateCustomerRequest {
     pub phone: Option<String>,
     pub accepts_marketing: Option<bool>,
     pub tags: Option<Vec<String>>,
+    #[schema(value_type = Option<Object>)]
     pub metadata: Option<serde_json::Value>,
 }
 
 /// Response body for a single customer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CustomerResponse {
+    #[schema(value_type = String, format = "uuid")]
     pub id: CustomerId,
     pub email: String,
     pub first_name: String,
@@ -155,7 +169,7 @@ pub struct CustomerResponse {
 }
 
 /// Response body for `GET /api/v1/customers` (list).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CustomerListResponse {
     pub customers: Vec<CustomerResponse>,
     pub total: usize,
@@ -168,7 +182,7 @@ pub struct CustomerListResponse {
 // ============================================================================
 
 /// Request body for `POST /api/v1/products`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateProductRequest {
     pub name: String,
     pub slug: Option<String>,
@@ -177,8 +191,9 @@ pub struct CreateProductRequest {
 }
 
 /// Response body for a single product.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ProductResponse {
+    #[schema(value_type = String, format = "uuid")]
     pub id: ProductId,
     pub name: String,
     pub slug: String,
@@ -190,7 +205,7 @@ pub struct ProductResponse {
 }
 
 /// Response body for `GET /api/v1/products` (list).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ProductListResponse {
     pub products: Vec<ProductResponse>,
     pub total: usize,
@@ -203,9 +218,10 @@ pub struct ProductListResponse {
 // ============================================================================
 
 /// Request body for `POST /api/v1/inventory/:sku/adjust`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct InventoryAdjustRequest {
     /// Signed quantity change (+/−).
+    #[schema(value_type = String)]
     pub quantity: Decimal,
     /// Reason for the adjustment.
     pub reason: String,
@@ -216,12 +232,15 @@ pub struct InventoryAdjustRequest {
 }
 
 /// Response body for inventory stock levels.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InventoryResponse {
     pub sku: String,
     pub name: String,
+    #[schema(value_type = String)]
     pub total_on_hand: Decimal,
+    #[schema(value_type = String)]
     pub total_allocated: Decimal,
+    #[schema(value_type = String)]
     pub total_available: Decimal,
 }
 
@@ -230,8 +249,9 @@ pub struct InventoryResponse {
 // ============================================================================
 
 /// Request body for `POST /api/v1/returns`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateReturnRequest {
+    #[schema(value_type = String, format = "uuid")]
     pub order_id: OrderId,
     pub reason: String,
     pub reason_details: Option<String>,
@@ -240,7 +260,7 @@ pub struct CreateReturnRequest {
 }
 
 /// A single item in a create-return request.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CreateReturnItemRequest {
     pub order_item_id: Uuid,
     pub quantity: i32,
@@ -248,13 +268,17 @@ pub struct CreateReturnItemRequest {
 }
 
 /// Response body for a single return.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ReturnResponse {
+    #[schema(value_type = String, format = "uuid")]
     pub id: ReturnId,
+    #[schema(value_type = String, format = "uuid")]
     pub order_id: OrderId,
+    #[schema(value_type = String, format = "uuid")]
     pub customer_id: CustomerId,
     pub status: String,
     pub reason: String,
+    #[schema(value_type = Option<String>)]
     pub refund_amount: Option<Decimal>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -265,13 +289,13 @@ pub struct ReturnResponse {
 // ============================================================================
 
 /// Response body for `GET /health`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct HealthResponse {
     pub status: &'static str,
 }
 
 /// Response body for `GET /health/ready`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReadyResponse {
     pub status: &'static str,
     pub database: &'static str,
@@ -282,7 +306,7 @@ pub struct ReadyResponse {
 // ============================================================================
 
 /// Query parameters for the SSE event stream endpoint.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
 pub struct EventStreamParams {
     /// Optional event type filter (e.g. `order.*`).
     pub filter: Option<String>,

@@ -331,7 +331,10 @@ export const shipmentTools = [
     description: 'List provider-backed shipping labels with optional filtering.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z.string().optional().describe('Filter by label status'),
+      status: z
+        .enum(['created', 'purchased', 'voided', 'error'])
+        .optional()
+        .describe('Filter by label status'),
       orderId: z.string().optional().describe('Filter by order ID'),
       shipmentId: z.string().optional().describe('Filter by shipment ID'),
       trackingNumber: z.string().optional().describe('Filter by tracking number'),

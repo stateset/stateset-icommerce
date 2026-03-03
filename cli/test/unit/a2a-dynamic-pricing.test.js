@@ -228,7 +228,7 @@ describe('DynamicPricingStrategy — evaluateIncomingQuote', () => {
   });
 
   it('applies volume discount when quantity qualifies', () => {
-    const s = createDynamicPricingStrategy({ demandSurgeThreshold: 9999 });
+    const s = createDynamicPricingStrategy({ demandSurgeThreshold: 9999, peakHours: { start: 25, end: 25, surgeMultiplier: 1.0 } });
     // 60 items at $10 each = cost $600, volume discount 0.10 (qty 60 >= 50)
     const quote = makeQuote({
       items: [{ description: 'Bolt', unit_price: 10, quantity: 60 }],

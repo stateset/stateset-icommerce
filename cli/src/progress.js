@@ -82,8 +82,8 @@ function ttyProgress(label) {
         spinnerInstance = clack.spinner();
         spinnerInstance.start(label);
       }
-    } catch {
-      // Fallback — spinner unavailable
+    } catch (spinnerErr) {
+      console.debug('spinner unavailable:', spinnerErr.message);
     }
   }
 
@@ -97,8 +97,8 @@ function ttyProgress(label) {
         spinnerInstance.start(label);
       }
     })
-    .catch(() => {
-      // @clack not available — noop
+    .catch((err) => {
+      console.debug('@clack/prompts not available for spinner:', err.message);
     });
 
   return {

@@ -1,3 +1,6 @@
+#![deny(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+
 //! VES v1.0 Cryptographic Operations
 //!
 //! Implements:

@@ -383,10 +383,12 @@ export function createMcpEventStreamer(options = {}) {
         try {
           const heartbeat = JSON.stringify({ timestamp: new Date().toISOString() });
           res.write(`event: heartbeat\ndata: ${heartbeat}\n\n`);
-        } catch {
+        } catch (writeErr) {
+          console.debug('SSE heartbeat write failed, closing:', writeErr.message);
           clearInterval(heartbeatInterval);
         }
       }, SSE_HEARTBEAT_INTERVAL_MS);
+      if (heartbeatInterval.unref) heartbeatInterval.unref();
 
       const cleanup = () => {
         const active = _sseClients.get(normalizedSession);

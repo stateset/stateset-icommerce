@@ -186,7 +186,8 @@ async function startPolling({ baseUrl, password, pollIntervalMs, onMessage, sign
     }
 
     if (!signal.aborted) {
-      setTimeout(poll, pollIntervalMs);
+      const pollTimer = setTimeout(poll, pollIntervalMs);
+      if (pollTimer.unref) pollTimer.unref();
     }
   }
 

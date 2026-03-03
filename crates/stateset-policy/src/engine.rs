@@ -91,13 +91,13 @@ impl PolicyEngine {
     }
 
     /// Builder: set unknown-domain behavior.
-    pub fn with_unknown_domain_mode(mut self, mode: UnknownDomainMode) -> Self {
+    pub const fn with_unknown_domain_mode(mut self, mode: UnknownDomainMode) -> Self {
         self.unknown_domain_mode = mode;
         self
     }
 
     /// Set unknown-domain behavior.
-    pub fn set_unknown_domain_mode(&mut self, mode: UnknownDomainMode) {
+    pub const fn set_unknown_domain_mode(&mut self, mode: UnknownDomainMode) {
         self.unknown_domain_mode = mode;
     }
 

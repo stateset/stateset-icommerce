@@ -390,18 +390,18 @@ export class TutorialRunner {
    * List available tutorials
    */
   listTutorials() {
-    console.log('\nAvailable Tutorials:\n');
+    console.info('\nAvailable Tutorials:\n');
 
     for (const [id, tutorial] of Object.entries(TUTORIALS)) {
-      console.log(`  ${id.padEnd(15)} ${tutorial.name}`);
-      console.log(`  ${' '.repeat(15)} ${this.dim(tutorial.description)}`);
-      console.log();
+      console.info(`  ${id.padEnd(15)} ${tutorial.name}`);
+      console.info(`  ${' '.repeat(15)} ${this.dim(tutorial.description)}`);
+      console.info();
     }
 
-    console.log('Run a tutorial:');
-    console.log('  $ stateset-tutorial quickstart');
-    console.log('  $ stateset-tutorial orders');
-    console.log();
+    console.info('Run a tutorial:');
+    console.info('  $ stateset-tutorial quickstart');
+    console.info('  $ stateset-tutorial orders');
+    console.info();
   }
 
   /**
@@ -416,37 +416,37 @@ export class TutorialRunner {
       return false;
     }
 
-    console.log(`\n${this.bold('═'.repeat(60))}`);
-    console.log(`${this.bold(`  ${tutorial.name}`)}`);
-    console.log(`  ${this.dim(tutorial.description)}`);
-    console.log(`${this.bold('═'.repeat(60))}\n`);
+    console.info(`\n${this.bold('═'.repeat(60))}`);
+    console.info(`${this.bold(`  ${tutorial.name}`)}`);
+    console.info(`  ${this.dim(tutorial.description)}`);
+    console.info(`${this.bold('═'.repeat(60))}\n`);
 
     for (let i = 0; i < tutorial.steps.length; i++) {
       const step = tutorial.steps[i];
 
-      console.log(
+      console.info(
         `${this.cyan(`Step ${i + 1}/${tutorial.steps.length}:`)} ${this.bold(step.title)}`,
       );
-      console.log(`${this.dim('─'.repeat(50))}`);
-      console.log(step.content);
+      console.info(`${this.dim('─'.repeat(50))}`);
+      console.info(step.content);
 
       if (step.tryCommand) {
-        console.log(`${this.yellow('Try it:')} ${step.tryCommand}\n`);
+        console.info(`${this.yellow('Try it:')} ${step.tryCommand}\n`);
       }
 
       if (i < tutorial.steps.length - 1) {
         if (this.interactive) {
           const shouldContinue = await this.promptContinue();
           if (!shouldContinue) {
-            console.log('\nTutorial paused. Run again to continue.');
+            console.info('\nTutorial paused. Run again to continue.');
             return false;
           }
         }
-        console.log();
+        console.info();
       }
     }
 
-    console.log(`${this.green('✓')} Tutorial complete!\n`);
+    console.info(`${this.green('✓')} Tutorial complete!\n`);
     return true;
   }
 
@@ -520,7 +520,7 @@ export async function checkFirstRun() {
  * Show first-run welcome message
  */
 export function showWelcome() {
-  console.log(`
+  console.info(`
 \x1b[36m╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
 ║   Welcome to StateSet CLI! 🚀                            ║

@@ -1,6 +1,7 @@
-//! HTTP middleware — request ID, logging, CORS.
+//! HTTP middleware — request ID, logging, CORS, rate limiting.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use axum::{
     Router,
@@ -152,6 +153,86 @@ pub(crate) fn cors_layer() -> CorsLayer {
         .allow_headers([AUTHORIZATION, CONTENT_TYPE, X_TENANT_ID.clone()])
 }
 
+// ============================================================================
+// Rate Limiting
+// ============================================================================
+
+/// Configuration for the token bucket rate limiter.
+#[derive(Clone, Debug)]
+pub(crate) struct RateLimitConfig {
+    /// Sustained requests per second.
+    pub requests_per_second: u64,
+    /// Maximum burst size (token bucket capacity).
+    pub burst_size: u64,
+}
+
+/// Token bucket for rate limiting.
+///
+/// Tokens refill at `rate` per second up to `capacity`. Each request consumes
+/// one token; if none are available the request is rejected with HTTP 429.
+pub(crate) struct TokenBucket {
+    tokens: f64,
+    last_refill: Instant,
+    rate: f64,
+    capacity: f64,
+}
+
+impl TokenBucket {
+    fn new(rate: u64, capacity: u64) -> Self {
+        Self {
+            tokens: capacity as f64,
+            last_refill: Instant::now(),
+            rate: rate as f64,
+            capacity: capacity as f64,
+        }
+    }
+
+    fn try_acquire(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.rate).min(self.capacity);
+        self.last_refill = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Create a shared token bucket wrapped in an `Arc<Mutex<_>>`.
+pub(crate) fn create_rate_limiter(config: &RateLimitConfig) -> Arc<Mutex<TokenBucket>> {
+    Arc::new(Mutex::new(TokenBucket::new(
+        config.requests_per_second,
+        config.burst_size,
+    )))
+}
+
+/// Middleware that enforces a global request rate limit.
+///
+/// Returns HTTP 429 with a `Retry-After` header when the bucket is empty.
+async fn rate_limit(
+    State(bucket): State<Arc<Mutex<TokenBucket>>>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let allowed = {
+        let mut guard = bucket.lock().unwrap_or_else(|e| e.into_inner());
+        guard.try_acquire()
+    };
+    if allowed {
+        next.run(request).await
+    } else {
+        let mut response =
+            HttpError::TooManyRequests("rate limit exceeded".to_string()).into_response();
+        response
+            .headers_mut()
+            .insert("retry-after", HeaderValue::from_static("1"));
+        response
+    }
+}
+
 /// Build the request-ID middleware layers.
 ///
 /// - Assigns a `x-request-id` UUID if the incoming request lacks one.
@@ -169,8 +250,14 @@ pub(crate) fn apply_middleware(
     with_cors: bool,
     with_request_id: bool,
     auth_config: Option<(String, Option<String>)>,
+    rate_limit_config: Option<RateLimitConfig>,
 ) -> Router {
     let mut router = router.layer(TraceLayer::new_for_http());
+
+    if let Some(config) = rate_limit_config {
+        let bucket = create_rate_limiter(&config);
+        router = router.layer(from_fn_with_state(bucket, rate_limit));
+    }
 
     if let Some((token, bound_tenant_id)) = auth_config {
         router = router.layer(from_fn_with_state(
@@ -217,25 +304,25 @@ mod tests {
     #[test]
     fn apply_middleware_no_extras() {
         let router = Router::new();
-        let _router = apply_middleware(router, false, false, None);
+        let _router = apply_middleware(router, false, false, None, None);
     }
 
     #[test]
     fn apply_middleware_all() {
         let router = Router::new();
-        let _router = apply_middleware(router, true, true, Some(("token".to_string(), None)));
+        let _router = apply_middleware(router, true, true, Some(("token".to_string(), None)), None);
     }
 
     #[test]
     fn apply_middleware_cors_only() {
         let router = Router::new();
-        let _router = apply_middleware(router, true, false, None);
+        let _router = apply_middleware(router, true, false, None, None);
     }
 
     #[test]
     fn apply_middleware_request_id_only() {
         let router = Router::new();
-        let _router = apply_middleware(router, false, true, None);
+        let _router = apply_middleware(router, false, true, None, None);
     }
 
     #[test]
@@ -259,7 +346,7 @@ mod tests {
     #[tokio::test]
     async fn auth_blocks_unauthorized_api_requests() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
-        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)));
+        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)), None);
 
         let response =
             app.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
@@ -269,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn auth_allows_authorized_api_requests() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
-        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)));
+        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)), None);
 
         let response = app
             .oneshot(
@@ -287,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn auth_blocks_missing_tenant_header() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
-        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)));
+        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)), None);
 
         let response = app
             .oneshot(
@@ -309,6 +396,7 @@ mod tests {
             false,
             false,
             Some(("secret".to_string(), Some("tenant-a".to_string()))),
+            None,
         );
 
         let response = app
@@ -327,7 +415,7 @@ mod tests {
     #[tokio::test]
     async fn auth_skips_non_api_routes() {
         let router = Router::new().route("/health", get(|| async { "ok" }));
-        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)));
+        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)), None);
 
         let response =
             app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
@@ -337,7 +425,7 @@ mod tests {
     #[tokio::test]
     async fn cors_allows_localhost_origin_by_default() {
         let router = Router::new().route("/health", get(|| async { "ok" }));
-        let app = apply_middleware(router, true, false, None);
+        let app = apply_middleware(router, true, false, None, None);
 
         let response = app
             .oneshot(
@@ -365,7 +453,7 @@ mod tests {
     #[tokio::test]
     async fn cors_rejects_unconfigured_origin_by_default() {
         let router = Router::new().route("/health", get(|| async { "ok" }));
-        let app = apply_middleware(router, true, false, None);
+        let app = apply_middleware(router, true, false, None, None);
 
         let response = app
             .oneshot(
@@ -382,5 +470,80 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get("access-control-allow-origin").is_none());
+    }
+
+    #[test]
+    fn token_bucket_allows_within_capacity() {
+        let mut bucket = TokenBucket::new(10, 5);
+        for _ in 0..5 {
+            assert!(bucket.try_acquire(), "should allow requests within burst capacity");
+        }
+    }
+
+    #[test]
+    fn token_bucket_rejects_over_capacity() {
+        let mut bucket = TokenBucket::new(10, 2);
+        assert!(bucket.try_acquire());
+        assert!(bucket.try_acquire());
+        assert!(!bucket.try_acquire(), "should reject requests beyond burst");
+    }
+
+    #[test]
+    fn token_bucket_refills_over_time() {
+        let mut bucket = TokenBucket::new(1000, 1);
+        assert!(bucket.try_acquire());
+        assert!(!bucket.try_acquire());
+        // Manually advance the last_refill to simulate time passing
+        bucket.last_refill -= std::time::Duration::from_millis(10);
+        assert!(bucket.try_acquire(), "should refill tokens over time");
+    }
+
+    #[test]
+    fn rate_limit_config_builds() {
+        let config = RateLimitConfig { requests_per_second: 100, burst_size: 200 };
+        let _limiter = create_rate_limiter(&config);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_allows_requests_within_limit() {
+        let router = Router::new().route("/health", get(|| async { "ok" }));
+        let config = Some(RateLimitConfig { requests_per_second: 100, burst_size: 10 });
+        let app = apply_middleware(router, false, false, None, config);
+
+        let response =
+            app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_returns_429_when_exceeded() {
+        let config = RateLimitConfig { requests_per_second: 1, burst_size: 1 };
+        let bucket = create_rate_limiter(&config);
+
+        // Exhaust the bucket
+        {
+            let mut guard = bucket.lock().unwrap();
+            guard.try_acquire();
+        }
+
+        // Build the middleware with a pre-exhausted bucket
+        let app: Router<()> = Router::new()
+            .route("/health", get(|| async { "ok" }))
+            .layer(from_fn_with_state(bucket, rate_limit));
+
+        let response =
+            app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response.headers().get("retry-after").and_then(|v| v.to_str().ok()),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn apply_middleware_with_rate_limit() {
+        let router = Router::new();
+        let config = Some(RateLimitConfig { requests_per_second: 50, burst_size: 100 });
+        let _router = apply_middleware(router, false, false, None, config);
     }
 }

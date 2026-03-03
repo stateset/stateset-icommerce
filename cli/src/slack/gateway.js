@@ -42,7 +42,8 @@ export async function startSlackGateway({
     ({
       default: { App },
     } = await import('@slack/bolt'));
-  } catch {
+  } catch (importErr) {
+    console.debug('@slack/bolt default import failed, trying named:', importErr.message);
     try {
       ({ App } = await import('@slack/bolt'));
     } catch (err2) {

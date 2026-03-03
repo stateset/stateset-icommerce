@@ -5,7 +5,7 @@ use stateset_macros::StateSetId;
 #[derive(StateSetId)]
 pub struct DownstreamInvoiceId(uuid::Uuid);
 
-fn assert_id_traits<T: Copy + Eq + Ord + std::hash::Hash + serde::Serialize>() {}
+const fn assert_id_traits<T: Copy + Eq + Ord + std::hash::Hash + serde::Serialize>() {}
 
 #[test]
 fn downstream_stateset_id_behaves_like_uuid_newtype() {

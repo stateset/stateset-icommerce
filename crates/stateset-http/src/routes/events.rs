@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
 ///
 /// Supports an optional `?filter=order.*` query parameter for event type
 /// filtering (prefix match with wildcard support).
+#[tracing::instrument(skip(params))]
 async fn event_stream(
     Query(params): Query<EventStreamParams>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {

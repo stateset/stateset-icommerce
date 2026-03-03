@@ -313,6 +313,7 @@ export default function init(api, { config }) {
           );
         }
       }, interval);
+      if (pruneTimer.unref) pruneTimer.unref();
       console.debug(`[memory-vector] Pruner started (interval: ${interval}ms)`);
     },
     stop: async () => {

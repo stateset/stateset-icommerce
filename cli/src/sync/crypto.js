@@ -22,8 +22,8 @@ import crypto from 'crypto';
 let _native = null;
 try {
   _native = await import('@stateset/embedded');
-} catch {
-  // Native module not available — use JS fallback
+} catch (nativeErr) {
+  console.debug('native crypto module not available, using JS fallback:', nativeErr.message);
 }
 
 // =============================================================================
@@ -183,8 +183,8 @@ export function canonicalizeJson(value) {
   if (_native?.jcsCanonicalize) {
     try {
       return _native.jcsCanonicalize(JSON.stringify(value));
-    } catch {
-      // Fall through to JS implementation
+    } catch (nativeErr) {
+      console.debug('native crypto call failed, using JS fallback:', nativeErr.message);
     }
   }
   if (value === null) return 'null';
@@ -329,8 +329,8 @@ export function signEventHash(eventSigningHash, privateKey) {
   if (_native?.ed25519Sign) {
     try {
       return _native.ed25519Sign(eventSigningHash, privateKey);
-    } catch {
-      // Fall through to JS implementation
+    } catch (nativeErr) {
+      console.debug('native crypto call failed, using JS fallback:', nativeErr.message);
     }
   }
   // Create key object from raw 32-byte seed
@@ -360,8 +360,8 @@ export function verifyEventSignature(eventSigningHash, signature, publicKey) {
   if (_native?.ed25519Verify) {
     try {
       return _native.ed25519Verify(eventSigningHash, signature, publicKey);
-    } catch {
-      // Fall through to JS implementation
+    } catch (nativeErr) {
+      console.debug('native crypto call failed, using JS fallback:', nativeErr.message);
     }
   }
   try {

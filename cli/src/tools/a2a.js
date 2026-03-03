@@ -1603,7 +1603,10 @@ export const a2aTools = [
     inputSchema: {
       recipientAddress: z.string().optional().describe('Filter by recipient address'),
       eventType: z.string().optional().describe('Filter by event type'),
-      status: z.string().optional().describe('Filter by status: pending, delivered, failed'),
+      status: z
+        .enum(['pending', 'delivered', 'failed'])
+        .optional()
+        .describe('Filter by status: pending, delivered, failed'),
       limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
@@ -1942,7 +1945,7 @@ export const a2aTools = [
         .optional()
         .describe('Platform fee percentage (0-100, deducted before split)'),
       platformFeeAddress: z.string().optional().describe('Platform fee recipient address'),
-      memo: z.string().optional().describe('Payment memo'),
+      memo: z.string().max(500).optional().describe('Payment memo'),
       referenceType: z.string().optional().describe('Reference entity type (e.g., "order")'),
       referenceId: z.string().optional().describe('Reference entity ID'),
       metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
