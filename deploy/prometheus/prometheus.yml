@@ -9,7 +9,7 @@ global:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: []
+        - targets: ['alertmanager:9093']
 
 # Rule files
 rule_files:

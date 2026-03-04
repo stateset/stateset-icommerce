@@ -332,7 +332,7 @@ impl SqliteCartRepository {
             CreateOrder {
                 customer_id,
                 items: order_items,
-                currency: Some(cart.currency.clone()),
+                currency: Some(cart.currency),
                 shipping_address,
                 billing_address,
                 notes: cart.notes.clone(),
@@ -447,7 +447,7 @@ impl CartRepository for SqliteCartRepository {
         let id = CartId::new();
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
-        let currency = input.currency.clone().unwrap_or_default();
+        let currency = input.currency.unwrap_or_default();
 
         let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
@@ -1351,7 +1351,7 @@ impl CartRepository for SqliteCartRepository {
             CreateOrder {
                 customer_id,
                 items: order_items,
-                currency: Some(cart.currency.clone()),
+                currency: Some(cart.currency),
                 shipping_address,
                 billing_address,
                 notes: cart.notes.clone(),
@@ -1564,7 +1564,7 @@ impl CartRepository for SqliteCartRepository {
             let id = CartId::new();
             let cart_number = Self::generate_cart_number();
             let now = Utc::now();
-            let currency = input.currency.clone().unwrap_or_default();
+            let currency = input.currency.unwrap_or_default();
 
             let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 

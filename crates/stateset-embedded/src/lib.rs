@@ -174,6 +174,8 @@ mod wishlists;
 mod work_orders;
 mod x402;
 
+pub mod notifications;
+
 #[cfg(feature = "vector")]
 mod vector;
 
@@ -237,6 +239,11 @@ pub use warranties::Warranties;
 pub use wishlists::Wishlists;
 pub use work_orders::WorkOrders;
 pub use x402::X402;
+
+pub use notifications::{
+    EmailBackend, EmailTemplate, LogEmailBackend, NotificationConfig, NotificationService,
+    RecipientResolver, TransactionalEmail, WebhookEmailBackend,
+};
 
 #[cfg(feature = "vector")]
 pub use vector::Vector;

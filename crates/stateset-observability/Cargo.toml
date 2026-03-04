@@ -17,4 +17,14 @@ workspace = true
 [dependencies]
 thiserror = { workspace = true }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+
+# OpenTelemetry (optional — enable with `otel` feature)
+opentelemetry = { version = "0.23", optional = true }
+opentelemetry-otlp = { version = "0.16", optional = true }
+opentelemetry_sdk = { version = "0.23", features = ["rt-tokio"], optional = true }
+tracing-opentelemetry = { version = "0.24", optional = true }
+
+[features]
+default = []
+otel = ["opentelemetry", "opentelemetry-otlp", "opentelemetry_sdk", "tracing-opentelemetry"]

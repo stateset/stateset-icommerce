@@ -164,6 +164,9 @@ pub struct ProductFilter {
     pub in_stock: Option<bool>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Keyset cursor: return records after this `(sort_key, id)` pair.
+    /// Sort key is `name` (ASC ordering).
+    pub after_cursor: Option<(String, String)>,
 }
 
 impl Product {

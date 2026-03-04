@@ -835,7 +835,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                     invoice_date.to_rfc3339(),
                     due_date.to_rfc3339(),
                     input.payment_terms.clone(),
-                    input.currency.clone().unwrap_or_default(),
+                    input.currency.unwrap_or_default(),
                     input.billing_name.clone(),
                     input.billing_email.clone(),
                     input.billing_address.clone(),

@@ -1,0 +1,165 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Service Health",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "up{job=\"stateset-cli\"}", "legendFormat": "CLI Service" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "title": "Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(stateset_requests_total[5m])", "legendFormat": "{{method}} {{path}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    },
+    {
+      "title": "Error Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(stateset_errors_total[5m])", "legendFormat": "{{error_type}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "errors/s", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "title": "Active Database Connections",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "stateset_database_connections_active", "legendFormat": "Active" }
+      ]
+    },
+    {
+      "title": "Request Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(stateset_request_duration_seconds_bucket[5m]))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(stateset_request_duration_seconds_bucket[5m]))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, rate(stateset_request_duration_seconds_bucket[5m]))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "title": "Orders Created",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(stateset_orders_created_total[5m])", "legendFormat": "Created" },
+        { "expr": "rate(stateset_orders_cancelled_total[5m])", "legendFormat": "Cancelled" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops" }
+      }
+    },
+    {
+      "title": "Inventory Alerts",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "stateset_inventory_available < 20", "legendFormat": "{{sku}}", "format": "table", "instant": true }
+      ]
+    },
+    {
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "process_resident_memory_bytes / 1024 / 1024", "legendFormat": "RSS (MB)" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "decmbytes" }
+      }
+    },
+    {
+      "title": "PostgreSQL Connections",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "pg_stat_activity_count / pg_settings_max_connections * 100", "legendFormat": "Connection Usage %" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "red", "value": 80 }] }
+        }
+      }
+    },
+    {
+      "title": "Sync Lag",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "stateset_sync_pending_events", "legendFormat": "Pending Events" },
+        { "expr": "stateset_sync_lag_seconds", "legendFormat": "Lag (s)" }
+      ]
+    },
+    {
+      "title": "Active Alerts",
+      "type": "alertlist",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "options": {
+        "showOptions": "current",
+        "sortOrder": 3,
+        "stateFilter": { "firing": true, "pending": true }
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["stateset", "commerce"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "StateSet iCommerce Overview",
+  "uid": "stateset-overview",
+  "version": 1
+}

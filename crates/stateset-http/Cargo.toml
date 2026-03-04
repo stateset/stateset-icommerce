@@ -28,7 +28,9 @@ rust_decimal = { workspace = true }
 thiserror = { workspace = true }
 tracing = "0.1"
 http = "1"
+http-body-util = "0.1"
 utoipa = { version = "5", features = ["chrono", "uuid"] }
+base64 = "0.22"
 
 [lints]
 workspace = true

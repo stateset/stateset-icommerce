@@ -13,6 +13,7 @@ use stateset_embedded::{
     CreateReturn, CreateReturnItem, CustomerFilter, OrderFilter, PaymentMethodType, ProductFilter,
     TimePeriod,
 };
+use stateset_primitives::CurrencyCode;
 use std::sync::{Arc, Mutex};
 
 // =============================================================================
@@ -221,7 +222,7 @@ fn create_order_object<'a>(env: &mut JNIEnv<'a>, order: &stateset_core::Order) -
         None => return JObject::null(),
     };
     let total: f64 = to_f64_or_nan(order.total_amount);
-    let currency_result = env.new_string(&order.currency);
+    let currency_result = env.new_string(order.currency.as_str());
     let currency = match jni_or_throw(env, currency_result, "Failed to create order currency") {
         Some(value) => value,
         None => return JObject::null(),
@@ -322,7 +323,7 @@ fn create_cart_object<'a>(env: &mut JNIEnv<'a>, cart: &stateset_core::Cart) -> J
         None => return JObject::null(),
     };
     let total: f64 = to_f64_or_nan(cart.grand_total);
-    let currency_result = env.new_string(&cart.currency);
+    let currency_result = env.new_string(cart.currency.as_str());
     let currency = match jni_or_throw(env, currency_result, "Failed to create cart currency") {
         Some(value) => value,
         None => return JObject::null(),
@@ -833,9 +834,9 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeCreate<'local>(
             .create(CreateOrder {
                 customer_id: uuid.into(),
                 currency: Some(if currency_str.is_empty() {
-                    "USD".to_string()
+                    CurrencyCode::USD
                 } else {
-                    currency_str
+                    currency_str.parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD)
                 }),
                 items: vec![],
                 ..Default::default()
@@ -989,7 +990,11 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCreate<'local>(
                 customer_id: customer_uuid.map(Into::into),
                 customer_email: None,
                 customer_name: None,
-                currency: if currency_str.is_empty() { None } else { Some(currency_str) },
+                currency: if currency_str.is_empty() {
+                    None
+                } else {
+                    currency_str.parse::<CurrencyCode>().ok()
+                },
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1169,7 +1174,7 @@ pub extern "system" fn Java_com_stateset_embedded_Payments_nativeRecordPayment<'
             .create(CreatePayment {
                 order_id: Some(uuid.into()),
                 amount: amt,
-                currency: Some("USD".to_string()),
+                currency: Some(CurrencyCode::USD),
                 payment_method,
                 external_id: if reference_str.is_empty() { None } else { Some(reference_str) },
                 ..Default::default()

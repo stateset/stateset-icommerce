@@ -526,13 +526,25 @@ impl ReturnRepository for SqliteReturnRepository {
             params.push(Box::new(to.to_rfc3339()));
         }
 
-        sql.push_str(" ORDER BY created_at DESC");
+        // Keyset cursor: (created_at, id) for stable DESC ordering
+        if let Some((cursor_date, cursor_id)) = &filter.after_cursor {
+            sql.push_str(
+                " AND (created_at < ? OR (created_at = ? AND id < ?))",
+            );
+            params.push(Box::new(cursor_date.clone()));
+            params.push(Box::new(cursor_date.clone()));
+            params.push(Box::new(cursor_id.clone()));
+        }
+
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
 
         if let Some(limit) = filter.limit {
             sql.push_str(&format!(" LIMIT {}", limit));
         }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        if filter.after_cursor.is_none() {
+            if let Some(offset) = filter.offset {
+                sql.push_str(&format!(" OFFSET {}", offset));
+            }
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();

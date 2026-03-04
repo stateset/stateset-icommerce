@@ -40,7 +40,7 @@ fn create_customer_then_order_verifies_total_and_status() {
     assert_eq!(order.items.len(), 2);
     // total = (2 * 25.00) + (1 * 50.00) = 100.00
     assert_eq!(order.total_amount, dec!(100.00));
-    assert_eq!(order.currency, "USD");
+    assert_eq!(order.currency.as_str(), "USD");
 }
 
 #[test]

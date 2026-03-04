@@ -392,7 +392,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeOrderCr
             .create(CreateOrder {
                 customer_id: customer_uuid.into(),
                 items,
-                currency: Some(currency_str),
+                currency: Some(currency_str.parse().unwrap_or_default()),
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -626,7 +626,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeCartCre
             .carts()
             .create(CreateCart {
                 customer_id: customer_uuid.map(Into::into),
-                currency: if currency_str.is_empty() { None } else { Some(currency_str) },
+                currency: if currency_str.is_empty() { None } else { currency_str.parse().ok() },
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -854,7 +854,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativePayment
             .create(CreatePayment {
                 order_id: Some(order_uuid.into()),
                 amount: amount_decimal,
-                currency: Some(currency_str),
+                currency: Some(currency_str.parse().unwrap_or_default()),
                 payment_method,
                 ..Default::default()
             })

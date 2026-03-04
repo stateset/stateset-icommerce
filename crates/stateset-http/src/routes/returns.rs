@@ -2,23 +2,27 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     routing::{get, patch, post},
 };
 
-use crate::dto::{CreateReturnRequest, ReturnResponse};
+use crate::dto::{
+    CreateReturnRequest, ReturnFilterParams, ReturnListResponse, ReturnResponse, decode_cursor,
+    encode_cursor,
+};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{
-    CreateReturn, CreateReturnItem, ItemCondition, OrderItemId, ReturnId, ReturnReason,
+    CreateReturn, CreateReturnItem, CustomerId, ItemCondition, OrderId, OrderItemId, ReturnFilter,
+    ReturnId, ReturnReason, ReturnStatus,
 };
 use std::str::FromStr;
 
 /// Build the returns sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/returns", post(create_return))
+        .route("/returns", post(create_return).get(list_returns))
         .route("/returns/{id}", get(get_return))
         .route("/returns/{id}/approve", patch(approve_return))
 }
@@ -126,6 +130,117 @@ pub(crate) async fn approve_return(
     Ok(Json(ReturnResponse::from(ret)))
 }
 
+/// `GET /api/v1/returns`
+#[utoipa::path(
+    get,
+    path = "/api/v1/returns",
+    tag = "returns",
+    params(ReturnFilterParams),
+    responses(
+        (status = 200, description = "List of returns", body = ReturnListResponse),
+        (status = 400, description = "Invalid filter parameter", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, params))]
+pub(crate) async fn list_returns(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<ReturnFilterParams>,
+) -> Result<Json<ReturnListResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
+    let limit = params.resolved_limit();
+    let offset = params.resolved_offset();
+
+    // Parse filter parameters
+    let order_id = params
+        .order_id
+        .map(|s| s.parse::<OrderId>())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid order_id: {e}")))?;
+    let customer_id = params
+        .customer_id
+        .map(|s| s.parse::<CustomerId>())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
+    let status = params
+        .status
+        .as_deref()
+        .map(ReturnStatus::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+    let reason = params
+        .reason
+        .as_deref()
+        .map(ReturnReason::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid reason: {e}")))?;
+    let from_date = params
+        .from_date
+        .map(|s| s.parse())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid from_date: {e}")))?;
+    let to_date = params
+        .to_date
+        .map(|s| s.parse())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid to_date: {e}")))?;
+
+    // Decode cursor if provided
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor)
+                .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
+
+    // Count total matching records (without pagination or cursor)
+    let count_filter = ReturnFilter {
+        order_id,
+        customer_id,
+        status,
+        reason,
+        from_date,
+        to_date,
+        limit: None,
+        offset: None,
+        after_cursor: None,
+    };
+    let total = commerce.returns().list(count_filter)?.len();
+
+    // Fetch the requested page
+    let filter = ReturnFilter {
+        order_id,
+        customer_id,
+        status,
+        reason,
+        from_date,
+        to_date,
+        limit: Some(limit),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
+        after_cursor,
+    };
+    let returns = commerce.returns().list(filter)?;
+    let has_more = returns.len() == limit as usize;
+    let next_cursor = if has_more {
+        returns
+            .last()
+            .map(|r| encode_cursor(&r.created_at.to_rfc3339(), &r.id.to_string()))
+    } else {
+        None
+    };
+    Ok(Json(ReturnListResponse {
+        returns: returns.into_iter().map(ReturnResponse::from).collect(),
+        total,
+        limit,
+        offset,
+        next_cursor,
+        has_more,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +296,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_returns_empty() {
+        let resp =
+            app().oneshot(Request::get("/returns").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 0);
+        assert!(json["returns"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_returns_invalid_status_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/returns?status=bogus").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_returns_invalid_order_id_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/returns?order_id=not-a-uuid").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_returns_invalid_reason_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/returns?reason=unicorn").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_returns_with_pagination() {
+        let resp = app()
+            .oneshot(Request::get("/returns?limit=10&offset=5").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["limit"], 10);
+        assert_eq!(json["offset"], 5);
     }
 }

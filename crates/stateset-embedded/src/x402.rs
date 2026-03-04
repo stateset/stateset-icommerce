@@ -999,7 +999,7 @@ mod tests {
                 quote_id: Some(quoted.id),
                 items: quoted.items,
                 total: quoted.total,
-                currency: Some(quoted.currency.clone()),
+                currency: Some(quoted.currency),
                 fulfillment_type: Some("digital".to_string()),
                 notes: Some("unit test purchase".into()),
                 metadata: None,

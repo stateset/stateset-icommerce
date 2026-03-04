@@ -4,12 +4,15 @@
  * Provides audit trail exports, tax reporting (1099-K), GDPR data portability
  * and erasure, compliance summaries, and SOC2 evidence gathering.
  *
- * Uses a factory function pattern — call `createComplianceService(store)`
+ * Uses a factory function pattern — call `createComplianceService(store, options)`
  * where `store` is an object with a `.db` property (better-sqlite3 instance).
- * Queries existing A2A tables; does NOT create new tables.
+ * Queries existing A2A tables and optionally the main commerce database for
+ * full GDPR coverage across customers, orders, carts, payments, invoices,
+ * shipments, subscriptions, and warranties.
  */
 
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -88,17 +91,59 @@ function hashValue(value) {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a compliance service that queries existing A2A tables.
+ * Create a compliance service that queries existing A2A tables and optionally
+ * the main commerce database for full GDPR coverage.
  *
  * @param {Object} store  - Object with a `.db` (better-sqlite3 Database)
+ * @param {Object} [options] - Additional options
+ * @param {string} [options.commerceDbPath] - Path to the main commerce SQLite database
  * @returns {Object} Compliance service methods
  */
-export function createComplianceService(store) {
+export function createComplianceService(store, options = {}) {
   if (!store || !store.db) {
     throw new Error('Compliance service requires a store with a .db property');
   }
 
   const { db } = store;
+
+  // Lazy-initialized commerce database handle (better-sqlite3)
+  let _commerceDb = options._commerceDbOverride || null;
+  const _commerceDbOwned = !options._commerceDbOverride;
+
+  /**
+   * Get the commerce database handle, opening it lazily on first access.
+   * Returns null if no commerce DB path was provided or the file doesn't exist.
+   *
+   * @returns {import('better-sqlite3').Database | null}
+   */
+  function getCommerceDb() {
+    if (_commerceDb) return _commerceDb;
+    const dbPath = options.commerceDbPath;
+    if (!dbPath) return null;
+    if (dbPath !== ':memory:' && !existsSync(dbPath)) return null;
+    try {
+      const Database = store.db.constructor;
+      _commerceDb = new Database(dbPath, { readonly: false });
+      _commerceDb.pragma('journal_mode = WAL');
+      return _commerceDb;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Check if a table exists in a given database.
+   *
+   * @param {import('better-sqlite3').Database} database
+   * @param {string} tableName
+   * @returns {boolean}
+   */
+  function tableExists(database, tableName) {
+    const row = database
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+      .get(tableName);
+    return !!row;
+  }
 
   // -------------------------------------------------------------------------
   // 1. exportAuditTrail
@@ -295,12 +340,133 @@ export function createComplianceService(store) {
       )
       .all(customerId, customerId);
 
+    // --- Commerce data (main database) ---
+    const commerceData = {};
+    const cdb = getCommerceDb();
+    if (cdb) {
+      // Customer profile
+      if (tableExists(cdb, 'customers')) {
+        commerceData.customers = cdb
+          .prepare(
+            `SELECT id, email, first_name, last_name, phone, status, accepts_marketing,
+                    email_verified, tags, metadata, created_at, updated_at
+             FROM customers WHERE id = ? OR email = ?`,
+          )
+          .all(customerId, customerId);
+      }
+
+      // Addresses
+      if (tableExists(cdb, 'customer_addresses')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        if (allIds.length > 0) {
+          const placeholders = allIds.map(() => '?').join(',');
+          commerceData.addresses = cdb
+            .prepare(`SELECT * FROM customer_addresses WHERE customer_id IN (${placeholders})`)
+            .all(...allIds);
+        }
+      }
+
+      // Orders
+      if (tableExists(cdb, 'orders')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        const placeholders = allIds.map(() => '?').join(',');
+        commerceData.orders = cdb
+          .prepare(`SELECT * FROM orders WHERE customer_id IN (${placeholders})`)
+          .all(...allIds);
+      }
+
+      // Carts
+      if (tableExists(cdb, 'carts')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        const placeholders = allIds.map(() => '?').join(',');
+        commerceData.carts = cdb
+          .prepare(
+            `SELECT * FROM carts WHERE customer_id IN (${placeholders})
+             OR customer_email = ?`,
+          )
+          .all(...allIds, customerId);
+      }
+
+      // Payments
+      if (tableExists(cdb, 'payments')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        const placeholders = allIds.map(() => '?').join(',');
+        commerceData.commercePayments = cdb
+          .prepare(`SELECT * FROM payments WHERE customer_id IN (${placeholders})`)
+          .all(...allIds);
+      }
+
+      // Payment methods
+      if (tableExists(cdb, 'payment_methods')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        const placeholders = allIds.map(() => '?').join(',');
+        commerceData.paymentMethods = cdb
+          .prepare(`SELECT * FROM payment_methods WHERE customer_id IN (${placeholders})`)
+          .all(...allIds);
+      }
+
+      // Invoices
+      if (tableExists(cdb, 'invoices')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        const placeholders = allIds.map(() => '?').join(',');
+        commerceData.invoices = cdb
+          .prepare(`SELECT * FROM invoices WHERE customer_id IN (${placeholders})`)
+          .all(...allIds);
+      }
+
+      // Subscriptions
+      if (tableExists(cdb, 'subscriptions')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        const placeholders = allIds.map(() => '?').join(',');
+        commerceData.subscriptions = cdb
+          .prepare(`SELECT * FROM subscriptions WHERE customer_id IN (${placeholders})`)
+          .all(...allIds);
+      }
+
+      // Warranties
+      if (tableExists(cdb, 'warranties')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        const placeholders = allIds.map(() => '?').join(',');
+        commerceData.warranties = cdb
+          .prepare(`SELECT * FROM warranties WHERE customer_id IN (${placeholders})`)
+          .all(...allIds);
+      }
+
+      // Warranty claims
+      if (tableExists(cdb, 'warranty_claims')) {
+        const customerIds = (commerceData.customers || []).map((c) => c.id);
+        const allIds = [customerId, ...customerIds];
+        const placeholders = allIds.map(() => '?').join(',');
+        commerceData.warrantyClaims = cdb
+          .prepare(`SELECT * FROM warranty_claims WHERE customer_id IN (${placeholders})`)
+          .all(...allIds);
+      }
+
+      // Shipments (via orders)
+      if (tableExists(cdb, 'shipments') && (commerceData.orders || []).length > 0) {
+        const orderIds = commerceData.orders.map((o) => o.id);
+        const placeholders = orderIds.map(() => '?').join(',');
+        commerceData.shipments = cdb
+          .prepare(`SELECT * FROM shipments WHERE order_id IN (${placeholders})`)
+          .all(...orderIds);
+      }
+    }
+
     return {
       customerId,
       personalData,
       payments,
       communications,
       disputes,
+      commerceData: Object.keys(commerceData).length > 0 ? commerceData : undefined,
       exportedAt: new Date().toISOString(),
     };
   }
@@ -409,6 +575,254 @@ export function createComplianceService(store) {
           customerId,
         );
         deleted.push({ table: 'a2a_disputes', count: disputes.length });
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Commerce tables (main database)
+    // -----------------------------------------------------------------------
+    const cdb = getCommerceDb();
+    if (cdb) {
+      // Resolve all customer IDs that match (by ID or email)
+      const matchedIds = new Set();
+      matchedIds.add(customerId);
+      if (tableExists(cdb, 'customers')) {
+        const rows = cdb
+          .prepare(`SELECT id FROM customers WHERE id = ? OR email = ?`)
+          .all(customerId, customerId);
+        for (const r of rows) matchedIds.add(r.id);
+      }
+      const customerIds = [...matchedIds];
+      const placeholders = customerIds.map(() => '?').join(',');
+
+      const ANON_EMAIL = `${anonAddress}@redacted.invalid`;
+      const REDACTED = '[REDACTED]';
+      const ANON_ADDR_JSON = JSON.stringify({
+        first_name: REDACTED,
+        last_name: REDACTED,
+        line1: REDACTED,
+        city: REDACTED,
+        postal_code: '00000',
+        country: 'XX',
+      });
+
+      // --- Customer profile ---
+      if (tableExists(cdb, 'customers')) {
+        if (keepTransactions) {
+          const res = cdb
+            .prepare(
+              `UPDATE customers SET
+                 email = ?, first_name = ?, last_name = ?,
+                 phone = NULL, metadata = NULL, status = 'deleted',
+                 updated_at = datetime('now')
+               WHERE id IN (${placeholders})`,
+            )
+            .run(ANON_EMAIL, REDACTED, REDACTED, ...customerIds);
+          if (res.changes > 0) {
+            retained.push({
+              table: 'customers',
+              count: res.changes,
+              action: 'anonymized',
+            });
+          }
+        } else {
+          // Soft-delete (set status) — hard delete could break FK constraints
+          const res = cdb
+            .prepare(
+              `UPDATE customers SET
+                 email = ?, first_name = ?, last_name = ?,
+                 phone = NULL, metadata = NULL, status = 'deleted',
+                 updated_at = datetime('now')
+               WHERE id IN (${placeholders})`,
+            )
+            .run(ANON_EMAIL, REDACTED, REDACTED, ...customerIds);
+          if (res.changes > 0) {
+            retained.push({
+              table: 'customers',
+              count: res.changes,
+              action: 'anonymized (soft-deleted)',
+            });
+          }
+        }
+      }
+
+      // --- Customer addresses ---
+      if (tableExists(cdb, 'customer_addresses')) {
+        const addrCount = cdb
+          .prepare(
+            `SELECT COUNT(*) AS cnt FROM customer_addresses WHERE customer_id IN (${placeholders})`,
+          )
+          .get(...customerIds);
+        if (addrCount.cnt > 0) {
+          cdb
+            .prepare(`DELETE FROM customer_addresses WHERE customer_id IN (${placeholders})`)
+            .run(...customerIds);
+          deleted.push({ table: 'customer_addresses', count: addrCount.cnt });
+        }
+      }
+
+      // --- Payment methods (always delete — contains card data) ---
+      if (tableExists(cdb, 'payment_methods')) {
+        const pmCount = cdb
+          .prepare(
+            `SELECT COUNT(*) AS cnt FROM payment_methods WHERE customer_id IN (${placeholders})`,
+          )
+          .get(...customerIds);
+        if (pmCount.cnt > 0) {
+          cdb
+            .prepare(`DELETE FROM payment_methods WHERE customer_id IN (${placeholders})`)
+            .run(...customerIds);
+          deleted.push({ table: 'payment_methods', count: pmCount.cnt });
+        }
+      }
+
+      // --- Orders (anonymize addresses, retain for accounting) ---
+      if (tableExists(cdb, 'orders')) {
+        const res = cdb
+          .prepare(
+            `UPDATE orders SET
+               shipping_address = ?, billing_address = ?, notes = NULL,
+               updated_at = datetime('now')
+             WHERE customer_id IN (${placeholders})`,
+          )
+          .run(ANON_ADDR_JSON, ANON_ADDR_JSON, ...customerIds);
+        if (res.changes > 0) {
+          retained.push({
+            table: 'orders',
+            count: res.changes,
+            action: 'anonymized (addresses redacted)',
+          });
+        }
+      }
+
+      // --- Carts (anonymize PII) ---
+      if (tableExists(cdb, 'carts')) {
+        const res = cdb
+          .prepare(
+            `UPDATE carts SET
+               customer_email = NULL, customer_phone = NULL, customer_name = NULL,
+               shipping_address = NULL, billing_address = NULL, notes = NULL,
+               metadata = NULL, updated_at = datetime('now')
+             WHERE customer_id IN (${placeholders}) OR customer_email = ?`,
+          )
+          .run(...customerIds, customerId);
+        if (res.changes > 0) {
+          retained.push({
+            table: 'carts',
+            count: res.changes,
+            action: 'anonymized',
+          });
+        }
+      }
+
+      // --- Payments (anonymize billing PII, retain amounts for accounting) ---
+      if (tableExists(cdb, 'payments')) {
+        const res = cdb
+          .prepare(
+            `UPDATE payments SET
+               billing_email = NULL, billing_name = NULL, billing_address = NULL,
+               card_last4 = NULL, card_brand = NULL,
+               card_exp_month = NULL, card_exp_year = NULL,
+               description = NULL, metadata = NULL,
+               updated_at = datetime('now')
+             WHERE customer_id IN (${placeholders})`,
+          )
+          .run(...customerIds);
+        if (res.changes > 0) {
+          retained.push({
+            table: 'payments',
+            count: res.changes,
+            action: 'anonymized (billing PII redacted)',
+          });
+        }
+      }
+
+      // --- Invoices (anonymize billing PII) ---
+      if (tableExists(cdb, 'invoices')) {
+        const res = cdb
+          .prepare(
+            `UPDATE invoices SET
+               billing_name = NULL, billing_email = NULL, billing_address = NULL,
+               billing_city = NULL, billing_state = NULL,
+               billing_postal_code = NULL, billing_country = NULL,
+               notes = NULL,
+               updated_at = datetime('now')
+             WHERE customer_id IN (${placeholders})`,
+          )
+          .run(...customerIds);
+        if (res.changes > 0) {
+          retained.push({
+            table: 'invoices',
+            count: res.changes,
+            action: 'anonymized (billing PII redacted)',
+          });
+        }
+      }
+
+      // --- Shipments (anonymize recipient PII, via orders) ---
+      if (tableExists(cdb, 'shipments') && tableExists(cdb, 'orders')) {
+        const orderRows = cdb
+          .prepare(`SELECT id FROM orders WHERE customer_id IN (${placeholders})`)
+          .all(...customerIds);
+        if (orderRows.length > 0) {
+          const orderIds = orderRows.map((r) => r.id);
+          const oPh = orderIds.map(() => '?').join(',');
+          const res = cdb
+            .prepare(
+              `UPDATE shipments SET
+                 recipient_name = ?, recipient_email = NULL, recipient_phone = NULL,
+                 shipping_address = ?, notes = NULL,
+                 updated_at = datetime('now')
+               WHERE order_id IN (${oPh})`,
+            )
+            .run(REDACTED, ANON_ADDR_JSON, ...orderIds);
+          if (res.changes > 0) {
+            retained.push({
+              table: 'shipments',
+              count: res.changes,
+              action: 'anonymized (recipient PII redacted)',
+            });
+          }
+        }
+      }
+
+      // --- Subscriptions (anonymize addresses) ---
+      if (tableExists(cdb, 'subscriptions')) {
+        const res = cdb
+          .prepare(
+            `UPDATE subscriptions SET
+               shipping_address = NULL, billing_address = NULL, metadata = NULL,
+               updated_at = datetime('now')
+             WHERE customer_id IN (${placeholders})`,
+          )
+          .run(...customerIds);
+        if (res.changes > 0) {
+          retained.push({
+            table: 'subscriptions',
+            count: res.changes,
+            action: 'anonymized (addresses redacted)',
+          });
+        }
+      }
+
+      // --- Warranty claims (anonymize contact PII) ---
+      if (tableExists(cdb, 'warranty_claims')) {
+        const res = cdb
+          .prepare(
+            `UPDATE warranty_claims SET
+               contact_phone = NULL, contact_email = NULL,
+               shipping_address = NULL, customer_notes = NULL,
+               updated_at = datetime('now')
+             WHERE customer_id IN (${placeholders})`,
+          )
+          .run(...customerIds);
+        if (res.changes > 0) {
+          retained.push({
+            table: 'warranty_claims',
+            count: res.changes,
+            action: 'anonymized (contact PII redacted)',
+          });
+        }
       }
     }
 
@@ -658,6 +1072,16 @@ export function createComplianceService(store) {
   // Public API
   // -------------------------------------------------------------------------
 
+  /**
+   * Close the commerce database handle if open and owned by this service.
+   */
+  function close() {
+    if (_commerceDb && _commerceDbOwned) {
+      _commerceDb.close();
+      _commerceDb = null;
+    }
+  }
+
   return {
     exportAuditTrail,
     generate1099K,
@@ -665,6 +1089,7 @@ export function createComplianceService(store) {
     deleteGDPRData,
     generateComplianceSummary,
     generateSOC2Evidence,
+    close,
     // Expose helpers for testing
     _recordsToCSV: recordsToCSV,
     _periodToDateRange: periodToDateRange,

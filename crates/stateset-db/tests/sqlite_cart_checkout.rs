@@ -102,7 +102,7 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
             CreateOrder {
                 customer_id: customer.id,
                 items: order_items,
-                currency: Some(cart_for_order.currency.clone()),
+                currency: Some(cart_for_order.currency),
                 shipping_address: cart_for_order.shipping_address.clone().map(Into::into),
                 billing_address: None,
                 notes: cart_for_order.notes.clone(),

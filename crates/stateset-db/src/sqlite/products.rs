@@ -337,6 +337,7 @@ impl ProductRepository for SqliteProductRepository {
             in_stock,
             limit,
             offset,
+            after_cursor,
         } = filter;
         let conn = self.conn()?;
         let use_json = json1_available(&conn);
@@ -388,15 +389,27 @@ impl ProductRepository for SqliteProductRepository {
             ));
         }
 
-        sql.push_str(" ORDER BY name");
+        // Keyset cursor: (name, id) for stable ASC ordering
+        if let Some((cursor_name, cursor_id)) = &after_cursor {
+            sql.push_str(
+                " AND (name > ? OR (name = ? AND id > ?))",
+            );
+            params.push(Box::new(cursor_name.clone()));
+            params.push(Box::new(cursor_name.clone()));
+            params.push(Box::new(cursor_id.clone()));
+        }
+
+        sql.push_str(" ORDER BY name ASC, id ASC");
 
         let apply_price_filter = min_price.is_some() || max_price.is_some();
         if !apply_price_filter {
             if let Some(limit) = limit {
                 sql.push_str(&format!(" LIMIT {}", limit));
             }
-            if let Some(offset) = offset {
-                sql.push_str(&format!(" OFFSET {}", offset));
+            if after_cursor.is_none() {
+                if let Some(offset) = offset {
+                    sql.push_str(&format!(" OFFSET {}", offset));
+                }
             }
         }
 
@@ -656,6 +669,7 @@ impl ProductRepository for SqliteProductRepository {
             in_stock,
             limit: _,
             offset: _,
+            after_cursor: _,
         } = filter;
 
         let conn = self.conn()?;

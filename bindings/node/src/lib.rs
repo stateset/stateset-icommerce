@@ -5,6 +5,7 @@ use napi_derive::napi;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{CartId, CustomerId, OrderId, ProductId, PromotionId, SubscriptionId};
+use stateset_embedded::CurrencyCode;
 use stateset_embedded::Commerce as RustCommerce;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -595,7 +596,7 @@ impl From<stateset_core::Order> for OrderOutput {
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
             total_amount: to_f64_or_nan(o.total_amount),
-            currency: o.currency,
+            currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
             tracking_number: o.tracking_number,
@@ -656,7 +657,7 @@ impl Orders {
             .create(stateset_core::CreateOrder {
                 customer_id,
                 items,
-                currency: input.currency,
+                currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
                 notes: input.notes,
                 ..Default::default()
             })
@@ -1724,7 +1725,7 @@ impl From<stateset_core::Payment> for PaymentOutput {
             customer_id: p.customer_id.map(|id| id.to_string()),
             idempotency_key: p.idempotency_key,
             amount: to_f64_or_nan(p.amount),
-            currency: p.currency,
+            currency: p.currency.to_string(),
             status: format!("{}", p.status),
             version: p.version,
             created_at: p.created_at.to_rfc3339(),
@@ -1823,7 +1824,7 @@ impl Payments {
                 customer_id,
                 idempotency_key: input.idempotency_key,
                 amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
-                currency: input.currency,
+                currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
                 payment_method,
                 ..Default::default()
             })
@@ -3390,7 +3391,7 @@ impl From<stateset_core::Cart> for CartOutput {
             cart_number: cart.cart_number,
             customer_id: cart.customer_id.map(|id| id.to_string()),
             status: format!("{}", cart.status),
-            currency: cart.currency,
+            currency: cart.currency.to_string(),
             subtotal: to_f64_or_nan(cart.subtotal),
             tax_amount: to_f64_or_nan(cart.tax_amount),
             shipping_amount: to_f64_or_nan(cart.shipping_amount),
@@ -3437,7 +3438,7 @@ impl From<stateset_core::CheckoutResult> for CheckoutResultOutput {
             order_number: result.order_number,
             payment_id: result.payment_id.map(|id| id.to_string()),
             total_charged: to_f64_or_nan(result.total_charged),
-            currency: result.currency,
+            currency: result.currency.to_string(),
         }
     }
 }
@@ -3462,7 +3463,7 @@ impl From<stateset_core::ShippingRate> for ShippingRateOutput {
             service: rate.service,
             description: rate.description,
             price: to_f64_or_nan(rate.price),
-            currency: rate.currency,
+            currency: rate.currency.to_string(),
             estimated_days: rate.estimated_days,
         }
     }
@@ -3508,7 +3509,7 @@ impl Carts {
                 customer_id,
                 customer_email: input.customer_email,
                 customer_name: input.customer_name,
-                currency: input.currency,
+                currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
                 shipping_address: input.shipping_address.map(input_to_cart_address),
                 billing_address: input.billing_address.map(input_to_cart_address),
                 notes: input.notes,
@@ -4790,6 +4791,7 @@ fn rounding_mode_to_string(mode: &stateset_embedded::RoundingMode) -> String {
         stateset_embedded::RoundingMode::Up => "up".to_string(),
         stateset_embedded::RoundingMode::Down => "down".to_string(),
         stateset_embedded::RoundingMode::HalfEven => "half_even".to_string(),
+        &_ => "half_up".to_string(),
     }
 }
 
@@ -5206,7 +5208,7 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
             custom_interval_days: p.custom_interval_days,
             price: to_f64_or_nan(p.price),
             setup_fee: p.setup_fee.map(|d| to_f64_or_nan(d)),
-            currency: p.currency,
+            currency: p.currency.to_string(),
             trial_days: p.trial_days,
             trial_requires_payment_method: p.trial_requires_payment_method,
             min_cycles: p.min_cycles,
@@ -5300,7 +5302,7 @@ impl From<stateset_core::Subscription> for SubscriptionOutput {
             billing_interval: format!("{}", s.billing_interval),
             custom_interval_days: s.custom_interval_days,
             price: to_f64_or_nan(s.price),
-            currency: s.currency,
+            currency: s.currency.to_string(),
             payment_method_id: s.payment_method_id,
             started_at: s.started_at.to_rfc3339(),
             current_period_start: s.current_period_start.to_rfc3339(),
@@ -5389,7 +5391,7 @@ impl From<stateset_core::BillingCycle> for BillingCycleOutput {
             discount: to_f64_or_nan(b.discount),
             tax: to_f64_or_nan(b.tax),
             total: to_f64_or_nan(b.total),
-            currency: b.currency,
+            currency: b.currency.to_string(),
             payment_id: b.payment_id,
             billed_at: b.billed_at.map(|d| d.to_rfc3339()),
             failure_reason: b.failure_reason,
@@ -5506,7 +5508,7 @@ impl Subscriptions {
                 price: Decimal::try_from(input.price)
                     .map_err(|e| Error::from_reason(format!("Invalid price: {}", e)))?,
                 setup_fee: input.setup_fee.map(|f| Decimal::try_from(f).unwrap_or_default()),
-                currency: input.currency,
+                currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
                 trial_days: input.trial_days,
                 trial_requires_payment_method: input.trial_requires_payment_method,
                 min_cycles: input.min_cycles,
@@ -6133,7 +6135,7 @@ impl From<stateset_core::Promotion> for PromotionOutput {
             total_usage_limit: p.total_usage_limit,
             per_customer_limit: p.per_customer_limit,
             usage_count: p.usage_count,
-            currency: p.currency,
+            currency: p.currency.to_string(),
             priority: p.priority,
             metadata: p.metadata.map(|m| m.to_string()),
             created_at: p.created_at.to_rfc3339(),
@@ -6307,7 +6309,7 @@ impl From<stateset_core::PromotionUsage> for PromotionUsageOutput {
             order_id: u.order_id.map(|id| id.to_string()),
             cart_id: u.cart_id.map(|id| id.to_string()),
             discount_amount: to_f64_or_nan(u.discount_amount),
-            currency: u.currency,
+            currency: u.currency.to_string(),
             used_at: u.used_at.to_rfc3339(),
         }
     }
@@ -6444,7 +6446,7 @@ impl Promotions {
                 ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(CustomerId::from).collect()
             }),
             eligible_customer_groups: input.eligible_customer_groups,
-            currency: input.currency,
+            currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
             priority: input.priority,
             metadata: input.metadata.and_then(|s| serde_json::from_str(&s).ok()),
         };
@@ -6753,7 +6755,7 @@ impl Promotions {
                 .unwrap_or_default(),
             shipping_country: input.shipping_country,
             shipping_state: input.shipping_state,
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: input.currency.unwrap_or_else(|| "USD".to_string()).parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD),
             is_first_order: false,
         };
 
@@ -7469,7 +7471,7 @@ impl Tax {
             shipping_amount: input
                 .shipping_amount
                 .map(|a| Decimal::from_f64_retain(a).unwrap_or_default()),
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: input.currency.unwrap_or_else(|| "USD".to_string()).parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD),
             transaction_date: input
                 .transaction_date
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
@@ -10538,7 +10540,7 @@ impl GeneralLedger {
                 parent_account_id: None,
                 is_header: None,
                 is_posting: Some(true),
-                currency: input.currency,
+                currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
             })
             .map_err(|e| Error::from_reason(format!("Failed to create account: {}", e)))?;
         Ok(account.into())

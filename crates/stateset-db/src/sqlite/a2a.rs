@@ -814,7 +814,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             if quote.valid_until <= Utc::now() {
                 return Err(CommerceError::ValidationError("quote has expired".to_string()));
             }
-            if quote.currency != Self::normalize_currency(input.currency.clone()).as_str() {
+            if quote.currency != Self::normalize_currency(input.currency).as_str() {
                 return Err(CommerceError::ValidationError(
                     "purchase currency does not match quote currency".to_string(),
                 ));

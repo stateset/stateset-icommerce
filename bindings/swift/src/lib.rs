@@ -371,7 +371,7 @@ pub extern "C" fn stateset_order_create(
             .create(CreateOrder {
                 customer_id: customer_uuid.into(),
                 items,
-                currency: Some(currency_str),
+                currency: Some(currency_str.parse().unwrap_or_default()),
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -557,7 +557,7 @@ pub extern "C" fn stateset_cart_create(
             .carts()
             .create(CreateCart {
                 customer_id: customer_uuid.map(Into::into),
-                currency: currency_str,
+                currency: currency_str.and_then(|s| s.parse().ok()),
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -760,7 +760,7 @@ pub extern "C" fn stateset_payment_create(
             .create(CreatePayment {
                 order_id: Some(order_uuid.into()),
                 amount: amount_decimal,
-                currency: Some(currency_str),
+                currency: Some(currency_str.parse().unwrap_or_default()),
                 payment_method,
                 ..Default::default()
             })

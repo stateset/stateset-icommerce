@@ -2,18 +2,23 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     routing::{get, post},
 };
 
-use crate::dto::{InventoryAdjustRequest, InventoryResponse};
+use crate::dto::{
+    InventoryAdjustRequest, InventoryFilterParams, InventoryItemResponse, InventoryListResponse,
+    InventoryResponse,
+};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
+use stateset_core::InventoryFilter;
 
 /// Build the inventory sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/inventory", get(list_inventory))
         .route("/inventory/{sku}", get(get_stock))
         .route("/inventory/{sku}/adjust", post(adjust_stock))
 }
@@ -82,6 +87,59 @@ pub(crate) async fn adjust_stock(
         .get_stock(&sku)?
         .ok_or_else(|| HttpError::NotFound(format!("Inventory item {sku} not found")))?;
     Ok(Json(InventoryResponse::from(stock)))
+}
+
+/// `GET /api/v1/inventory`
+#[utoipa::path(
+    get,
+    path = "/api/v1/inventory",
+    tag = "inventory",
+    params(InventoryFilterParams),
+    responses(
+        (status = 200, description = "List of inventory items", body = InventoryListResponse),
+    )
+)]
+#[tracing::instrument(skip(state, headers, params))]
+pub(crate) async fn list_inventory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<InventoryFilterParams>,
+) -> Result<Json<InventoryListResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
+    let limit = params.resolved_limit();
+    let offset = params.resolved_offset();
+
+    // Count total matching records (without pagination)
+    let count_filter = InventoryFilter {
+        sku: params.sku.clone(),
+        location_id: None,
+        below_reorder_point: params.below_reorder_point,
+        is_active: params.is_active,
+        limit: None,
+        offset: None,
+    };
+    let total = commerce.inventory().list(count_filter)?.len();
+
+    // Fetch the requested page
+    let filter = InventoryFilter {
+        sku: params.sku,
+        location_id: None,
+        below_reorder_point: params.below_reorder_point,
+        is_active: params.is_active,
+        limit: Some(limit),
+        offset: Some(offset),
+    };
+    let items = commerce.inventory().list(filter)?;
+    let has_more = items.len() == limit as usize;
+    Ok(Json(InventoryListResponse {
+        items: items.into_iter().map(InventoryItemResponse::from).collect(),
+        total,
+        limit,
+        offset,
+        has_more,
+    }))
 }
 
 #[cfg(test)]
@@ -212,5 +270,69 @@ mod tests {
         let resp_body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&resp_body).unwrap();
         assert_eq!(json["error"]["code"], "validation_error");
+    }
+
+    #[tokio::test]
+    async fn list_inventory_empty() {
+        let resp = app()
+            .oneshot(Request::get("/inventory").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 0);
+        assert!(json["items"].as_array().unwrap().is_empty());
+        assert_eq!(json["has_more"], false);
+    }
+
+    #[tokio::test]
+    async fn list_inventory_with_items() {
+        let (_, state) = app_with_state();
+
+        state
+            .commerce()
+            .inventory()
+            .create_item(CreateInventoryItem {
+                sku: "LIST-001".into(),
+                name: "List Item 1".into(),
+                initial_quantity: Some(dec!(50)),
+                ..Default::default()
+            })
+            .unwrap();
+        state
+            .commerce()
+            .inventory()
+            .create_item(CreateInventoryItem {
+                sku: "LIST-002".into(),
+                name: "List Item 2".into(),
+                initial_quantity: Some(dec!(25)),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let app = router().with_state(state);
+        let resp = app
+            .oneshot(Request::get("/inventory").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["items"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_inventory_with_pagination() {
+        let resp = app()
+            .oneshot(Request::get("/inventory?limit=10&offset=5").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["limit"], 10);
+        assert_eq!(json["offset"], 5);
     }
 }

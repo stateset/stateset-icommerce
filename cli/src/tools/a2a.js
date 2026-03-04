@@ -1675,6 +1675,145 @@ export const a2aTools = [
   },
 
   // ==========================================================================
+  // Webhook Dead Letter Queue (DLQ)
+  // ==========================================================================
+  {
+    name: 'a2a_list_webhook_dlq',
+    description:
+      'List quarantined webhook notifications that permanently failed delivery. Use to inspect and replay failed deliveries.',
+    inputSchema: {
+      recipientAddress: z.string().optional().describe('Filter by recipient agent address'),
+      eventType: z.string().optional().describe('Filter by event type'),
+      limit: z.number().int().positive().max(200).default(50).describe('Max entries to return'),
+      offset: z.number().int().min(0).default(0).describe('Pagination offset'),
+    },
+    permission: 'admin',
+    handler: async ({ params, commerce }) => {
+      const store = commerce.a2a();
+      const entries = store.listDLQ({
+        recipient_address: params.recipientAddress,
+        event_type: params.eventType,
+        limit: params.limit,
+        offset: params.offset,
+      });
+      const count = store.countDLQ({
+        recipient_address: params.recipientAddress,
+        event_type: params.eventType,
+      });
+      return {
+        success: true,
+        entries,
+        count: entries.length,
+        totalCount: count,
+      };
+    },
+  },
+  {
+    name: 'a2a_quarantine_failed_webhooks',
+    description:
+      'Move permanently failed webhook notifications to the dead letter queue. Notifications that exhausted all retry attempts are quarantined for inspection.',
+    inputSchema: {
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(500)
+        .default(100)
+        .describe('Max notifications to quarantine'),
+    },
+    permission: 'admin',
+    handler: async ({ params, commerce, applyMode }) => {
+      if (!applyMode) {
+        return {
+          success: false,
+          error: 'Quarantining failed webhooks requires --apply flag.',
+        };
+      }
+      const store = commerce.a2a();
+      const result = store.quarantineFailedNotifications({ limit: params.limit });
+      return {
+        success: true,
+        message: `Quarantined ${result.quarantined} failed notification(s) to DLQ`,
+        ...result,
+      };
+    },
+  },
+  {
+    name: 'a2a_replay_dlq_entry',
+    description:
+      'Replay a dead letter queue entry by moving it back to the notification log for retry. Resets the attempt counter.',
+    inputSchema: {
+      dlqId: z.string().min(1).describe('DLQ entry ID to replay'),
+    },
+    permission: 'admin',
+    handler: async ({ params, commerce, applyMode }) => {
+      if (!applyMode) {
+        return {
+          success: false,
+          error: 'Replaying DLQ entries requires --apply flag.',
+        };
+      }
+      const store = commerce.a2a();
+      const result = store.replayDLQEntry(params.dlqId);
+      if (!result.replayed) {
+        return { success: false, error: `DLQ entry ${params.dlqId} not found` };
+      }
+      return {
+        success: true,
+        message: `Replayed DLQ entry ${params.dlqId} — notification re-queued for retry`,
+        ...result,
+      };
+    },
+  },
+  {
+    name: 'a2a_purge_dlq',
+    description:
+      'Purge old dead letter queue entries. Removes entries quarantined more than the specified number of days ago.',
+    inputSchema: {
+      olderThanDays: z
+        .number()
+        .int()
+        .positive()
+        .max(365)
+        .default(30)
+        .describe('Remove entries older than this many days'),
+    },
+    permission: 'admin',
+    handler: async ({ params, commerce, applyMode }) => {
+      if (!applyMode) {
+        return {
+          success: false,
+          error: 'Purging DLQ requires --apply flag.',
+        };
+      }
+      const store = commerce.a2a();
+      const result = store.purgeDLQ({ olderThanDays: params.olderThanDays });
+      return {
+        success: true,
+        message: `Purged ${result.purged} DLQ entries older than ${params.olderThanDays} days`,
+        ...result,
+      };
+    },
+  },
+  {
+    name: 'a2a_dlq_count',
+    description: 'Get the count of entries in the webhook dead letter queue.',
+    inputSchema: {
+      recipientAddress: z.string().optional().describe('Filter by recipient agent address'),
+      eventType: z.string().optional().describe('Filter by event type'),
+    },
+    permission: 'read',
+    handler: async ({ params, commerce }) => {
+      const store = commerce.a2a();
+      const count = store.countDLQ({
+        recipient_address: params.recipientAddress,
+        event_type: params.eventType,
+      });
+      return { success: true, count };
+    },
+  },
+
+  // ==========================================================================
   // Agent Subscriptions (Recurring A2A Payments)
   // ==========================================================================
   {

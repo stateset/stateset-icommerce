@@ -292,7 +292,7 @@ impl SqliteOrderRepository {
         let id = OrderId::new();
         let order_number = Self::generate_order_number();
         let now = Utc::now();
-        let currency = input.currency.clone().unwrap_or_default();
+        let currency = input.currency.unwrap_or_default();
 
         // Calculate total
         let total: Decimal = input
@@ -576,7 +576,7 @@ impl SqliteOrderRepository {
                 status: OrderStatus::Pending,
                 order_date: now,
                 total_amount: total,
-                currency: currency.clone(),
+                currency,
                 payment_status: PaymentStatus::Pending,
                 fulfillment_status: FulfillmentStatus::Unfulfilled,
                 payment_method: input.payment_method.clone(),
@@ -924,13 +924,25 @@ impl OrderRepository for SqliteOrderRepository {
             params.push(Box::new(to.to_rfc3339()));
         }
 
-        sql.push_str(" ORDER BY order_date DESC");
+        // Keyset cursor: (order_date, id) for stable DESC ordering
+        if let Some((cursor_date, cursor_id)) = &filter.after_cursor {
+            sql.push_str(
+                " AND (order_date < ? OR (order_date = ? AND id < ?))",
+            );
+            params.push(Box::new(cursor_date.clone()));
+            params.push(Box::new(cursor_date.clone()));
+            params.push(Box::new(cursor_id.clone()));
+        }
+
+        sql.push_str(" ORDER BY order_date DESC, id DESC");
 
         if let Some(limit) = filter.limit {
             sql.push_str(&format!(" LIMIT {}", limit));
         }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        if filter.after_cursor.is_none() {
+            if let Some(offset) = filter.offset {
+                sql.push_str(&format!(" OFFSET {}", offset));
+            }
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -1099,7 +1111,7 @@ impl OrderRepository for SqliteOrderRepository {
             let id = OrderId::new();
             let order_number = Self::generate_order_number();
             let now = Utc::now();
-            let currency = input.currency.clone().unwrap_or_default();
+            let currency = input.currency.unwrap_or_default();
 
             let total: Decimal = input
                 .items

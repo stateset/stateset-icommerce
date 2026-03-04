@@ -725,7 +725,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     PaymentTransactionStatus::Pending.to_string(),
                     input.payment_method.to_string(),
                     input.amount.to_string(),
-                    input.currency.clone().unwrap_or_default(),
+                    input.currency.unwrap_or_default(),
                     "0",
                     input.external_id.clone(),
                     input.idempotency_key.clone(),

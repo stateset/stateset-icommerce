@@ -19,6 +19,7 @@ use rust_decimal::Decimal;
 use serde_json;
 // Use :: prefix to refer to the external crate, not the pymodule
 use ::stateset_embedded::Commerce as RustCommerce;
+use stateset_primitives::CurrencyCode;
 use std::sync::{Arc, Mutex};
 
 fn to_f64_or_nan<T>(value: T) -> f64
@@ -546,7 +547,7 @@ impl From<stateset_core::Order> for Order {
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
             total_amount: to_f64_or_nan(o.total_amount),
-            currency: o.currency,
+            currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
             tracking_number: o.tracking_number,
@@ -664,7 +665,7 @@ impl Orders {
             .create(stateset_core::CreateOrder {
                 customer_id: cust_uuid,
                 items: order_items,
-                currency,
+                currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
                 notes,
                 ..Default::default()
             })
@@ -2130,7 +2131,7 @@ impl From<stateset_core::Payment> for Payment {
             customer_id: p.customer_id.map(|id| id.to_string()),
             idempotency_key: p.idempotency_key,
             amount: to_f64_or_nan(p.amount),
-            currency: p.currency,
+            currency: p.currency.to_string(),
             status: format!("{}", p.status),
             payment_method: format!("{}", p.payment_method),
             version: p.version,
@@ -2247,7 +2248,7 @@ impl Payments {
                 customer_id: customer_uuid,
                 idempotency_key,
                 amount: Decimal::from_f64_retain(amount).unwrap_or_default(),
-                currency,
+                currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
                 payment_method: method,
                 ..Default::default()
             })
@@ -4097,7 +4098,7 @@ impl From<stateset_core::ShippingRate> for ShippingRate {
             service: r.service,
             description: r.description,
             price: to_f64_or_nan(r.price),
-            currency: r.currency,
+            currency: r.currency.to_string(),
             estimated_days: r.estimated_days,
             estimated_delivery: r.estimated_delivery.map(|d| d.to_rfc3339()),
         }
@@ -4140,7 +4141,7 @@ impl From<stateset_core::CheckoutResult> for CheckoutResult {
             cart_id: r.cart_id.to_string(),
             payment_id: r.payment_id.map(|id| id.to_string()),
             total_charged: to_f64_or_nan(r.total_charged),
-            currency: r.currency,
+            currency: r.currency.to_string(),
         }
     }
 }
@@ -4235,7 +4236,7 @@ impl From<stateset_core::Cart> for Cart {
             cart_number: c.cart_number,
             customer_id: c.customer_id.map(|id| id.to_string()),
             status: format!("{}", c.status),
-            currency: c.currency,
+            currency: c.currency.to_string(),
             subtotal: to_f64_or_nan(c.subtotal),
             tax_amount: to_f64_or_nan(c.tax_amount),
             shipping_amount: to_f64_or_nan(c.shipping_amount),
@@ -4372,7 +4373,7 @@ impl Carts {
                 customer_id: cust_uuid,
                 customer_email,
                 customer_name,
-                currency,
+                currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
                 expires_in_minutes,
                 ..Default::default()
             })
@@ -5996,6 +5997,7 @@ fn rounding_mode_to_string(mode: &stateset_core::RoundingMode) -> String {
         stateset_core::RoundingMode::Up => "up".to_string(),
         stateset_core::RoundingMode::Down => "down".to_string(),
         stateset_core::RoundingMode::HalfEven => "half_even".to_string(),
+        _ => "half_up".to_string(),
     }
 }
 
@@ -6487,7 +6489,7 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
             billing_interval: format!("{:?}", p.billing_interval).to_lowercase(),
             billing_interval_count: 1, // Default to 1 since core doesn't have this field
             price: to_f64_or_nan(p.price),
-            currency: p.currency,
+            currency: p.currency.to_string(),
             setup_fee: p.setup_fee.map(|d| to_f64_or_nan(d)).unwrap_or(0.0),
             trial_days: p.trial_days,
             status: format!("{:?}", p.status).to_lowercase(),
@@ -6545,7 +6547,7 @@ impl From<stateset_core::Subscription> for Subscription {
             cancelled_at: s.cancelled_at.map(|d| d.to_rfc3339()),
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
             price: to_f64_or_nan(s.price),
-            currency: s.currency,
+            currency: s.currency.to_string(),
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
         }
@@ -6592,7 +6594,7 @@ impl From<stateset_core::BillingCycle> for BillingCycle {
             period_start: c.period_start.to_rfc3339(),
             period_end: c.period_end.to_rfc3339(),
             total: to_f64_or_nan(c.total),
-            currency: c.currency,
+            currency: c.currency.to_string(),
             payment_id: c.payment_id,
             invoice_id: c.invoice_id.map(|id| id.to_string()),
             created_at: c.created_at.to_rfc3339(),
@@ -6691,7 +6693,7 @@ impl Subscriptions {
                 custom_interval_days: billing_interval_count,
                 price: Decimal::from_f64_retain(price)
                     .ok_or_else(|| PyValueError::new_err("Invalid price"))?,
-                currency: Some(currency.unwrap_or_else(|| "USD".to_string())),
+                currency: Some(currency.unwrap_or_else(|| "USD".to_string()).parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD)),
                 setup_fee: setup_fee.map(|f| Decimal::from_f64_retain(f).unwrap_or_default()),
                 trial_days,
                 ..Default::default()
@@ -7163,7 +7165,7 @@ impl From<stateset_core::Promotion> for Promotion {
             total_usage_limit: p.total_usage_limit,
             per_customer_limit: p.per_customer_limit,
             usage_count: p.usage_count,
-            currency: p.currency,
+            currency: p.currency.to_string(),
             priority: p.priority,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
@@ -7316,7 +7318,7 @@ impl From<stateset_core::PromotionUsage> for PromotionUsage {
             order_id: u.order_id.map(|id| id.to_string()),
             cart_id: u.cart_id.map(|id| id.to_string()),
             discount_amount: to_f64_or_nan(u.discount_amount),
-            currency: u.currency,
+            currency: u.currency.to_string(),
             used_at: u.used_at.to_rfc3339(),
         }
     }
@@ -7463,7 +7465,7 @@ impl PromotionsApi {
             excluded_category_ids: None,
             eligible_customer_ids: None,
             eligible_customer_groups: None,
-            currency,
+            currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
             priority,
             metadata: None,
         };
@@ -7755,7 +7757,7 @@ impl PromotionsApi {
                 .unwrap_or_default(),
             shipping_country: None,
             shipping_state: None,
-            currency: currency.unwrap_or_else(|| "USD".to_string()),
+            currency: currency.unwrap_or_else(|| "USD".to_string()).parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD),
             is_first_order: false,
         };
 

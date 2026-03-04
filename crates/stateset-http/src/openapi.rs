@@ -2,6 +2,7 @@
 //!
 //! Serves the auto-generated `OpenAPI` 3.1 spec at `GET /api/v1/openapi.json`.
 
+use axum::response::Html;
 use axum::{Json, Router, routing::get};
 use utoipa::OpenApi;
 
@@ -38,12 +39,23 @@ use crate::state::AppState;
         crate::routes::products::get_product,
         crate::routes::products::list_products,
         // Inventory
+        crate::routes::inventory::list_inventory,
         crate::routes::inventory::get_stock,
         crate::routes::inventory::adjust_stock,
         // Returns
         crate::routes::returns::create_return,
         crate::routes::returns::get_return,
+        crate::routes::returns::list_returns,
         crate::routes::returns::approve_return,
+        // Shipments
+        crate::routes::shipments::list_shipments,
+        crate::routes::shipments::get_shipment,
+        // Payments
+        crate::routes::payments::list_payments,
+        crate::routes::payments::get_payment,
+        // Invoices
+        crate::routes::invoices::list_invoices,
+        crate::routes::invoices::get_invoice,
     ),
     components(schemas(
         // Request DTOs
@@ -64,7 +76,16 @@ use crate::state::AppState;
         ProductResponse,
         ProductListResponse,
         InventoryResponse,
+        InventoryItemResponse,
+        InventoryListResponse,
+        ShipmentResponse,
+        ShipmentListResponse,
+        PaymentResponse,
+        PaymentListResponse,
+        InvoiceResponse,
+        InvoiceListResponse,
         ReturnResponse,
+        ReturnListResponse,
         HealthResponse,
         ReadyResponse,
         // Error
@@ -77,18 +98,41 @@ use crate::state::AppState;
         (name = "products", description = "Product catalog"),
         (name = "inventory", description = "Stock and inventory management"),
         (name = "returns", description = "Return request processing"),
+        (name = "shipments", description = "Shipment tracking and management"),
+        (name = "payments", description = "Payment transaction management"),
+        (name = "invoices", description = "Invoice management"),
     )
 )]
 pub(crate) struct ApiDoc;
 
 /// Build the `OpenAPI` spec router.
 pub(crate) fn router() -> Router<AppState> {
-    Router::new().route("/openapi.json", get(openapi_json))
+    Router::new()
+        .route("/openapi.json", get(openapi_json))
+        .route("/docs", get(docs_ui))
 }
 
 /// `GET /api/v1/openapi.json` — returns the `OpenAPI` spec as JSON.
 async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
+}
+
+/// `GET /api/v1/docs` — interactive API documentation UI (Scalar).
+async fn docs_ui() -> Html<&'static str> {
+    Html(
+        r#"<!doctype html>
+<html>
+<head>
+  <title>StateSet Commerce API</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body>
+  <script id="api-reference" data-url="/api/v1/openapi.json"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+</body>
+</html>"#,
+    )
 }
 
 #[cfg(test)]
@@ -109,19 +153,25 @@ mod tests {
         let json = serde_json::to_value(&spec).unwrap();
         let paths = json["paths"].as_object().unwrap();
 
-        // 17 unique paths (some have multiple methods)
         assert!(paths.contains_key("/health"), "missing /health");
         assert!(paths.contains_key("/health/ready"), "missing /health/ready");
         assert!(paths.contains_key("/api/v1/orders"), "missing /api/v1/orders");
         assert!(paths.contains_key("/api/v1/orders/{id}"), "missing /api/v1/orders/{{id}}");
         assert!(paths.contains_key("/api/v1/customers"), "missing /api/v1/customers");
         assert!(paths.contains_key("/api/v1/products"), "missing /api/v1/products");
+        assert!(paths.contains_key("/api/v1/inventory"), "missing /api/v1/inventory");
         assert!(paths.contains_key("/api/v1/inventory/{sku}"), "missing /api/v1/inventory/{{sku}}");
         assert!(paths.contains_key("/api/v1/returns"), "missing /api/v1/returns");
         assert!(
             paths.contains_key("/api/v1/returns/{id}/approve"),
             "missing /api/v1/returns/{{id}}/approve"
         );
+        assert!(paths.contains_key("/api/v1/shipments"), "missing /api/v1/shipments");
+        assert!(paths.contains_key("/api/v1/shipments/{id}"), "missing /api/v1/shipments/{{id}}");
+        assert!(paths.contains_key("/api/v1/payments"), "missing /api/v1/payments");
+        assert!(paths.contains_key("/api/v1/payments/{id}"), "missing /api/v1/payments/{{id}}");
+        assert!(paths.contains_key("/api/v1/invoices"), "missing /api/v1/invoices");
+        assert!(paths.contains_key("/api/v1/invoices/{id}"), "missing /api/v1/invoices/{{id}}");
     }
 
     #[test]
@@ -136,6 +186,10 @@ mod tests {
             "CustomerResponse",
             "ProductResponse",
             "InventoryResponse",
+            "InventoryItemResponse",
+            "ShipmentResponse",
+            "PaymentResponse",
+            "InvoiceResponse",
             "ReturnResponse",
             "HealthResponse",
             "ErrorBody",

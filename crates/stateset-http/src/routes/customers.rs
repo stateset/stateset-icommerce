@@ -7,10 +7,14 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::dto::{CreateCustomerRequest, CustomerListResponse, CustomerResponse, PaginationParams};
+use crate::dto::{
+    CreateCustomerRequest, CustomerFilterParams, CustomerListResponse, CustomerResponse,
+    decode_cursor, encode_cursor,
+};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
-use stateset_core::{CreateCustomer, CustomerFilter, CustomerId};
+use stateset_core::{CreateCustomer, CustomerFilter, CustomerId, CustomerStatus};
+use std::str::FromStr;
 
 /// Build the customers sub-router.
 pub fn router() -> Router<AppState> {
@@ -83,31 +87,79 @@ pub(crate) async fn get_customer(
     get,
     path = "/api/v1/customers",
     tag = "customers",
-    params(PaginationParams),
+    params(CustomerFilterParams),
     responses(
         (status = 200, description = "List of customers", body = CustomerListResponse),
+        (status = 400, description = "Invalid filter parameter", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, params))]
 pub(crate) async fn list_customers(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(params): Query<PaginationParams>,
+    Query(params): Query<CustomerFilterParams>,
 ) -> Result<Json<CustomerListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let total = commerce.customers().list(CustomerFilter::default())?.len();
+
+    let limit = params.resolved_limit();
+    let offset = params.resolved_offset();
+
+    // Parse filter parameters
+    let status = params
+        .status
+        .as_deref()
+        .map(CustomerStatus::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+
+    // Decode cursor if provided
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor)
+                .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
+
+    // Count total matching records (without pagination or cursor)
+    let count_filter = CustomerFilter {
+        email: params.email.clone(),
+        status,
+        tag: params.tag.clone(),
+        accepts_marketing: params.accepts_marketing,
+        limit: None,
+        offset: None,
+        after_cursor: None,
+    };
+    let total = commerce.customers().list(count_filter)?.len();
+
+    // Fetch the requested page
     let filter = CustomerFilter {
-        limit: Some(params.resolved_limit()),
-        offset: Some(params.resolved_offset()),
-        ..Default::default()
+        email: params.email,
+        status,
+        tag: params.tag,
+        accepts_marketing: params.accepts_marketing,
+        limit: Some(limit),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
+        after_cursor,
     };
     let customers = commerce.customers().list(filter)?;
+    let has_more = customers.len() == limit as usize;
+    let next_cursor = if has_more {
+        customers
+            .last()
+            .map(|c| encode_cursor(&c.created_at.to_rfc3339(), &c.id.to_string()))
+    } else {
+        None
+    };
     Ok(Json(CustomerListResponse {
         customers: customers.into_iter().map(CustomerResponse::from).collect(),
         total,
-        limit: params.resolved_limit(),
-        offset: params.resolved_offset(),
+        limit,
+        offset,
+        next_cursor,
+        has_more,
     }))
 }
 
@@ -239,5 +291,94 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["total"], 2);
         assert_eq!(json["customers"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_customers_filter_by_email() {
+        let (app, state) = app_with_state();
+
+        state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "alice@filter.com".into(),
+                first_name: "Alice".into(),
+                last_name: "Filter".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "bob@filter.com".into(),
+                first_name: "Bob".into(),
+                last_name: "Filter".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::get("/customers?email=alice%40filter.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 1);
+        assert_eq!(json["customers"][0]["email"], "alice@filter.com");
+    }
+
+    #[tokio::test]
+    async fn list_customers_invalid_status_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/customers?status=bogus").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_customers_filter_by_accepts_marketing() {
+        let (app, state) = app_with_state();
+
+        state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "opt-in@test.com".into(),
+                first_name: "Opt".into(),
+                last_name: "In".into(),
+                accepts_marketing: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "opt-out@test.com".into(),
+                first_name: "Opt".into(),
+                last_name: "Out".into(),
+                accepts_marketing: Some(false),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::get("/customers?accepts_marketing=true").body(Body::empty()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 1);
+        assert_eq!(json["customers"][0]["email"], "opt-in@test.com");
     }
 }

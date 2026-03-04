@@ -20,6 +20,7 @@ resources:
   - service.yaml
   - ingress.yaml
   - hpa.yaml
+  - postgres-backup-cronjob.yaml
 
 # Image customization (override in overlays)
 images:

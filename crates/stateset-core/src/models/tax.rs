@@ -399,7 +399,7 @@ pub struct TaxCalculationRequest {
     pub prices_include_tax: bool,
 }
 
-fn default_currency() -> CurrencyCode {
+const fn default_currency() -> CurrencyCode {
     CurrencyCode::USD
 }
 

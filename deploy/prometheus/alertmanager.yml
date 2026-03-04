@@ -1,0 +1,53 @@
+# StateSet iCommerce Alertmanager Configuration
+#
+# Configure receivers below to route alerts to your preferred channels.
+# See: https://prometheus.io/docs/alerting/latest/configuration/
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default'
+
+  routes:
+    # Critical alerts get shorter repeat interval
+    - match:
+        severity: critical
+      receiver: 'critical'
+      repeat_interval: 1h
+
+receivers:
+  # Default receiver — logs to stdout (replace with your webhook/email/Slack)
+  - name: 'default'
+    webhook_configs:
+      - url: 'http://stateset-cli:3000/api/v1/webhooks/alerts'
+        send_resolved: true
+
+  # Critical receiver — same endpoint, operators should add PagerDuty/OpsGenie here
+  - name: 'critical'
+    webhook_configs:
+      - url: 'http://stateset-cli:3000/api/v1/webhooks/alerts'
+        send_resolved: true
+    # Uncomment and configure for PagerDuty:
+    # pagerduty_configs:
+    #   - service_key: '<PAGERDUTY_SERVICE_KEY>'
+    #     severity: '{{ .CommonLabels.severity }}'
+    #
+    # Uncomment and configure for Slack:
+    # slack_configs:
+    #   - api_url: '<SLACK_WEBHOOK_URL>'
+    #     channel: '#alerts-critical'
+    #     title: '{{ .CommonAnnotations.summary }}'
+    #     text: '{{ .CommonAnnotations.description }}'
+
+inhibit_rules:
+  # If a critical alert fires, suppress warnings for the same alertname
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname']

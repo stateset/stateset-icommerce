@@ -40,6 +40,177 @@ impl PaginationParams {
 }
 
 // ============================================================================
+// Cursor helpers
+// ============================================================================
+
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
+/// Encode a keyset cursor from `(sort_key, id)`.
+#[must_use]
+pub fn encode_cursor(sort_key: &str, id: &str) -> String {
+    let payload = format!("{}\x00{}", sort_key, id);
+    URL_SAFE_NO_PAD.encode(payload.as_bytes())
+}
+
+/// Decode a keyset cursor into `(sort_key, id)`.
+pub fn decode_cursor(cursor: &str) -> Option<(String, String)> {
+    let bytes = URL_SAFE_NO_PAD.decode(cursor).ok()?;
+    let s = String::from_utf8(bytes).ok()?;
+    let (sort_key, id) = s.split_once('\x00')?;
+    Some((sort_key.to_string(), id.to_string()))
+}
+
+// ============================================================================
+// Filter query parameters
+// ============================================================================
+
+/// Query parameters for `GET /api/v1/orders` with filtering.
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+pub struct OrderFilterParams {
+    /// Maximum number of results to return (default: 50).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default: 0). Ignored when `after` cursor is set.
+    pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
+    /// Filter by customer ID (UUID).
+    pub customer_id: Option<String>,
+    /// Filter by order status (pending, confirmed, shipped, delivered, cancelled).
+    pub status: Option<String>,
+    /// Filter by payment status (pending, paid, `partially_refunded`, refunded).
+    pub payment_status: Option<String>,
+    /// Filter by fulfillment status (unfulfilled, partial, fulfilled).
+    pub fulfillment_status: Option<String>,
+    /// Orders created on or after this date (RFC 3339, e.g. 2024-01-15T00:00:00Z).
+    pub from_date: Option<String>,
+    /// Orders created on or before this date (RFC 3339, e.g. 2024-12-31T23:59:59Z).
+    pub to_date: Option<String>,
+}
+
+impl OrderFilterParams {
+    /// Resolved limit with bounds checking.
+    #[must_use]
+    pub fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+    }
+
+    /// Resolved offset.
+    #[must_use]
+    pub fn resolved_offset(&self) -> u32 {
+        self.offset.unwrap_or(0)
+    }
+}
+
+/// Query parameters for `GET /api/v1/customers` with filtering.
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+pub struct CustomerFilterParams {
+    /// Maximum number of results to return (default: 50).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default: 0). Ignored when `after` cursor is set.
+    pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
+    /// Filter by email address (exact match).
+    pub email: Option<String>,
+    /// Filter by customer status (active, inactive, deleted).
+    pub status: Option<String>,
+    /// Filter by tag.
+    pub tag: Option<String>,
+    /// Filter by marketing opt-in.
+    pub accepts_marketing: Option<bool>,
+}
+
+impl CustomerFilterParams {
+    /// Resolved limit with bounds checking.
+    #[must_use]
+    pub fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+    }
+
+    /// Resolved offset.
+    #[must_use]
+    pub fn resolved_offset(&self) -> u32 {
+        self.offset.unwrap_or(0)
+    }
+}
+
+/// Query parameters for `GET /api/v1/products` with filtering.
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+pub struct ProductFilterParams {
+    /// Maximum number of results to return (default: 50).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default: 0). Ignored when `after` cursor is set.
+    pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
+    /// Filter by product status (draft, active, archived).
+    pub status: Option<String>,
+    /// Filter by product type (simple, digital, bundle, subscription, service).
+    pub product_type: Option<String>,
+    /// Full-text search across name and description.
+    pub search: Option<String>,
+    /// Filter by category.
+    pub category: Option<String>,
+    /// Minimum price filter.
+    pub min_price: Option<String>,
+    /// Maximum price filter.
+    pub max_price: Option<String>,
+    /// Filter by stock availability.
+    pub in_stock: Option<bool>,
+}
+
+impl ProductFilterParams {
+    /// Resolved limit with bounds checking.
+    #[must_use]
+    pub fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+    }
+
+    /// Resolved offset.
+    #[must_use]
+    pub fn resolved_offset(&self) -> u32 {
+        self.offset.unwrap_or(0)
+    }
+}
+
+/// Query parameters for `GET /api/v1/returns` with filtering.
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+pub struct ReturnFilterParams {
+    /// Maximum number of results to return (default: 50).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default: 0). Ignored when `after` cursor is set.
+    pub offset: Option<u32>,
+    /// Cursor for keyset pagination (opaque token from `next_cursor`).
+    pub after: Option<String>,
+    /// Filter by order ID (UUID).
+    pub order_id: Option<String>,
+    /// Filter by customer ID (UUID).
+    pub customer_id: Option<String>,
+    /// Filter by return status (requested, approved, rejected, received, refunded, closed).
+    pub status: Option<String>,
+    /// Filter by return reason (defective, `wrong_item`, `not_as_described`, `changed_mind`, other).
+    pub reason: Option<String>,
+    /// Returns created on or after this date (RFC 3339).
+    pub from_date: Option<String>,
+    /// Returns created on or before this date (RFC 3339).
+    pub to_date: Option<String>,
+}
+
+impl ReturnFilterParams {
+    /// Resolved limit with bounds checking.
+    #[must_use]
+    pub fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+    }
+
+    /// Resolved offset.
+    #[must_use]
+    pub fn resolved_offset(&self) -> u32 {
+        self.offset.unwrap_or(0)
+    }
+}
+
+// ============================================================================
 // Orders
 // ============================================================================
 
@@ -134,6 +305,11 @@ pub struct OrderListResponse {
     pub total: usize,
     pub limit: u32,
     pub offset: u32,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 // ============================================================================
@@ -175,6 +351,11 @@ pub struct CustomerListResponse {
     pub total: usize,
     pub limit: u32,
     pub offset: u32,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 // ============================================================================
@@ -211,6 +392,11 @@ pub struct ProductListResponse {
     pub total: usize,
     pub limit: u32,
     pub offset: u32,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 // ============================================================================
@@ -242,6 +428,287 @@ pub struct InventoryResponse {
     pub total_allocated: Decimal,
     #[schema(value_type = String)]
     pub total_available: Decimal,
+}
+
+// ============================================================================
+// Inventory (list)
+// ============================================================================
+
+/// Query parameters for `GET /api/v1/inventory` with filtering.
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+pub struct InventoryFilterParams {
+    /// Maximum number of results to return (default: 50).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default: 0).
+    pub offset: Option<u32>,
+    /// Filter by SKU (exact match).
+    pub sku: Option<String>,
+    /// Filter by items below reorder point.
+    pub below_reorder_point: Option<bool>,
+    /// Filter by active status.
+    pub is_active: Option<bool>,
+}
+
+impl InventoryFilterParams {
+    /// Resolved limit with bounds checking.
+    #[must_use]
+    pub fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+    }
+
+    /// Resolved offset.
+    #[must_use]
+    pub fn resolved_offset(&self) -> u32 {
+        self.offset.unwrap_or(0)
+    }
+}
+
+/// Response body for a single inventory item (list view).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InventoryItemResponse {
+    pub id: i64,
+    pub sku: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub unit_of_measure: String,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Response body for `GET /api/v1/inventory` (list).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct InventoryListResponse {
+    pub items: Vec<InventoryItemResponse>,
+    pub total: usize,
+    pub limit: u32,
+    pub offset: u32,
+    pub has_more: bool,
+}
+
+// ============================================================================
+// Shipments
+// ============================================================================
+
+/// Query parameters for `GET /api/v1/shipments` with filtering.
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+pub struct ShipmentFilterParams {
+    /// Maximum number of results to return (default: 50).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default: 0).
+    pub offset: Option<u32>,
+    /// Filter by order ID (UUID).
+    pub order_id: Option<String>,
+    /// Filter by shipment status (pending, shipped, `in_transit`, delivered, returned, cancelled).
+    pub status: Option<String>,
+    /// Filter by carrier (usps, ups, fedex, dhl, etc.).
+    pub carrier: Option<String>,
+    /// Filter by tracking number.
+    pub tracking_number: Option<String>,
+}
+
+impl ShipmentFilterParams {
+    /// Resolved limit with bounds checking.
+    #[must_use]
+    pub fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+    }
+
+    /// Resolved offset.
+    #[must_use]
+    pub fn resolved_offset(&self) -> u32 {
+        self.offset.unwrap_or(0)
+    }
+}
+
+/// Response body for a single shipment.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ShipmentResponse {
+    #[schema(value_type = String, format = "uuid")]
+    pub id: stateset_primitives::ShipmentId,
+    pub shipment_number: String,
+    #[schema(value_type = String, format = "uuid")]
+    pub order_id: OrderId,
+    pub status: String,
+    pub carrier: String,
+    pub shipping_method: String,
+    pub tracking_number: Option<String>,
+    pub tracking_url: Option<String>,
+    pub recipient_name: String,
+    #[schema(value_type = Option<String>)]
+    pub shipping_cost: Option<Decimal>,
+    pub shipped_at: Option<DateTime<Utc>>,
+    pub estimated_delivery: Option<DateTime<Utc>>,
+    pub delivered_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Response body for `GET /api/v1/shipments` (list).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ShipmentListResponse {
+    pub shipments: Vec<ShipmentResponse>,
+    pub total: usize,
+    pub limit: u32,
+    pub offset: u32,
+    pub has_more: bool,
+}
+
+// ============================================================================
+// Payments
+// ============================================================================
+
+/// Query parameters for `GET /api/v1/payments` with filtering.
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+pub struct PaymentFilterParams {
+    /// Maximum number of results to return (default: 50).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default: 0).
+    pub offset: Option<u32>,
+    /// Filter by order ID (UUID).
+    pub order_id: Option<String>,
+    /// Filter by customer ID (UUID).
+    pub customer_id: Option<String>,
+    /// Filter by payment status (pending, authorized, captured, failed, refunded, `partially_refunded`, voided).
+    pub status: Option<String>,
+    /// Filter by payment method (`credit_card`, `debit_card`, `bank_transfer`, etc.).
+    pub payment_method: Option<String>,
+    /// Filter by processor name.
+    pub processor: Option<String>,
+    /// Minimum payment amount.
+    pub min_amount: Option<String>,
+    /// Maximum payment amount.
+    pub max_amount: Option<String>,
+    /// Payments created on or after this date (RFC 3339).
+    pub from_date: Option<String>,
+    /// Payments created on or before this date (RFC 3339).
+    pub to_date: Option<String>,
+}
+
+impl PaymentFilterParams {
+    /// Resolved limit with bounds checking.
+    #[must_use]
+    pub fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+    }
+
+    /// Resolved offset.
+    #[must_use]
+    pub fn resolved_offset(&self) -> u32 {
+        self.offset.unwrap_or(0)
+    }
+}
+
+/// Response body for a single payment.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PaymentResponse {
+    #[schema(value_type = String, format = "uuid")]
+    pub id: stateset_primitives::PaymentId,
+    pub payment_number: String,
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub order_id: Option<OrderId>,
+    pub customer_id: Option<String>,
+    pub status: String,
+    pub payment_method: String,
+    #[schema(value_type = String)]
+    pub amount: Decimal,
+    pub currency: String,
+    #[schema(value_type = String)]
+    pub amount_refunded: Decimal,
+    pub external_id: Option<String>,
+    pub processor: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Response body for `GET /api/v1/payments` (list).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PaymentListResponse {
+    pub payments: Vec<PaymentResponse>,
+    pub total: usize,
+    pub limit: u32,
+    pub offset: u32,
+    pub has_more: bool,
+}
+
+// ============================================================================
+// Invoices
+// ============================================================================
+
+/// Query parameters for `GET /api/v1/invoices` with filtering.
+#[derive(Debug, Clone, Deserialize, Default, IntoParams)]
+pub struct InvoiceFilterParams {
+    /// Maximum number of results to return (default: 50).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default: 0).
+    pub offset: Option<u32>,
+    /// Filter by customer ID (UUID).
+    pub customer_id: Option<String>,
+    /// Filter by order ID (UUID).
+    pub order_id: Option<String>,
+    /// Filter by invoice status (draft, sent, viewed, paid, overdue, voided).
+    pub status: Option<String>,
+    /// Filter by invoice type (standard, `credit_note`, `pro_forma`, recurring).
+    pub invoice_type: Option<String>,
+    /// Filter overdue invoices only.
+    pub overdue_only: Option<bool>,
+    /// Invoices created on or after this date (RFC 3339).
+    pub from_date: Option<String>,
+    /// Invoices created on or before this date (RFC 3339).
+    pub to_date: Option<String>,
+}
+
+impl InvoiceFilterParams {
+    /// Resolved limit with bounds checking.
+    #[must_use]
+    pub fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+    }
+
+    /// Resolved offset.
+    #[must_use]
+    pub fn resolved_offset(&self) -> u32 {
+        self.offset.unwrap_or(0)
+    }
+}
+
+/// Response body for a single invoice.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InvoiceResponse {
+    #[schema(value_type = String, format = "uuid")]
+    pub id: stateset_primitives::InvoiceId,
+    pub invoice_number: String,
+    #[schema(value_type = String, format = "uuid")]
+    pub customer_id: CustomerId,
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub order_id: Option<OrderId>,
+    pub status: String,
+    pub invoice_type: String,
+    pub invoice_date: DateTime<Utc>,
+    pub due_date: DateTime<Utc>,
+    pub currency: String,
+    #[schema(value_type = String)]
+    pub subtotal: Decimal,
+    #[schema(value_type = String)]
+    pub tax_amount: Decimal,
+    #[schema(value_type = String)]
+    pub total: Decimal,
+    #[schema(value_type = String)]
+    pub amount_paid: Decimal,
+    #[schema(value_type = String)]
+    pub balance_due: Decimal,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Response body for `GET /api/v1/invoices` (list).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct InvoiceListResponse {
+    pub invoices: Vec<InvoiceResponse>,
+    pub total: usize,
+    pub limit: u32,
+    pub offset: u32,
+    pub has_more: bool,
 }
 
 // ============================================================================
@@ -282,6 +749,20 @@ pub struct ReturnResponse {
     pub refund_amount: Option<Decimal>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Response body for `GET /api/v1/returns` (list).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReturnListResponse {
+    pub returns: Vec<ReturnResponse>,
+    pub total: usize,
+    pub limit: u32,
+    pub offset: u32,
+    /// Opaque cursor for fetching the next page (keyset pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Whether more results are available after this page.
+    pub has_more: bool,
 }
 
 // ============================================================================
@@ -387,6 +868,86 @@ impl From<stateset_core::StockLevel> for InventoryResponse {
             total_on_hand: s.total_on_hand,
             total_allocated: s.total_allocated,
             total_available: s.total_available,
+        }
+    }
+}
+
+impl From<stateset_core::InventoryItem> for InventoryItemResponse {
+    fn from(i: stateset_core::InventoryItem) -> Self {
+        Self {
+            id: i.id,
+            sku: i.sku,
+            name: i.name,
+            description: i.description,
+            unit_of_measure: i.unit_of_measure,
+            is_active: i.is_active,
+            created_at: i.created_at,
+            updated_at: i.updated_at,
+        }
+    }
+}
+
+impl From<stateset_core::Shipment> for ShipmentResponse {
+    fn from(s: stateset_core::Shipment) -> Self {
+        Self {
+            id: s.id,
+            shipment_number: s.shipment_number,
+            order_id: s.order_id,
+            status: s.status.to_string(),
+            carrier: s.carrier.to_string(),
+            shipping_method: s.shipping_method.to_string(),
+            tracking_number: s.tracking_number,
+            tracking_url: s.tracking_url,
+            recipient_name: s.recipient_name,
+            shipping_cost: s.shipping_cost,
+            shipped_at: s.shipped_at,
+            estimated_delivery: s.estimated_delivery,
+            delivered_at: s.delivered_at,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
+        }
+    }
+}
+
+impl From<stateset_core::Payment> for PaymentResponse {
+    fn from(p: stateset_core::Payment) -> Self {
+        Self {
+            id: p.id,
+            payment_number: p.payment_number,
+            order_id: p.order_id,
+            customer_id: p.customer_id.map(|c| c.to_string()),
+            status: p.status.to_string(),
+            payment_method: p.payment_method.to_string(),
+            amount: p.amount,
+            currency: p.currency.to_string(),
+            amount_refunded: p.amount_refunded,
+            external_id: p.external_id,
+            processor: p.processor,
+            created_at: p.created_at,
+            updated_at: p.updated_at,
+        }
+    }
+}
+
+impl From<stateset_core::Invoice> for InvoiceResponse {
+    fn from(i: stateset_core::Invoice) -> Self {
+        Self {
+            id: i.id,
+            invoice_number: i.invoice_number,
+            customer_id: i.customer_id,
+            order_id: i.order_id,
+            status: i.status.to_string(),
+            invoice_type: i.invoice_type.to_string(),
+            invoice_date: i.invoice_date,
+            due_date: i.due_date,
+            currency: i.currency.to_string(),
+            subtotal: i.subtotal,
+            tax_amount: i.tax_amount,
+            total: i.total,
+            amount_paid: i.amount_paid,
+            balance_due: i.balance_due,
+            created_at: i.created_at,
+            updated_at: i.updated_at,
         }
     }
 }
@@ -662,22 +1223,164 @@ mod tests {
 
     #[test]
     fn order_list_response_serialization() {
-        let resp = OrderListResponse { orders: vec![], total: 0, limit: 50, offset: 0 };
+        let resp = OrderListResponse {
+            orders: vec![],
+            total: 0,
+            limit: 50,
+            offset: 0,
+            next_cursor: None,
+            has_more: false,
+        };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["total"], 0);
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none()); // skipped when None
     }
 
     #[test]
     fn customer_list_response_serialization() {
-        let resp = CustomerListResponse { customers: vec![], total: 0, limit: 50, offset: 0 };
+        let resp = CustomerListResponse {
+            customers: vec![],
+            total: 0,
+            limit: 50,
+            offset: 0,
+            next_cursor: None,
+            has_more: false,
+        };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["total"], 0);
+        assert_eq!(json["has_more"], false);
     }
 
     #[test]
     fn product_list_response_serialization() {
-        let resp = ProductListResponse { products: vec![], total: 0, limit: 50, offset: 0 };
+        let resp = ProductListResponse {
+            products: vec![],
+            total: 0,
+            limit: 50,
+            offset: 0,
+            next_cursor: None,
+            has_more: false,
+        };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["total"], 0);
+        assert_eq!(json["has_more"], false);
+    }
+
+    #[test]
+    fn return_list_response_serialization() {
+        let resp = ReturnListResponse {
+            returns: vec![],
+            total: 0,
+            limit: 50,
+            offset: 0,
+            next_cursor: None,
+            has_more: false,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["total"], 0);
+        assert_eq!(json["has_more"], false);
+    }
+
+    // ============================================================================
+    // Cursor helpers tests
+    // ============================================================================
+
+    #[test]
+    fn cursor_encode_decode_roundtrip() {
+        let cursor = encode_cursor("2024-01-15T10:30:00Z", "550e8400-e29b-41d4-a716-446655440000");
+        let (sort_key, id) = decode_cursor(&cursor).unwrap();
+        assert_eq!(sort_key, "2024-01-15T10:30:00Z");
+        assert_eq!(id, "550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn cursor_decode_invalid_base64() {
+        assert!(decode_cursor("not-valid-base64!!!").is_none());
+    }
+
+    #[test]
+    fn cursor_decode_missing_separator() {
+        let encoded = URL_SAFE_NO_PAD.encode(b"no-separator-here");
+        assert!(decode_cursor(&encoded).is_none());
+    }
+
+    #[test]
+    fn cursor_next_cursor_serialized_when_present() {
+        let resp = OrderListResponse {
+            orders: vec![],
+            total: 100,
+            limit: 10,
+            offset: 0,
+            next_cursor: Some("abc123".into()),
+            has_more: true,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["next_cursor"], "abc123");
+        assert_eq!(json["has_more"], true);
+    }
+
+    // ============================================================================
+    // Filter params deserialization tests
+    // ============================================================================
+
+    #[test]
+    fn order_filter_params_default() {
+        let p = OrderFilterParams::default();
+        assert_eq!(p.resolved_limit(), PaginationParams::DEFAULT_LIMIT);
+        assert_eq!(p.resolved_offset(), 0);
+        assert!(p.customer_id.is_none());
+        assert!(p.status.is_none());
+    }
+
+    #[test]
+    fn order_filter_params_deserialization() {
+        let p: OrderFilterParams = serde_json::from_value(serde_json::json!({
+            "limit": 10, "offset": 5, "status": "pending", "customer_id": "abc"
+        }))
+        .unwrap();
+        assert_eq!(p.resolved_limit(), 10);
+        assert_eq!(p.resolved_offset(), 5);
+        assert_eq!(p.status.as_deref(), Some("pending"));
+        assert_eq!(p.customer_id.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn customer_filter_params_deserialization() {
+        let p: CustomerFilterParams = serde_json::from_value(serde_json::json!({
+            "email": "test@example.com", "accepts_marketing": true
+        }))
+        .unwrap();
+        assert_eq!(p.email.as_deref(), Some("test@example.com"));
+        assert_eq!(p.accepts_marketing, Some(true));
+    }
+
+    #[test]
+    fn product_filter_params_deserialization() {
+        let p: ProductFilterParams = serde_json::from_value(serde_json::json!({
+            "search": "widget", "min_price": "10.00", "max_price": "100", "in_stock": true
+        }))
+        .unwrap();
+        assert_eq!(p.search.as_deref(), Some("widget"));
+        assert_eq!(p.min_price.as_deref(), Some("10.00"));
+        assert_eq!(p.max_price.as_deref(), Some("100"));
+        assert_eq!(p.in_stock, Some(true));
+    }
+
+    #[test]
+    fn return_filter_params_deserialization() {
+        let p: ReturnFilterParams = serde_json::from_value(serde_json::json!({
+            "status": "requested", "reason": "defective", "limit": 5
+        }))
+        .unwrap();
+        assert_eq!(p.status.as_deref(), Some("requested"));
+        assert_eq!(p.reason.as_deref(), Some("defective"));
+        assert_eq!(p.resolved_limit(), 5);
+    }
+
+    #[test]
+    fn filter_params_limit_clamps_to_max() {
+        let p = OrderFilterParams { limit: Some(999), ..Default::default() };
+        assert_eq!(p.resolved_limit(), PaginationParams::MAX_LIMIT);
     }
 }

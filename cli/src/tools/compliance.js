@@ -12,14 +12,22 @@ let _complianceSvc = null;
 /**
  * Lazy-initialize the compliance service singleton.
  * Uses dynamic imports to avoid circular dependencies.
+ * Passes both the A2A store and the commerce database path for full GDPR coverage.
  */
 async function getComplianceSvc() {
   if (_complianceSvc) return _complianceSvc;
   const { A2AStore } = await import('../a2a/store.js');
   const { createComplianceService } = await import('../compliance/exports.js');
+  const path = await import('node:path');
   const store = new A2AStore();
   store.init();
-  _complianceSvc = createComplianceService(store);
+
+  // Derive the commerce DB path from the A2A store path
+  const commerceDbPath = store.dbPath
+    ? path.resolve(path.dirname(store.dbPath), 'store.db')
+    : './store.db';
+
+  _complianceSvc = createComplianceService(store, { commerceDbPath });
   return _complianceSvc;
 }
 

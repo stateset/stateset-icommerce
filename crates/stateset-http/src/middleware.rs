@@ -1,4 +1,4 @@
-//! HTTP middleware — request ID, logging, CORS, rate limiting.
+//! HTTP middleware — request ID, logging, CORS, rate limiting, caching.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -8,12 +8,13 @@ use axum::{
     body::Body,
     extract::State,
     http::{
-        HeaderName, HeaderValue, Method, Request,
+        HeaderName, HeaderValue, Method, Request, StatusCode,
         header::{AUTHORIZATION, CONTENT_TYPE},
     },
-    middleware::{Next, from_fn_with_state},
+    middleware::{Next, from_fn, from_fn_with_state},
     response::{IntoResponse, Response},
 };
+use http_body_util::BodyExt;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -244,6 +245,115 @@ pub(crate) fn request_id_layers() -> (SetRequestIdLayer<MakeRequestUuid>, Propag
     )
 }
 
+// ============================================================================
+// HTTP Caching (ETag + Cache-Control)
+// ============================================================================
+
+/// Compute a weak `ETag` from response body bytes using FNV-1a for speed.
+fn compute_etag(body: &[u8]) -> String {
+    // FNV-1a 64-bit — fast, non-cryptographic hash ideal for ETags.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in body {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("W/\"{hash:016x}\"")
+}
+
+/// Determine the `Cache-Control` value based on the request path.
+///
+/// - Health endpoints: `no-cache` (always revalidate)
+/// - List endpoints (`/api/v1/<resource>`): short TTL (10s) + revalidation
+/// - Single resource (`/api/v1/<resource>/<id>`): moderate TTL (60s) + revalidation
+/// - `OpenAPI` spec: long TTL (1 hour, public)
+fn cache_control_for_path(path: &str) -> &'static str {
+    if path.starts_with("/health") {
+        "no-cache"
+    } else if path.contains("/openapi.json") {
+        "public, max-age=3600"
+    } else if let Some(rest) = path.strip_prefix("/api/v1/") {
+        // Count path segments after /api/v1/
+        let segments = rest.split('/').filter(|s| !s.is_empty()).count();
+        if segments <= 1 {
+            // List endpoint (e.g. /api/v1/orders)
+            "private, max-age=10, must-revalidate"
+        } else {
+            // Single resource (e.g. /api/v1/orders/{id})
+            "private, max-age=60, must-revalidate"
+        }
+    } else {
+        "no-cache"
+    }
+}
+
+/// Middleware that adds `ETag` and `Cache-Control` headers to GET responses,
+/// and handles `If-None-Match` conditional requests (returns 304 Not Modified).
+///
+/// Only applied to successful GET responses with a response body.
+async fn http_cache(request: Request<Body>, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+
+    // Only cache GET requests
+    if method != Method::GET {
+        return next.run(request).await;
+    }
+
+    // Extract If-None-Match header before passing the request
+    let if_none_match = request
+        .headers()
+        .get("if-none-match")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+
+    let response = next.run(request).await;
+
+    // Only cache successful responses
+    if !response.status().is_success() {
+        return response;
+    }
+
+    let (mut parts, body) = response.into_parts();
+
+    // Collect the body bytes
+    let body_bytes = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(_) => return Response::from_parts(parts, Body::empty()),
+    };
+
+    // Compute ETag
+    let etag = compute_etag(&body_bytes);
+
+    // Check If-None-Match
+    if let Some(client_etag) = if_none_match {
+        // Strip quotes and W/ prefix for comparison
+        let normalize = |s: &str| s.replace("W/", "").replace('"', "");
+        if normalize(&client_etag) == normalize(&etag) {
+            let mut not_modified = Response::new(Body::empty());
+            *not_modified.status_mut() = StatusCode::NOT_MODIFIED;
+            not_modified
+                .headers_mut()
+                .insert("etag", HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("")));
+            not_modified.headers_mut().insert(
+                "cache-control",
+                HeaderValue::from_static(cache_control_for_path(&path)),
+            );
+            return not_modified;
+        }
+    }
+
+    // Add caching headers
+    parts
+        .headers
+        .insert("etag", HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("")));
+    parts.headers.insert(
+        "cache-control",
+        HeaderValue::from_static(cache_control_for_path(&path)),
+    );
+
+    Response::from_parts(parts, Body::from(body_bytes))
+}
+
 /// Apply all standard middleware to a router.
 pub(crate) fn apply_middleware(
     router: Router,
@@ -253,6 +363,9 @@ pub(crate) fn apply_middleware(
     rate_limit_config: Option<RateLimitConfig>,
 ) -> Router {
     let mut router = router.layer(TraceLayer::new_for_http());
+
+    // HTTP caching (ETag + Cache-Control) — innermost layer for GET responses
+    router = router.layer(from_fn(http_cache));
 
     if let Some(config) = rate_limit_config {
         let bucket = create_rate_limiter(&config);
@@ -545,5 +658,187 @@ mod tests {
         let router = Router::new();
         let config = Some(RateLimitConfig { requests_per_second: 50, burst_size: 100 });
         let _router = apply_middleware(router, false, false, None, config);
+    }
+
+    // ========================================================================
+    // HTTP Caching Tests
+    // ========================================================================
+
+    #[test]
+    fn compute_etag_deterministic() {
+        let etag1 = compute_etag(b"hello world");
+        let etag2 = compute_etag(b"hello world");
+        assert_eq!(etag1, etag2, "same input should produce same ETag");
+    }
+
+    #[test]
+    fn compute_etag_differs_for_different_input() {
+        let etag1 = compute_etag(b"hello");
+        let etag2 = compute_etag(b"world");
+        assert_ne!(etag1, etag2, "different input should produce different ETag");
+    }
+
+    #[test]
+    fn compute_etag_is_weak() {
+        let etag = compute_etag(b"test");
+        assert!(etag.starts_with("W/\""), "ETag should be a weak validator");
+    }
+
+    #[test]
+    fn cache_control_health_is_no_cache() {
+        assert_eq!(cache_control_for_path("/health"), "no-cache");
+        assert_eq!(cache_control_for_path("/health/ready"), "no-cache");
+    }
+
+    #[test]
+    fn cache_control_openapi_is_public() {
+        assert_eq!(
+            cache_control_for_path("/api/v1/openapi.json"),
+            "public, max-age=3600"
+        );
+    }
+
+    #[test]
+    fn cache_control_list_endpoints() {
+        assert_eq!(
+            cache_control_for_path("/api/v1/orders"),
+            "private, max-age=10, must-revalidate"
+        );
+        assert_eq!(
+            cache_control_for_path("/api/v1/customers"),
+            "private, max-age=10, must-revalidate"
+        );
+    }
+
+    #[test]
+    fn cache_control_single_resource() {
+        assert_eq!(
+            cache_control_for_path("/api/v1/orders/abc-123"),
+            "private, max-age=60, must-revalidate"
+        );
+        assert_eq!(
+            cache_control_for_path("/api/v1/customers/cust-1"),
+            "private, max-age=60, must-revalidate"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_cache_adds_etag_to_get_response() {
+        let app: Router<()> = Router::new()
+            .route("/api/v1/orders", get(|| async { "[]" }))
+            .layer(from_fn(http_cache));
+
+        let response = app
+            .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("etag").is_some(), "should have ETag header");
+        assert!(
+            response.headers().get("cache-control").is_some(),
+            "should have Cache-Control header"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_cache_returns_304_on_matching_etag() {
+        let app: Router<()> = Router::new()
+            .route("/api/v1/orders", get(|| async { "[]" }))
+            .layer(from_fn(http_cache));
+
+        // First request to get the ETag
+        let response = app
+            .clone()
+            .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let etag = response
+            .headers()
+            .get("etag")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // Second request with If-None-Match
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("if-none-match", &etag)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    }
+
+    #[tokio::test]
+    async fn http_cache_skips_post_requests() {
+        use axum::routing::post;
+
+        let app: Router<()> = Router::new()
+            .route("/api/v1/orders", post(|| async { "created" }))
+            .layer(from_fn(http_cache));
+
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/orders")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("etag").is_none(), "POST should not have ETag");
+    }
+
+    #[tokio::test]
+    async fn http_cache_does_not_cache_error_responses() {
+        async fn handler() -> (StatusCode, &'static str) {
+            (StatusCode::NOT_FOUND, "not found")
+        }
+
+        let app: Router<()> = Router::new()
+            .route("/api/v1/orders/missing", get(handler))
+            .layer(from_fn(http_cache));
+
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/orders/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(
+            response.headers().get("etag").is_none(),
+            "error responses should not have ETag"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_cache_returns_200_on_mismatched_etag() {
+        let app: Router<()> = Router::new()
+            .route("/api/v1/orders", get(|| async { "[]" }))
+            .layer(from_fn(http_cache));
+
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("if-none-match", "W/\"stale-etag\"")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("etag").is_some());
     }
 }

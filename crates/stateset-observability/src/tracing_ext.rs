@@ -91,6 +91,74 @@ pub fn canonical_span_name(operation: &str) -> String {
     conventions::operation_span_name(operation)
 }
 
+/// Initialize tracing with OpenTelemetry OTLP export.
+///
+/// Sends traces to an OTLP-compatible collector (e.g. Jaeger, Tempo, Datadog).
+/// The endpoint defaults to `http://localhost:4317` and can be overridden via
+/// the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable.
+///
+/// Requires the `otel` feature flag.
+///
+/// # Errors
+///
+/// Returns an error if the OTLP exporter or tracer pipeline cannot be initialized.
+#[cfg(feature = "otel")]
+pub fn init_tracing_otel(config: &TracingConfig) -> Result<()> {
+    use opentelemetry::KeyValue;
+    use opentelemetry_otlp::WithExportConfig;
+    use opentelemetry_sdk::Resource;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    if tracing::dispatcher::has_been_set() {
+        return Ok(());
+    }
+
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(opentelemetry_otlp::new_exporter().tonic().with_endpoint(&endpoint))
+        .with_trace_config(
+            opentelemetry_sdk::trace::Config::default().with_resource(Resource::new(vec![
+                KeyValue::new("service.name", config.service_name.clone()),
+                KeyValue::new("deployment.environment", config.environment.clone()),
+                KeyValue::new("cloud.region", config.region.clone()),
+            ])),
+        )
+        .install_batch(opentelemetry_sdk::runtime::Tokio)
+        .map_err(|e| ObservabilityError::ExporterError(e.to_string()))?;
+
+    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(true);
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(otel_layer)
+        .try_init()
+        .map_err(|e| ObservabilityError::TracingInitError(e.to_string()))?;
+
+    tracing::info!(
+        service_name = config.service_name.as_str(),
+        environment = config.environment.as_str(),
+        endpoint = endpoint.as_str(),
+        "initialized OpenTelemetry OTLP tracing"
+    );
+
+    Ok(())
+}
+
+/// Flush and shut down the OpenTelemetry tracer provider.
+///
+/// Call this during graceful shutdown to ensure all pending spans are exported.
+#[cfg(feature = "otel")]
+pub fn shutdown_otel() {
+    opentelemetry::global::shutdown_tracer_provider();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

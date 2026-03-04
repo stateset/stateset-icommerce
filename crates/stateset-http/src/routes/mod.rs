@@ -4,9 +4,12 @@ pub mod customers;
 pub mod events;
 pub mod health;
 pub mod inventory;
+pub mod invoices;
 pub mod orders;
+pub mod payments;
 pub mod products;
 pub mod returns;
+pub mod shipments;
 
 use axum::Router;
 
@@ -30,6 +33,9 @@ fn v1_router() -> Router<AppState> {
         .merge(products::router())
         .merge(inventory::router())
         .merge(returns::router())
+        .merge(shipments::router())
+        .merge(payments::router())
+        .merge(invoices::router())
         .merge(events::router())
         .merge(crate::openapi::router())
 }

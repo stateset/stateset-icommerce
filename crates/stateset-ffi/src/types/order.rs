@@ -1,7 +1,6 @@
 //! ABI-safe order types.
 
 use stateset_core::models::order::{Order, OrderStatus};
-use stateset_primitives::CurrencyCode;
 
 use crate::error::FfiErrorCode;
 
@@ -128,6 +127,7 @@ mod tests {
     use chrono::Utc;
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
+    use stateset_primitives::CurrencyCode;
     use stateset_core::models::order::{FulfillmentStatus, OrderItem, PaymentStatus};
     use stateset_primitives::{CustomerId, OrderId, OrderItemId, ProductId};
 

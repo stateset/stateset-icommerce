@@ -1249,7 +1249,7 @@ impl Commerce {
             line_items,
             shipping_address: tax_address,
             customer_id: cart.customer_id.map(Into::into),
-            currency: cart.currency.clone(),
+            currency: cart.currency,
             shipping_amount: Some(cart.shipping_amount),
             ..Default::default()
         };
@@ -1348,7 +1348,7 @@ impl Commerce {
             shipping_amount: cart.shipping_amount,
             shipping_country: cart.shipping_address.as_ref().map(|a| a.country.clone()),
             shipping_state: cart.shipping_address.as_ref().and_then(|a| a.state.clone()),
-            currency: cart.currency.clone(),
+            currency: cart.currency,
             coupon_codes,
             line_items,
             is_first_order: false, // Could check customer order history

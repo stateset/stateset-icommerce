@@ -8,11 +8,16 @@ use axum::{
 };
 
 use crate::dto::{
-    CreateOrderItemRequest, CreateOrderRequest, OrderListResponse, OrderResponse, PaginationParams,
+    CreateOrderItemRequest, CreateOrderRequest, OrderFilterParams, OrderListResponse,
+    OrderResponse, decode_cursor, encode_cursor,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
-use stateset_core::{Address, CreateOrder, CreateOrderItem, OrderFilter, OrderId};
+use stateset_core::{
+    Address, CreateOrder, CreateOrderItem, CustomerId, FulfillmentStatus, OrderFilter, OrderId,
+    OrderStatus, PaymentStatus,
+};
+use std::str::FromStr;
 
 /// Build the orders sub-router.
 pub fn router() -> Router<AppState> {
@@ -88,31 +93,110 @@ pub(crate) async fn get_order(
     get,
     path = "/api/v1/orders",
     tag = "orders",
-    params(PaginationParams),
+    params(OrderFilterParams),
     responses(
         (status = 200, description = "List of orders", body = OrderListResponse),
+        (status = 400, description = "Invalid filter parameter", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, params))]
 pub(crate) async fn list_orders(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(params): Query<PaginationParams>,
+    Query(params): Query<OrderFilterParams>,
 ) -> Result<Json<OrderListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let total = commerce.orders().list(OrderFilter::default())?.len();
+
+    let limit = params.resolved_limit();
+    let offset = params.resolved_offset();
+
+    // Parse filter parameters
+    let customer_id = params
+        .customer_id
+        .map(|s| s.parse::<CustomerId>())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
+    let status = params
+        .status
+        .as_deref()
+        .map(OrderStatus::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+    let payment_status = params
+        .payment_status
+        .as_deref()
+        .map(PaymentStatus::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid payment_status: {e}")))?;
+    let fulfillment_status = params
+        .fulfillment_status
+        .as_deref()
+        .map(FulfillmentStatus::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid fulfillment_status: {e}")))?;
+    let from_date = params
+        .from_date
+        .map(|s| s.parse())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid from_date: {e}")))?;
+    let to_date = params
+        .to_date
+        .map(|s| s.parse())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid to_date: {e}")))?;
+
+    // Decode cursor if provided
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor)
+                .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
+
+    // Count total matching records (without pagination or cursor)
+    let count_filter = OrderFilter {
+        customer_id,
+        status,
+        payment_status,
+        fulfillment_status,
+        from_date,
+        to_date,
+        limit: None,
+        offset: None,
+        after_cursor: None,
+    };
+    let total = commerce.orders().list(count_filter)?.len();
+
+    // Fetch the requested page
     let filter = OrderFilter {
-        limit: Some(params.resolved_limit()),
-        offset: Some(params.resolved_offset()),
-        ..Default::default()
+        customer_id,
+        status,
+        payment_status,
+        fulfillment_status,
+        from_date,
+        to_date,
+        limit: Some(limit),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
+        after_cursor,
     };
     let orders = commerce.orders().list(filter)?;
+    let has_more = orders.len() == limit as usize;
+    let next_cursor = if has_more {
+        orders
+            .last()
+            .map(|o| encode_cursor(&o.order_date.to_rfc3339(), &o.id.to_string()))
+    } else {
+        None
+    };
     Ok(Json(OrderListResponse {
         orders: orders.into_iter().map(OrderResponse::from).collect(),
         total,
-        limit: params.resolved_limit(),
-        offset: params.resolved_offset(),
+        limit,
+        offset,
+        next_cursor,
+        has_more,
     }))
 }
 
@@ -381,5 +465,224 @@ mod tests {
         let core = into_core_order_item(req);
         assert_eq!(core.sku, "SKU");
         assert_eq!(core.discount, Some(dec!(1)));
+    }
+
+    #[tokio::test]
+    async fn list_orders_filter_by_customer_id() {
+        let (app, state) = app_with_state();
+
+        let cust_a = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "a@example.com".into(),
+                first_name: "A".into(),
+                last_name: "A".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let cust_b = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "b@example.com".into(),
+                first_name: "B".into(),
+                last_name: "B".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let product = state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Filter Widget".into(),
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: "FILT-001".into(),
+                    price: dec!(5.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let make_item = || stateset_core::CreateOrderItem {
+            product_id: product.id,
+            variant_id: None,
+            sku: "FILT-001".into(),
+            name: "Filter Widget".into(),
+            quantity: 1,
+            unit_price: dec!(5.00),
+            discount: None,
+            tax_amount: None,
+        };
+
+        // 2 orders for cust_a, 1 for cust_b
+        for _ in 0..2 {
+            state
+                .commerce()
+                .orders()
+                .create(stateset_core::CreateOrder {
+                    customer_id: cust_a.id,
+                    items: vec![make_item()],
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        state
+            .commerce()
+            .orders()
+            .create(stateset_core::CreateOrder {
+                customer_id: cust_b.id,
+                items: vec![make_item()],
+                ..Default::default()
+            })
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::get(format!("/orders?customer_id={}", cust_a.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["orders"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_orders_invalid_status_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/orders?status=bogus").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_orders_invalid_customer_id_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/orders?customer_id=not-a-uuid").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_orders_invalid_date_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/orders?from_date=not-a-date").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_orders_has_more_and_next_cursor() {
+        let (_, state) = app_with_state();
+
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "cursor@example.com".into(),
+                first_name: "Cursor".into(),
+                last_name: "Test".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let product = state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Cursor Widget".into(),
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: "CUR-001".into(),
+                    price: dec!(5.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // Create 3 orders
+        for _ in 0..3 {
+            state
+                .commerce()
+                .orders()
+                .create(stateset_core::CreateOrder {
+                    customer_id: customer.id,
+                    items: vec![stateset_core::CreateOrderItem {
+                        product_id: product.id,
+                        variant_id: None,
+                        sku: "CUR-001".into(),
+                        name: "Cursor Widget".into(),
+                        quantity: 1,
+                        unit_price: dec!(5.00),
+                        discount: None,
+                        tax_amount: None,
+                    }],
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        // Request page of size 2 — should have has_more=true and next_cursor
+        let app = router().with_state(state.clone());
+        let resp = app
+            .oneshot(Request::get("/orders?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["total"], 3);
+        assert_eq!(json["orders"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], true);
+        let cursor = json["next_cursor"].as_str().expect("next_cursor should be present");
+
+        // Use cursor to fetch the next page
+        let app2 = router().with_state(state);
+        let resp2 = app2
+            .oneshot(
+                Request::get(format!("/orders?limit=2&after={cursor}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+        let body2 = axum::body::to_bytes(resp2.into_body(), usize::MAX).await.unwrap();
+        let json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+
+        assert_eq!(json2["orders"].as_array().unwrap().len(), 1);
+        assert_eq!(json2["has_more"], false);
+        assert!(json2.get("next_cursor").is_none() || json2["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_orders_invalid_cursor_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/orders?after=!!!invalid!!!").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_orders_empty_has_more_false() {
+        let resp =
+            app().oneshot(Request::get("/orders").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none() || json["next_cursor"].is_null());
     }
 }

@@ -7,10 +7,14 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::dto::{CreateProductRequest, PaginationParams, ProductListResponse, ProductResponse};
+use crate::dto::{
+    CreateProductRequest, ProductFilterParams, ProductListResponse, ProductResponse,
+    decode_cursor, encode_cursor,
+};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
-use stateset_core::{CreateProduct, ProductFilter, ProductId, ProductType};
+use rust_decimal::Decimal;
+use stateset_core::{CreateProduct, ProductFilter, ProductId, ProductStatus, ProductType};
 use std::str::FromStr;
 
 /// Build the products sub-router.
@@ -89,31 +93,101 @@ pub(crate) async fn get_product(
     get,
     path = "/api/v1/products",
     tag = "products",
-    params(PaginationParams),
+    params(ProductFilterParams),
     responses(
         (status = 200, description = "List of products", body = ProductListResponse),
+        (status = 400, description = "Invalid filter parameter", body = ErrorBody),
     )
 )]
 #[tracing::instrument(skip(state, headers, params))]
 pub(crate) async fn list_products(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(params): Query<PaginationParams>,
+    Query(params): Query<ProductFilterParams>,
 ) -> Result<Json<ProductListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let total = commerce.products().list(ProductFilter::default())?.len();
+
+    let limit = params.resolved_limit();
+    let offset = params.resolved_offset();
+
+    // Parse filter parameters
+    let status = params
+        .status
+        .as_deref()
+        .map(ProductStatus::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+    let product_type = params
+        .product_type
+        .as_deref()
+        .map(ProductType::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid product_type: {e}")))?;
+    let min_price = params
+        .min_price
+        .map(|s| s.parse::<Decimal>())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid min_price: {e}")))?;
+    let max_price = params
+        .max_price
+        .map(|s| s.parse::<Decimal>())
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid max_price: {e}")))?;
+
+    // Decode cursor if provided
+    let after_cursor = match &params.after {
+        Some(cursor) => Some(
+            decode_cursor(cursor)
+                .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
+
+    // Count total matching records (without pagination or cursor)
+    let count_filter = ProductFilter {
+        status,
+        product_type,
+        search: params.search.clone(),
+        category: params.category.clone(),
+        min_price,
+        max_price,
+        in_stock: params.in_stock,
+        limit: None,
+        offset: None,
+        after_cursor: None,
+    };
+    let total = commerce.products().list(count_filter)?.len();
+
+    // Fetch the requested page
     let filter = ProductFilter {
-        limit: Some(params.resolved_limit()),
-        offset: Some(params.resolved_offset()),
-        ..Default::default()
+        status,
+        product_type,
+        search: params.search,
+        category: params.category,
+        min_price,
+        max_price,
+        in_stock: params.in_stock,
+        limit: Some(limit),
+        offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
+        after_cursor,
     };
     let products = commerce.products().list(filter)?;
+    let has_more = products.len() == limit as usize;
+    let next_cursor = if has_more {
+        products
+            .last()
+            .map(|p| encode_cursor(&p.name, &p.id.to_string()))
+    } else {
+        None
+    };
     Ok(Json(ProductListResponse {
         products: products.into_iter().map(ProductResponse::from).collect(),
         total,
-        limit: params.resolved_limit(),
-        offset: params.resolved_offset(),
+        limit,
+        offset,
+        next_cursor,
+        has_more,
     }))
 }
 
@@ -243,5 +317,59 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["total"], 2);
         assert_eq!(json["products"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_products_filter_by_product_type() {
+        let (app, state) = app_with_state();
+
+        state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Digital Book".into(),
+                product_type: Some(ProductType::Digital),
+                ..Default::default()
+            })
+            .unwrap();
+        state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Physical Widget".into(),
+                product_type: Some(ProductType::Simple),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::get("/products?product_type=digital").body(Body::empty()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["total"], 1);
+        assert_eq!(json["products"][0]["name"], "Digital Book");
+    }
+
+    #[tokio::test]
+    async fn list_products_invalid_status_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/products?status=bogus").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_products_invalid_price_returns_400() {
+        let resp = app()
+            .oneshot(Request::get("/products?min_price=abc").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }
