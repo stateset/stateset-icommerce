@@ -122,7 +122,9 @@ pub struct CostRollup {
 // ============================================================================
 
 /// Inventory costing method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -138,7 +140,9 @@ pub enum CostMethod {
 }
 
 /// Source of a cost layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -153,7 +157,9 @@ pub enum CostLayerSource {
 }
 
 /// Cost transaction type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -167,7 +173,9 @@ pub enum CostTransactionType {
 }
 
 /// Variance type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -182,7 +190,9 @@ pub enum VarianceType {
 }
 
 /// Cost adjustment type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -197,7 +207,9 @@ pub enum CostAdjustmentType {
 }
 
 /// Cost adjustment status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

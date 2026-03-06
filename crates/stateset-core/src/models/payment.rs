@@ -52,10 +52,9 @@ impl PaymentTransactionStatus {
                 next,
                 Self::RequiresAction | Self::Completed | Self::Failed | Self::Cancelled
             ),
-            Self::RequiresAction => matches!(
-                next,
-                Self::Processing | Self::Completed | Self::Failed | Self::Cancelled
-            ),
+            Self::RequiresAction => {
+                matches!(next, Self::Processing | Self::Completed | Self::Failed | Self::Cancelled)
+            }
             Self::Completed => {
                 matches!(next, Self::Refunded | Self::PartiallyRefunded | Self::Disputed)
             }

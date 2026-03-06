@@ -268,17 +268,16 @@ pub enum CurrencyCodeError {
 impl rusqlite::types::FromSql for CurrencyCode {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         let s = value.as_str()?;
-        s.parse::<Self>()
-            .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))
+        s.parse::<Self>().map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))
     }
 }
 
 #[cfg(feature = "rusqlite")]
 impl rusqlite::types::ToSql for CurrencyCode {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(rusqlite::types::ToSqlOutput::Borrowed(
-            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
-        ))
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(
+            self.as_str().as_bytes(),
+        )))
     }
 }
 

@@ -80,10 +80,7 @@ impl PaymentError {
     /// Convenience constructor for `InvalidTransition`.
     #[track_caller]
     pub fn invalid_transition(from: impl std::fmt::Display, to: impl std::fmt::Display) -> Self {
-        Self::InvalidTransition(super::StateTransitionError::new(
-            from.to_string(),
-            to.to_string(),
-        ))
+        Self::InvalidTransition(super::StateTransitionError::new(from.to_string(), to.to_string()))
     }
 }
 

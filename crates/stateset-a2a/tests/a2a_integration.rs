@@ -759,7 +759,10 @@ fn integration_event_filter_realistic_patterns() {
 
 #[test]
 fn dispute_full_lifecycle_to_resolution() {
-    use stateset_a2a::disputes::{DisputeStatus, DisputeTransition, DisputeCategory, DisputeRecord, ResolutionType, resolution_to_escrow_action};
+    use stateset_a2a::disputes::{
+        DisputeCategory, DisputeRecord, DisputeStatus, DisputeTransition, ResolutionType,
+        resolution_to_escrow_action,
+    };
 
     // File a dispute
     let record = DisputeRecord::new(
@@ -768,7 +771,8 @@ fn dispute_full_lifecycle_to_resolution() {
         "0xSeller",
         DisputeCategory::NonDelivery,
         "Item was never shipped",
-    ).with_amount(dec!(100));
+    )
+    .with_amount(dec!(100));
 
     assert_eq!(record.status, DisputeStatus::Filed);
     assert_eq!(record.amount, Some(dec!(100)));
@@ -787,8 +791,8 @@ fn dispute_full_lifecycle_to_resolution() {
 
 #[test]
 fn dispute_evidence_hashing_and_verification() {
-    use stateset_a2a::disputes::{Evidence, hash_evidence, evidence::verify_evidence_hash};
     use stateset_a2a::disputes::EvidenceType;
+    use stateset_a2a::disputes::{Evidence, evidence::verify_evidence_hash, hash_evidence};
 
     let content = b"Transaction log: payment of 100 USDC on 2026-02-15";
     let evidence = Evidence::new(
@@ -807,7 +811,9 @@ fn dispute_evidence_hashing_and_verification() {
 
 #[test]
 fn dispute_escalation_path() {
-    use stateset_a2a::disputes::{DisputeStatus, DisputeTransition, ResolutionType, resolution_to_escrow_action};
+    use stateset_a2a::disputes::{
+        DisputeStatus, DisputeTransition, ResolutionType, resolution_to_escrow_action,
+    };
 
     // Dispute can be escalated from under_review
     let t1 = DisputeTransition::new(DisputeStatus::Filed, DisputeStatus::EvidencePeriod).unwrap();
@@ -870,21 +876,26 @@ fn reputation_tier_progression() {
 
 #[test]
 fn circuit_breaker_lifecycle() {
-    use stateset_a2a::circuit_breaker::{CircuitState, CircuitTransition, CircuitBreakerConfig};
-    use stateset_a2a::circuit_breaker::limits::{SpendingLimits, check_spending_limits, LimitCheckResult};
+    use stateset_a2a::circuit_breaker::limits::{
+        LimitCheckResult, SpendingLimits, check_spending_limits,
+    };
+    use stateset_a2a::circuit_breaker::{CircuitBreakerConfig, CircuitState, CircuitTransition};
 
     // Normal operation
     let cfg = CircuitBreakerConfig::default();
     let spending = SpendingLimits::default();
-    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(100), &spending, Decimal::ZERO);
+    let result =
+        check_spending_limits(&cfg, CircuitState::Closed, dec!(100), &spending, Decimal::ZERO);
     assert_eq!(result, LimitCheckResult::Allowed);
 
     // Circuit trips on failure rate
-    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(100), &spending, dec!(0.35));
+    let result =
+        check_spending_limits(&cfg, CircuitState::Closed, dec!(100), &spending, dec!(0.35));
     assert_eq!(result, LimitCheckResult::FailureRateExceeded);
 
     // Open state blocks all transactions
-    let result = check_spending_limits(&cfg, CircuitState::Open, dec!(100), &spending, Decimal::ZERO);
+    let result =
+        check_spending_limits(&cfg, CircuitState::Open, dec!(100), &spending, Decimal::ZERO);
     assert_eq!(result, LimitCheckResult::CircuitOpen);
 
     // Recovery: open → half_open → closed
@@ -895,24 +906,33 @@ fn circuit_breaker_lifecycle() {
 
 #[test]
 fn circuit_breaker_spending_limits() {
-    use stateset_a2a::circuit_breaker::{CircuitState, CircuitBreakerConfig};
-    use stateset_a2a::circuit_breaker::limits::{SpendingLimits, check_spending_limits, LimitCheckResult};
+    use stateset_a2a::circuit_breaker::limits::{
+        LimitCheckResult, SpendingLimits, check_spending_limits,
+    };
+    use stateset_a2a::circuit_breaker::{CircuitBreakerConfig, CircuitState};
 
     let cfg = CircuitBreakerConfig::default();
 
     // Per-transaction limit: 1000 (default)
     let result = check_spending_limits(
-        &cfg, CircuitState::Closed, dec!(1001), &SpendingLimits::default(), Decimal::ZERO);
+        &cfg,
+        CircuitState::Closed,
+        dec!(1001),
+        &SpendingLimits::default(),
+        Decimal::ZERO,
+    );
     assert_eq!(result, LimitCheckResult::PerTransactionExceeded);
 
     // Daily limit: 10000 (default)
     let spending = SpendingLimits { daily_spent: dec!(9500), monthly_spent: dec!(9500) };
-    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(600), &spending, Decimal::ZERO);
+    let result =
+        check_spending_limits(&cfg, CircuitState::Closed, dec!(600), &spending, Decimal::ZERO);
     assert_eq!(result, LimitCheckResult::DailyLimitExceeded);
 
     // Monthly limit: 100000 (default)
     let spending = SpendingLimits { daily_spent: Decimal::ZERO, monthly_spent: dec!(99500) };
-    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(600), &spending, Decimal::ZERO);
+    let result =
+        check_spending_limits(&cfg, CircuitState::Closed, dec!(600), &spending, Decimal::ZERO);
     assert_eq!(result, LimitCheckResult::MonthlyLimitExceeded);
 }
 
@@ -922,12 +942,11 @@ fn circuit_breaker_spending_limits() {
 
 #[test]
 fn sla_compliance_all_pass() {
-    use stateset_a2a::sla::{SlaDefinition, check_compliance};
     use stateset_a2a::sla::compliance::ActualMetrics;
+    use stateset_a2a::sla::{SlaDefinition, check_compliance};
 
-    let sla = SlaDefinition::new(Uuid::new_v4())
-        .with_response_time(dec!(500))
-        .with_uptime(dec!(99));
+    let sla =
+        SlaDefinition::new(Uuid::new_v4()).with_response_time(dec!(500)).with_uptime(dec!(99));
 
     let actual = ActualMetrics {
         avg_response_time_ms: Some(dec!(400)),
@@ -942,8 +961,8 @@ fn sla_compliance_all_pass() {
 
 #[test]
 fn sla_compliance_violations_and_penalties() {
-    use stateset_a2a::sla::{SlaDefinition, SlaMetricType, check_compliance};
     use stateset_a2a::sla::compliance::ActualMetrics;
+    use stateset_a2a::sla::{SlaDefinition, SlaMetricType, check_compliance};
 
     let sla = SlaDefinition::new(Uuid::new_v4())
         .with_response_time(dec!(500))
@@ -972,7 +991,7 @@ fn sla_compliance_violations_and_penalties() {
 
 #[test]
 fn marketplace_rfq_scoring_and_ranking() {
-    use stateset_a2a::marketplace::{ScoringCriteria, RfqResponse, rank_responses};
+    use stateset_a2a::marketplace::{RfqResponse, ScoringCriteria, rank_responses};
 
     let responses = vec![
         RfqResponse::new("Expensive", dec!(300)).with_reputation(dec!(5)),
@@ -1014,8 +1033,8 @@ fn marketplace_rfq_state_machine() {
 
 #[test]
 fn agent_card_validation_and_discovery() {
-    use stateset_a2a::agent_cards::{AgentCard, AgentSkill, DiscoveryFilter, validate_agent_card};
     use stateset_a2a::agent_cards::types::filter_agents;
+    use stateset_a2a::agent_cards::{AgentCard, AgentSkill, DiscoveryFilter, validate_agent_card};
     use stateset_a2a::reputation::TrustTier;
 
     // Valid card
@@ -1044,10 +1063,8 @@ fn agent_card_validation_and_discovery() {
     assert_eq!(results[0].name, "Alice");
 
     // Filter by trust tier
-    let filter = DiscoveryFilter {
-        min_trust_tier: Some(TrustTier::Verified),
-        ..Default::default()
-    };
+    let filter =
+        DiscoveryFilter { min_trust_tier: Some(TrustTier::Verified), ..Default::default() };
     let results = filter_agents(&cards, &filter);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "Alice");
@@ -1059,8 +1076,8 @@ fn agent_card_validation_and_discovery() {
 
 #[test]
 fn cross_module_dispute_impacts_reputation() {
-    use stateset_a2a::reputation::scoring::{FeedbackEntry, aggregate_feedback};
     use stateset_a2a::reputation::TrustTier;
+    use stateset_a2a::reputation::scoring::{FeedbackEntry, aggregate_feedback};
 
     // Agent has mostly good transactions but one dispute
     let mut entries: Vec<FeedbackEntry> = (0..24)
@@ -1085,14 +1102,17 @@ fn cross_module_dispute_impacts_reputation() {
 
 #[test]
 fn cross_module_circuit_breaker_blocks_then_recovers() {
-    use stateset_a2a::circuit_breaker::{CircuitState, CircuitTransition, CircuitBreakerConfig};
-    use stateset_a2a::circuit_breaker::limits::{SpendingLimits, check_spending_limits, LimitCheckResult};
+    use stateset_a2a::circuit_breaker::limits::{
+        LimitCheckResult, SpendingLimits, check_spending_limits,
+    };
+    use stateset_a2a::circuit_breaker::{CircuitBreakerConfig, CircuitState, CircuitTransition};
 
     let cfg = CircuitBreakerConfig::default();
     let spending = SpendingLimits::default();
 
     // Normal operation
-    let result = check_spending_limits(&cfg, CircuitState::Closed, dec!(500), &spending, Decimal::ZERO);
+    let result =
+        check_spending_limits(&cfg, CircuitState::Closed, dec!(500), &spending, Decimal::ZERO);
     assert!(result.is_allowed());
 
     // Failure rate spikes — would trip to open
@@ -1100,7 +1120,8 @@ fn cross_module_circuit_breaker_blocks_then_recovers() {
     assert_eq!(result, LimitCheckResult::FailureRateExceeded);
 
     // Now in open state — blocked
-    let result = check_spending_limits(&cfg, CircuitState::Open, dec!(100), &spending, Decimal::ZERO);
+    let result =
+        check_spending_limits(&cfg, CircuitState::Open, dec!(100), &spending, Decimal::ZERO);
     assert!(!result.is_allowed());
 
     // Cooldown passes → half_open
@@ -1117,9 +1138,9 @@ fn cross_module_circuit_breaker_blocks_then_recovers() {
 
 #[test]
 fn cross_module_sla_violation_with_penalty() {
-    use stateset_a2a::sla::{SlaDefinition, SlaMetricType, check_compliance};
     use stateset_a2a::sla::compliance::ActualMetrics;
     use stateset_a2a::sla::violations::ViolationSeverity;
+    use stateset_a2a::sla::{SlaDefinition, SlaMetricType, check_compliance};
 
     let sla = SlaDefinition::new(Uuid::new_v4())
         .with_response_time(dec!(500))
@@ -1129,7 +1150,7 @@ fn cross_module_sla_violation_with_penalty() {
     // Severe quality violation (< 80% of target)
     let actual = ActualMetrics {
         avg_response_time_ms: Some(dec!(400)), // OK
-        avg_quality_score: Some(dec!(2.0)),     // 2.0/4.0 = 50% → critical
+        avg_quality_score: Some(dec!(2.0)),    // 2.0/4.0 = 50% → critical
         ..ActualMetrics::default()
     };
 

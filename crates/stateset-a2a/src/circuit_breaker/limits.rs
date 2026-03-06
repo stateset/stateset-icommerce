@@ -113,7 +113,11 @@ pub fn check_spending_limits(
 ///
 /// Returns [`A2AError::CircuitBreakerBlocked`] or [`A2AError::SpendingLimitExceeded`]
 /// depending on the block reason.
-pub fn require_allowed(result: LimitCheckResult, amount: Decimal, config: &CircuitBreakerConfig) -> A2AResult<()> {
+pub fn require_allowed(
+    result: LimitCheckResult,
+    amount: Decimal,
+    config: &CircuitBreakerConfig,
+) -> A2AResult<()> {
     match result {
         LimitCheckResult::Allowed => Ok(()),
         LimitCheckResult::KillSwitchActive | LimitCheckResult::CircuitOpen => {
@@ -223,13 +227,8 @@ mod tests {
     fn blocked_daily_limit_exceeded() {
         let cfg = CircuitBreakerConfig::default();
         let spending = SpendingLimits { daily_spent: dec!(9500), monthly_spent: dec!(9500) };
-        let result = check_spending_limits(
-            &cfg,
-            CircuitState::Closed,
-            dec!(600),
-            &spending,
-            Decimal::ZERO,
-        );
+        let result =
+            check_spending_limits(&cfg, CircuitState::Closed, dec!(600), &spending, Decimal::ZERO);
         assert_eq!(result, LimitCheckResult::DailyLimitExceeded);
     }
 
@@ -237,13 +236,8 @@ mod tests {
     fn blocked_monthly_limit_exceeded() {
         let cfg = CircuitBreakerConfig::default();
         let spending = SpendingLimits { daily_spent: dec!(0), monthly_spent: dec!(99500) };
-        let result = check_spending_limits(
-            &cfg,
-            CircuitState::Closed,
-            dec!(600),
-            &spending,
-            Decimal::ZERO,
-        );
+        let result =
+            check_spending_limits(&cfg, CircuitState::Closed, dec!(600), &spending, Decimal::ZERO);
         assert_eq!(result, LimitCheckResult::MonthlyLimitExceeded);
     }
 
@@ -331,7 +325,9 @@ mod tests {
     fn limit_check_result_reasons() {
         assert!(LimitCheckResult::KillSwitchActive.reason().unwrap().contains("kill switch"));
         assert!(LimitCheckResult::CircuitOpen.reason().unwrap().contains("open"));
-        assert!(LimitCheckResult::PerTransactionExceeded.reason().unwrap().contains("per-transaction"));
+        assert!(
+            LimitCheckResult::PerTransactionExceeded.reason().unwrap().contains("per-transaction")
+        );
         assert!(LimitCheckResult::DailyLimitExceeded.reason().unwrap().contains("daily"));
         assert!(LimitCheckResult::MonthlyLimitExceeded.reason().unwrap().contains("monthly"));
         assert!(LimitCheckResult::FailureRateExceeded.reason().unwrap().contains("failure rate"));

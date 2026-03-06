@@ -216,7 +216,12 @@ fn validate_stateset_id_input(input: &DeriveInput) -> syn::Result<()> {
         ));
     }
 
-    let only_field = fields.unnamed.first().expect("checked len above");
+    let Some(only_field) = fields.unnamed.first() else {
+        return Err(syn::Error::new_spanned(
+            &data.fields,
+            "StateSetId requires exactly one tuple field of type `uuid::Uuid`",
+        ));
+    };
     if !is_uuid_type(&only_field.ty) {
         return Err(syn::Error::new_spanned(
             &only_field.ty,

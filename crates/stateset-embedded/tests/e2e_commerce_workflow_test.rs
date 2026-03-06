@@ -7,6 +7,7 @@
 //! all commerce domains work together correctly.
 
 use rust_decimal_macros::dec;
+use stateset_core::CurrencyCode;
 use stateset_embedded::{
     Address, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
     CreatePayment, CreateProduct, CreateProductVariant, CreateRefund, CreateReturn,
@@ -14,7 +15,6 @@ use stateset_embedded::{
     PaymentTransactionStatus, RefundStatus, ReturnReason, ReturnStatus, ShipmentStatus,
     ShippingCarrier, ShippingMethod, UpdateReturn,
 };
-use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================

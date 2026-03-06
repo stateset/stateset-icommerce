@@ -31,7 +31,7 @@ const MAX_PULL_PAGES: usize = 10_000;
 /// use serde_json::json;
 ///
 /// let config = SyncConfig::new("agent-1", "tenant-1", "store-1");
-/// let mut engine = SyncEngine::new(config);
+/// let mut engine = SyncEngine::new(config).expect("valid sync config");
 ///
 /// let seq = engine.record(SyncEvent::new("order.created", "order", "ORD-1", json!({"total": 99})));
 /// assert!(seq.is_ok());
@@ -51,16 +51,26 @@ pub struct SyncEngine {
 
 impl SyncEngine {
     /// Create a new `SyncEngine` with the given configuration.
-    #[must_use]
-    pub fn new(config: SyncConfig) -> Self {
-        Self::try_new(config).unwrap_or_else(|err| panic!("invalid sync configuration: {err}"))
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::InvalidConfig`] for invalid settings or
+    /// [`SyncError::Storage`] when durable outbox initialization fails.
+    pub fn new(config: SyncConfig) -> Result<Self, SyncError> {
+        Self::try_new(config)
     }
 
     /// Create a `SyncEngine` with a custom conflict resolution strategy.
-    #[must_use]
-    pub fn with_strategy(config: SyncConfig, strategy: ConflictStrategy) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::InvalidConfig`] for invalid settings or
+    /// [`SyncError::Storage`] when durable outbox initialization fails.
+    pub fn with_strategy(
+        config: SyncConfig,
+        strategy: ConflictStrategy,
+    ) -> Result<Self, SyncError> {
         Self::try_with_strategy(config, strategy)
-            .unwrap_or_else(|err| panic!("invalid sync configuration: {err}"))
     }
 
     /// Fallible constructor that validates config and initializes persistence.
@@ -372,7 +382,7 @@ mod tests {
 
     #[test]
     fn new_engine() {
-        let engine = SyncEngine::new(make_config());
+        let engine = SyncEngine::new(make_config()).unwrap();
         assert_eq!(engine.pending_count(), 0);
         assert_eq!(engine.buffered_count(), 0);
         assert!(engine.status().initialized);
@@ -380,7 +390,7 @@ mod tests {
 
     #[test]
     fn record_event() {
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         let seq = engine.record(make_event("order.created")).unwrap();
         assert_eq!(seq, 1);
         assert_eq!(engine.pending_count(), 1);
@@ -389,7 +399,7 @@ mod tests {
 
     #[test]
     fn record_multiple_events() {
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         engine.record(make_event("a")).unwrap();
         engine.record(make_event("b")).unwrap();
         engine.record(make_event("c")).unwrap();
@@ -399,7 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_with_null_transport() {
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         engine.record(make_event("a")).unwrap();
         engine.record(make_event("b")).unwrap();
 
@@ -412,7 +422,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_empty_outbox() {
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         let transport = NullTransport::new();
         let result = engine.push(&transport).await.unwrap();
         assert_eq!(result.accepted, 0);
@@ -420,7 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn pull_with_null_transport() {
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         let transport = NullTransport::new();
         let result = engine.pull(&transport).await.unwrap();
         assert!(result.events.is_empty());
@@ -463,7 +473,7 @@ mod tests {
             head: 2,
         };
 
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         let result = engine.pull(&transport).await.unwrap();
         assert_eq!(result.events.len(), 2);
         assert_eq!(engine.buffered_count(), 2);
@@ -472,7 +482,7 @@ mod tests {
 
     #[tokio::test]
     async fn full_sync() {
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         engine.record(make_event("local")).unwrap();
 
         let transport = NullTransport::new();
@@ -484,7 +494,7 @@ mod tests {
 
     #[test]
     fn status_reporting() {
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         engine.record(make_event("a")).unwrap();
         engine.record(make_event("b")).unwrap();
 
@@ -499,7 +509,7 @@ mod tests {
 
     #[test]
     fn drain_buffer() {
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         // Manually push to buffer via engine internals
         engine.buffer.push(make_event("buffered"));
         assert_eq!(engine.buffered_count(), 1);
@@ -511,14 +521,14 @@ mod tests {
 
     #[test]
     fn engine_with_strategy() {
-        let engine = SyncEngine::with_strategy(make_config(), ConflictStrategy::LocalWins);
+        let engine = SyncEngine::with_strategy(make_config(), ConflictStrategy::LocalWins).unwrap();
         assert_eq!(engine.resolver().strategy(), ConflictStrategy::LocalWins);
     }
 
     #[test]
     fn config_accessor() {
         let config = make_config();
-        let engine = SyncEngine::new(config);
+        let engine = SyncEngine::new(config).unwrap();
         assert_eq!(engine.config().agent_id, "agent-1");
     }
 
@@ -555,7 +565,7 @@ mod tests {
     #[tokio::test]
     async fn push_respects_batch_size() {
         let config = SyncConfig::new("agent-1", "tenant-1", "store-1").with_batch_size(2);
-        let mut engine = SyncEngine::new(config);
+        let mut engine = SyncEngine::new(config).unwrap();
         engine.record(make_event("a")).unwrap();
         engine.record(make_event("b")).unwrap();
         engine.record(make_event("c")).unwrap();
@@ -597,7 +607,7 @@ mod tests {
 
         let transport = MockHeadTransport { head: Arc::new(AtomicU64::new(0)) };
 
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         engine.record(make_event("a")).unwrap();
         engine.record(make_event("b")).unwrap();
 
@@ -626,7 +636,7 @@ mod tests {
             }
         }
 
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         engine.record(make_event("a")).unwrap();
 
         let transport = FailTransport;
@@ -661,7 +671,7 @@ mod tests {
             }
         }
 
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         engine.record(make_event("a")).unwrap();
         engine.record(make_event("b")).unwrap();
         engine.record(make_event("c")).unwrap();
@@ -695,7 +705,8 @@ mod tests {
             }
         }
 
-        let mut engine = SyncEngine::with_strategy(make_config(), ConflictStrategy::RemoteWins);
+        let mut engine =
+            SyncEngine::with_strategy(make_config(), ConflictStrategy::RemoteWins).unwrap();
         engine
             .record(SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "local"})))
             .unwrap();
@@ -730,7 +741,8 @@ mod tests {
             }
         }
 
-        let mut engine = SyncEngine::with_strategy(make_config(), ConflictStrategy::LocalWins);
+        let mut engine =
+            SyncEngine::with_strategy(make_config(), ConflictStrategy::LocalWins).unwrap();
         engine
             .record(SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "local"})))
             .unwrap();
@@ -790,7 +802,7 @@ mod tests {
             pulls: Arc::new(AtomicU64::new(0)),
             since_args: Arc::clone(&since_args),
         };
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         let (_push_result, pull_result) = engine.full_sync(&transport).await.unwrap();
 
         assert_eq!(pull_result.events.len(), 2);
@@ -833,7 +845,7 @@ mod tests {
 
         let since_args = Arc::new(Mutex::new(Vec::new()));
         let transport = HeadSkewTransport { since_args: Arc::clone(&since_args) };
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
 
         engine.record(make_event("local.pending")).unwrap();
         let (_push, pull) = engine.full_sync(&transport).await.unwrap();
@@ -871,7 +883,7 @@ mod tests {
             }
         }
 
-        let mut engine = SyncEngine::new(make_config());
+        let mut engine = SyncEngine::new(make_config()).unwrap();
         let err = engine.pull(&StalledPagingTransport).await.unwrap_err();
         assert!(matches!(err, SyncError::Transport(_)));
     }
@@ -941,7 +953,7 @@ mod tests {
 
     #[test]
     fn engine_debug() {
-        let engine = SyncEngine::new(make_config());
+        let engine = SyncEngine::new(make_config()).unwrap();
         let debug = format!("{engine:?}");
         assert!(debug.contains("SyncEngine"));
     }

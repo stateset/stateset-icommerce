@@ -22,7 +22,9 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Type of promotion
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -55,7 +57,9 @@ pub enum PromotionType {
 }
 
 /// Status of a promotion
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -78,7 +82,9 @@ pub enum PromotionStatus {
 }
 
 /// How the promotion is triggered
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -94,7 +100,9 @@ pub enum PromotionTrigger {
 }
 
 /// What the promotion applies to
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -114,7 +122,9 @@ pub enum PromotionTarget {
 }
 
 /// Stacking behavior with other promotions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -130,7 +140,9 @@ pub enum StackingBehavior {
 }
 
 /// Condition operator for rules
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -156,7 +168,9 @@ pub enum ConditionOperator {
 }
 
 /// Type of condition
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

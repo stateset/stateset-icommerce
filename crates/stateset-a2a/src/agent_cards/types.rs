@@ -231,18 +231,10 @@ impl DiscoveryFilter {
 /// Results are sorted by trust tier (highest first), then by name.
 #[must_use]
 pub fn filter_agents(cards: &[AgentCard], filter: &DiscoveryFilter) -> Vec<AgentCard> {
-    let mut results: Vec<AgentCard> = cards
-        .iter()
-        .filter(|c| filter.matches(c))
-        .cloned()
-        .collect();
+    let mut results: Vec<AgentCard> = cards.iter().filter(|c| filter.matches(c)).cloned().collect();
 
     // Sort by trust tier descending, then name ascending
-    results.sort_by(|a, b| {
-        b.trust_tier
-            .cmp(&a.trust_tier)
-            .then_with(|| a.name.cmp(&b.name))
-    });
+    results.sort_by(|a, b| b.trust_tier.cmp(&a.trust_tier).then_with(|| a.name.cmp(&b.name)));
 
     // Apply limit
     if let Some(limit) = filter.limit {
@@ -441,16 +433,12 @@ mod tests {
     #[test]
     fn filter_by_trust_tier() {
         let card = sample_card().with_trust_tier(TrustTier::Verified);
-        let filter = DiscoveryFilter {
-            min_trust_tier: Some(TrustTier::Standard),
-            ..Default::default()
-        };
+        let filter =
+            DiscoveryFilter { min_trust_tier: Some(TrustTier::Standard), ..Default::default() };
         assert!(filter.matches(&card));
 
-        let filter2 = DiscoveryFilter {
-            min_trust_tier: Some(TrustTier::Enterprise),
-            ..Default::default()
-        };
+        let filter2 =
+            DiscoveryFilter { min_trust_tier: Some(TrustTier::Enterprise), ..Default::default() };
         assert!(!filter2.matches(&card));
     }
 

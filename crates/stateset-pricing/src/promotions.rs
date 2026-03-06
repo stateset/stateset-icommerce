@@ -221,15 +221,13 @@ pub fn evaluate_promotions(
     let mut remaining_discount_budget = context.order_total.max(Decimal::ZERO);
 
     // Non-stackable: pick best
-    if !eligible_non_stackable.is_empty() {
-        // Find the one with the highest discount
-        let best_idx = eligible_non_stackable
+    if !eligible_non_stackable.is_empty()
+        && let Some(best_idx) = eligible_non_stackable
             .iter()
             .enumerate()
             .max_by_key(|(_, (_, amt))| *amt)
             .map(|(idx, _)| idx)
-            .expect("non-empty vec");
-
+    {
         for (idx, (promo_idx, discount_amount)) in eligible_non_stackable.iter().enumerate() {
             if idx == best_idx {
                 apply_with_budget(

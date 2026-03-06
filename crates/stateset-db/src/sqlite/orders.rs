@@ -255,8 +255,10 @@ impl SqliteOrderRepository {
         Ok(items)
     }
 
-    pub fn get_by_cart_id(&self, cart_id: Uuid) -> Result<Option<Order>> {
-        let conn = self.conn()?;
+    fn get_by_cart_id_in_conn(
+        conn: &rusqlite::Connection,
+        cart_id: Uuid,
+    ) -> std::result::Result<Option<Order>, rusqlite::Error> {
         let result = conn.query_row(
             "SELECT * FROM orders WHERE cart_id = ?",
             [cart_id.to_string()],
@@ -265,12 +267,315 @@ impl SqliteOrderRepository {
 
         match result {
             Ok(mut order) => {
-                order.items = Self::load_order_items_with_conn(&conn, order.id)?;
+                order.items = Self::load_order_items_with_conn(conn, order.id)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 Ok(Some(order))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
+            Err(e) => Err(e),
         }
+    }
+
+    pub fn get_by_cart_id(&self, cart_id: Uuid) -> Result<Option<Order>> {
+        let conn = self.conn()?;
+        Self::get_by_cart_id_in_conn(&conn, cart_id).map_err(map_db_error)
+    }
+
+    fn create_internal_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: Option<Uuid>,
+        idempotent_by_cart_id: bool,
+        input: &CreateOrder,
+    ) -> std::result::Result<Order, rusqlite::Error> {
+        let id = OrderId::new();
+        let order_number = Self::generate_order_number();
+        let now = Utc::now();
+        let currency = input.currency.unwrap_or_default();
+
+        let total: Decimal = input
+            .items
+            .iter()
+            .map(|item| {
+                let subtotal = item.unit_price * Decimal::from(item.quantity);
+                let discount = item.discount.unwrap_or_default();
+                let tax = item.tax_amount.unwrap_or_default();
+                subtotal - discount + tax
+            })
+            .sum();
+
+        let shipping_address_json = input
+            .shipping_address
+            .as_ref()
+            .map(|address| {
+                serde_json::to_string(address).map_err(|error| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        format!("Failed to serialize order.shipping_address: {error}"),
+                    )))
+                })
+            })
+            .transpose()?;
+        let billing_address_json = input
+            .billing_address
+            .as_ref()
+            .map(|address| {
+                serde_json::to_string(address).map_err(|error| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        format!("Failed to serialize order.billing_address: {error}"),
+                    )))
+                })
+            })
+            .transpose()?;
+
+        let cart_id_str = if idempotent_by_cart_id {
+            Some(
+                cart_id
+                    .ok_or_else(|| {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            CommerceError::ValidationError(
+                                "cart_id is required for cart checkout".into(),
+                            ),
+                        ))
+                    })?
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+
+        let inserted = if idempotent_by_cart_id {
+            let cart_id_str = cart_id_str.as_deref().ok_or_else(|| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                    "cart_id was required but missing (internal error)".into(),
+                )))
+            })?;
+            let rows_affected = tx.execute(
+                "INSERT OR IGNORE INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                 currency, payment_status, fulfillment_status, payment_method,
+                                 shipping_method, notes, shipping_address, billing_address,
+                                 cart_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    &order_number,
+                    input.customer_id.to_string(),
+                    "pending",
+                    now.to_rfc3339(),
+                    total.to_string(),
+                    &currency,
+                    "pending",
+                    "unfulfilled",
+                    &input.payment_method,
+                    &input.shipping_method,
+                    &input.notes,
+                    &shipping_address_json,
+                    &billing_address_json,
+                    cart_id_str,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )?;
+
+            rows_affected > 0
+        } else {
+            tx.execute(
+                "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                 currency, payment_status, fulfillment_status, payment_method,
+                                 shipping_method, notes, shipping_address, billing_address,
+                                 created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    &order_number,
+                    input.customer_id.to_string(),
+                    "pending",
+                    now.to_rfc3339(),
+                    total.to_string(),
+                    &currency,
+                    "pending",
+                    "unfulfilled",
+                    &input.payment_method,
+                    &input.shipping_method,
+                    &input.notes,
+                    &shipping_address_json,
+                    &billing_address_json,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )?;
+
+            true
+        };
+
+        if !inserted {
+            let cart_id = cart_id.ok_or_else(|| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                    "cart_id was required but missing (internal error)".into(),
+                )))
+            })?;
+            let existing = Self::get_by_cart_id_in_conn(tx, cart_id)?;
+            return existing.ok_or_else(|| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                    "Order exists for cart_id but could not be loaded".into(),
+                )))
+            });
+        }
+
+        let mut items = Vec::with_capacity(input.items.len());
+        for item in &input.items {
+            let item_id = OrderItemId::new();
+            let item_total = OrderItem::calculate_total(
+                item.quantity,
+                item.unit_price,
+                item.discount.unwrap_or_default(),
+                item.tax_amount.unwrap_or_default(),
+            );
+
+            tx.execute(
+                "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
+                                          quantity, unit_price, discount, tax_amount, total)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    item_id.to_string(),
+                    id.to_string(),
+                    item.product_id.to_string(),
+                    item.variant_id.map(|variant_id| variant_id.to_string()),
+                    &item.sku,
+                    &item.name,
+                    item.quantity,
+                    item.unit_price.to_string(),
+                    item.discount.unwrap_or_default().to_string(),
+                    item.tax_amount.unwrap_or_default().to_string(),
+                    item_total.to_string(),
+                ],
+            )?;
+
+            items.push(OrderItem {
+                id: item_id,
+                order_id: id,
+                product_id: item.product_id,
+                variant_id: item.variant_id,
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                discount: item.discount.unwrap_or_default(),
+                tax_amount: item.tax_amount.unwrap_or_default(),
+                total: item_total,
+            });
+        }
+
+        let reference_id = id.to_string();
+        for item in &items {
+            if item.quantity <= 0 {
+                continue;
+            }
+
+            let item_row =
+                tx.query_row("SELECT id FROM inventory_items WHERE sku = ?", [&item.sku], |row| {
+                    row.get::<_, i64>(0)
+                });
+
+            let item_id = match item_row {
+                Ok(item_id) => item_id,
+                Err(rusqlite::Error::QueryReturnedNoRows) => continue,
+                Err(e) => return Err(e),
+            };
+
+            let available = sum_decimal_query(
+                tx,
+                "SELECT quantity_available FROM inventory_balances WHERE item_id = ?",
+                &[&item_id],
+                "inventory_balance",
+                "quantity_available",
+            )
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+            let requested = Decimal::from(item.quantity);
+            let reserve_qty =
+                if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
+
+            let mut reserved = Decimal::ZERO;
+            if reserve_qty > Decimal::ZERO {
+                let reserve_input = ReserveInventory {
+                    sku: item.sku.clone(),
+                    location_id: None,
+                    quantity: reserve_qty,
+                    reference_type: "order".to_string(),
+                    reference_id: reference_id.clone(),
+                    expires_in_seconds: None,
+                };
+
+                match SqliteInventoryRepository::reserve_in_tx(tx, &reserve_input) {
+                    Ok(_reservation) => {
+                        reserved = reserve_qty;
+                    }
+                    Err(err) => {
+                        let commerce_err = map_db_error(err);
+                        if matches!(commerce_err, CommerceError::InsufficientStock { .. }) {
+                            reserved = Decimal::ZERO;
+                        } else {
+                            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                                commerce_err,
+                            )));
+                        }
+                    }
+                }
+            }
+
+            let remaining = requested - reserved;
+            if remaining > Decimal::ZERO {
+                let backorder_input = CreateBackorder {
+                    order_id: id.into_uuid(),
+                    order_line_id: Some(item.id.into_uuid()),
+                    customer_id: input.customer_id.into_uuid(),
+                    sku: item.sku.clone(),
+                    quantity: remaining,
+                    priority: None,
+                    expected_date: None,
+                    promised_date: None,
+                    source_location_id: None,
+                    notes: Some("Auto backorder: insufficient stock".to_string()),
+                };
+                create_backorder_in_tx(tx, &backorder_input)?;
+            }
+        }
+
+        Ok(Order {
+            id,
+            order_number: order_number.clone(),
+            customer_id: input.customer_id,
+            status: OrderStatus::Pending,
+            order_date: now,
+            total_amount: total,
+            currency,
+            payment_status: PaymentStatus::Pending,
+            fulfillment_status: FulfillmentStatus::Unfulfilled,
+            payment_method: input.payment_method.clone(),
+            shipping_method: input.shipping_method.clone(),
+            tracking_number: None,
+            notes: input.notes.clone(),
+            shipping_address: input.shipping_address.clone(),
+            billing_address: input.billing_address.clone(),
+            items,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    pub(crate) fn create_from_cart_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: Uuid,
+        input: &CreateOrder,
+    ) -> std::result::Result<Order, rusqlite::Error> {
+        Self::validate_order_input(input)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+        if let Some(existing) = Self::get_by_cart_id_in_conn(tx, cart_id)? {
+            return Ok(existing);
+        }
+
+        Self::create_internal_in_tx(tx, Some(cart_id), true, input)
     }
 
     pub fn create_from_cart(&self, cart_id: Uuid, input: CreateOrder) -> Result<Order> {
@@ -289,307 +594,8 @@ impl SqliteOrderRepository {
     ) -> Result<Order> {
         Self::validate_order_input(&input)?;
 
-        let id = OrderId::new();
-        let order_number = Self::generate_order_number();
-        let now = Utc::now();
-        let currency = input.currency.unwrap_or_default();
-
-        // Calculate total
-        let total: Decimal = input
-            .items
-            .iter()
-            .map(|item| {
-                let subtotal = item.unit_price * Decimal::from(item.quantity);
-                let discount = item.discount.unwrap_or_default();
-                let tax = item.tax_amount.unwrap_or_default();
-                subtotal - discount + tax
-            })
-            .sum();
-
-        let shipping_address_json = input
-            .shipping_address
-            .as_ref()
-            .map(|a| {
-                serde_json::to_string(a).map_err(|e| {
-                    CommerceError::DatabaseError(format!(
-                        "Failed to serialize order.shipping_address: {}",
-                        e
-                    ))
-                })
-            })
-            .transpose()?;
-        let billing_address_json = input
-            .billing_address
-            .as_ref()
-            .map(|a| {
-                serde_json::to_string(a).map_err(|e| {
-                    CommerceError::DatabaseError(format!(
-                        "Failed to serialize order.billing_address: {}",
-                        e
-                    ))
-                })
-            })
-            .transpose()?;
-
-        let cart_id_str = if idempotent_by_cart_id {
-            Some(
-                cart_id
-                    .ok_or_else(|| {
-                        CommerceError::ValidationError(
-                            "cart_id is required for cart checkout".into(),
-                        )
-                    })?
-                    .to_string(),
-            )
-        } else {
-            None
-        };
-
-        // The Fn closure borrows `input` by shared reference, so no clone is needed.
-
         with_immediate_transaction(&self.pool, |tx| {
-            let inserted = if idempotent_by_cart_id {
-                let cart_id_str = cart_id_str.as_deref().ok_or_else(|| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
-                        "cart_id was required but missing (internal error)".into(),
-                    )))
-                })?;
-                let rows_affected = tx.execute(
-                    "INSERT OR IGNORE INTO orders (id, order_number, customer_id, status, order_date, total_amount,
-                                     currency, payment_status, fulfillment_status, payment_method,
-                                     shipping_method, notes, shipping_address, billing_address,
-                                     cart_id, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    rusqlite::params![
-                        id.to_string(),
-                        &order_number,
-                        input.customer_id.to_string(),
-                        "pending",
-                        now.to_rfc3339(),
-                        total.to_string(),
-                        &currency,
-                        "pending",
-                        "unfulfilled",
-                        &input.payment_method,
-                        &input.shipping_method,
-                        &input.notes,
-                        &shipping_address_json,
-                        &billing_address_json,
-                        cart_id_str,
-                        now.to_rfc3339(),
-                        now.to_rfc3339(),
-                    ],
-                )?;
-
-                rows_affected > 0
-            } else {
-                tx.execute(
-                    "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
-                                     currency, payment_status, fulfillment_status, payment_method,
-                                     shipping_method, notes, shipping_address, billing_address,
-                                     created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    rusqlite::params![
-                        id.to_string(),
-                        &order_number,
-                        input.customer_id.to_string(),
-                        "pending",
-                        now.to_rfc3339(),
-                        total.to_string(),
-                        &currency,
-                        "pending",
-                        "unfulfilled",
-                        &input.payment_method,
-                        &input.shipping_method,
-                        &input.notes,
-                        &shipping_address_json,
-                        &billing_address_json,
-                        now.to_rfc3339(),
-                        now.to_rfc3339(),
-                    ],
-                )?;
-
-                true
-            };
-
-            if !inserted {
-                let cart_id_str = cart_id_str.as_deref().ok_or_else(|| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
-                        "cart_id was required but missing (internal error)".into(),
-                    )))
-                })?;
-                let result = tx.query_row(
-                    "SELECT * FROM orders WHERE cart_id = ?",
-                    [cart_id_str],
-                    Self::row_to_order,
-                );
-
-                let mut order = match result {
-                    Ok(order) => order,
-                    Err(rusqlite::Error::QueryReturnedNoRows) => {
-                        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                            CommerceError::DatabaseError(
-                                "Order exists for cart_id but could not be loaded".into(),
-                            ),
-                        )));
-                    }
-                    Err(e) => return Err(e),
-                };
-
-                order.items = Self::load_order_items_with_conn(tx, order.id)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                return Ok(order);
-            }
-
-            // Insert order items and build items vec
-            let mut items = Vec::with_capacity(input.items.len());
-            for item in &input.items {
-                let item_id = OrderItemId::new();
-                let item_total = OrderItem::calculate_total(
-                    item.quantity,
-                    item.unit_price,
-                    item.discount.unwrap_or_default(),
-                    item.tax_amount.unwrap_or_default(),
-                );
-
-                tx.execute(
-                    "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
-                                              quantity, unit_price, discount, tax_amount, total)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    rusqlite::params![
-                        item_id.to_string(),
-                        id.to_string(),
-                        item.product_id.to_string(),
-                        item.variant_id.map(|v| v.to_string()),
-                        &item.sku,
-                        &item.name,
-                        item.quantity,
-                        item.unit_price.to_string(),
-                        item.discount.unwrap_or_default().to_string(),
-                        item.tax_amount.unwrap_or_default().to_string(),
-                        item_total.to_string(),
-                    ],
-                )?;
-
-                items.push(OrderItem {
-                    id: item_id,
-                    order_id: id,
-                    product_id: item.product_id,
-                    variant_id: item.variant_id,
-                    sku: item.sku.clone(),
-                    name: item.name.clone(),
-                    quantity: item.quantity,
-                    unit_price: item.unit_price,
-                    discount: item.discount.unwrap_or_default(),
-                    tax_amount: item.tax_amount.unwrap_or_default(),
-                    total: item_total,
-                });
-            }
-
-            let reference_id = id.to_string();
-            for item in &items {
-                if item.quantity <= 0 {
-                    continue;
-                }
-
-                let item_row = tx.query_row(
-                    "SELECT id FROM inventory_items WHERE sku = ?",
-                    [&item.sku],
-                    |row| row.get::<_, i64>(0),
-                );
-
-                let item_id = match item_row {
-                    Ok(item_id) => item_id,
-                    Err(rusqlite::Error::QueryReturnedNoRows) => {
-                        // Non-inventory item; skip reservations/backorders.
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                };
-
-                let available = sum_decimal_query(
-                    tx,
-                    "SELECT quantity_available FROM inventory_balances WHERE item_id = ?",
-                    &[&item_id],
-                    "inventory_balance",
-                    "quantity_available",
-                )
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-
-                let requested = Decimal::from(item.quantity);
-                let reserve_qty = if available > Decimal::ZERO {
-                    requested.min(available)
-                } else {
-                    Decimal::ZERO
-                };
-
-                let mut reserved = Decimal::ZERO;
-                if reserve_qty > Decimal::ZERO {
-                    let reserve_input = ReserveInventory {
-                        sku: item.sku.clone(),
-                        location_id: None,
-                        quantity: reserve_qty,
-                        reference_type: "order".to_string(),
-                        reference_id: reference_id.clone(),
-                        expires_in_seconds: None,
-                    };
-
-                    match SqliteInventoryRepository::reserve_in_tx(tx, &reserve_input) {
-                        Ok(_reservation) => {
-                            reserved = reserve_qty;
-                        }
-                        Err(err) => {
-                            let commerce_err = map_db_error(err);
-                            if matches!(commerce_err, CommerceError::InsufficientStock { .. }) {
-                                reserved = Decimal::ZERO;
-                            } else {
-                                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                                    commerce_err,
-                                )));
-                            }
-                        }
-                    }
-                }
-
-                let remaining = requested - reserved;
-                if remaining > Decimal::ZERO {
-                    let backorder_input = CreateBackorder {
-                        order_id: id.into_uuid(),
-                        order_line_id: Some(item.id.into_uuid()),
-                        customer_id: input.customer_id.into_uuid(),
-                        sku: item.sku.clone(),
-                        quantity: remaining,
-                        priority: None,
-                        expected_date: None,
-                        promised_date: None,
-                        source_location_id: None,
-                        notes: Some("Auto backorder: insufficient stock".to_string()),
-                    };
-                    create_backorder_in_tx(tx, &backorder_input)?;
-                }
-            }
-
-            Ok(Order {
-                id,
-                order_number: order_number.clone(),
-                customer_id: input.customer_id,
-                status: OrderStatus::Pending,
-                order_date: now,
-                total_amount: total,
-                currency,
-                payment_status: PaymentStatus::Pending,
-                fulfillment_status: FulfillmentStatus::Unfulfilled,
-                payment_method: input.payment_method.clone(),
-                shipping_method: input.shipping_method.clone(),
-                tracking_number: None,
-                notes: input.notes.clone(),
-                shipping_address: input.shipping_address.clone(),
-                billing_address: input.billing_address.clone(),
-                items,
-                version: 1,
-                created_at: now,
-                updated_at: now,
-            })
+            Self::create_internal_in_tx(tx, cart_id, idempotent_by_cart_id, &input)
         })
     }
 }
@@ -926,9 +932,7 @@ impl OrderRepository for SqliteOrderRepository {
 
         // Keyset cursor: (order_date, id) for stable DESC ordering
         if let Some((cursor_date, cursor_id)) = &filter.after_cursor {
-            sql.push_str(
-                " AND (order_date < ? OR (order_date = ? AND id < ?))",
-            );
+            sql.push_str(" AND (order_date < ? OR (order_date = ? AND id < ?))");
             params.push(Box::new(cursor_date.clone()));
             params.push(Box::new(cursor_date.clone()));
             params.push(Box::new(cursor_id.clone()));

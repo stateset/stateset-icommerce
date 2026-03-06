@@ -51,7 +51,8 @@ pub fn check_compliance(
     let mut violations = Vec::new();
 
     // Response time check
-    if let (Some(required), Some(actual_val)) = (sla.response_time_ms, actual.avg_response_time_ms) {
+    if let (Some(required), Some(actual_val)) = (sla.response_time_ms, actual.avg_response_time_ms)
+    {
         if actual_val > required {
             let severity = determine_severity(SlaMetricType::ResponseTimeMs, actual_val, required);
             violations.push(SlaViolation {
@@ -68,7 +69,8 @@ pub fn check_compliance(
     if let (Some(required), Some(success_rate)) = (sla.uptime_percent, actual.success_rate) {
         let actual_percent = success_rate * dec!(100);
         if actual_percent < required {
-            let severity = determine_severity(SlaMetricType::UptimePercent, actual_percent, required);
+            let severity =
+                determine_severity(SlaMetricType::UptimePercent, actual_percent, required);
             violations.push(SlaViolation {
                 metric: SlaMetricType::UptimePercent,
                 actual: actual_percent,
@@ -115,8 +117,8 @@ pub fn check_compliance(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::violations::ViolationSeverity;
+    use super::*;
     use rust_decimal_macros::dec;
     use uuid::Uuid;
 
@@ -146,10 +148,8 @@ mod tests {
     #[test]
     fn response_time_violation() {
         let sla = SlaDefinition::new(Uuid::new_v4()).with_response_time(dec!(500));
-        let actual = ActualMetrics {
-            avg_response_time_ms: Some(dec!(600)),
-            ..ActualMetrics::default()
-        };
+        let actual =
+            ActualMetrics { avg_response_time_ms: Some(dec!(600)), ..ActualMetrics::default() };
         let result = check_compliance(&sla, &actual, dec!(100)).unwrap();
         assert!(!result.compliant);
         assert_eq!(result.violations.len(), 1);
@@ -172,10 +172,8 @@ mod tests {
     #[test]
     fn quality_violation() {
         let sla = SlaDefinition::new(Uuid::new_v4()).with_quality(dec!(4.0));
-        let actual = ActualMetrics {
-            avg_quality_score: Some(dec!(3.5)),
-            ..ActualMetrics::default()
-        };
+        let actual =
+            ActualMetrics { avg_quality_score: Some(dec!(3.5)), ..ActualMetrics::default() };
         let result = check_compliance(&sla, &actual, dec!(100)).unwrap();
         assert!(!result.compliant);
         assert_eq!(result.violations[0].metric, SlaMetricType::QualityMinScore);
@@ -184,10 +182,7 @@ mod tests {
     #[test]
     fn throughput_violation() {
         let sla = SlaDefinition::new(Uuid::new_v4()).with_throughput(dec!(100));
-        let actual = ActualMetrics {
-            throughput_rps: Some(dec!(80)),
-            ..ActualMetrics::default()
-        };
+        let actual = ActualMetrics { throughput_rps: Some(dec!(80)), ..ActualMetrics::default() };
         let result = check_compliance(&sla, &actual, dec!(100)).unwrap();
         assert!(!result.compliant);
         assert_eq!(result.violations[0].metric, SlaMetricType::ThroughputRps);
@@ -211,19 +206,16 @@ mod tests {
     #[test]
     fn penalty_amount_computed() {
         let sla = SlaDefinition::new(Uuid::new_v4()).with_response_time(dec!(500));
-        let actual = ActualMetrics {
-            avg_response_time_ms: Some(dec!(600)),
-            ..ActualMetrics::default()
-        };
+        let actual =
+            ActualMetrics { avg_response_time_ms: Some(dec!(600)), ..ActualMetrics::default() };
         let result = check_compliance(&sla, &actual, dec!(200)).unwrap();
         assert_eq!(result.violations[0].penalty_amount, dec!(10)); // 200 * 5%
     }
 
     #[test]
     fn missing_actual_metric_is_not_violation() {
-        let sla = SlaDefinition::new(Uuid::new_v4())
-            .with_response_time(dec!(500))
-            .with_uptime(dec!(99));
+        let sla =
+            SlaDefinition::new(Uuid::new_v4()).with_response_time(dec!(500)).with_uptime(dec!(99));
         let actual = ActualMetrics {
             avg_response_time_ms: Some(dec!(400)),
             // uptime not provided
@@ -255,10 +247,8 @@ mod tests {
     #[test]
     fn at_boundary_passes() {
         let sla = SlaDefinition::new(Uuid::new_v4()).with_response_time(dec!(500));
-        let actual = ActualMetrics {
-            avg_response_time_ms: Some(dec!(500)),
-            ..ActualMetrics::default()
-        };
+        let actual =
+            ActualMetrics { avg_response_time_ms: Some(dec!(500)), ..ActualMetrics::default() };
         let result = check_compliance(&sla, &actual, dec!(100)).unwrap();
         assert!(result.compliant);
     }

@@ -19,7 +19,9 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Types of taxes supported
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -60,7 +62,9 @@ impl TaxType {
 }
 
 /// Tax calculation method
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -110,7 +114,9 @@ impl std::str::FromStr for TaxCompoundMethod {
 }
 
 /// Product tax category
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

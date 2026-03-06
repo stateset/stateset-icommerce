@@ -109,13 +109,6 @@ impl FfiOrder {
     }
 }
 
-impl From<&Order> for FfiOrder {
-    fn from(order: &Order) -> Self {
-        Self::try_from_order(order)
-            .expect("order total and currency must be representable as i64 minor units")
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -127,8 +120,8 @@ mod tests {
     use chrono::Utc;
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
-    use stateset_primitives::CurrencyCode;
     use stateset_core::models::order::{FulfillmentStatus, OrderItem, PaymentStatus};
+    use stateset_primitives::CurrencyCode;
     use stateset_primitives::{CustomerId, OrderId, OrderItemId, ProductId};
 
     fn make_test_order(status: OrderStatus) -> Order {
@@ -215,7 +208,7 @@ mod tests {
     #[test]
     fn ffi_order_from_domain() {
         let order = make_test_order(OrderStatus::Processing);
-        let ffi = FfiOrder::from(&order);
+        let ffi = FfiOrder::try_from_order(&order).unwrap();
 
         assert_eq!(ffi.id, FfiUuid::from(order.id));
         assert_eq!(ffi.customer_id, FfiUuid::from(order.customer_id));
@@ -238,7 +231,7 @@ mod tests {
     #[test]
     fn ffi_order_preserves_customer_id() {
         let order = make_test_order(OrderStatus::Pending);
-        let ffi = FfiOrder::from(&order);
+        let ffi = FfiOrder::try_from_order(&order).unwrap();
         let back_customer: CustomerId = ffi.customer_id.into();
         assert_eq!(back_customer, order.customer_id);
     }
@@ -246,7 +239,7 @@ mod tests {
     #[test]
     fn ffi_order_debug() {
         let order = make_test_order(OrderStatus::Shipped);
-        let ffi = FfiOrder::from(&order);
+        let ffi = FfiOrder::try_from_order(&order).unwrap();
         let debug = format!("{:?}", ffi);
         assert!(debug.contains("FfiOrder"));
         assert!(debug.contains("Shipped"));
@@ -290,7 +283,7 @@ mod tests {
         let mut order = make_test_order(OrderStatus::Pending);
         order.currency = CurrencyCode::JPY;
         order.total_amount = dec!(1500);
-        let ffi = FfiOrder::from(&order);
+        let ffi = FfiOrder::try_from_order(&order).unwrap();
         assert_eq!(ffi.total.amount_cents, 1500);
         assert_eq!(&ffi.total.currency, b"JPY");
     }
@@ -299,7 +292,7 @@ mod tests {
     fn ffi_order_currency_is_always_uppercase() {
         // CurrencyCode guarantees uppercase at construction time
         let order = make_test_order(OrderStatus::Pending);
-        let ffi = FfiOrder::from(&order);
+        let ffi = FfiOrder::try_from_order(&order).unwrap();
         assert_eq!(&ffi.total.currency, b"USD");
     }
 }

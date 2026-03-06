@@ -288,7 +288,9 @@ impl PaymentRequestStatus {
     #[must_use]
     pub const fn allowed_transitions(self) -> &'static [Self] {
         match self {
-            Self::Pending => &[Self::Viewed, Self::Processing, Self::Declined, Self::Expired, Self::Cancelled],
+            Self::Pending => {
+                &[Self::Viewed, Self::Processing, Self::Declined, Self::Expired, Self::Cancelled]
+            }
             Self::Viewed => &[Self::Processing, Self::Declined, Self::Expired, Self::Cancelled],
             Self::Processing => &[Self::Paid, Self::Declined],
             Self::Paid | Self::Declined | Self::Expired | Self::Cancelled => &[],
@@ -523,8 +525,16 @@ impl A2AQuoteStatus {
     pub const fn allowed_transitions(self) -> &'static [Self] {
         match self {
             Self::Requested => &[Self::Quoted, Self::Cancelled, Self::Expired],
-            Self::Quoted => &[Self::Accepted, Self::CounterOffered, Self::Declined, Self::Expired, Self::Cancelled],
-            Self::CounterOffered => &[Self::Quoted, Self::Accepted, Self::Declined, Self::Expired, Self::Cancelled],
+            Self::Quoted => &[
+                Self::Accepted,
+                Self::CounterOffered,
+                Self::Declined,
+                Self::Expired,
+                Self::Cancelled,
+            ],
+            Self::CounterOffered => {
+                &[Self::Quoted, Self::Accepted, Self::Declined, Self::Expired, Self::Cancelled]
+            }
             Self::Accepted => &[Self::Fulfilled, Self::Cancelled],
             Self::Declined | Self::Expired | Self::Fulfilled | Self::Cancelled => &[],
         }
@@ -878,7 +888,14 @@ impl A2AQuote {
     }
 
     /// Seller revises the quote in response to a counter-offer.
-    pub fn revise(&mut self, revised_total: u64, fees: u64, tax: u64, expires_in_hours: i64, message: Option<String>) {
+    pub fn revise(
+        &mut self,
+        revised_total: u64,
+        fees: u64,
+        tax: u64,
+        expires_in_hours: i64,
+        message: Option<String>,
+    ) {
         let decimals = self.asset.decimals();
         let divisor = 10u64.pow(decimals as u32);
 
@@ -1460,10 +1477,7 @@ mod tests {
         assert_eq!(quote.status, A2AQuoteStatus::CounterOffered);
         assert_eq!(quote.counter_count, 1);
         assert_eq!(quote.negotiation_history.len(), 1);
-        assert_eq!(
-            quote.negotiation_history[0].negotiation_type,
-            NegotiationType::CounterOffer
-        );
+        assert_eq!(quote.negotiation_history[0].negotiation_type, NegotiationType::CounterOffer);
     }
 
     #[test]
@@ -1495,8 +1509,8 @@ mod tests {
     #[test]
     fn negotiation_round_limit() {
         let items = vec![A2AQuoteItem::new("Item", 1, 100)];
-        let mut quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc)
-            .with_max_rounds(2);
+        let mut quote =
+            A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc).with_max_rounds(2);
 
         quote.provide_quote(200, 0, 0, 24);
 
@@ -1526,8 +1540,8 @@ mod tests {
     fn with_escrow() {
         let items = vec![A2AQuoteItem::new("Item", 1, 100)];
         let escrow_id = Uuid::new_v4();
-        let quote = A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc)
-            .with_escrow(escrow_id);
+        let quote =
+            A2AQuote::request("0xbuyer", "0xseller", items, X402Asset::Usdc).with_escrow(escrow_id);
         assert_eq!(quote.escrow_id, Some(escrow_id));
     }
 

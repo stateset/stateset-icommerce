@@ -142,11 +142,7 @@ pub fn rank_responses(responses: &[RfqResponse], criteria: ScoringCriteria) -> V
         .collect();
 
     // Sort by descending score
-    scored.sort_by(|a, b| {
-        b.score
-            .unwrap_or(Decimal::ZERO)
-            .cmp(&a.score.unwrap_or(Decimal::ZERO))
-    });
+    scored.sort_by(|a, b| b.score.unwrap_or(Decimal::ZERO).cmp(&a.score.unwrap_or(Decimal::ZERO)));
 
     // Assign ranks
     for (i, r) in scored.iter_mut().enumerate() {
@@ -293,10 +289,7 @@ mod tests {
 
     #[test]
     fn rank_responses_all_scored() {
-        let responses = vec![
-            RfqResponse::new("A", dec!(100)),
-            RfqResponse::new("B", dec!(200)),
-        ];
+        let responses = vec![RfqResponse::new("A", dec!(100)), RfqResponse::new("B", dec!(200))];
         let ranked = rank_responses(&responses, ScoringCriteria::BestValue);
         assert!(ranked.iter().all(|r| r.score.is_some()));
     }

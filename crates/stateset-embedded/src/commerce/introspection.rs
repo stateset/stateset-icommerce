@@ -73,11 +73,11 @@ impl Commerce {
 
     /// Access vector search operations.
     ///
-    /// Requires the `vector` feature and an OpenAI API key for embedding generation.
+    /// Requires the `vector` feature and an `OpenAI` API key for embedding generation.
     ///
     /// # Arguments
     ///
-    /// * `api_key` - OpenAI API key for generating embeddings
+    /// * `api_key` - `OpenAI` API key for generating embeddings
     ///
     /// # Example
     ///

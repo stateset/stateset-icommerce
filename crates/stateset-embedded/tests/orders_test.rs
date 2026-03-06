@@ -1,13 +1,13 @@
 //! Integration tests for Order management
 
 use rust_decimal_macros::dec;
+use stateset_core::CurrencyCode;
 use stateset_core::{CustomerId, OrderId};
 use stateset_embedded::{
     Address, BackorderStatus, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder,
     CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderStatus, PaymentStatus,
     ReservationStatus, UpdateOrder,
 };
-use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================

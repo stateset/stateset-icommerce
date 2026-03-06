@@ -5,13 +5,14 @@
 //! in-memory [`Commerce`] instance.
 
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use rust_decimal_macros::dec;
 use serde_json::{Value, json};
 use stateset_embedded::Commerce;
 use stateset_http::{
-    AppState, CreateCustomerRequest, CreateOrderItemRequest, CreateOrderRequest, PaginationParams,
-    ServerBuilder,
+    AppState, CreateCustomerRequest, CreateOrderItemRequest, CreateOrderRequest,
+    MetricsHeaderLimits, PaginationParams, ServerBuilder,
 };
 use stateset_primitives::{CustomerId, OrderId, ProductId};
 use std::fs;
@@ -109,6 +110,53 @@ async fn health_ready_returns_200_with_database_connected() {
 }
 
 #[tokio::test]
+async fn metrics_returns_200_with_prometheus_payload() {
+    let resp = app().oneshot(Request::get("/metrics").body(Body::empty()).unwrap()).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/plain; version=0.0.4; charset=utf-8"
+    );
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("stateset_http_tenant_cache_enabled 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_requests_total 1"));
+    assert!(text.contains("stateset_http_metrics_scrape_allowed_total 1"));
+    assert!(text.contains("stateset_http_metrics_scrape_allowed_peer_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_allowed_forwarded_trusted_proxy_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_allowed_forwarded_without_peer_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_allowed_unavailable_total 1"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_ip_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_ip_not_allowed_total 0"));
+    assert!(text.contains(
+        "stateset_http_metrics_scrape_denied_missing_peer_ip_with_trusted_proxies_total 0"
+    ));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_auth_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_auth_header_missing_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_auth_header_invalid_total 0"));
+    assert!(
+        text.contains("stateset_http_metrics_scrape_denied_auth_header_invalid_encoding_total 0")
+    );
+    assert!(
+        text.contains("stateset_http_metrics_scrape_denied_auth_header_invalid_scheme_total 0")
+    );
+    assert!(text.contains("stateset_http_metrics_scrape_denied_auth_header_malformed_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_auth_header_multiple_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_auth_header_oversized_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_auth_token_mismatch_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_forwarded_missing_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_forwarded_invalid_total 0"));
+    assert!(text.contains("stateset_http_metrics_scrape_denied_forwarded_oversized_total 0"));
+    assert!(text.contains("stateset_http_metrics_auth_enabled 0"));
+    assert!(text.contains("stateset_http_metrics_ip_allowlist_entries 0"));
+    assert!(text.contains("stateset_http_metrics_trusted_proxy_cidr_entries 0"));
+    assert!(text.contains("stateset_http_metrics_forwarded_header_limit_bytes 2048"));
+    assert!(text.contains("stateset_http_metrics_authorization_header_limit_bytes 2048"));
+    assert!(text.contains("stateset_engine_orders_created_total"));
+}
+
+#[tokio::test]
 async fn api_requires_bearer_auth_by_default() {
     let (router, _token) = secure_app();
 
@@ -133,6 +181,239 @@ async fn api_accepts_valid_bearer_auth() {
         .await
         .unwrap();
 
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn metrics_requires_bearer_auth_by_default() {
+    let (router, _token) = secure_app();
+
+    let resp = router.oneshot(Request::get("/metrics").body(Body::empty()).unwrap()).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn metrics_accepts_valid_bearer_auth_by_default() {
+    let (router, token) = secure_app();
+
+    let resp = router
+        .oneshot(
+            Request::get("/metrics")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn metrics_allowlist_rejects_disallowed_ip() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+        .build();
+
+    let resp = router
+        .oneshot(
+            Request::get("/metrics")
+                .header("authorization", "Bearer metrics-token")
+                .header("x-forwarded-for", "203.0.113.10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn metrics_allowlist_accepts_allowed_x_real_ip_with_port() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+        .build();
+
+    let resp = router
+        .oneshot(
+            Request::get("/metrics")
+                .header("authorization", "Bearer metrics-token")
+                .header("x-real-ip", "127.0.0.1:8080")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn metrics_allowlist_requires_client_ip_header_when_configured() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+        .build();
+
+    let resp = router
+        .oneshot(
+            Request::get("/metrics")
+                .header("authorization", "Bearer metrics-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn metrics_allowlist_rejects_oversized_x_forwarded_for_header() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+        .build();
+
+    let resp = router
+        .oneshot(
+            Request::get("/metrics")
+                .header("authorization", "Bearer metrics-token")
+                .header("x-forwarded-for", format!("127.0.0.1,{}", "a".repeat(4096)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn metrics_allowlist_rejects_header_over_custom_x_forwarded_for_limit() {
+    let limits = MetricsHeaderLimits::new(2048, 15, 512).unwrap();
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+        .with_metrics_header_limits(limits)
+        .build();
+
+    let resp = router
+        .oneshot(
+            Request::get("/metrics")
+                .header("authorization", "Bearer metrics-token")
+                .header("x-forwarded-for", "127.0.0.1,10.0.0.1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn metrics_cidr_allowlist_accepts_matching_peer_ip() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_cidr_allowlist(["10.0.0.0/8".parse().unwrap()])
+        .build();
+
+    let mut request = Request::get("/metrics")
+        .header("authorization", "Bearer metrics-token")
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo("10.9.8.7:8080".parse::<std::net::SocketAddr>().unwrap()));
+
+    let resp = router.oneshot(request).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn metrics_cidr_allowlist_rejects_non_matching_peer_ip() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_cidr_allowlist(["10.0.0.0/8".parse().unwrap()])
+        .build();
+
+    let mut request = Request::get("/metrics")
+        .header("authorization", "Bearer metrics-token")
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo("203.0.113.10:8080".parse::<std::net::SocketAddr>().unwrap()));
+
+    let resp = router.oneshot(request).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn metrics_trusted_proxy_uses_forwarded_ip_when_peer_is_trusted() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+        .with_metrics_trusted_proxies(["10.0.0.0/8".parse().unwrap()])
+        .build();
+
+    let mut request = Request::get("/metrics")
+        .header("authorization", "Bearer metrics-token")
+        .header("x-forwarded-for", "127.0.0.1")
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo("10.5.4.3:8080".parse::<std::net::SocketAddr>().unwrap()));
+
+    let resp = router.oneshot(request).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn metrics_trusted_proxy_ignores_forwarded_ip_when_peer_is_untrusted() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+        .with_metrics_trusted_proxies(["10.0.0.0/8".parse().unwrap()])
+        .build();
+
+    let mut request = Request::get("/metrics")
+        .header("authorization", "Bearer metrics-token")
+        .header("x-forwarded-for", "127.0.0.1")
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo("203.0.113.10:8080".parse::<std::net::SocketAddr>().unwrap()));
+
+    let resp = router.oneshot(request).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn metrics_trusted_proxy_uses_standard_forwarded_header_when_peer_is_trusted() {
+    let router = ServerBuilder::new(test_commerce())
+        .with_metrics_bearer_auth("metrics-token")
+        .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+        .with_metrics_trusted_proxies(["10.0.0.0/8".parse().unwrap()])
+        .build();
+
+    let mut request = Request::get("/metrics")
+        .header("authorization", "Bearer metrics-token")
+        .header("forwarded", "for=127.0.0.1;proto=https")
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo("10.10.10.10:8080".parse::<std::net::SocketAddr>().unwrap()));
+
+    let resp = router.oneshot(request).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 

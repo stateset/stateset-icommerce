@@ -7,7 +7,9 @@ use axum::{
     routing::get,
 };
 
-use crate::dto::{PaymentFilterParams, PaymentListResponse, PaymentResponse};
+use crate::dto::{
+    PaymentFilterParams, PaymentListResponse, PaymentResponse, finalize_page, overfetch_limit,
+};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use rust_decimal::Decimal;
@@ -18,9 +20,7 @@ use std::str::FromStr;
 
 /// Build the payments sub-router.
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/payments", get(list_payments))
-        .route("/payments/{id}", get(get_payment))
+    Router::new().route("/payments", get(list_payments)).route("/payments/{id}", get(get_payment))
 }
 
 /// `GET /api/v1/payments/:id`
@@ -147,11 +147,11 @@ pub(crate) async fn list_payments(
         max_amount,
         from_date,
         to_date,
-        limit: Some(limit),
+        limit: Some(overfetch_limit(limit)),
         offset: Some(offset),
     };
-    let payments = commerce.payments().list(filter)?;
-    let has_more = payments.len() == limit as usize;
+    let mut payments = commerce.payments().list(filter)?;
+    let has_more = finalize_page(&mut payments, limit);
     Ok(Json(PaymentListResponse {
         payments: payments.into_iter().map(PaymentResponse::from).collect(),
         total,
@@ -166,11 +166,18 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use rust_decimal_macros::dec;
     use stateset_embedded::Commerce;
     use tower::ServiceExt;
 
     fn app() -> Router {
         router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
+    }
+
+    fn app_with_state() -> (Router, AppState) {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let router = router().with_state(state.clone());
+        (router, state)
     }
 
     #[tokio::test]
@@ -185,10 +192,8 @@ mod tests {
 
     #[tokio::test]
     async fn list_payments_empty() {
-        let resp = app()
-            .oneshot(Request::get("/payments").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app().oneshot(Request::get("/payments").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -235,5 +240,34 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["limit"], 10);
         assert_eq!(json["offset"], 5);
+    }
+
+    #[tokio::test]
+    async fn list_payments_exact_boundary_has_more_false() {
+        let (app, state) = app_with_state();
+
+        for _ in 0..2 {
+            state
+                .commerce()
+                .payments()
+                .create(stateset_core::CreatePayment {
+                    payment_method: PaymentMethodType::CreditCard,
+                    amount: dec!(25.00),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let resp = app
+            .oneshot(Request::get("/payments?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["payments"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], false);
     }
 }

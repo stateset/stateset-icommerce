@@ -61,7 +61,18 @@ impl BillOfMaterials {
 }
 
 /// BOM lifecycle status
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -231,7 +242,18 @@ impl WorkOrder {
 }
 
 /// Work order status
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -282,7 +304,18 @@ impl WorkOrderStatus {
 }
 
 /// Work order priority
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -414,7 +447,18 @@ impl WorkOrderTask {
 }
 
 /// Task status
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, strum::Display, strum::EnumString, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

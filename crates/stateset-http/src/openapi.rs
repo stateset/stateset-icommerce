@@ -24,6 +24,7 @@ use crate::state::AppState;
         // Health
         crate::routes::health::health,
         crate::routes::health::readiness,
+        crate::routes::health::metrics,
         // Orders
         crate::routes::orders::create_order,
         crate::routes::orders::get_order,
@@ -88,6 +89,7 @@ use crate::state::AppState;
         ReturnListResponse,
         HealthResponse,
         ReadyResponse,
+        TenantCacheResponse,
         // Error
         ErrorBody,
     )),
@@ -107,9 +109,7 @@ pub(crate) struct ApiDoc;
 
 /// Build the `OpenAPI` spec router.
 pub(crate) fn router() -> Router<AppState> {
-    Router::new()
-        .route("/openapi.json", get(openapi_json))
-        .route("/docs", get(docs_ui))
+    Router::new().route("/openapi.json", get(openapi_json)).route("/docs", get(docs_ui))
 }
 
 /// `GET /api/v1/openapi.json` — returns the `OpenAPI` spec as JSON.
@@ -155,6 +155,7 @@ mod tests {
 
         assert!(paths.contains_key("/health"), "missing /health");
         assert!(paths.contains_key("/health/ready"), "missing /health/ready");
+        assert!(paths.contains_key("/metrics"), "missing /metrics");
         assert!(paths.contains_key("/api/v1/orders"), "missing /api/v1/orders");
         assert!(paths.contains_key("/api/v1/orders/{id}"), "missing /api/v1/orders/{{id}}");
         assert!(paths.contains_key("/api/v1/customers"), "missing /api/v1/customers");
@@ -192,6 +193,7 @@ mod tests {
             "InvoiceResponse",
             "ReturnResponse",
             "HealthResponse",
+            "TenantCacheResponse",
             "ErrorBody",
         ];
         for name in expected {

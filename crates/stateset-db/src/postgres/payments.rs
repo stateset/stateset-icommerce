@@ -440,6 +440,10 @@ impl PgPaymentRepository {
             query.push_str(&format!(" AND order_id = ${}", param_idx));
             param_idx += 1;
         }
+        if filter.invoice_id.is_some() {
+            query.push_str(&format!(" AND invoice_id = ${}", param_idx));
+            param_idx += 1;
+        }
         if filter.customer_id.is_some() {
             query.push_str(&format!(" AND customer_id = ${}", param_idx));
             param_idx += 1;
@@ -459,6 +463,9 @@ impl PgPaymentRepository {
 
         if let Some(order_id) = filter.order_id {
             q = q.bind(order_id.into_uuid());
+        }
+        if let Some(invoice_id) = filter.invoice_id {
+            q = q.bind(invoice_id);
         }
         if let Some(customer_id) = filter.customer_id {
             q = q.bind(customer_id.into_uuid());
@@ -810,6 +817,10 @@ impl PgPaymentRepository {
             query.push_str(&format!(" AND order_id = ${}", param_idx));
             param_idx += 1;
         }
+        if filter.invoice_id.is_some() {
+            query.push_str(&format!(" AND invoice_id = ${}", param_idx));
+            param_idx += 1;
+        }
         if filter.customer_id.is_some() {
             query.push_str(&format!(" AND customer_id = ${}", param_idx));
             param_idx += 1;
@@ -822,6 +833,9 @@ impl PgPaymentRepository {
 
         if let Some(order_id) = filter.order_id {
             q = q.bind(order_id.into_uuid());
+        }
+        if let Some(invoice_id) = filter.invoice_id {
+            q = q.bind(invoice_id);
         }
         if let Some(customer_id) = filter.customer_id {
             q = q.bind(customer_id.into_uuid());

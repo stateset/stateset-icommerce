@@ -204,10 +204,7 @@ impl TokenBucket {
 
 /// Create a shared token bucket wrapped in an `Arc<Mutex<_>>`.
 pub(crate) fn create_rate_limiter(config: &RateLimitConfig) -> Arc<Mutex<TokenBucket>> {
-    Arc::new(Mutex::new(TokenBucket::new(
-        config.requests_per_second,
-        config.burst_size,
-    )))
+    Arc::new(Mutex::new(TokenBucket::new(config.requests_per_second, config.burst_size)))
 }
 
 /// Middleware that enforces a global request rate limit.
@@ -227,9 +224,7 @@ async fn rate_limit(
     } else {
         let mut response =
             HttpError::TooManyRequests("rate limit exceeded".to_string()).into_response();
-        response
-            .headers_mut()
-            .insert("retry-after", HeaderValue::from_static("1"));
+        response.headers_mut().insert("retry-after", HeaderValue::from_static("1"));
         response
     }
 }
@@ -269,6 +264,8 @@ fn compute_etag(body: &[u8]) -> String {
 fn cache_control_for_path(path: &str) -> &'static str {
     if path.starts_with("/health") {
         "no-cache"
+    } else if path.ends_with("/events/stream") {
+        "no-cache"
     } else if path.contains("/openapi.json") {
         "public, max-age=3600"
     } else if let Some(rest) = path.strip_prefix("/api/v1/") {
@@ -300,11 +297,8 @@ async fn http_cache(request: Request<Body>, next: Next) -> Response {
     }
 
     // Extract If-None-Match header before passing the request
-    let if_none_match = request
-        .headers()
-        .get("if-none-match")
-        .and_then(|v| v.to_str().ok())
-        .map(String::from);
+    let if_none_match =
+        request.headers().get("if-none-match").and_then(|v| v.to_str().ok()).map(String::from);
 
     let response = next.run(request).await;
 
@@ -314,6 +308,17 @@ async fn http_cache(request: Request<Body>, next: Next) -> Response {
     }
 
     let (mut parts, body) = response.into_parts();
+
+    // Do not buffer indefinitely streaming responses such as SSE.
+    let is_sse = parts
+        .headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    if is_sse {
+        parts.headers.insert("cache-control", HeaderValue::from_static("no-cache"));
+        return Response::from_parts(parts, body);
+    }
 
     // Collect the body bytes
     let body_bytes = match body.collect().await {
@@ -331,13 +336,13 @@ async fn http_cache(request: Request<Body>, next: Next) -> Response {
         if normalize(&client_etag) == normalize(&etag) {
             let mut not_modified = Response::new(Body::empty());
             *not_modified.status_mut() = StatusCode::NOT_MODIFIED;
+            not_modified.headers_mut().insert(
+                "etag",
+                HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("")),
+            );
             not_modified
                 .headers_mut()
-                .insert("etag", HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("")));
-            not_modified.headers_mut().insert(
-                "cache-control",
-                HeaderValue::from_static(cache_control_for_path(&path)),
-            );
+                .insert("cache-control", HeaderValue::from_static(cache_control_for_path(&path)));
             return not_modified;
         }
     }
@@ -346,10 +351,7 @@ async fn http_cache(request: Request<Body>, next: Next) -> Response {
     parts
         .headers
         .insert("etag", HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("")));
-    parts.headers.insert(
-        "cache-control",
-        HeaderValue::from_static(cache_control_for_path(&path)),
-    );
+    parts.headers.insert("cache-control", HeaderValue::from_static(cache_control_for_path(&path)));
 
     Response::from_parts(parts, Body::from(body_bytes))
 }
@@ -396,7 +398,10 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Method, Request, StatusCode};
+    use axum::response::sse::{Event, KeepAlive, Sse};
     use axum::routing::get;
+    use std::{convert::Infallible, time::Duration};
+    use tokio_stream::{StreamExt as _, wrappers::IntervalStream};
     use tower::ServiceExt;
 
     #[test]
@@ -647,10 +652,7 @@ mod tests {
         let response =
             app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(
-            response.headers().get("retry-after").and_then(|v| v.to_str().ok()),
-            Some("1")
-        );
+        assert_eq!(response.headers().get("retry-after").and_then(|v| v.to_str().ok()), Some("1"));
     }
 
     #[test]
@@ -692,10 +694,7 @@ mod tests {
 
     #[test]
     fn cache_control_openapi_is_public() {
-        assert_eq!(
-            cache_control_for_path("/api/v1/openapi.json"),
-            "public, max-age=3600"
-        );
+        assert_eq!(cache_control_for_path("/api/v1/openapi.json"), "public, max-age=3600");
     }
 
     #[test]
@@ -722,16 +721,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cache_control_event_stream_is_no_cache() {
+        assert_eq!(cache_control_for_path("/api/v1/events/stream"), "no-cache");
+    }
+
     #[tokio::test]
     async fn http_cache_adds_etag_to_get_response() {
         let app: Router<()> = Router::new()
             .route("/api/v1/orders", get(|| async { "[]" }))
             .layer(from_fn(http_cache));
 
-        let response = app
-            .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let response =
+            app.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get("etag").is_some(), "should have ETag header");
@@ -753,13 +755,7 @@ mod tests {
             .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
             .await
             .unwrap();
-        let etag = response
-            .headers()
-            .get("etag")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+        let etag = response.headers().get("etag").unwrap().to_str().unwrap().to_string();
 
         // Second request with If-None-Match
         let response = app
@@ -784,11 +780,7 @@ mod tests {
             .layer(from_fn(http_cache));
 
         let response = app
-            .oneshot(
-                Request::post("/api/v1/orders")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::post("/api/v1/orders").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
@@ -802,24 +794,16 @@ mod tests {
             (StatusCode::NOT_FOUND, "not found")
         }
 
-        let app: Router<()> = Router::new()
-            .route("/api/v1/orders/missing", get(handler))
-            .layer(from_fn(http_cache));
+        let app: Router<()> =
+            Router::new().route("/api/v1/orders/missing", get(handler)).layer(from_fn(http_cache));
 
         let response = app
-            .oneshot(
-                Request::get("/api/v1/orders/missing")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/v1/orders/missing").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert!(
-            response.headers().get("etag").is_none(),
-            "error responses should not have ETag"
-        );
+        assert!(response.headers().get("etag").is_none(), "error responses should not have ETag");
     }
 
     #[tokio::test]
@@ -840,5 +824,42 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get("etag").is_some());
+    }
+
+    #[tokio::test]
+    async fn http_cache_skips_sse_responses() {
+        let app: Router<()> = Router::new()
+            .route(
+                "/api/v1/events/stream",
+                get(|| async {
+                    let stream =
+                        IntervalStream::new(tokio::time::interval(Duration::from_secs(60)))
+                            .map(|_| Ok::<_, Infallible>(Event::default().data("tick")));
+                    Sse::new(stream).keep_alive(KeepAlive::default())
+                }),
+            )
+            .layer(from_fn(http_cache));
+
+        let response = tokio::time::timeout(
+            Duration::from_millis(200),
+            app.oneshot(Request::get("/api/v1/events/stream").body(Body::empty()).unwrap()),
+        )
+        .await
+        .expect("SSE response should not be buffered by cache middleware")
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+            Some("text/event-stream")
+        );
+        assert_eq!(
+            response.headers().get("cache-control").and_then(|value| value.to_str().ok()),
+            Some("no-cache")
+        );
+        assert!(
+            response.headers().get("etag").is_none(),
+            "streaming responses should not have ETags"
+        );
     }
 }

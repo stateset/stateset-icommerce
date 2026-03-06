@@ -131,6 +131,8 @@ pub trait EmailBackend: Send + Sync + fmt::Debug {
 pub struct WebhookEmailBackend {
     url: String,
     secret: Option<String>,
+    #[cfg(feature = "events")]
+    client: reqwest::blocking::Client,
 }
 
 impl fmt::Debug for WebhookEmailBackend {
@@ -146,7 +148,18 @@ impl WebhookEmailBackend {
     /// Create a new webhook email backend.
     #[must_use]
     pub fn new(url: impl Into<String>, secret: Option<String>) -> Self {
-        Self { url: url.into(), secret }
+        #[cfg(feature = "events")]
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new());
+
+        Self {
+            url: url.into(),
+            secret,
+            #[cfg(feature = "events")]
+            client,
+        }
     }
 
     /// Compute HMAC-SHA256 signature for a payload.
@@ -156,8 +169,7 @@ impl WebhookEmailBackend {
         use sha2::Sha256;
 
         let secret = self.secret.as_deref()?;
-        let mut mac =
-            Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
         mac.update(payload);
         let result = mac.finalize();
         Some(format!("sha256={}", hex::encode(result.into_bytes())))
@@ -171,12 +183,8 @@ impl EmailBackend for WebhookEmailBackend {
 
         #[cfg(feature = "events")]
         {
-            let client = reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
-            let mut request = client
+            let mut request = self
+                .client
                 .post(&self.url)
                 .header("Content-Type", "application/json")
                 .header("User-Agent", "stateset-notifications/1.0");
@@ -193,10 +201,7 @@ impl EmailBackend for WebhookEmailBackend {
             if response.status().is_success() {
                 Ok(())
             } else {
-                Err(format!(
-                    "Webhook returned HTTP {}",
-                    response.status().as_u16()
-                ))
+                Err(format!("Webhook returned HTTP {}", response.status().as_u16()))
             }
         }
 
@@ -231,10 +236,7 @@ impl LogEmailBackend {
     /// Get all emails that have been "delivered" (logged).
     #[must_use]
     pub fn emails(&self) -> Vec<TransactionalEmail> {
-        self.emails
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        self.emails.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 }
 
@@ -248,10 +250,7 @@ impl EmailBackend for LogEmailBackend {
             message_id = %email.message_id,
             "Notification email (log backend)"
         );
-        self.emails
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(email.clone());
+        self.emails.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(email.clone());
         Ok(())
     }
 }
@@ -332,10 +331,7 @@ impl NotificationService {
     /// The resolver receives a `CommerceEvent` and should return the
     /// recipient email address, or `None` to skip sending.
     #[must_use]
-    pub fn with_recipient_resolver(
-        mut self,
-        resolver: RecipientResolver,
-    ) -> Self {
+    pub fn with_recipient_resolver(mut self, resolver: RecipientResolver) -> Self {
         self.recipient_resolver = Some(resolver);
         self
     }
@@ -350,10 +346,7 @@ impl NotificationService {
     /// Returns `Ok(Some(message_id))` if an email was sent, `Ok(None)` if
     /// the event does not map to an email template or the template is
     /// disabled, and `Err` if delivery failed.
-    pub fn process_event(
-        &self,
-        event: &CommerceEvent,
-    ) -> Result<Option<uuid::Uuid>, String> {
+    pub fn process_event(&self, event: &CommerceEvent) -> Result<Option<uuid::Uuid>, String> {
         if !self.config.enabled {
             return Ok(None);
         }
@@ -407,12 +400,7 @@ impl NotificationService {
         event: &CommerceEvent,
     ) -> Option<(EmailTemplate, String, HashMap<String, serde_json::Value>)> {
         match event {
-            CommerceEvent::OrderCreated {
-                order_id,
-                total_amount,
-                item_count,
-                ..
-            } => {
+            CommerceEvent::OrderCreated { order_id, total_amount, item_count, .. } => {
                 let mut data = HashMap::new();
                 data.insert("order_id".into(), serde_json::json!(order_id.to_string()));
                 data.insert("total_amount".into(), serde_json::json!(total_amount.to_string()));
@@ -423,9 +411,7 @@ impl NotificationService {
                     data,
                 ))
             }
-            CommerceEvent::OrderCancelled {
-                order_id, reason, ..
-            } => {
+            CommerceEvent::OrderCancelled { order_id, reason, .. } => {
                 let mut data = HashMap::new();
                 data.insert("order_id".into(), serde_json::json!(order_id.to_string()));
                 if let Some(reason) = reason {
@@ -437,11 +423,7 @@ impl NotificationService {
                     data,
                 ))
             }
-            CommerceEvent::OrderFulfillmentStatusChanged {
-                order_id,
-                to_status,
-                ..
-            } => {
+            CommerceEvent::OrderFulfillmentStatusChanged { order_id, to_status, .. } => {
                 use stateset_core::FulfillmentStatus;
                 if *to_status != FulfillmentStatus::Shipped {
                     return None;
@@ -455,12 +437,7 @@ impl NotificationService {
                     data,
                 ))
             }
-            CommerceEvent::ReturnStatusChanged {
-                return_id,
-                from_status,
-                to_status,
-                ..
-            } => {
+            CommerceEvent::ReturnStatusChanged { return_id, from_status, to_status, .. } => {
                 let mut data = HashMap::new();
                 data.insert("return_id".into(), serde_json::json!(return_id.to_string()));
                 data.insert("from_status".into(), serde_json::json!(from_status.to_string()));
@@ -471,11 +448,7 @@ impl NotificationService {
                     data,
                 ))
             }
-            CommerceEvent::ReturnApproved {
-                return_id,
-                order_id,
-                ..
-            } => {
+            CommerceEvent::ReturnApproved { return_id, order_id, .. } => {
                 let mut data = HashMap::new();
                 data.insert("return_id".into(), serde_json::json!(return_id.to_string()));
                 data.insert("order_id".into(), serde_json::json!(order_id.to_string()));
@@ -485,13 +458,7 @@ impl NotificationService {
                     data,
                 ))
             }
-            CommerceEvent::RefundIssued {
-                return_id,
-                order_id,
-                amount,
-                method,
-                ..
-            } => {
+            CommerceEvent::RefundIssued { return_id, order_id, amount, method, .. } => {
                 let mut data = HashMap::new();
                 data.insert("return_id".into(), serde_json::json!(return_id.to_string()));
                 data.insert("order_id".into(), serde_json::json!(order_id.to_string()));
@@ -503,41 +470,21 @@ impl NotificationService {
                     data,
                 ))
             }
-            CommerceEvent::LowStockAlert {
-                sku,
-                current_quantity,
-                reorder_point,
-                ..
-            } => {
+            CommerceEvent::LowStockAlert { sku, current_quantity, reorder_point, .. } => {
                 let mut data = HashMap::new();
                 data.insert("sku".into(), serde_json::json!(sku));
                 data.insert(
                     "current_quantity".into(),
                     serde_json::json!(current_quantity.to_string()),
                 );
-                data.insert(
-                    "reorder_point".into(),
-                    serde_json::json!(reorder_point.to_string()),
-                );
-                Some((
-                    EmailTemplate::LowStockAlert,
-                    format!("Low Stock Alert — {sku}"),
-                    data,
-                ))
+                data.insert("reorder_point".into(), serde_json::json!(reorder_point.to_string()));
+                Some((EmailTemplate::LowStockAlert, format!("Low Stock Alert — {sku}"), data))
             }
-            CommerceEvent::CustomerCreated {
-                customer_id,
-                email,
-                ..
-            } => {
+            CommerceEvent::CustomerCreated { customer_id, email, .. } => {
                 let mut data = HashMap::new();
                 data.insert("customer_id".into(), serde_json::json!(customer_id.to_string()));
                 data.insert("email".into(), serde_json::json!(email));
-                Some((
-                    EmailTemplate::CustomerWelcome,
-                    "Welcome to Our Store!".into(),
-                    data,
-                ))
+                Some((EmailTemplate::CustomerWelcome, "Welcome to Our Store!".into(), data))
             }
             _ => None,
         }
@@ -586,12 +533,11 @@ mod tests {
         (service, emails)
     }
 
-    fn service_with_resolver(
-    ) -> (NotificationService, Arc<std::sync::Mutex<Vec<TransactionalEmail>>>) {
+    fn service_with_resolver()
+    -> (NotificationService, Arc<std::sync::Mutex<Vec<TransactionalEmail>>>) {
         let (service, emails) = default_service();
-        let service = service.with_recipient_resolver(Arc::new(|_| {
-            Some("customer@example.com".into())
-        }));
+        let service =
+            service.with_recipient_resolver(Arc::new(|_| Some("customer@example.com".into())));
         (service, emails)
     }
 
@@ -781,10 +727,7 @@ mod tests {
     fn disabled_service_skips_all() {
         let backend = LogEmailBackend::new();
         let emails = backend.emails.clone();
-        let config = NotificationConfig {
-            enabled: false,
-            ..Default::default()
-        };
+        let config = NotificationConfig { enabled: false, ..Default::default() };
         let service = NotificationService::new(config, Box::new(backend))
             .with_recipient_resolver(Arc::new(|_| Some("a@b.com".into())));
 

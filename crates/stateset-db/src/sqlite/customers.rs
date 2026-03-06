@@ -356,9 +356,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         // Keyset cursor: (created_at, id) for stable DESC ordering
         if let Some((cursor_date, cursor_id)) = &filter.after_cursor {
-            sql.push_str(
-                " AND (created_at < ? OR (created_at = ? AND id < ?))",
-            );
+            sql.push_str(" AND (created_at < ? OR (created_at = ? AND id < ?))");
             params.push(Box::new(cursor_date.clone()));
             params.push(Box::new(cursor_date.clone()));
             params.push(Box::new(cursor_id.clone()));

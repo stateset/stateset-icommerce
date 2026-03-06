@@ -161,13 +161,16 @@ pub fn aggregate_feedback(entries: &[FeedbackEntry]) -> ReputationSummary {
 
     // Determine trust tier
     let dispute_rate = if total_transactions > 0 {
-        Decimal::from(disputed_transactions)
-            / Decimal::from(total_transactions)
+        Decimal::from(disputed_transactions) / Decimal::from(total_transactions)
     } else {
         Decimal::ZERO
     };
-    let trust_tier =
-        TrustTier::compute_tier(total_transactions, average_score, disputed_transactions, dispute_rate);
+    let trust_tier = TrustTier::compute_tier(
+        total_transactions,
+        average_score,
+        disputed_transactions,
+        dispute_rate,
+    );
 
     ReputationSummary {
         total_transactions,

@@ -248,7 +248,8 @@ mod tests {
 
     #[test]
     fn transition_valid() {
-        let t = DisputeTransition::new(DisputeStatus::Filed, DisputeStatus::EvidencePeriod).unwrap();
+        let t =
+            DisputeTransition::new(DisputeStatus::Filed, DisputeStatus::EvidencePeriod).unwrap();
         assert_eq!(t.from, DisputeStatus::Filed);
         assert_eq!(t.to, DisputeStatus::EvidencePeriod);
     }
@@ -271,8 +272,7 @@ mod tests {
     fn full_lifecycle_transition() {
         let t1 =
             DisputeTransition::new(DisputeStatus::Filed, DisputeStatus::EvidencePeriod).unwrap();
-        let t2 =
-            DisputeTransition::new(t1.to, DisputeStatus::UnderReview).unwrap();
+        let t2 = DisputeTransition::new(t1.to, DisputeStatus::UnderReview).unwrap();
         let t3 = DisputeTransition::new(t2.to, DisputeStatus::Resolved).unwrap();
         assert_eq!(t3.to, DisputeStatus::Resolved);
     }

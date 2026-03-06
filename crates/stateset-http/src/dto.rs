@@ -39,6 +39,22 @@ impl PaginationParams {
     }
 }
 
+/// Request one extra row to detect whether another page exists.
+#[must_use]
+pub const fn overfetch_limit(limit: u32) -> u32 {
+    limit.saturating_add(1)
+}
+
+/// Trim an overfetched page back to the requested size and return `has_more`.
+pub fn finalize_page<T>(items: &mut Vec<T>, requested_limit: u32) -> bool {
+    let requested_limit = requested_limit as usize;
+    let has_more = items.len() > requested_limit;
+    if has_more {
+        items.truncate(requested_limit);
+    }
+    has_more
+}
+
 // ============================================================================
 // Cursor helpers
 // ============================================================================
@@ -769,10 +785,24 @@ pub struct ReturnListResponse {
 // Health
 // ============================================================================
 
+/// Tenant cache status included in health and readiness responses.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TenantCacheResponse {
+    pub enabled: bool,
+    pub max_cached_dbs: usize,
+    pub cached_dbs: usize,
+    pub in_use_cached_dbs: usize,
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub rejections: u64,
+}
+
 /// Response body for `GET /health`.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct HealthResponse {
     pub status: &'static str,
+    pub tenant_cache: TenantCacheResponse,
 }
 
 /// Response body for `GET /health/ready`.
@@ -780,6 +810,7 @@ pub struct HealthResponse {
 pub struct ReadyResponse {
     pub status: &'static str,
     pub database: &'static str,
+    pub tenant_cache: TenantCacheResponse,
 }
 
 // ============================================================================
@@ -1108,16 +1139,43 @@ mod tests {
 
     #[test]
     fn health_response_serialization() {
-        let resp = HealthResponse { status: "ok" };
+        let resp = HealthResponse {
+            status: "ok",
+            tenant_cache: TenantCacheResponse {
+                enabled: true,
+                max_cached_dbs: 256,
+                cached_dbs: 3,
+                in_use_cached_dbs: 1,
+                hits: 20,
+                misses: 4,
+                evictions: 2,
+                rejections: 1,
+            },
+        };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["status"], "ok");
+        assert_eq!(json["tenant_cache"]["cached_dbs"], 3);
     }
 
     #[test]
     fn ready_response_serialization() {
-        let resp = ReadyResponse { status: "ok", database: "connected" };
+        let resp = ReadyResponse {
+            status: "ok",
+            database: "connected",
+            tenant_cache: TenantCacheResponse {
+                enabled: false,
+                max_cached_dbs: 256,
+                cached_dbs: 0,
+                in_use_cached_dbs: 0,
+                hits: 0,
+                misses: 0,
+                evictions: 0,
+                rejections: 0,
+            },
+        };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["database"], "connected");
+        assert_eq!(json["tenant_cache"]["enabled"], false);
     }
 
     #[test]
@@ -1303,6 +1361,28 @@ mod tests {
     fn cursor_decode_missing_separator() {
         let encoded = URL_SAFE_NO_PAD.encode(b"no-separator-here");
         assert!(decode_cursor(&encoded).is_none());
+    }
+
+    #[test]
+    fn overfetch_limit_adds_one_row() {
+        assert_eq!(overfetch_limit(10), 11);
+        assert_eq!(overfetch_limit(PaginationParams::MAX_LIMIT), PaginationParams::MAX_LIMIT + 1);
+    }
+
+    #[test]
+    fn finalize_page_marks_exact_boundary_as_not_has_more() {
+        let mut items = vec![1, 2];
+        let has_more = finalize_page(&mut items, 2);
+        assert!(!has_more);
+        assert_eq!(items, vec![1, 2]);
+    }
+
+    #[test]
+    fn finalize_page_trims_overfetch_and_sets_has_more() {
+        let mut items = vec![1, 2, 3];
+        let has_more = finalize_page(&mut items, 2);
+        assert!(has_more);
+        assert_eq!(items, vec![1, 2]);
     }
 
     #[test]

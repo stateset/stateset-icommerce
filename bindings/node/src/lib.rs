@@ -5,8 +5,8 @@ use napi_derive::napi;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{CartId, CustomerId, OrderId, ProductId, PromotionId, SubscriptionId};
-use stateset_embedded::CurrencyCode;
 use stateset_embedded::Commerce as RustCommerce;
+use stateset_embedded::CurrencyCode;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -819,7 +819,7 @@ impl From<stateset_core::ProductVariant> for ProductVariantOutput {
             sku: v.sku,
             name: v.name,
             price: to_f64_or_nan(v.price),
-            compare_at_price: v.compare_at_price.map(|d| to_f64_or_nan(d)),
+            compare_at_price: v.compare_at_price.map(to_f64_or_nan),
             is_default: v.is_default,
         }
     }
@@ -3304,7 +3304,7 @@ impl From<stateset_core::CartItem> for CartItemOutput {
             image_url: item.image_url,
             quantity: item.quantity,
             unit_price: to_f64_or_nan(item.unit_price),
-            original_price: item.original_price.map(|p| to_f64_or_nan(p)),
+            original_price: item.original_price.map(to_f64_or_nan),
             discount_amount: to_f64_or_nan(item.discount_amount),
             tax_amount: to_f64_or_nan(item.tax_amount),
             total: to_f64_or_nan(item.total),
@@ -3589,7 +3589,8 @@ impl Carts {
     #[napi]
     pub async fn for_customer(&self, customer_id: String) -> Result<Vec<CartOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
 
         let carts = commerce
             .carts()
@@ -3621,7 +3622,8 @@ impl Carts {
         item: AddCartItemInput,
     ) -> Result<CartItemOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+        let uuid: uuid::Uuid =
+            cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
 
         let product_id = item
             .product_id
@@ -3706,7 +3708,8 @@ impl Carts {
     #[napi]
     pub async fn get_items(&self, cart_id: String) -> Result<Vec<CartItemOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+        let uuid: uuid::Uuid =
+            cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
 
         let items = commerce
             .carts()
@@ -3720,7 +3723,8 @@ impl Carts {
     #[napi]
     pub async fn clear_items(&self, cart_id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid: uuid::Uuid = cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
+        let uuid: uuid::Uuid =
+            cart_id.parse().map_err(|_| Error::from_reason("Invalid cart UUID"))?;
 
         commerce
             .carts()
@@ -4494,9 +4498,9 @@ impl Analytics {
                 on_hand: to_f64_or_nan(i.on_hand),
                 allocated: to_f64_or_nan(i.allocated),
                 available: to_f64_or_nan(i.available),
-                reorder_point: i.reorder_point.map(|d| to_f64_or_nan(d)),
-                average_daily_sales: i.average_daily_sales.map(|d| to_f64_or_nan(d)),
-                days_of_stock: i.days_of_stock.map(|d| to_f64_or_nan(d)),
+                reorder_point: i.reorder_point.map(to_f64_or_nan),
+                average_daily_sales: i.average_daily_sales.map(to_f64_or_nan),
+                days_of_stock: i.days_of_stock.map(to_f64_or_nan),
             })
             .collect())
     }
@@ -4559,7 +4563,7 @@ impl Analytics {
                 confidence: to_f64_or_nan(f.confidence),
                 current_stock: to_f64_or_nan(f.current_stock),
                 days_until_stockout: f.days_until_stockout,
-                recommended_reorder_qty: f.recommended_reorder_qty.map(|d| to_f64_or_nan(d)),
+                recommended_reorder_qty: f.recommended_reorder_qty.map(to_f64_or_nan),
                 trend: format!("{:?}", f.trend),
             })
             .collect())
@@ -4647,10 +4651,10 @@ impl Analytics {
             .map_err(|e| Error::from_reason(format!("Failed to get fulfillment metrics: {}", e)))?;
 
         Ok(FulfillmentMetricsOutput {
-            avg_time_to_ship_hours: metrics.avg_time_to_ship_hours.map(|d| to_f64_or_nan(d)),
-            avg_time_to_deliver_hours: metrics.avg_time_to_deliver_hours.map(|d| to_f64_or_nan(d)),
-            on_time_shipping_percent: metrics.on_time_shipping_percent.map(|d| to_f64_or_nan(d)),
-            on_time_delivery_percent: metrics.on_time_delivery_percent.map(|d| to_f64_or_nan(d)),
+            avg_time_to_ship_hours: metrics.avg_time_to_ship_hours.map(to_f64_or_nan),
+            avg_time_to_deliver_hours: metrics.avg_time_to_deliver_hours.map(to_f64_or_nan),
+            on_time_shipping_percent: metrics.on_time_shipping_percent.map(to_f64_or_nan),
+            on_time_delivery_percent: metrics.on_time_delivery_percent.map(to_f64_or_nan),
             shipped_today: metrics.shipped_today as u32,
             awaiting_shipment: metrics.awaiting_shipment as u32,
         })
@@ -5207,14 +5211,14 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
             billing_interval: format!("{}", p.billing_interval),
             custom_interval_days: p.custom_interval_days,
             price: to_f64_or_nan(p.price),
-            setup_fee: p.setup_fee.map(|d| to_f64_or_nan(d)),
+            setup_fee: p.setup_fee.map(to_f64_or_nan),
             currency: p.currency.to_string(),
             trial_days: p.trial_days,
             trial_requires_payment_method: p.trial_requires_payment_method,
             min_cycles: p.min_cycles,
             max_cycles: p.max_cycles,
-            discount_percent: p.discount_percent.map(|d| to_f64_or_nan(d)),
-            discount_amount: p.discount_amount.map(|d| to_f64_or_nan(d)),
+            discount_percent: p.discount_percent.map(to_f64_or_nan),
+            discount_amount: p.discount_amount.map(to_f64_or_nan),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         }
@@ -5315,8 +5319,8 @@ impl From<stateset_core::Subscription> for SubscriptionOutput {
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
             billing_cycle_count: s.billing_cycle_count,
             failed_payment_attempts: s.failed_payment_attempts,
-            discount_percent: s.discount_percent.map(|d| to_f64_or_nan(d)),
-            discount_amount: s.discount_amount.map(|d| to_f64_or_nan(d)),
+            discount_percent: s.discount_percent.map(to_f64_or_nan),
+            discount_amount: s.discount_amount.map(to_f64_or_nan),
             coupon_code: s.coupon_code,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
@@ -5724,7 +5728,11 @@ impl Subscriptions {
         let commerce = self.commerce.lock().await;
         let f = filter.unwrap_or_default();
 
-        let customer_id = f.customer_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok()).map(CustomerId::from);
+        let customer_id = f
+            .customer_id
+            .as_ref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .map(CustomerId::from);
         let plan_id = f.plan_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
         let from_date = f.from_date.as_ref().and_then(|s| {
             chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
@@ -5892,8 +5900,11 @@ impl Subscriptions {
         let commerce = self.commerce.lock().await;
         let f = filter.unwrap_or_default();
 
-        let subscription_id =
-            f.subscription_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok()).map(SubscriptionId::from);
+        let subscription_id = f
+            .subscription_id
+            .as_ref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .map(SubscriptionId::from);
         let from_date = f.from_date.as_ref().and_then(|s| {
             chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
         });
@@ -6124,12 +6135,12 @@ impl From<stateset_core::Promotion> for PromotionOutput {
             target: format!("{:?}", p.target).to_lowercase(),
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
-            percentage_off: p.percentage_off.map(|d| to_f64_or_nan(d)),
-            fixed_amount_off: p.fixed_amount_off.map(|d| to_f64_or_nan(d)),
-            max_discount_amount: p.max_discount_amount.map(|d| to_f64_or_nan(d)),
+            percentage_off: p.percentage_off.map(to_f64_or_nan),
+            fixed_amount_off: p.fixed_amount_off.map(to_f64_or_nan),
+            max_discount_amount: p.max_discount_amount.map(to_f64_or_nan),
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
-            get_discount_percent: p.get_discount_percent.map(|d| to_f64_or_nan(d)),
+            get_discount_percent: p.get_discount_percent.map(to_f64_or_nan),
             starts_at: p.starts_at.to_rfc3339(),
             ends_at: p.ends_at.map(|d| d.to_rfc3339()),
             total_usage_limit: p.total_usage_limit,
@@ -6415,7 +6426,10 @@ impl Promotions {
                 .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
             tiers: input.tiers.and_then(|s| serde_json::from_str(&s).ok()),
             bundle_product_ids: input.bundle_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .map(ProductId::from)
+                    .collect()
             }),
             bundle_discount: input
                 .bundle_discount
@@ -6430,20 +6444,29 @@ impl Promotions {
             per_customer_limit: input.per_customer_limit,
             conditions: None,
             applicable_product_ids: input.applicable_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .map(ProductId::from)
+                    .collect()
             }),
             applicable_category_ids: input.applicable_category_ids.map(|ids| {
                 ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
             }),
             applicable_skus: input.applicable_skus,
             excluded_product_ids: input.excluded_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .map(ProductId::from)
+                    .collect()
             }),
             excluded_category_ids: input.excluded_category_ids.map(|ids| {
                 ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
             }),
             eligible_customer_ids: input.eligible_customer_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).map(CustomerId::from).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .map(CustomerId::from)
+                    .collect()
             }),
             eligible_customer_groups: input.eligible_customer_groups,
             currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
@@ -6692,7 +6715,10 @@ impl Promotions {
         let filter = filter.unwrap_or_default();
 
         let core_filter = stateset_core::CouponFilter {
-            promotion_id: filter.promotion_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(PromotionId::from),
+            promotion_id: filter
+                .promotion_id
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                .map(PromotionId::from),
             status: filter.status.map(|s| parse_coupon_status(&s)),
             search: filter.search,
             limit: filter.limit.map(|v| v as u32),
@@ -6729,14 +6755,20 @@ impl Promotions {
         let commerce = self.commerce.lock().await;
         let request = stateset_core::ApplyPromotionsRequest {
             cart_id: input.cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CartId::from),
-            customer_id: input.customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CustomerId::from),
+            customer_id: input
+                .customer_id
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                .map(CustomerId::from),
             coupon_codes: input.coupon_codes.unwrap_or_default(),
             line_items: input
                 .line_items
                 .into_iter()
                 .map(|item| stateset_core::PromotionLineItem {
                     id: item.id,
-                    product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from),
+                    product_id: item
+                        .product_id
+                        .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                        .map(ProductId::from),
                     variant_id: item.variant_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
                     sku: item.sku,
                     category_ids: item
@@ -6755,7 +6787,11 @@ impl Promotions {
                 .unwrap_or_default(),
             shipping_country: input.shipping_country,
             shipping_state: input.shipping_state,
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()).parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD),
+            currency: input
+                .currency
+                .unwrap_or_else(|| "USD".to_string())
+                .parse::<CurrencyCode>()
+                .unwrap_or(CurrencyCode::USD),
             is_first_order: false,
         };
 
@@ -7000,9 +7036,9 @@ impl From<stateset_core::TaxRate> for TaxRateOutput {
             description: r.description,
             is_compound: r.is_compound,
             priority: r.priority,
-            threshold_min: r.threshold_min.map(|d| to_f64_or_nan(d)),
-            threshold_max: r.threshold_max.map(|d| to_f64_or_nan(d)),
-            fixed_amount: r.fixed_amount.map(|d| to_f64_or_nan(d)),
+            threshold_min: r.threshold_min.map(to_f64_or_nan),
+            threshold_max: r.threshold_max.map(to_f64_or_nan),
+            fixed_amount: r.fixed_amount.map(to_f64_or_nan),
             effective_from: r.effective_from.to_string(),
             effective_to: r.effective_to.map(|d| d.to_string()),
             active: r.active,
@@ -7297,9 +7333,9 @@ impl From<stateset_core::EuVatInfo> for EuVatInfoOutput {
             country_code: i.country_code,
             country_name: i.country_name,
             standard_rate: to_f64_or_nan(i.standard_rate),
-            reduced_rate: i.reduced_rate.map(|d| to_f64_or_nan(d)),
-            super_reduced_rate: i.super_reduced_rate.map(|d| to_f64_or_nan(d)),
-            parking_rate: i.parking_rate.map(|d| to_f64_or_nan(d)),
+            reduced_rate: i.reduced_rate.map(to_f64_or_nan),
+            super_reduced_rate: i.super_reduced_rate.map(to_f64_or_nan),
+            parking_rate: i.parking_rate.map(to_f64_or_nan),
         }
     }
 }
@@ -7322,9 +7358,9 @@ impl From<stateset_core::CanadianTaxInfo> for CanadianTaxInfoOutput {
             province_code: i.province_code,
             province_name: i.province_name,
             gst_rate: to_f64_or_nan(i.gst_rate),
-            pst_rate: i.pst_rate.map(|d| to_f64_or_nan(d)),
-            hst_rate: i.hst_rate.map(|d| to_f64_or_nan(d)),
-            qst_rate: i.qst_rate.map(|d| to_f64_or_nan(d)),
+            pst_rate: i.pst_rate.map(to_f64_or_nan),
+            hst_rate: i.hst_rate.map(to_f64_or_nan),
+            qst_rate: i.qst_rate.map(to_f64_or_nan),
             total_rate: to_f64_or_nan(i.total_rate),
         }
     }
@@ -7431,7 +7467,10 @@ impl Tax {
             .map(|item| stateset_core::TaxLineItem {
                 id: item.id,
                 sku: item.sku,
-                product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(ProductId::from),
+                product_id: item
+                    .product_id
+                    .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                    .map(ProductId::from),
                 quantity: Decimal::from_f64_retain(item.quantity).unwrap_or(Decimal::ONE),
                 unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
                 discount_amount: Decimal::from_f64_retain(item.discount_amount.unwrap_or(0.0))
@@ -7471,7 +7510,11 @@ impl Tax {
             shipping_amount: input
                 .shipping_amount
                 .map(|a| Decimal::from_f64_retain(a).unwrap_or_default()),
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()).parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD),
+            currency: input
+                .currency
+                .unwrap_or_else(|| "USD".to_string())
+                .parse::<CurrencyCode>()
+                .unwrap_or(CurrencyCode::USD),
             transaction_date: input
                 .transaction_date
                 .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
@@ -9239,8 +9282,12 @@ impl Fulfillment {
     #[napi]
     pub async fn create_wave(&self, input: CreateWaveInput) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
-        let order_ids: Vec<OrderId> =
-            input.order_ids.iter().filter_map(|s| s.parse::<uuid::Uuid>().ok()).map(OrderId::from).collect();
+        let order_ids: Vec<OrderId> = input
+            .order_ids
+            .iter()
+            .filter_map(|s| s.parse::<uuid::Uuid>().ok())
+            .map(OrderId::from)
+            .collect();
         let wave = commerce
             .fulfillment()
             .create_wave(stateset_core::CreateWave {
@@ -11730,7 +11777,8 @@ impl VectorSearch {
     /// Index a product for vector search
     #[napi]
     pub async fn index_product(&self, product_id: String) -> Result<()> {
-        let uuid: uuid::Uuid = product_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            product_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let (product, vector) = {
             let commerce = self.commerce.lock().await;
@@ -11757,7 +11805,8 @@ impl VectorSearch {
     /// Index a customer for vector search
     #[napi]
     pub async fn index_customer(&self, customer_id: String) -> Result<()> {
-        let uuid: uuid::Uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let (customer, vector) = {
             let commerce = self.commerce.lock().await;

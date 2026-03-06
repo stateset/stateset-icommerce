@@ -46,7 +46,11 @@ pub struct SlaViolation {
 /// For `ResponseTimeMs`, higher actual is worse (inverse relationship).
 /// For other metrics, lower actual is worse.
 #[must_use]
-pub fn determine_severity(metric: SlaMetricType, actual: Decimal, required: Decimal) -> ViolationSeverity {
+pub fn determine_severity(
+    metric: SlaMetricType,
+    actual: Decimal,
+    required: Decimal,
+) -> ViolationSeverity {
     if required.is_zero() {
         return ViolationSeverity::Critical;
     }
@@ -63,11 +67,7 @@ pub fn determine_severity(metric: SlaMetricType, actual: Decimal, required: Deci
         _ => actual / required,
     };
 
-    if ratio > dec!(0.8) {
-        ViolationSeverity::Warning
-    } else {
-        ViolationSeverity::Critical
-    }
+    if ratio > dec!(0.8) { ViolationSeverity::Warning } else { ViolationSeverity::Critical }
 }
 
 /// Compute the penalty amount based on the average transaction value and penalty percentage.

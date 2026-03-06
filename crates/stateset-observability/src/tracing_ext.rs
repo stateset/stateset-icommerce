@@ -120,13 +120,13 @@ pub fn init_tracing_otel(config: &TracingConfig) -> Result<()> {
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(opentelemetry_otlp::new_exporter().tonic().with_endpoint(&endpoint))
-        .with_trace_config(
-            opentelemetry_sdk::trace::Config::default().with_resource(Resource::new(vec![
+        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
+            Resource::new(vec![
                 KeyValue::new("service.name", config.service_name.clone()),
                 KeyValue::new("deployment.environment", config.environment.clone()),
                 KeyValue::new("cloud.region", config.region.clone()),
-            ])),
-        )
+            ]),
+        ))
         .install_batch(opentelemetry_sdk::runtime::Tokio)
         .map_err(|e| ObservabilityError::ExporterError(e.to_string()))?;
 

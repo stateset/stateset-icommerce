@@ -9,7 +9,7 @@ use axum::{
 
 use crate::dto::{
     CreateCustomerRequest, CustomerFilterParams, CustomerListResponse, CustomerResponse,
-    decode_cursor, encode_cursor,
+    decode_cursor, encode_cursor, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
@@ -116,8 +116,7 @@ pub(crate) async fn list_customers(
     // Decode cursor if provided
     let after_cursor = match &params.after {
         Some(cursor) => Some(
-            decode_cursor(cursor)
-                .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
         ),
         None => None,
     };
@@ -140,16 +139,14 @@ pub(crate) async fn list_customers(
         status,
         tag: params.tag,
         accepts_marketing: params.accepts_marketing,
-        limit: Some(limit),
+        limit: Some(overfetch_limit(limit)),
         offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
         after_cursor,
     };
-    let customers = commerce.customers().list(filter)?;
-    let has_more = customers.len() == limit as usize;
+    let mut customers = commerce.customers().list(filter)?;
+    let has_more = finalize_page(&mut customers, limit);
     let next_cursor = if has_more {
-        customers
-            .last()
-            .map(|c| encode_cursor(&c.created_at.to_rfc3339(), &c.id.to_string()))
+        customers.last().map(|c| encode_cursor(&c.created_at.to_rfc3339(), &c.id.to_string()))
     } else {
         None
     };
@@ -320,9 +317,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::get("/customers?email=alice%40filter.com")
-                    .body(Body::empty())
-                    .unwrap(),
+                Request::get("/customers?email=alice%40filter.com").body(Body::empty()).unwrap(),
             )
             .await
             .unwrap();
@@ -370,9 +365,7 @@ mod tests {
             .unwrap();
 
         let resp = app
-            .oneshot(
-                Request::get("/customers?accepts_marketing=true").body(Body::empty()).unwrap(),
-            )
+            .oneshot(Request::get("/customers?accepts_marketing=true").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

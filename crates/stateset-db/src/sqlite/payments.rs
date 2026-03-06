@@ -2,8 +2,8 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
-    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
-    with_immediate_transaction, uuid_params,
+    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    with_immediate_transaction,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -360,6 +360,10 @@ impl PaymentRepository for SqlitePaymentRepository {
             sql.push_str(" AND order_id = ?");
             params_vec.push(Box::new(order_id.to_string()));
         }
+        if let Some(invoice_id) = &filter.invoice_id {
+            sql.push_str(" AND invoice_id = ?");
+            params_vec.push(Box::new(invoice_id.to_string()));
+        }
         if let Some(customer_id) = &filter.customer_id {
             sql.push_str(" AND customer_id = ?");
             params_vec.push(Box::new(customer_id.to_string()));
@@ -662,6 +666,10 @@ impl PaymentRepository for SqlitePaymentRepository {
         if let Some(order_id) = &filter.order_id {
             sql.push_str(" AND order_id = ?");
             params_vec.push(Box::new(order_id.to_string()));
+        }
+        if let Some(invoice_id) = &filter.invoice_id {
+            sql.push_str(" AND invoice_id = ?");
+            params_vec.push(Box::new(invoice_id.to_string()));
         }
         if let Some(customer_id) = &filter.customer_id {
             sql.push_str(" AND customer_id = ?");

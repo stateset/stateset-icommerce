@@ -2,10 +2,10 @@
 
 use super::parse_helpers::{parse_decimal as parse_decimal_err, parse_uuid};
 use super::{
-    SqliteCustomerRepository, SqliteOrderRepository, SqlitePromotionRepository, build_in_clause,
-    map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
-    uuid_params,
+    SqliteOrderRepository, SqlitePromotionRepository, build_in_clause, map_db_error, params_refs,
+    parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
+    parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    with_immediate_transaction,
 };
 use chrono::{Duration, Utc};
 use r2d2::Pool;
@@ -15,12 +15,11 @@ use rust_decimal::Decimal;
 use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
-    CreateCustomer, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, CustomerRepository,
-    OrderId, OrderRepository, OrderStatus, PaymentStatus, ProductId, PromotionType, Result,
-    SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem,
-    UpdateOrder, X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData,
-    X402IntentStatus, X402PaymentRequiredData, validate_batch_size, validate_currency_code,
-    validate_price,
+    CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, OrderId, OrderStatus, PaymentStatus,
+    ProductId, PromotionType, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
+    ShippingRate, UpdateCart, UpdateCartItem, X402AwaitingSettlementData, X402CheckoutResult,
+    X402IntentCreatedData, X402IntentStatus, X402PaymentRequiredData, validate_batch_size,
+    validate_currency_code, validate_email, validate_phone, validate_price, validate_required_text,
 };
 use uuid::Uuid;
 
@@ -188,7 +187,7 @@ impl SqliteCartRepository {
     }
 
     fn load_cart_items_with_conn(
-        conn: &r2d2::PooledConnection<SqliteConnectionManager>,
+        conn: &rusqlite::Connection,
         cart_id: CartId,
     ) -> Result<Vec<CartItem>> {
         let mut stmt = conn
@@ -277,106 +276,26 @@ impl SqliteCartRepository {
         Ok(items)
     }
 
+    fn load_cart_with_conn(conn: &rusqlite::Connection, id: CartId) -> Result<Option<Cart>> {
+        let result =
+            conn.query_row("SELECT * FROM carts WHERE id = ?", [id.to_string()], Self::row_to_cart);
+
+        match result {
+            Ok(mut cart) => {
+                cart.items = Self::load_cart_items_with_conn(conn, id)?;
+                Ok(Some(cart))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(map_db_error(error)),
+        }
+    }
+
     /// Finalize x402 checkout after payment settlement
     fn finalize_x402_checkout(&self, cart_id: CartId) -> Result<X402CheckoutResult> {
-        // This is similar to complete() but assumes x402 payment is settled
-        let cart = self.get(cart_id)?.ok_or(CommerceError::NotFound)?;
-
-        if cart.status == CartStatus::Completed {
-            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
-            {
-                return Ok(X402CheckoutResult::Completed(CheckoutResult {
-                    cart_id,
-                    order_id,
-                    order_number,
-                    payment_id: None,
-                    total_charged: cart.grand_total,
-                    currency: cart.currency,
-                }));
-            }
-        }
-
-        if !cart.is_ready_for_checkout() {
-            return Err(CommerceError::ValidationError(
-                "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
-            ));
-        }
-
-        let order_repo = SqliteOrderRepository::new(self.pool.clone());
-        let customer_id = self.resolve_customer_id(&cart)?;
-
-        let order_items: Vec<CreateOrderItem> = cart
-            .items
-            .iter()
-            .map(|item| CreateOrderItem {
-                product_id: item.product_id.unwrap_or_else(ProductId::new),
-                variant_id: item.variant_id,
-                sku: item.sku.clone(),
-                name: item.name.clone(),
-                quantity: item.quantity,
-                unit_price: item.unit_price,
-                discount: Some(item.discount_amount),
-                tax_amount: Some(item.tax_amount),
-            })
-            .collect();
-
-        let shipping_address = cart.shipping_address.clone().map(Into::into);
-        let billing_address = if cart.billing_same_as_shipping {
-            cart.billing_address.clone().or_else(|| cart.shipping_address.clone()).map(Into::into)
-        } else {
-            cart.billing_address.clone().map(Into::into)
-        };
-
-        let order = order_repo.create_from_cart(
-            cart_id.into_uuid(),
-            CreateOrder {
-                customer_id,
-                items: order_items,
-                currency: Some(cart.currency),
-                shipping_address,
-                billing_address,
-                notes: cart.notes.clone(),
-                payment_method: cart.payment_method.clone(),
-                shipping_method: cart.shipping_method.clone(),
-            },
-        )?;
-
-        let order = order_repo.update(
-            order.id,
-            UpdateOrder {
-                status: Some(OrderStatus::Confirmed),
-                payment_status: Some(PaymentStatus::Paid),
-                ..Default::default()
-            },
-        )?;
-
-        // Update cart to completed status
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE carts SET
-                status = 'completed', order_id = ?, order_number = ?,
-                payment_status = 'captured', x402_status = 'settled',
-                completed_at = ?, updated_at = ?, customer_id = ?
-             WHERE id = ?",
-            rusqlite::params![
-                order.id.to_string(),
-                order.order_number,
-                Utc::now().to_rfc3339(),
-                Utc::now().to_rfc3339(),
-                customer_id.to_string(),
-                cart_id.to_string()
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        Ok(X402CheckoutResult::Completed(CheckoutResult {
-            cart_id,
-            order_id: order.id,
-            order_number: order.order_number,
-            payment_id: None, // x402 payment tracked separately
-            total_charged: cart.grand_total,
-            currency: cart.currency,
-        }))
+        let result = with_immediate_transaction(&self.pool, |tx| {
+            self.complete_checkout_in_tx(tx, cart_id, true)
+        })?;
+        Ok(X402CheckoutResult::Completed(result))
     }
 
     fn update_cart_totals(&self, conn: &rusqlite::Connection, cart_id: CartId) -> Result<()> {
@@ -548,17 +467,7 @@ impl CartRepository for SqliteCartRepository {
 
     fn get(&self, id: CartId) -> Result<Option<Cart>> {
         let conn = self.conn()?;
-        let result =
-            conn.query_row("SELECT * FROM carts WHERE id = ?", [id.to_string()], Self::row_to_cart);
-
-        match result {
-            Ok(mut cart) => {
-                cart.items = Self::load_cart_items_with_conn(&conn, id)?;
-                Ok(Some(cart))
-            }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
-        }
+        Self::load_cart_with_conn(&conn, id)
     }
 
     fn get_by_number(&self, cart_number: &str) -> Result<Option<Cart>> {
@@ -1299,105 +1208,7 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn complete(&self, id: CartId) -> Result<CheckoutResult> {
-        let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
-
-        // Idempotent checkout: if already completed, return the existing order reference.
-        if cart.status == CartStatus::Completed {
-            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
-            {
-                return Ok(CheckoutResult {
-                    cart_id: id,
-                    order_id,
-                    order_number,
-                    payment_id: None,
-                    total_charged: cart.grand_total,
-                    currency: cart.currency,
-                });
-            }
-        }
-
-        if !cart.is_ready_for_checkout() {
-            return Err(CommerceError::ValidationError(
-                "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
-            ));
-        }
-
-        let customer_id = self.resolve_customer_id(&cart)?;
-        let order_items: Vec<CreateOrderItem> = cart
-            .items
-            .iter()
-            .map(|item| CreateOrderItem {
-                product_id: item.product_id.unwrap_or_else(ProductId::new),
-                variant_id: item.variant_id,
-                sku: item.sku.clone(),
-                name: item.name.clone(),
-                quantity: item.quantity,
-                unit_price: item.unit_price,
-                discount: Some(item.discount_amount),
-                tax_amount: Some(item.tax_amount),
-            })
-            .collect();
-
-        let shipping_address = cart.shipping_address.clone().map(Into::into);
-        let billing_address = if cart.billing_same_as_shipping {
-            cart.billing_address.clone().or_else(|| cart.shipping_address.clone()).map(Into::into)
-        } else {
-            cart.billing_address.clone().map(Into::into)
-        };
-
-        let order_repo = SqliteOrderRepository::new(self.pool.clone());
-        let order = order_repo.create_from_cart(
-            id.into_uuid(),
-            CreateOrder {
-                customer_id,
-                items: order_items,
-                currency: Some(cart.currency),
-                shipping_address,
-                billing_address,
-                notes: cart.notes.clone(),
-                payment_method: cart.payment_method.clone(),
-                shipping_method: cart.shipping_method.clone(),
-            },
-        )?;
-
-        // Confirm the order after checkout
-        let order = order_repo.update(
-            order.id,
-            UpdateOrder {
-                status: Some(OrderStatus::Confirmed),
-                payment_status: Some(PaymentStatus::Paid),
-                ..Default::default()
-            },
-        )?;
-
-        let order_id = order.id;
-        let order_number = order.order_number;
-        let now = Utc::now();
-        {
-            let conn = self.conn()?;
-            conn.execute(
-                "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
-                 payment_status = 'captured', completed_at = ?, updated_at = ?, customer_id = ? WHERE id = ?",
-                rusqlite::params![
-                    order_id.to_string(),
-                    &order_number,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                    customer_id.to_string(),
-                    id.to_string()
-                ],
-            )
-            .map_err(map_db_error)?;
-        }
-
-        Ok(CheckoutResult {
-            cart_id: id,
-            order_id,
-            order_number,
-            payment_id: None,
-            total_charged: cart.grand_total,
-            currency: cart.currency,
-        })
+        with_immediate_transaction(&self.pool, |tx| self.complete_checkout_in_tx(tx, id, false))
     }
 
     fn cancel(&self, id: CartId) -> Result<Cart> {
@@ -1923,7 +1734,10 @@ impl SqliteCartRepository {
         })
     }
 
-    fn resolve_customer_id(&self, cart: &Cart) -> Result<CustomerId> {
+    fn resolve_customer_id_with_conn(
+        conn: &rusqlite::Connection,
+        cart: &Cart,
+    ) -> Result<CustomerId> {
         if let Some(customer_id) = cart.customer_id {
             return Ok(customer_id);
         }
@@ -1934,21 +1748,209 @@ impl SqliteCartRepository {
             )
         })?;
 
-        let customer_repo = SqliteCustomerRepository::new(self.pool.clone());
-        if let Some(customer) = customer_repo.get_by_email(email)? {
-            return Ok(customer.id);
-        }
+        validate_email(email)?;
 
         let (first_name, last_name) = split_customer_name(cart.customer_name.as_deref());
-        let created = customer_repo.create(CreateCustomer {
-            email: email.to_string(),
-            first_name,
-            last_name,
-            phone: cart.customer_phone.clone(),
-            ..Default::default()
-        })?;
+        validate_required_text("customer.first_name", &first_name, 100)?;
+        validate_required_text("customer.last_name", &last_name, 100)?;
+        if let Some(phone) = &cart.customer_phone {
+            validate_phone(phone)?;
+        }
 
-        Ok(created.id)
+        let result = conn.query_row("SELECT id FROM customers WHERE email = ?", [email], |row| {
+            row.get::<_, String>(0)
+        });
+
+        match result {
+            Ok(id) => Ok(CustomerId::from(parse_uuid(&id, "customer", "id")?)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                let customer_id = CustomerId::new();
+                let now = Utc::now();
+                conn.execute(
+                    "INSERT INTO customers (id, email, first_name, last_name, phone, status,
+                                            accepts_marketing, email_verified, tags, metadata,
+                                            created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        customer_id.to_string(),
+                        email,
+                        &first_name,
+                        &last_name,
+                        &cart.customer_phone,
+                        "active",
+                        0,
+                        0,
+                        "[]",
+                        Option::<String>::None,
+                        now.to_rfc3339(),
+                        now.to_rfc3339(),
+                    ],
+                )
+                .map_err(map_db_error)?;
+                Ok(customer_id)
+            }
+            Err(error) => Err(map_db_error(error)),
+        }
+    }
+
+    fn resolve_customer_id_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        cart: &Cart,
+    ) -> std::result::Result<CustomerId, rusqlite::Error> {
+        Self::resolve_customer_id_with_conn(tx, cart)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+    }
+
+    fn complete_checkout_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        cart_id: CartId,
+        x402_settled: bool,
+    ) -> std::result::Result<CheckoutResult, rusqlite::Error> {
+        let mut cart = match tx.query_row(
+            "SELECT * FROM carts WHERE id = ?",
+            [cart_id.to_string()],
+            Self::row_to_cart,
+        ) {
+            Ok(cart) => cart,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::NotFound,
+                )));
+            }
+            Err(error) => return Err(error),
+        };
+        cart.items = Self::load_cart_items_with_conn(tx, cart_id)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+
+        if cart.status == CartStatus::Completed {
+            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+            {
+                return Ok(CheckoutResult {
+                    cart_id,
+                    order_id,
+                    order_number,
+                    payment_id: None,
+                    total_charged: cart.grand_total,
+                    currency: cart.currency,
+                });
+            }
+        }
+
+        if !cart.is_ready_for_checkout() {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::ValidationError(
+                    "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
+                ),
+            )));
+        }
+
+        let customer_id = Self::resolve_customer_id_in_tx(tx, &cart)?;
+        let order_items: Vec<CreateOrderItem> = cart
+            .items
+            .iter()
+            .map(|item| CreateOrderItem {
+                product_id: item.product_id.unwrap_or_else(ProductId::new),
+                variant_id: item.variant_id,
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                discount: Some(item.discount_amount),
+                tax_amount: Some(item.tax_amount),
+            })
+            .collect();
+
+        let shipping_address = cart.shipping_address.clone().map(Into::into);
+        let billing_address = if cart.billing_same_as_shipping {
+            cart.billing_address.clone().or_else(|| cart.shipping_address.clone()).map(Into::into)
+        } else {
+            cart.billing_address.clone().map(Into::into)
+        };
+
+        let mut order = SqliteOrderRepository::create_from_cart_in_tx(
+            tx,
+            cart_id.into_uuid(),
+            &CreateOrder {
+                customer_id,
+                items: order_items,
+                currency: Some(cart.currency),
+                shipping_address,
+                billing_address,
+                notes: cart.notes.clone(),
+                payment_method: cart.payment_method.clone(),
+                shipping_method: cart.shipping_method.clone(),
+            },
+        )?;
+
+        if order.status != OrderStatus::Confirmed
+            && !order.status.can_transition_to(OrderStatus::Confirmed)
+        {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                CommerceError::InvalidOrderStatusTransition {
+                    from: order.status.to_string(),
+                    to: OrderStatus::Confirmed.to_string(),
+                },
+            )));
+        }
+
+        if order.status != OrderStatus::Confirmed || order.payment_status != PaymentStatus::Paid {
+            let now = Utc::now();
+            tx.execute(
+                "UPDATE orders SET status = ?, payment_status = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+                rusqlite::params![
+                    OrderStatus::Confirmed.to_string(),
+                    PaymentStatus::Paid.to_string(),
+                    now.to_rfc3339(),
+                    order.id.to_string(),
+                ],
+            )?;
+            order.status = OrderStatus::Confirmed;
+            order.payment_status = PaymentStatus::Paid;
+            order.updated_at = now;
+            order.version += 1;
+        }
+
+        let completed_at = Utc::now();
+        if x402_settled {
+            tx.execute(
+                "UPDATE carts SET
+                    status = 'completed', order_id = ?, order_number = ?,
+                    payment_status = 'captured', x402_status = 'settled',
+                    completed_at = ?, updated_at = ?, customer_id = ?
+                 WHERE id = ?",
+                rusqlite::params![
+                    order.id.to_string(),
+                    &order.order_number,
+                    completed_at.to_rfc3339(),
+                    completed_at.to_rfc3339(),
+                    customer_id.to_string(),
+                    cart_id.to_string()
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
+                 payment_status = 'captured', completed_at = ?, updated_at = ?, customer_id = ? WHERE id = ?",
+                rusqlite::params![
+                    order.id.to_string(),
+                    &order.order_number,
+                    completed_at.to_rfc3339(),
+                    completed_at.to_rfc3339(),
+                    customer_id.to_string(),
+                    cart_id.to_string()
+                ],
+            )?;
+        }
+
+        Ok(CheckoutResult {
+            cart_id,
+            order_id: order.id,
+            order_number: order.order_number,
+            payment_id: None,
+            total_charged: cart.grand_total,
+            currency: cart.currency,
+        })
     }
 }
 

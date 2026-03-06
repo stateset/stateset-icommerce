@@ -9,7 +9,7 @@ use axum::{
 
 use crate::dto::{
     InventoryAdjustRequest, InventoryFilterParams, InventoryItemResponse, InventoryListResponse,
-    InventoryResponse,
+    InventoryResponse, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
@@ -128,11 +128,11 @@ pub(crate) async fn list_inventory(
         location_id: None,
         below_reorder_point: params.below_reorder_point,
         is_active: params.is_active,
-        limit: Some(limit),
+        limit: Some(overfetch_limit(limit)),
         offset: Some(offset),
     };
-    let items = commerce.inventory().list(filter)?;
-    let has_more = items.len() == limit as usize;
+    let mut items = commerce.inventory().list(filter)?;
+    let has_more = finalize_page(&mut items, limit);
     Ok(Json(InventoryListResponse {
         items: items.into_iter().map(InventoryItemResponse::from).collect(),
         total,
@@ -274,10 +274,8 @@ mod tests {
 
     #[tokio::test]
     async fn list_inventory_empty() {
-        let resp = app()
-            .oneshot(Request::get("/inventory").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app().oneshot(Request::get("/inventory").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -312,10 +310,8 @@ mod tests {
             .unwrap();
 
         let app = router().with_state(state);
-        let resp = app
-            .oneshot(Request::get("/inventory").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app.oneshot(Request::get("/inventory").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();

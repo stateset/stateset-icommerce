@@ -275,9 +275,7 @@ pub fn decrypt_payload(
     if plaintext.len() < SALT_SIZE {
         return Err(CryptoError::DecryptionError("Plaintext too short".to_string()));
     }
-    let salt: [u8; 16] = plaintext[..SALT_SIZE]
-        .try_into()
-        .map_err(|_| CryptoError::InvalidSalt)?;
+    let salt: [u8; 16] = plaintext[..SALT_SIZE].try_into().map_err(|_| CryptoError::InvalidSalt)?;
     let json_bytes = &plaintext[SALT_SIZE..];
     let payload: serde_json::Value = serde_json::from_slice(json_bytes)
         .map_err(|e| CryptoError::DecryptionError(e.to_string()))?;

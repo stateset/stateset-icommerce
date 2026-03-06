@@ -9,13 +9,13 @@ use axum::{
 
 use crate::dto::{
     CreateOrderItemRequest, CreateOrderRequest, OrderFilterParams, OrderListResponse,
-    OrderResponse, decode_cursor, encode_cursor,
+    OrderResponse, decode_cursor, encode_cursor, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{
-    Address, CreateOrder, CreateOrderItem, CustomerId, FulfillmentStatus, OrderFilter, OrderId,
-    OrderStatus, PaymentStatus,
+    Address, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentStatus,
+    OrderFilter, OrderId, OrderStatus, PaymentStatus,
 };
 use std::str::FromStr;
 
@@ -47,11 +47,17 @@ pub(crate) async fn create_order(
 ) -> Result<(axum::http::StatusCode, Json<OrderResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let currency = req
+        .currency
+        .as_deref()
+        .map(CurrencyCode::from_str)
+        .transpose()
+        .map_err(|error| HttpError::BadRequest(format!("Invalid currency: {error}")))?;
 
     let input = CreateOrder {
         customer_id: req.customer_id,
         items: req.items.into_iter().map(into_core_order_item).collect(),
-        currency: req.currency.map(|c| c.parse().unwrap_or_default()),
+        currency,
         shipping_address: req.shipping_address.map(Address::from),
         billing_address: req.billing_address.map(Address::from),
         notes: req.notes,
@@ -149,8 +155,7 @@ pub(crate) async fn list_orders(
     // Decode cursor if provided
     let after_cursor = match &params.after {
         Some(cursor) => Some(
-            decode_cursor(cursor)
-                .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
         ),
         None => None,
     };
@@ -177,16 +182,14 @@ pub(crate) async fn list_orders(
         fulfillment_status,
         from_date,
         to_date,
-        limit: Some(limit),
+        limit: Some(overfetch_limit(limit)),
         offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
         after_cursor,
     };
-    let orders = commerce.orders().list(filter)?;
-    let has_more = orders.len() == limit as usize;
+    let mut orders = commerce.orders().list(filter)?;
+    let has_more = finalize_page(&mut orders, limit);
     let next_cursor = if has_more {
-        orders
-            .last()
-            .map(|o| encode_cursor(&o.order_date.to_rfc3339(), &o.id.to_string()))
+        orders.last().map(|o| encode_cursor(&o.order_date.to_rfc3339(), &o.id.to_string()))
     } else {
         None
     };
@@ -333,6 +336,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn create_order_rejects_invalid_currency() {
+        let (app, state) = app_with_state();
+
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "invalid-currency@example.com".into(),
+                first_name: "Invalid".into(),
+                last_name: "Currency".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let product = state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Widget".into(),
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: "SKU-INVALID-CURRENCY".into(),
+                    price: dec!(29.99),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let body = serde_json::json!({
+            "customer_id": customer.id,
+            "currency": "USDX",
+            "items": [{
+                "product_id": product.id,
+                "sku": "SKU-INVALID-CURRENCY",
+                "name": "Widget",
+                "quantity": 1,
+                "unit_price": "29.99"
+            }]
+        });
+
+        let resp = app
+            .oneshot(
+                Request::post("/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -664,6 +721,71 @@ mod tests {
         assert_eq!(json2["orders"].as_array().unwrap().len(), 1);
         assert_eq!(json2["has_more"], false);
         assert!(json2.get("next_cursor").is_none() || json2["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_orders_exact_boundary_has_more_false() {
+        let (_, state) = app_with_state();
+
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "cursor-boundary@example.com".into(),
+                first_name: "Cursor".into(),
+                last_name: "Boundary".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let product = state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Boundary Widget".into(),
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: "CUR-BOUNDARY-001".into(),
+                    price: dec!(5.00),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        for _ in 0..2 {
+            state
+                .commerce()
+                .orders()
+                .create(stateset_core::CreateOrder {
+                    customer_id: customer.id,
+                    items: vec![stateset_core::CreateOrderItem {
+                        product_id: product.id,
+                        variant_id: None,
+                        sku: "CUR-BOUNDARY-001".into(),
+                        name: "Boundary Widget".into(),
+                        quantity: 1,
+                        unit_price: dec!(5.00),
+                        discount: None,
+                        tax_amount: None,
+                    }],
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let app = router().with_state(state);
+        let resp = app
+            .oneshot(Request::get("/orders?limit=2").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["orders"].as_array().unwrap().len(), 2);
+        assert_eq!(json["has_more"], false);
+        assert!(json.get("next_cursor").is_none() || json["next_cursor"].is_null());
     }
 
     #[tokio::test]

@@ -8,8 +8,8 @@ use axum::{
 };
 
 use crate::dto::{
-    CreateProductRequest, ProductFilterParams, ProductListResponse, ProductResponse,
-    decode_cursor, encode_cursor,
+    CreateProductRequest, ProductFilterParams, ProductListResponse, ProductResponse, decode_cursor,
+    encode_cursor, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
@@ -138,8 +138,7 @@ pub(crate) async fn list_products(
     // Decode cursor if provided
     let after_cursor = match &params.after {
         Some(cursor) => Some(
-            decode_cursor(cursor)
-                .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
         ),
         None => None,
     };
@@ -168,16 +167,14 @@ pub(crate) async fn list_products(
         min_price,
         max_price,
         in_stock: params.in_stock,
-        limit: Some(limit),
+        limit: Some(overfetch_limit(limit)),
         offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
         after_cursor,
     };
-    let products = commerce.products().list(filter)?;
-    let has_more = products.len() == limit as usize;
+    let mut products = commerce.products().list(filter)?;
+    let has_more = finalize_page(&mut products, limit);
     let next_cursor = if has_more {
-        products
-            .last()
-            .map(|p| encode_cursor(&p.name, &p.id.to_string()))
+        products.last().map(|p| encode_cursor(&p.name, &p.id.to_string()))
     } else {
         None
     };
@@ -343,9 +340,7 @@ mod tests {
             .unwrap();
 
         let resp = app
-            .oneshot(
-                Request::get("/products?product_type=digital").body(Body::empty()).unwrap(),
-            )
+            .oneshot(Request::get("/products?product_type=digital").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

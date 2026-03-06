@@ -13,7 +13,6 @@ use stateset_core::CustomerId;
 use stateset_primitives::CurrencyCode;
 use uuid::Uuid;
 
-use stateset_core::{OrderId, OrderItemId, ProductId};
 use stateset_core::models::cart::{AddCartItem, CreateCart};
 use stateset_core::models::customer::{CreateCustomer, CreateCustomerAddress};
 use stateset_core::models::fraud::{CreateFraudRule, FraudDecision, FraudSignalType};
@@ -29,9 +28,12 @@ use stateset_core::models::segment::{CreateSegment, SegmentType};
 use stateset_core::models::shipment::CreateShipment;
 use stateset_core::models::shipping_zone::CreateShippingZone;
 use stateset_core::models::store_credit::{CreateStoreCredit, StoreCreditReason};
-use stateset_core::models::subscription::{BillingInterval, CreateSubscription, CreateSubscriptionPlan};
+use stateset_core::models::subscription::{
+    BillingInterval, CreateSubscription, CreateSubscriptionPlan,
+};
 use stateset_core::models::warranty::CreateWarranty;
 use stateset_core::models::wishlist::CreateWishlist;
+use stateset_core::{OrderId, OrderItemId, ProductId};
 
 // ============================================================================
 // Customer Fixtures
@@ -587,11 +589,7 @@ pub fn create_subscription_input(customer_id: CustomerId, plan_id: Uuid) -> Crea
 pub fn create_cart_input(customer_id: Option<CustomerId>) -> CreateCart {
     CreateCart {
         customer_id,
-        customer_email: if customer_id.is_none() {
-            Some("guest@example.com".into())
-        } else {
-            None
-        },
+        customer_email: if customer_id.is_none() { Some("guest@example.com".into()) } else { None },
         customer_name: if customer_id.is_none() { Some("Guest User".into()) } else { None },
         currency: Some(CurrencyCode::USD),
         items: Some(vec![AddCartItem {

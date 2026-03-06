@@ -7,7 +7,9 @@ use axum::{
     routing::get,
 };
 
-use crate::dto::{InvoiceFilterParams, InvoiceListResponse, InvoiceResponse};
+use crate::dto::{
+    InvoiceFilterParams, InvoiceListResponse, InvoiceResponse, finalize_page, overfetch_limit,
+};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{CustomerId, InvoiceFilter, InvoiceStatus, InvoiceType, OrderId};
@@ -16,9 +18,7 @@ use uuid::Uuid;
 
 /// Build the invoices sub-router.
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/invoices", get(list_invoices))
-        .route("/invoices/{id}", get(get_invoice))
+    Router::new().route("/invoices", get(list_invoices)).route("/invoices/{id}", get(get_invoice))
 }
 
 /// `GET /api/v1/invoices/:id`
@@ -139,11 +139,11 @@ pub(crate) async fn list_invoices(
         max_total: None,
         min_balance: None,
         invoice_number: None,
-        limit: Some(limit),
+        limit: Some(overfetch_limit(limit)),
         offset: Some(offset),
     };
-    let invoices = commerce.invoices().list(filter)?;
-    let has_more = invoices.len() == limit as usize;
+    let mut invoices = commerce.invoices().list(filter)?;
+    let has_more = finalize_page(&mut invoices, limit);
     Ok(Json(InvoiceListResponse {
         invoices: invoices.into_iter().map(InvoiceResponse::from).collect(),
         total,
@@ -178,10 +178,8 @@ mod tests {
 
     #[tokio::test]
     async fn list_invoices_empty() {
-        let resp = app()
-            .oneshot(Request::get("/invoices").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app().oneshot(Request::get("/invoices").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -202,9 +200,7 @@ mod tests {
     #[tokio::test]
     async fn list_invoices_invalid_customer_id_returns_400() {
         let resp = app()
-            .oneshot(
-                Request::get("/invoices?customer_id=not-a-uuid").body(Body::empty()).unwrap(),
-            )
+            .oneshot(Request::get("/invoices?customer_id=not-a-uuid").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -213,9 +209,7 @@ mod tests {
     #[tokio::test]
     async fn list_invoices_invalid_invoice_type_returns_400() {
         let resp = app()
-            .oneshot(
-                Request::get("/invoices?invoice_type=bogus").body(Body::empty()).unwrap(),
-            )
+            .oneshot(Request::get("/invoices?invoice_type=bogus").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);

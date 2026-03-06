@@ -400,7 +400,6 @@ pub use stateset_core::{
     // Currency types
     ConversionResult,
     ConvertCurrency,
-    CurrencyCode,
     // Cost Accounting types
     CostAdjustment,
     CostAdjustmentFilter,
@@ -551,6 +550,7 @@ pub use stateset_core::{
     CreditTransactionFilter,
     CreditTransactionType,
     Currency,
+    CurrencyCode,
     // Custom Objects (custom states / metaobjects)
     CustomFieldDefinition,
     CustomFieldType,

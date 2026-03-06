@@ -9,7 +9,7 @@ use axum::{
 
 use crate::dto::{
     CreateReturnRequest, ReturnFilterParams, ReturnListResponse, ReturnResponse, decode_cursor,
-    encode_cursor,
+    encode_cursor, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
@@ -190,8 +190,7 @@ pub(crate) async fn list_returns(
     // Decode cursor if provided
     let after_cursor = match &params.after {
         Some(cursor) => Some(
-            decode_cursor(cursor)
-                .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
         ),
         None => None,
     };
@@ -218,16 +217,14 @@ pub(crate) async fn list_returns(
         reason,
         from_date,
         to_date,
-        limit: Some(limit),
+        limit: Some(overfetch_limit(limit)),
         offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
         after_cursor,
     };
-    let returns = commerce.returns().list(filter)?;
-    let has_more = returns.len() == limit as usize;
+    let mut returns = commerce.returns().list(filter)?;
+    let has_more = finalize_page(&mut returns, limit);
     let next_cursor = if has_more {
-        returns
-            .last()
-            .map(|r| encode_cursor(&r.created_at.to_rfc3339(), &r.id.to_string()))
+        returns.last().map(|r| encode_cursor(&r.created_at.to_rfc3339(), &r.id.to_string()))
     } else {
         None
     };

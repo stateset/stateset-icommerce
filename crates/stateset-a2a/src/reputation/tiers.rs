@@ -230,33 +230,21 @@ mod tests {
 
     #[test]
     fn compute_tier_enterprise() {
-        assert_eq!(
-            TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.01)),
-            TrustTier::Enterprise
-        );
+        assert_eq!(TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.01)), TrustTier::Enterprise);
     }
 
     #[test]
     fn compute_tier_enterprise_boundary() {
         // Exactly 2% dispute rate → blocked
-        assert_ne!(
-            TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.02)),
-            TrustTier::Enterprise
-        );
+        assert_ne!(TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.02)), TrustTier::Enterprise);
         // Just under 2%
-        assert_eq!(
-            TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.019)),
-            TrustTier::Enterprise
-        );
+        assert_eq!(TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.019)), TrustTier::Enterprise);
     }
 
     #[test]
     fn compute_tier_enterprise_high_dispute_rate_falls_to_verified() {
         // High dispute rate blocks enterprise, but 0 unresolved allows verified
-        assert_eq!(
-            TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.05)),
-            TrustTier::Verified
-        );
+        assert_eq!(TrustTier::compute_tier(100, dec!(4.5), 0, dec!(0.05)), TrustTier::Verified);
     }
 
     #[test]

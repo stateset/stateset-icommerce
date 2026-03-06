@@ -212,10 +212,7 @@ pub struct ResolutionOutcome {
 ///
 /// For `Split`, uses a 50/50 default split.
 #[must_use]
-pub fn resolution_to_escrow_action(
-    resolution: ResolutionType,
-    amount: Decimal,
-) -> EscrowAction {
+pub fn resolution_to_escrow_action(resolution: ResolutionType, amount: Decimal) -> EscrowAction {
     match resolution {
         ResolutionType::FullRefund => EscrowAction {
             resolution_type: resolution,

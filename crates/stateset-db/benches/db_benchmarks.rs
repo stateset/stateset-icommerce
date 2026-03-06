@@ -5,10 +5,10 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct,
-    CurrencyCode, CustomerFilter, CustomerId, CustomerRepository, FulfillmentStatus,
-    InventoryRepository, OrderFilter, OrderRepository, OrderStatus, PaymentStatus, ProductFilter,
-    ProductId, ProductRepository, ReserveInventory, UpdateOrder,
+    CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct, CurrencyCode,
+    CustomerFilter, CustomerId, CustomerRepository, FulfillmentStatus, InventoryRepository,
+    OrderFilter, OrderRepository, OrderStatus, PaymentStatus, ProductFilter, ProductId,
+    ProductRepository, ReserveInventory, UpdateOrder,
 };
 use stateset_db::{DatabaseConfig, SqliteDatabase};
 use std::sync::Arc;

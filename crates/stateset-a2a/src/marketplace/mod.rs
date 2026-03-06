@@ -6,5 +6,5 @@
 pub mod scoring;
 pub mod state_machine;
 
-pub use scoring::{RfqResponse, ScoringCriteria, score_response, rank_responses};
-pub use state_machine::{RfqStatus, RfqResponseStatus, RfqTransition};
+pub use scoring::{RfqResponse, ScoringCriteria, rank_responses, score_response};
+pub use state_machine::{RfqResponseStatus, RfqStatus, RfqTransition};

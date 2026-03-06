@@ -1,12 +1,12 @@
 //! Integration tests for subscription management features
 
 use rust_decimal_macros::dec;
+use stateset_core::CurrencyCode;
 use stateset_embedded::{
     BillingInterval, CancelSubscription, Commerce, CreateCustomer, CreateSubscription,
     CreateSubscriptionPlan, CustomerId, PauseSubscription, PlanStatus, SkipBillingCycle,
     SubscriptionFilter, SubscriptionPlanFilter, SubscriptionStatus, UpdateSubscriptionPlan,
 };
-use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================

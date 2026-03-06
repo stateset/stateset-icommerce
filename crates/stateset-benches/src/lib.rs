@@ -22,7 +22,7 @@ use rust_decimal_macros::dec;
 use serde_json::json;
 use stateset_core::models::customer::CreateCustomer;
 use stateset_core::models::order::{Address, CreateOrder, CreateOrderItem};
-use stateset_core::{CustomerId, ProductId};
+use stateset_core::{CurrencyCode, CustomerId, ProductId};
 use stateset_embedded::Commerce;
 use uuid::Uuid;
 
@@ -45,7 +45,7 @@ pub fn create_test_orders(n: usize) -> Vec<CreateOrder> {
                 discount: None,
                 tax_amount: None,
             }],
-            currency: Some("USD".into()),
+            currency: Some(CurrencyCode::USD),
             shipping_address: Some(Address {
                 line1: "123 Bench St".into(),
                 line2: None,

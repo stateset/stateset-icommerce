@@ -2,12 +2,12 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::CartId;
+use stateset_core::CurrencyCode;
 use stateset_embedded::{
     AddCartItem, Cart, CartAddress, CartFilter, CartStatus, CheckoutResult, Commerce, CreateCart,
     CreateCouponCode, CreateCustomer, CreatePromotion, PromotionType, SetCartPayment,
     SetCartShipping, UpdateCart, UpdateCartItem,
 };
-use stateset_core::CurrencyCode;
 use uuid::Uuid;
 
 // ============================================================================

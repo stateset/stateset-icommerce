@@ -38,9 +38,11 @@ impl FfiMoney {
 // Conversions: Money ↔ FfiMoney
 // ---------------------------------------------------------------------------
 
-impl From<Money> for FfiMoney {
-    fn from(m: Money) -> Self {
-        Self::try_from_money(m).expect("Money amount must be representable as i64 minor units")
+impl TryFrom<Money> for FfiMoney {
+    type Error = FfiErrorCode;
+
+    fn try_from(m: Money) -> Result<Self, Self::Error> {
+        Self::try_from_money(m)
     }
 }
 
@@ -205,7 +207,7 @@ mod tests {
     #[test]
     fn money_roundtrip() {
         let money = Money::new(dec!(42.50), CurrencyCode::USD);
-        let ffi: FfiMoney = money.into();
+        let ffi: FfiMoney = money.try_into().unwrap();
         assert_eq!(ffi.amount_cents, 4250);
         assert_eq!(&ffi.currency, b"USD");
 
@@ -217,7 +219,7 @@ mod tests {
     #[test]
     fn money_zero() {
         let money = Money::zero(CurrencyCode::EUR);
-        let ffi: FfiMoney = money.into();
+        let ffi: FfiMoney = money.try_into().unwrap();
         assert_eq!(ffi.amount_cents, 0);
         assert_eq!(&ffi.currency, b"EUR");
     }
@@ -225,21 +227,21 @@ mod tests {
     #[test]
     fn money_negative() {
         let money = Money::new(dec!(-5.99), CurrencyCode::USD);
-        let ffi: FfiMoney = money.into();
+        let ffi: FfiMoney = money.try_into().unwrap();
         assert_eq!(ffi.amount_cents, -599);
     }
 
     #[test]
     fn money_large_amount() {
         let money = Money::new(dec!(999999.99), CurrencyCode::USD);
-        let ffi: FfiMoney = money.into();
+        let ffi: FfiMoney = money.try_into().unwrap();
         assert_eq!(ffi.amount_cents, 99999999);
     }
 
     #[test]
     fn money_roundtrip_jpy_uses_zero_minor_units() {
         let money = Money::new(dec!(42), CurrencyCode::JPY);
-        let ffi: FfiMoney = money.into();
+        let ffi: FfiMoney = money.try_into().unwrap();
         assert_eq!(ffi.amount_cents, 42);
         assert_eq!(&ffi.currency, b"JPY");
 
@@ -252,7 +254,7 @@ mod tests {
     fn money_roundtrip_three_decimal_currency() {
         let kwd = CurrencyCode::from_bytes(*b"KWD").unwrap();
         let money = Money::new(dec!(1.234), kwd);
-        let ffi: FfiMoney = money.into();
+        let ffi: FfiMoney = money.try_into().unwrap();
         assert_eq!(ffi.amount_cents, 1234);
 
         let back: Money = ffi.try_into().unwrap();

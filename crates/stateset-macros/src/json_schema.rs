@@ -152,7 +152,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let mut required_names = Vec::new();
 
     for field in fields {
-        let field_name = field.ident.as_ref().expect("named fields have identifiers");
+        let Some(field_name) = field.ident.as_ref() else {
+            return Err(syn::Error::new_spanned(
+                name,
+                "JsonSchema only supports structs with named fields",
+            ));
+        };
         let field_name_str = field_name.to_string();
 
         let is_optional = extract_option_inner(&field.ty).is_some();

@@ -131,7 +131,9 @@ pub struct ShipTask {
 // ============================================================================
 
 /// Status of a wave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -159,7 +161,9 @@ impl FromStr for WaveStatus {
 }
 
 /// Status of a pick task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -189,7 +193,9 @@ impl FromStr for PickStatus {
 }
 
 /// Status of a pack task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -258,7 +264,9 @@ impl FromStr for ShipStatus {
 }
 
 /// Package type for cartons.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -272,7 +280,9 @@ pub enum PackageType {
 }
 
 /// Type of wave for order grouping
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default,
+)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

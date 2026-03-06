@@ -76,7 +76,16 @@ impl RedSnapshot {
         let error_rate = if requests == 0 { 0.0 } else { errors as f64 / requests as f64 };
         let avg_duration_ms = if requests == 0 { 0.0 } else { duration_total_ms / requests as f64 };
 
-        Self { requests, errors, duration_total_ms, error_rate, avg_duration_ms, p50_ms: 0.0, p95_ms: 0.0, p99_ms: 0.0 }
+        Self {
+            requests,
+            errors,
+            duration_total_ms,
+            error_rate,
+            avg_duration_ms,
+            p50_ms: 0.0,
+            p95_ms: 0.0,
+            p99_ms: 0.0,
+        }
     }
 
     /// Evaluate this RED snapshot against an SLO target.
@@ -306,7 +315,8 @@ impl RedAccumulator {
     }
 
     fn snapshot(&self) -> RedSnapshot {
-        let mut snap = RedSnapshot::from_counts(self.requests, self.errors, self.duration_micros_total);
+        let mut snap =
+            RedSnapshot::from_counts(self.requests, self.errors, self.duration_micros_total);
         snap.p50_ms = self.histogram.percentile(0.50);
         snap.p95_ms = self.histogram.percentile(0.95);
         snap.p99_ms = self.histogram.percentile(0.99);

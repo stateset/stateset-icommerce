@@ -1,12 +1,13 @@
 //! Integration tests for Payment processing
 
 use rust_decimal_macros::dec;
-use stateset_embedded::{
-    CardBrand, Commerce, CreateCustomer, CreateOrder, CreateOrderItem, CreatePayment,
-    CreatePaymentMethod, CreateRefund, CustomerId, OrderId, Payment, PaymentFilter, PaymentId,
-    PaymentMethodType, PaymentTransactionStatus, RefundStatus, UpdatePayment,
-};
 use stateset_core::CurrencyCode;
+use stateset_embedded::{
+    CardBrand, Commerce, CreateCustomer, CreateInvoice, CreateInvoiceItem, CreateOrder,
+    CreateOrderItem, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId, OrderId,
+    Payment, PaymentFilter, PaymentId, PaymentMethodType, PaymentTransactionStatus, RefundStatus,
+    UpdatePayment,
+};
 use uuid::Uuid;
 
 // ============================================================================
@@ -45,6 +46,25 @@ fn create_test_order(commerce: &Commerce, customer_id: CustomerId) -> OrderId {
         })
         .expect("Failed to create order")
         .id
+}
+
+/// Helper to create a test invoice
+fn create_test_invoice(commerce: &Commerce, customer_id: CustomerId) -> Uuid {
+    commerce
+        .invoices()
+        .create(CreateInvoice {
+            customer_id,
+            items: vec![CreateInvoiceItem {
+                description: "Test invoice item".into(),
+                quantity: dec!(1),
+                unit_price: dec!(49.99),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("Failed to create invoice")
+        .id
+        .into()
 }
 
 /// Helper to create a test payment for an order
@@ -630,6 +650,55 @@ fn test_list_payments_by_customer() {
 
     assert_eq!(customer1_payments.len(), 3);
     assert!(customer1_payments.iter().all(|p| p.customer_id == Some(customer1)));
+}
+
+#[test]
+fn test_list_payments_by_invoice() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+    let invoice1 = create_test_invoice(&commerce, customer_id);
+    let invoice2 = create_test_invoice(&commerce, customer_id);
+
+    commerce
+        .payments()
+        .create(CreatePayment {
+            invoice_id: Some(invoice1),
+            customer_id: Some(customer_id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(49.99),
+            ..Default::default()
+        })
+        .expect("Failed to create invoice payment 1");
+
+    commerce
+        .payments()
+        .create(CreatePayment {
+            invoice_id: Some(invoice2),
+            customer_id: Some(customer_id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(24.99),
+            ..Default::default()
+        })
+        .expect("Failed to create invoice payment 2");
+
+    create_test_payment(&commerce, None, Some(customer_id));
+
+    let filtered = commerce
+        .payments()
+        .list(PaymentFilter { invoice_id: Some(invoice1), ..Default::default() })
+        .expect("Failed to filter payments by invoice");
+    let invoice_payments =
+        commerce.payments().for_invoice(invoice1).expect("Failed to fetch payments for invoice");
+    let count = commerce
+        .payments()
+        .count(PaymentFilter { invoice_id: Some(invoice1), ..Default::default() })
+        .expect("Failed to count payments by invoice");
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].invoice_id, Some(invoice1));
+    assert_eq!(invoice_payments.len(), 1);
+    assert_eq!(invoice_payments[0].invoice_id, Some(invoice1));
+    assert_eq!(count, 1);
 }
 
 #[test]

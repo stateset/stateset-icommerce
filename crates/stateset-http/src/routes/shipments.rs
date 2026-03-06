@@ -7,7 +7,9 @@ use axum::{
     routing::get,
 };
 
-use crate::dto::{ShipmentFilterParams, ShipmentListResponse, ShipmentResponse};
+use crate::dto::{
+    ShipmentFilterParams, ShipmentListResponse, ShipmentResponse, finalize_page, overfetch_limit,
+};
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use stateset_core::{OrderId, ShipmentFilter, ShipmentId, ShipmentStatus, ShippingCarrier};
@@ -105,11 +107,11 @@ pub(crate) async fn list_shipments(
         status,
         carrier,
         tracking_number: params.tracking_number,
-        limit: Some(limit),
+        limit: Some(overfetch_limit(limit)),
         offset: Some(offset),
     };
-    let shipments = commerce.shipments().list(filter)?;
-    let has_more = shipments.len() == limit as usize;
+    let mut shipments = commerce.shipments().list(filter)?;
+    let has_more = finalize_page(&mut shipments, limit);
     Ok(Json(ShipmentListResponse {
         shipments: shipments.into_iter().map(ShipmentResponse::from).collect(),
         total,
@@ -143,10 +145,8 @@ mod tests {
 
     #[tokio::test]
     async fn list_shipments_empty() {
-        let resp = app()
-            .oneshot(Request::get("/shipments").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let resp =
+            app().oneshot(Request::get("/shipments").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -167,9 +167,7 @@ mod tests {
     #[tokio::test]
     async fn list_shipments_invalid_order_id_returns_400() {
         let resp = app()
-            .oneshot(
-                Request::get("/shipments?order_id=not-a-uuid").body(Body::empty()).unwrap(),
-            )
+            .oneshot(Request::get("/shipments?order_id=not-a-uuid").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -187,9 +185,7 @@ mod tests {
     #[tokio::test]
     async fn list_shipments_with_pagination() {
         let resp = app()
-            .oneshot(
-                Request::get("/shipments?limit=10&offset=5").body(Body::empty()).unwrap(),
-            )
+            .oneshot(Request::get("/shipments?limit=10&offset=5").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

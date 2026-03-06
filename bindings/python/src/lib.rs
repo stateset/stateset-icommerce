@@ -12,11 +12,12 @@
 //!     last_name="Smith"
 //! )
 //! ```
+// PyO3 APIs intentionally expose rich keyword argument signatures to Python callers.
+#![allow(clippy::too_many_arguments)]
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use rust_decimal::Decimal;
-use serde_json;
 // Use :: prefix to refer to the external crate, not the pymodule
 use ::stateset_embedded::Commerce as RustCommerce;
 use stateset_primitives::CurrencyCode;
@@ -897,7 +898,7 @@ impl From<stateset_core::ProductVariant> for ProductVariant {
             sku: v.sku,
             name: v.name,
             price: to_f64_or_nan(v.price),
-            compare_at_price: v.compare_at_price.map(|d| to_f64_or_nan(d)),
+            compare_at_price: v.compare_at_price.map(to_f64_or_nan),
             is_default: v.is_default,
         }
     }
@@ -965,7 +966,7 @@ impl Products {
                     sku: v.sku,
                     name: v.name,
                     price: Decimal::from_f64_retain(v.price).unwrap_or_default(),
-                    compare_at_price: v.compare_at_price.and_then(|p| Decimal::from_f64_retain(p)),
+                    compare_at_price: v.compare_at_price.and_then(Decimal::from_f64_retain),
                     ..Default::default()
                 })
                 .collect()
@@ -1699,8 +1700,8 @@ impl Inventory {
                 sku,
                 name,
                 description,
-                initial_quantity: initial_quantity.and_then(|q| Decimal::from_f64_retain(q)),
-                reorder_point: reorder_point.and_then(|r| Decimal::from_f64_retain(r)),
+                initial_quantity: initial_quantity.and_then(Decimal::from_f64_retain),
+                reorder_point: reorder_point.and_then(Decimal::from_f64_retain),
                 ..Default::default()
             })
             .map_err(|e| {
@@ -2338,7 +2339,8 @@ impl Payments {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid: uuid::Uuid = payment_id.parse().map_err(|_| PyValueError::new_err("Invalid payment UUID"))?;
+        let uuid: uuid::Uuid =
+            payment_id.parse().map_err(|_| PyValueError::new_err("Invalid payment UUID"))?;
 
         let refund = commerce
             .payments()
@@ -2467,20 +2469,20 @@ impl Shipments {
         let order_uuid =
             order_id.parse().map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
 
-        let carrier_type = carrier.and_then(|c| match c.to_lowercase().as_str() {
-            "ups" => Some(stateset_core::ShippingCarrier::Ups),
-            "fedex" => Some(stateset_core::ShippingCarrier::FedEx),
-            "usps" => Some(stateset_core::ShippingCarrier::Usps),
-            "dhl" => Some(stateset_core::ShippingCarrier::Dhl),
-            _ => Some(stateset_core::ShippingCarrier::Other),
+        let carrier_type = carrier.map(|c| match c.to_lowercase().as_str() {
+            "ups" => stateset_core::ShippingCarrier::Ups,
+            "fedex" => stateset_core::ShippingCarrier::FedEx,
+            "usps" => stateset_core::ShippingCarrier::Usps,
+            "dhl" => stateset_core::ShippingCarrier::Dhl,
+            _ => stateset_core::ShippingCarrier::Other,
         });
 
-        let method = shipping_method.and_then(|m| match m.to_lowercase().as_str() {
-            "standard" => Some(stateset_core::ShippingMethod::Standard),
-            "express" => Some(stateset_core::ShippingMethod::Express),
-            "overnight" => Some(stateset_core::ShippingMethod::Overnight),
-            "ground" => Some(stateset_core::ShippingMethod::Ground),
-            _ => Some(stateset_core::ShippingMethod::Standard),
+        let method = shipping_method.map(|m| match m.to_lowercase().as_str() {
+            "standard" => stateset_core::ShippingMethod::Standard,
+            "express" => stateset_core::ShippingMethod::Express,
+            "overnight" => stateset_core::ShippingMethod::Overnight,
+            "ground" => stateset_core::ShippingMethod::Ground,
+            _ => stateset_core::ShippingMethod::Standard,
         });
 
         let shipment = commerce
@@ -4048,7 +4050,7 @@ impl From<stateset_core::CartItem> for CartItem {
             image_url: i.image_url,
             quantity: i.quantity,
             unit_price: to_f64_or_nan(i.unit_price),
-            original_price: i.original_price.map(|p| to_f64_or_nan(p)),
+            original_price: i.original_price.map(to_f64_or_nan),
             discount_amount: to_f64_or_nan(i.discount_amount),
             tax_amount: to_f64_or_nan(i.tax_amount),
             total: to_f64_or_nan(i.total),
@@ -4507,7 +4509,8 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid: uuid::Uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let carts = commerce
             .carts()
@@ -4553,7 +4556,8 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid: uuid::Uuid = cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let prod_uuid = item
             .product_id
@@ -4611,11 +4615,12 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid: uuid::Uuid = item_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            item_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let cart_item = commerce
             .carts()
-            .update_item(uuid.into(), stateset_core::UpdateCartItem { quantity, ..Default::default() })
+            .update_item(uuid, stateset_core::UpdateCartItem { quantity, ..Default::default() })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to update item: {}", e)))?;
 
         Ok(cart_item.into())
@@ -4631,11 +4636,12 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid: uuid::Uuid = item_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            item_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce
             .carts()
-            .remove_item(uuid.into())
+            .remove_item(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove item: {}", e)))?;
 
         Ok(())
@@ -4654,7 +4660,8 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid: uuid::Uuid = cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let items = commerce
             .carts()
@@ -4674,7 +4681,8 @@ impl Carts {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid: uuid::Uuid = cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            cart_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         commerce
             .carts()
@@ -4702,9 +4710,10 @@ impl Carts {
 
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
-        let cart = commerce.carts().set_shipping_address(uuid.into(), (&address).into()).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to set shipping address: {}", e))
-        })?;
+        let cart =
+            commerce.carts().set_shipping_address(uuid.into(), (&address).into()).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to set shipping address: {}", e))
+            })?;
 
         Ok(cart.into())
     }
@@ -4725,9 +4734,10 @@ impl Carts {
 
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
-        let cart = commerce.carts().set_billing_address(uuid.into(), (&address).into()).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to set billing address: {}", e))
-        })?;
+        let cart =
+            commerce.carts().set_billing_address(uuid.into(), (&address).into()).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to set billing address: {}", e))
+            })?;
 
         Ok(cart.into())
     }
@@ -5128,7 +5138,10 @@ impl Carts {
 
         let cart = commerce
             .carts()
-            .set_tax(uuid.into(), Decimal::from_str_exact(&tax_amount.to_string()).unwrap_or_default())
+            .set_tax(
+                uuid.into(),
+                Decimal::from_str_exact(&tax_amount.to_string()).unwrap_or_default(),
+            )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to set tax: {}", e)))?;
 
         Ok(cart.into())
@@ -6490,7 +6503,7 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
             billing_interval_count: 1, // Default to 1 since core doesn't have this field
             price: to_f64_or_nan(p.price),
             currency: p.currency.to_string(),
-            setup_fee: p.setup_fee.map(|d| to_f64_or_nan(d)).unwrap_or(0.0),
+            setup_fee: p.setup_fee.map(to_f64_or_nan).unwrap_or(0.0),
             trial_days: p.trial_days,
             status: format!("{:?}", p.status).to_lowercase(),
             created_at: p.created_at.to_rfc3339(),
@@ -6693,7 +6706,12 @@ impl Subscriptions {
                 custom_interval_days: billing_interval_count,
                 price: Decimal::from_f64_retain(price)
                     .ok_or_else(|| PyValueError::new_err("Invalid price"))?,
-                currency: Some(currency.unwrap_or_else(|| "USD".to_string()).parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD)),
+                currency: Some(
+                    currency
+                        .unwrap_or_else(|| "USD".to_string())
+                        .parse::<CurrencyCode>()
+                        .unwrap_or(CurrencyCode::USD),
+                ),
                 setup_fee: setup_fee.map(|f| Decimal::from_f64_retain(f).unwrap_or_default()),
                 trial_days,
                 ..Default::default()
@@ -6714,7 +6732,7 @@ impl Subscriptions {
 
         let plan = commerce
             .subscriptions()
-            .get_plan(uuid.into())
+            .get_plan(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get plan: {}", e)))?;
 
         Ok(plan.map(|p| p.into()))
@@ -6768,7 +6786,7 @@ impl Subscriptions {
 
         let plan = commerce
             .subscriptions()
-            .activate_plan(uuid.into())
+            .activate_plan(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to activate plan: {}", e)))?;
 
         Ok(plan.into())
@@ -6785,7 +6803,7 @@ impl Subscriptions {
 
         let plan = commerce
             .subscriptions()
-            .archive_plan(uuid.into())
+            .archive_plan(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to archive plan: {}", e)))?;
 
         Ok(plan.into())
@@ -6819,7 +6837,7 @@ impl Subscriptions {
                 customer_id: cust_uuid,
                 plan_id: plan_uuid,
                 skip_trial,
-                price: price.and_then(|p| Decimal::from_f64_retain(p)),
+                price: price.and_then(Decimal::from_f64_retain),
                 ..Default::default()
             })
             .map_err(|e| {
@@ -7059,7 +7077,7 @@ impl Subscriptions {
 
         let cycle = commerce
             .subscriptions()
-            .get_billing_cycle(uuid.into())
+            .get_billing_cycle(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get billing cycle: {}", e)))?;
 
         Ok(cycle.map(|c| c.into()))
@@ -7076,7 +7094,8 @@ impl Subscriptions {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let uuid: uuid::Uuid = subscription_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let uuid: uuid::Uuid =
+            subscription_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
 
         let events = commerce
             .subscriptions()
@@ -7155,9 +7174,9 @@ impl From<stateset_core::Promotion> for Promotion {
             target: format!("{:?}", p.target).to_lowercase(),
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
-            percentage_off: p.percentage_off.map(|d| to_f64_or_nan(d)),
-            fixed_amount_off: p.fixed_amount_off.map(|d| to_f64_or_nan(d)),
-            max_discount_amount: p.max_discount_amount.map(|d| to_f64_or_nan(d)),
+            percentage_off: p.percentage_off.map(to_f64_or_nan),
+            fixed_amount_off: p.fixed_amount_off.map(to_f64_or_nan),
+            max_discount_amount: p.max_discount_amount.map(to_f64_or_nan),
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
             starts_at: p.starts_at.to_rfc3339(),
@@ -7663,7 +7682,7 @@ impl PromotionsApi {
 
         let coupon = commerce
             .promotions()
-            .get_coupon(uuid.into())
+            .get_coupon(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get coupon: {}", e)))?;
 
         Ok(coupon.map(|c| c.into()))
@@ -7757,7 +7776,10 @@ impl PromotionsApi {
                 .unwrap_or_default(),
             shipping_country: None,
             shipping_state: None,
-            currency: currency.unwrap_or_else(|| "USD".to_string()).parse::<CurrencyCode>().unwrap_or(CurrencyCode::USD),
+            currency: currency
+                .unwrap_or_else(|| "USD".to_string())
+                .parse::<CurrencyCode>()
+                .unwrap_or(CurrencyCode::USD),
             is_first_order: false,
         };
 
@@ -8128,9 +8150,9 @@ impl From<stateset_core::EuVatInfo> for EuVatInfo {
             country_code: i.country_code,
             country_name: i.country_name,
             standard_rate: to_f64_or_nan(i.standard_rate),
-            reduced_rate: i.reduced_rate.map(|d| to_f64_or_nan(d)),
-            super_reduced_rate: i.super_reduced_rate.map(|d| to_f64_or_nan(d)),
-            parking_rate: i.parking_rate.map(|d| to_f64_or_nan(d)),
+            reduced_rate: i.reduced_rate.map(to_f64_or_nan),
+            super_reduced_rate: i.super_reduced_rate.map(to_f64_or_nan),
+            parking_rate: i.parking_rate.map(to_f64_or_nan),
         }
     }
 }
@@ -8161,9 +8183,9 @@ impl From<stateset_core::CanadianTaxInfo> for CanadianTaxInfo {
             province_code: i.province_code,
             province_name: i.province_name,
             gst_rate: to_f64_or_nan(i.gst_rate),
-            pst_rate: i.pst_rate.map(|d| to_f64_or_nan(d)),
-            hst_rate: i.hst_rate.map(|d| to_f64_or_nan(d)),
-            qst_rate: i.qst_rate.map(|d| to_f64_or_nan(d)),
+            pst_rate: i.pst_rate.map(to_f64_or_nan),
+            hst_rate: i.hst_rate.map(to_f64_or_nan),
+            qst_rate: i.qst_rate.map(to_f64_or_nan),
             total_rate: to_f64_or_nan(i.total_rate),
         }
     }
@@ -9404,7 +9426,7 @@ impl From<stateset_core::ReceiptItem> for ReceiptLine {
             sku: l.sku,
             expected_quantity: to_f64_or_nan(l.expected_quantity),
             received_quantity: to_f64_or_nan(l.received_quantity),
-            unit_cost: l.unit_cost.map(|c| to_f64_or_nan(c)),
+            unit_cost: l.unit_cost.map(to_f64_or_nan),
             status: format!("{:?}", l.status),
         }
     }
@@ -9579,8 +9601,10 @@ impl FulfillmentApi {
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let wh_id: i32 =
             warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
-        let order_typed_ids: Vec<stateset_core::OrderId> =
-            order_ids.iter().filter_map(|id| id.parse::<uuid::Uuid>().ok().map(Into::into)).collect();
+        let order_typed_ids: Vec<stateset_core::OrderId> = order_ids
+            .iter()
+            .filter_map(|id| id.parse::<uuid::Uuid>().ok().map(Into::into))
+            .collect();
         let wave = commerce
             .fulfillment()
             .create_wave(stateset_core::CreateWave {
@@ -9651,7 +9675,7 @@ impl FulfillmentApi {
         let task = commerce
             .fulfillment()
             .complete_pick(stateset_core::CompletePick {
-                pick_id: uuid.into(),
+                pick_id: uuid,
                 quantity_picked: Decimal::from_f64_retain(quantity_picked).unwrap_or_default(),
                 quantity_short: None,
                 short_reason: None,

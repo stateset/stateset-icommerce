@@ -7,4 +7,4 @@ pub mod scoring;
 pub mod tiers;
 
 pub use scoring::{DimensionScores, FeedbackEntry, ReputationSummary, ScoreDimension};
-pub use tiers::{TierRequirements, TrustTier, TransactionType};
+pub use tiers::{TierRequirements, TransactionType, TrustTier};

@@ -25,7 +25,7 @@
 //! let commerce = Commerce::new(":memory:")?;
 //! let addr: SocketAddr = "0.0.0.0:3000".parse()?;
 //!
-//! ServerBuilder::new(commerce)
+//! ServerBuilder::new_from_env(commerce)?
 //!     .bind(addr)
 //!     .with_cors()
 //!     .with_request_id()
@@ -62,7 +62,7 @@ mod state;
 pub use dto::*;
 pub use error::HttpError;
 pub use server::ServerBuilder;
-pub use state::AppState;
+pub use state::{AppState, IpCidr, MetricsHeaderLimits};
 
 // Re-export the router assembly function for users who want to embed the
 // routes in a larger application.

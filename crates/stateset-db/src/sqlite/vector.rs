@@ -17,14 +17,14 @@ use stateset_core::{
 };
 use std::collections::HashMap;
 
-/// SQLite implementation of VectorRepository using pure Rust cosine similarity
+/// SQLite implementation of `VectorRepository` using pure Rust cosine similarity.
 #[derive(Debug)]
 pub struct SqliteVectorRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
 impl SqliteVectorRepository {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 

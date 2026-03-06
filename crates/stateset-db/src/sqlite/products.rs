@@ -391,9 +391,7 @@ impl ProductRepository for SqliteProductRepository {
 
         // Keyset cursor: (name, id) for stable ASC ordering
         if let Some((cursor_name, cursor_id)) = &after_cursor {
-            sql.push_str(
-                " AND (name > ? OR (name = ? AND id > ?))",
-            );
+            sql.push_str(" AND (name > ? OR (name = ? AND id > ?))");
             params.push(Box::new(cursor_name.clone()));
             params.push(Box::new(cursor_name.clone()));
             params.push(Box::new(cursor_id.clone()));

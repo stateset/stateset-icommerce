@@ -8,11 +8,8 @@ use crate::error::FfiErrorCode;
 /// Convert a domain type into its FFI-safe representation.
 #[allow(clippy::wrong_self_convention)]
 pub trait IntoFfi<F> {
-    /// Perform the conversion.
-    ///
-    /// This is infallible because we control both sides of the conversion
-    /// and domain types are always representable in the FFI layer.
-    fn into_ffi(&self) -> F;
+    /// Perform a checked conversion.
+    fn into_ffi(&self) -> Result<F, FfiErrorCode>;
 }
 
 /// Fallible conversion from a domain type into its FFI-safe representation.
@@ -43,38 +40,38 @@ use stateset_primitives::Money;
 use crate::types::{FfiCustomer, FfiInventoryLevel, FfiMoney, FfiOrder, FfiProduct, FfiUuid};
 
 impl IntoFfi<FfiOrder> for Order {
-    fn into_ffi(&self) -> FfiOrder {
-        self.try_into_ffi().expect("order conversion to FFI must succeed")
+    fn into_ffi(&self) -> Result<FfiOrder, FfiErrorCode> {
+        self.try_into_ffi()
     }
 }
 
 impl IntoFfi<FfiCustomer> for Customer {
-    fn into_ffi(&self) -> FfiCustomer {
-        self.try_into_ffi().expect("customer conversion to FFI must succeed")
+    fn into_ffi(&self) -> Result<FfiCustomer, FfiErrorCode> {
+        self.try_into_ffi()
     }
 }
 
 impl IntoFfi<FfiProduct> for Product {
-    fn into_ffi(&self) -> FfiProduct {
-        self.try_into_ffi().expect("product conversion to FFI must succeed")
+    fn into_ffi(&self) -> Result<FfiProduct, FfiErrorCode> {
+        self.try_into_ffi()
     }
 }
 
 impl IntoFfi<FfiInventoryLevel> for StockLevel {
-    fn into_ffi(&self) -> FfiInventoryLevel {
-        self.try_into_ffi().expect("inventory conversion to FFI must succeed")
+    fn into_ffi(&self) -> Result<FfiInventoryLevel, FfiErrorCode> {
+        self.try_into_ffi()
     }
 }
 
 impl IntoFfi<FfiMoney> for Money {
-    fn into_ffi(&self) -> FfiMoney {
-        FfiMoney::from(*self)
+    fn into_ffi(&self) -> Result<FfiMoney, FfiErrorCode> {
+        self.try_into_ffi()
     }
 }
 
 impl IntoFfi<FfiUuid> for uuid::Uuid {
-    fn into_ffi(&self) -> FfiUuid {
-        FfiUuid::from(*self)
+    fn into_ffi(&self) -> Result<FfiUuid, FfiErrorCode> {
+        self.try_into_ffi()
     }
 }
 
@@ -233,7 +230,7 @@ mod tests {
     #[test]
     fn order_into_ffi() {
         let order = make_order();
-        let ffi: FfiOrder = order.into_ffi();
+        let ffi: FfiOrder = order.into_ffi().unwrap();
         assert_eq!(ffi.id, FfiUuid::from(order.id));
         assert_eq!(ffi.item_count, 1);
     }
@@ -241,7 +238,7 @@ mod tests {
     #[test]
     fn customer_into_ffi() {
         let customer = make_customer();
-        let ffi: FfiCustomer = customer.into_ffi();
+        let ffi: FfiCustomer = customer.into_ffi().unwrap();
         assert_eq!(ffi.id, FfiUuid::from(customer.id));
         unsafe { crate::types::customer::stateset_customer_free(ffi) };
     }
@@ -249,7 +246,7 @@ mod tests {
     #[test]
     fn product_into_ffi() {
         let product = make_product();
-        let ffi: FfiProduct = product.into_ffi();
+        let ffi: FfiProduct = product.into_ffi().unwrap();
         assert_eq!(ffi.id, FfiUuid::from(product.id));
         unsafe { crate::types::product::stateset_product_free(ffi) };
     }
@@ -257,7 +254,7 @@ mod tests {
     #[test]
     fn inventory_into_ffi() {
         let stock = make_stock_level();
-        let ffi: FfiInventoryLevel = stock.into_ffi();
+        let ffi: FfiInventoryLevel = stock.into_ffi().unwrap();
         assert_eq!(ffi.quantity, 50);
         assert_eq!(ffi.available, 40);
     }
@@ -265,7 +262,7 @@ mod tests {
     #[test]
     fn money_into_ffi() {
         let money = Money::new(dec!(9.99), CurrencyCode::USD);
-        let ffi: FfiMoney = money.into_ffi();
+        let ffi: FfiMoney = money.into_ffi().unwrap();
         assert_eq!(ffi.amount_cents, 999);
     }
 
@@ -286,7 +283,7 @@ mod tests {
     #[test]
     fn uuid_into_ffi() {
         let uuid = Uuid::new_v4();
-        let ffi: FfiUuid = uuid.into_ffi();
+        let ffi: FfiUuid = uuid.into_ffi().unwrap();
         assert_eq!(ffi.bytes, *uuid.as_bytes());
     }
 
@@ -304,5 +301,4 @@ mod tests {
         let err = customer.try_into_ffi().unwrap_err();
         assert_eq!(err, FfiErrorCode::InvalidArgument);
     }
-
 }

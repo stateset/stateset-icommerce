@@ -265,7 +265,10 @@ mod tests {
     #[test]
     fn error_body_json_structure() {
         let body = super::ErrorBody {
-            error: super::ErrorDetail { code: "not_found".into(), message: "Order not found".into() },
+            error: super::ErrorDetail {
+                code: "not_found".into(),
+                message: "Order not found".into(),
+            },
         };
         let json = serde_json::to_value(&body).unwrap();
         assert_eq!(json["error"]["code"], "not_found");

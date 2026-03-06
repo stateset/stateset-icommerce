@@ -20,9 +20,7 @@ use crate::state::AppState;
 /// This is the main entry point for route assembly. The returned [`Router`]
 /// can be used directly or composed into a larger application.
 pub fn api_router() -> Router<AppState> {
-    Router::new()
-        .merge(health::router())
-        .nest("/api/v1", v1_router())
+    Router::new().merge(health::router()).nest("/api/v1", v1_router())
 }
 
 /// Build the v1 API sub-router.

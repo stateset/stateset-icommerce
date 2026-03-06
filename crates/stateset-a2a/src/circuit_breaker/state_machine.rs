@@ -203,8 +203,7 @@ mod tests {
 
     #[test]
     fn transition_invalid() {
-        let err =
-            CircuitTransition::new(CircuitState::Closed, CircuitState::HalfOpen).unwrap_err();
+        let err = CircuitTransition::new(CircuitState::Closed, CircuitState::HalfOpen).unwrap_err();
         assert!(matches!(err, A2AError::InvalidTransition { .. }));
     }
 
