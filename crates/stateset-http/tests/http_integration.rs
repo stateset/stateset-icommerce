@@ -111,7 +111,16 @@ async fn health_ready_returns_200_with_database_connected() {
 
 #[tokio::test]
 async fn metrics_returns_200_with_prometheus_payload() {
-    let resp = app().oneshot(Request::get("/metrics").body(Body::empty()).unwrap()).await.unwrap();
+    let (router, token) = secure_app();
+    let resp = router
+        .oneshot(
+            Request::get("/metrics")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(
@@ -148,7 +157,7 @@ async fn metrics_returns_200_with_prometheus_payload() {
     assert!(text.contains("stateset_http_metrics_scrape_denied_forwarded_missing_total 0"));
     assert!(text.contains("stateset_http_metrics_scrape_denied_forwarded_invalid_total 0"));
     assert!(text.contains("stateset_http_metrics_scrape_denied_forwarded_oversized_total 0"));
-    assert!(text.contains("stateset_http_metrics_auth_enabled 0"));
+    assert!(text.contains("stateset_http_metrics_auth_enabled 1"));
     assert!(text.contains("stateset_http_metrics_ip_allowlist_entries 0"));
     assert!(text.contains("stateset_http_metrics_trusted_proxy_cidr_entries 0"));
     assert!(text.contains("stateset_http_metrics_forwarded_header_limit_bytes 2048"));

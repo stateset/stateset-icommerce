@@ -1,6 +1,6 @@
 [package]
 name = "stateset-embedded-node"
-version = "0.7.20"
+version = "0.7.21"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Node.js bindings for StateSet Embedded Commerce"
@@ -14,10 +14,10 @@ napi = { version = "2", features = ["async", "napi9", "serde-json"] }
 napi-derive = "2"
 
 # Our commerce library
-stateset-embedded = { path = "../../crates/stateset-embedded", features = ["vector"], version = "0.7.20" }
-stateset-core = { path = "../../crates/stateset-core", features = ["embeddings"], version = "0.7.20" }
-stateset-db = { path = "../../crates/stateset-db", features = ["vector"], version = "0.7.20" }
-stateset-crypto = { path = "../../crates/stateset-crypto", version = "0.7.20" }
+stateset-embedded = { path = "../../crates/stateset-embedded", features = ["vector"], version = "0.7.21" }
+stateset-core = { path = "../../crates/stateset-core", features = ["embeddings"], version = "0.7.21" }
+stateset-db = { path = "../../crates/stateset-db", features = ["vector"], version = "0.7.21" }
+stateset-crypto = { path = "../../crates/stateset-crypto", version = "0.7.21" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

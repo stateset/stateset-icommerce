@@ -38,7 +38,7 @@ ENDPOINTS:
   GET /metrics                        Prometheus metrics
 
 OPTIONS:
-  --db <path>             Database path (default: ./store.db)
+  --db <path>             Database path (default: $DB_PATH or ./store.db)
   --host <host>           HTTP host (default: 127.0.0.1)
   --port <port>           HTTP port (default: 8081, 0 picks random port)
   --history-limit <n>     In-memory event history size (default: 500)
@@ -46,6 +46,10 @@ OPTIONS:
   --structured-tool-results  Include machine-readable _agentic metadata in MCP tool results
   --help, -h              Show this help message
   --version, -v           Show version
+
+ENVIRONMENT:
+  DB_PATH                         Fallback database path when --db is omitted
+  STATESET_MCP_ALLOWED_ORIGINS   Comma-separated extra origins allowed for CORS
 
 QUERY PARAMS:
   /events
@@ -91,27 +95,73 @@ const normalizePath = (pathname) => {
   return pathname;
 };
 
-const sendJson = (res, statusCode, payload) => {
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+const parseAllowedOrigins = (raw) => {
+  if (typeof raw !== 'string' || !raw.trim()) return new Set();
+  return new Set(
+    raw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+};
+
+const EXTRA_ALLOWED_ORIGINS = parseAllowedOrigins(process.env.STATESET_MCP_ALLOWED_ORIGINS);
+
+const isAllowedCorsOrigin = (origin) => {
+  if (typeof origin !== 'string' || !origin.trim()) return false;
+  try {
+    const parsed = new URL(origin);
+    if (LOOPBACK_HOSTS.has(parsed.hostname)) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return EXTRA_ALLOWED_ORIGINS.has(origin);
+};
+
+const buildCorsHeaders = (req, baseHeaders = {}) => {
+  const origin = req.headers.origin;
+  if (!isAllowedCorsOrigin(origin)) {
+    return baseHeaders;
+  }
+  return {
+    ...baseHeaders,
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Accept, Last-Event-ID',
+    Vary: 'Origin',
+  };
+};
+
+const sendJson = (req, res, statusCode, payload) => {
   const body = JSON.stringify(payload);
-  res.writeHead(statusCode, {
-    'Content-Type': 'application/json',
-    'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*',
-  });
+  res.writeHead(
+    statusCode,
+    buildCorsHeaders(req, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    }),
+  );
   res.end(body);
 };
 
 const sendText = (
+  req,
   res,
   statusCode,
   body,
   contentType = 'text/plain; version=0.0.4; charset=utf-8',
 ) => {
-  res.writeHead(statusCode, {
-    'Content-Type': contentType,
-    'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*',
-  });
+  res.writeHead(
+    statusCode,
+    buildCorsHeaders(req, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-store',
+    }),
+  );
   res.end(body);
 };
 
@@ -129,7 +179,7 @@ const runtime = {
 async function main() {
   const { values } = parseArgs({
     options: {
-      db: { type: 'string', default: './store.db' },
+      db: { type: 'string', default: process.env.DB_PATH || './store.db' },
       host: { type: 'string', default: '127.0.0.1' },
       port: { type: 'string', default: '8081' },
       'history-limit': { type: 'string', default: '500' },
@@ -155,11 +205,12 @@ async function main() {
   const port = normalizePort(values.port, 8081);
   const historyLimit = parseLimit(values['history-limit']) || 500;
   const streamName = values['stream-name'];
+  const dbPath = values.db || process.env.DB_PATH || './store.db';
   runtime.startedAt = Date.now();
 
   let commerce;
   try {
-    commerce = new Commerce(values.db);
+    commerce = new Commerce(dbPath);
   } catch (error) {
     console.error(`[stateset-mcp-events] database init error: ${error.message}`);
     process.exit(1);
@@ -172,7 +223,7 @@ async function main() {
 
   const mcpServer = createStatesetMcpServer({
     commerce,
-    dbPath: values.db,
+    dbPath,
     structuredToolResults: values['structured-tool-results'],
     mcpEventStream: eventStreamer,
   });
@@ -196,12 +247,19 @@ async function main() {
       };
       const sendJsonWithMetrics = (statusCode, payload) => {
         countRequest(statusCode);
-        sendJson(res, statusCode, payload);
+        sendJson(req, res, statusCode, payload);
       };
       const sendTextWithMetrics = (statusCode, body, contentType) => {
         countRequest(statusCode);
-        sendText(res, statusCode, body, contentType);
+        sendText(req, res, statusCode, body, contentType);
       };
+
+      if (method === 'OPTIONS') {
+        countRequest(204);
+        res.writeHead(204, buildCorsHeaders(req, { 'Cache-Control': 'no-store' }));
+        res.end();
+        return;
+      }
 
       if (pathname === '/health') {
         if (method !== 'GET') {
@@ -292,7 +350,11 @@ async function main() {
         }
 
         const subscriptionId = subscription.subscription.id;
-        eventStreamer.handleSSEConnection(req, res, sessionId);
+        eventStreamer.handleSSEConnection(req, res, {
+          sessionId,
+          subscriptionId,
+          headers: buildCorsHeaders(req),
+        });
 
         let closed = false;
         req.on('close', () => {
@@ -342,7 +404,7 @@ async function main() {
     })().catch((error) => {
       if (res.writableEnded) return;
       runtime.requestErrors += 1;
-      sendJson(res, 500, {
+      sendJson(req, res, 500, {
         error: 'Request failed',
         details: error?.message || String(error),
       });
@@ -365,10 +427,10 @@ async function main() {
   const address = server.address();
   const advertisedPort =
     typeof address === 'object' && address && address.port ? address.port : port;
-  console.log(
+  console.error(
     `[stateset-mcp-events] MCP stdio and event gateway active on http://${host}:${advertisedPort}`,
   );
-  console.log(
+  console.error(
     '[stateset-mcp-events] Endpoints: /events, /history, /subscriptions, /health, /ready, /metrics',
   );
 }

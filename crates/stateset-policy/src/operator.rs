@@ -1,3 +1,4 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -95,8 +96,8 @@ impl Operator {
     /// # Numeric coercion
     ///
     /// Comparison operators (`Gt`, `Gte`, `Lt`, `Lte`, `Between`, `DivisibleBy`)
-    /// attempt to extract `f64` from both values. If either side is not numeric,
-    /// the comparison returns `false`.
+    /// attempt to extract an exact decimal representation from both values. If
+    /// either side is not numeric, the comparison returns `false`.
     pub fn evaluate(self, field_value: &Value, compare_value: &Value) -> bool {
         match self {
             // -- Comparison --
@@ -163,9 +164,11 @@ impl Operator {
 
             // -- Numeric --
             Self::Between => {
-                if let (Some(val), Value::Array(range)) = (as_f64(field_value), compare_value) {
+                if let (Some(val), Value::Array(range)) = (as_decimal(field_value), compare_value) {
                     if range.len() == 2 {
-                        if let (Some(min), Some(max)) = (as_f64(&range[0]), as_f64(&range[1])) {
+                        if let (Some(min), Some(max)) =
+                            (as_decimal(&range[0]), as_decimal(&range[1]))
+                        {
                             return val >= min && val <= max;
                         }
                     }
@@ -173,11 +176,11 @@ impl Operator {
                 false
             }
             Self::DivisibleBy => {
-                if let (Some(a), Some(b)) = (as_f64(field_value), as_f64(compare_value)) {
-                    if b == 0.0 {
+                if let (Some(a), Some(b)) = (as_decimal(field_value), as_decimal(compare_value)) {
+                    if b.is_zero() {
                         return false;
                     }
-                    (a % b).abs() < f64::EPSILON
+                    (a % b).is_zero()
                 } else {
                     false
                 }
@@ -220,18 +223,22 @@ impl std::fmt::Display for Operator {
 
 /// Compare two values numerically using the given predicate.
 /// Returns `false` if either value is not numeric.
-fn numeric_cmp(a: &Value, b: &Value, pred: impl FnOnce(f64, f64) -> bool) -> bool {
-    match (as_f64(a), as_f64(b)) {
+fn numeric_cmp(a: &Value, b: &Value, pred: impl FnOnce(Decimal, Decimal) -> bool) -> bool {
+    match (as_decimal(a), as_decimal(b)) {
         (Some(x), Some(y)) => pred(x, y),
         _ => false,
     }
 }
 
-/// Try to extract an `f64` from a JSON value (number or numeric string).
-fn as_f64(v: &Value) -> Option<f64> {
+fn parse_decimal(input: &str) -> Option<Decimal> {
+    Decimal::from_str_exact(input).or_else(|_| Decimal::from_scientific(input)).ok()
+}
+
+/// Try to extract an exact decimal from a JSON value (number or numeric string).
+fn as_decimal(v: &Value) -> Option<Decimal> {
     match v {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.parse::<f64>().ok(),
+        Value::Number(n) => parse_decimal(&n.to_string()),
+        Value::String(s) => parse_decimal(s),
         _ => None,
     }
 }
@@ -251,23 +258,18 @@ fn value_to_string(v: &Value) -> String {
 /// Loose equality that mirrors JS `===` for JSON values.
 ///
 /// Two values are equal if they are the same JSON kind and have the same
-/// content. Numeric comparison uses `f64` to handle `1 == 1.0`.
+/// content. Numeric comparison uses exact decimal coercion to handle `1 == 1.0`
+/// without sacrificing precision for large values.
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Null, Value::Null) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Number(_), Value::Number(_)) => {
-            // Compare as f64 to handle 1 == 1.0
-            as_f64(a) == as_f64(b)
-        }
+        (Value::Number(_), Value::Number(_)) => as_decimal(a) == as_decimal(b),
         (Value::String(x), Value::String(y)) => x == y,
         // Cross-type: number vs string — try numeric comparison (like JS loose behavior
         // for policy values where "100" should match 100)
         (Value::Number(_), Value::String(_)) | (Value::String(_), Value::Number(_)) => {
-            match (as_f64(a), as_f64(b)) {
-                (Some(x), Some(y)) => (x - y).abs() < f64::EPSILON,
-                _ => false,
-            }
+            as_decimal(a) == as_decimal(b)
         }
         (Value::Array(x), Value::Array(y)) => x == y,
         (Value::Object(x), Value::Object(y)) => x == y,
@@ -319,6 +321,17 @@ mod tests {
     #[test]
     fn eq_string_mismatch() {
         assert!(!Operator::Eq.evaluate(&json!("hello"), &json!("world")));
+    }
+
+    #[test]
+    fn eq_large_integer_preserves_precision() {
+        let value = json!("9007199254740993");
+        assert!(Operator::Eq.evaluate(&value, &json!(9007199254740993u64)));
+    }
+
+    #[test]
+    fn gt_large_integer_preserves_precision() {
+        assert!(Operator::Gt.evaluate(&json!("9007199254740993"), &json!(9007199254740992u64)));
     }
 
     #[test]

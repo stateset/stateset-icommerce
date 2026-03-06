@@ -66,6 +66,7 @@ pub struct TransactionHandle {
     id: String,
     state: TransactionState,
     operations: Vec<Box<dyn Transactional<Output = ()>>>,
+    completed_operations: usize,
 }
 
 impl std::fmt::Debug for TransactionHandle {
@@ -85,6 +86,7 @@ impl TransactionHandle {
             id: uuid::Uuid::new_v4().to_string(),
             state: TransactionState::Active,
             operations: Vec::new(),
+            completed_operations: 0,
         }
     }
 
@@ -109,18 +111,18 @@ impl TransactionHandle {
             return Err(TransactionError::NotActive);
         }
 
-        let mut completed = 0usize;
+        self.completed_operations = 0;
 
         // Execute all operations
         for op in &self.operations {
             match op.execute() {
                 Ok(_) => {
-                    completed += 1;
+                    self.completed_operations += 1;
                 }
                 Err(e) => {
                     self.state = TransactionState::Failed;
                     // Try to compensate
-                    Self::compensate(&self.operations[..completed])?;
+                    Self::compensate(&self.operations[..self.completed_operations])?;
                     return Err(e);
                 }
             }
@@ -136,7 +138,7 @@ impl TransactionHandle {
             return Err(TransactionError::NotActive);
         }
 
-        Self::compensate(&self.operations)?;
+        Self::compensate(&self.operations[..self.completed_operations])?;
         self.state = TransactionState::RolledBack;
         Ok(())
     }
@@ -283,6 +285,25 @@ mod tests {
         handle.commit().unwrap();
         assert_eq!(handle.state(), TransactionState::Committed);
         assert!(*executed.lock().unwrap());
+        assert!(!(*compensated.lock().unwrap()));
+    }
+
+    #[test]
+    fn test_rollback_without_executing_does_not_compensate() {
+        let mut handle = TransactionHandle::new();
+
+        let executed = Arc::new(Mutex::new(false));
+        let compensated = Arc::new(Mutex::new(false));
+
+        handle.add_operation(Box::new(SimpleOperation {
+            name: "op1".into(),
+            executed: executed.clone(),
+            compensated: compensated.clone(),
+        }));
+
+        handle.rollback().unwrap();
+        assert_eq!(handle.state(), TransactionState::RolledBack);
+        assert!(!(*executed.lock().unwrap()));
         assert!(!(*compensated.lock().unwrap()));
     }
 

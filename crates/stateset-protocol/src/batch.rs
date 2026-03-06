@@ -154,9 +154,7 @@ impl SyncBatch {
                 self.protocol_version
             )));
         }
-        if self.source_node_id.is_empty() {
-            return Err(ProtocolError::InvalidBatch("source_node_id must not be empty".into()));
-        }
+        validate_required_batch_str("source_node_id", &self.source_node_id)?;
         if self.leaves.is_empty() {
             return Err(ProtocolError::InvalidBatch(
                 "batch must contain at least one event".into(),
@@ -318,6 +316,13 @@ impl SyncBatch {
             .map_err(|e| ProtocolError::SerializationError(e.to_string()))?;
         Ok(canonical.into_bytes())
     }
+}
+
+fn validate_required_batch_str(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(ProtocolError::InvalidBatch(format!("{field} must not be empty")));
+    }
+    Ok(())
 }
 
 /// A cryptographic signature over a batch.
@@ -492,6 +497,14 @@ mod tests {
     }
 
     #[test]
+    fn validate_whitespace_source_node_id() {
+        let envs = vec![make_envelope("1", b"data")];
+        let mut batch = SyncBatch::new("node", envs);
+        batch.source_node_id = "   ".to_string();
+        assert!(batch.validate().is_err());
+    }
+
+    #[test]
     fn validate_empty_leaves() {
         let batch = SyncBatch::new("node", vec![]);
         assert!(batch.validate().is_err());
@@ -583,6 +596,21 @@ mod tests {
             signer_id: "node_signer".into(),
             algorithm: SignatureAlgorithm::Ed25519,
             signature: vec![1, 2, 3],
+            public_key: vec![0u8; 32],
+        });
+
+        let err = batch.validate().unwrap_err();
+        assert!(matches!(err, ProtocolError::InvalidSignature(_)));
+    }
+
+    #[test]
+    fn validate_rejects_whitespace_signer_id() {
+        let envs = vec![make_envelope("1", b"d")];
+        let mut batch = SyncBatch::new("node", envs);
+        batch.add_signature(BatchSignature {
+            signer_id: "   ".into(),
+            algorithm: SignatureAlgorithm::Ed25519,
+            signature: vec![0u8; 64],
             public_key: vec![0u8; 32],
         });
 

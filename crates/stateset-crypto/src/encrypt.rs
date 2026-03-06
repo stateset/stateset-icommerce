@@ -3,6 +3,8 @@
 //! - AES-256-GCM for payload encryption
 //! - X25519 ECDH + HKDF + AES-256-GCM for key wrapping
 
+use std::collections::HashSet;
+
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use base64::Engine;
@@ -24,6 +26,12 @@ const NONCE_SIZE: usize = 12;
 const SALT_SIZE: usize = 16;
 const KEY_SIZE: usize = 32;
 const TAG_SIZE: usize = 16;
+const ENC_VERSION: u64 = 1;
+const AEAD_ALGORITHM: &str = "AES-256-GCM";
+const HPKE_MODE: &str = "base";
+const HPKE_KEM: &str = "X25519-HKDF-SHA256";
+const HPKE_KDF: &str = "HKDF-SHA256";
+const HPKE_AEAD: &str = "AES-256-GCM";
 
 /// Recipient key for encryption
 #[derive(Debug, Clone)]
@@ -63,6 +71,7 @@ pub fn encrypt_payload(
     if recipient_keys.is_empty() {
         return Err(CryptoError::NoRecipients);
     }
+    validate_unique_recipient_kids(recipient_keys.iter().map(|recipient| recipient.kid))?;
 
     let mut rng = rand::thread_rng();
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -142,16 +151,16 @@ pub fn encrypt_payload(
     let payload_cipher_hash = compute_payload_cipher_hash(Some(&cipher_params));
 
     let payload_encrypted = serde_json::json!({
-        "enc_version": 1,
-        "aead": "AES-256-GCM",
+        "enc_version": ENC_VERSION,
+        "aead": AEAD_ALGORITHM,
         "nonce_b64u": b64.encode(nonce_bytes),
         "ciphertext_b64u": b64.encode(ciphertext),
         "tag_b64u": b64.encode(tag),
         "hpke": {
-            "mode": "base",
-            "kem": "X25519-HKDF-SHA256",
-            "kdf": "HKDF-SHA256",
-            "aead": "AES-256-GCM"
+            "mode": HPKE_MODE,
+            "kem": HPKE_KEM,
+            "kdf": HPKE_KDF,
+            "aead": HPKE_AEAD
         },
         "recipients": recipients,
     });
@@ -176,11 +185,8 @@ pub fn decrypt_payload(
 ) -> Result<serde_json::Value, CryptoError> {
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-    // Find recipient entry
-    let recipients = payload_encrypted
-        .get("recipients")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| CryptoError::DecryptionError("Missing recipients".to_string()))?;
+    // Fail fast on envelopes that do not match the declared implementation contract.
+    let recipients = validate_encryption_envelope(payload_encrypted)?;
 
     let recipient = recipients
         .iter()
@@ -287,6 +293,90 @@ pub fn decrypt_payload(
     }
 
     Ok(payload)
+}
+
+fn validate_unique_recipient_kids(
+    recipient_kids: impl IntoIterator<Item = u32>,
+) -> Result<(), CryptoError> {
+    let mut seen = HashSet::new();
+    for recipient_kid in recipient_kids {
+        if !seen.insert(recipient_kid) {
+            return Err(CryptoError::EncryptionError(format!(
+                "duplicate recipient_kid: {recipient_kid}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_encryption_envelope(
+    payload_encrypted: &serde_json::Value,
+) -> Result<&Vec<serde_json::Value>, CryptoError> {
+    let enc_version = payload_encrypted
+        .get("enc_version")
+        .and_then(|value| value.as_u64())
+        .ok_or_else(|| CryptoError::DecryptionError("Missing enc_version".to_string()))?;
+    if enc_version != ENC_VERSION {
+        return Err(CryptoError::DecryptionError(format!(
+            "Unsupported enc_version: expected {ENC_VERSION}, got {enc_version}"
+        )));
+    }
+
+    let aead = payload_encrypted
+        .get("aead")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| CryptoError::DecryptionError("Missing aead".to_string()))?;
+    if aead != AEAD_ALGORITHM {
+        return Err(CryptoError::DecryptionError(format!(
+            "Unsupported aead: expected {AEAD_ALGORITHM}, got {aead}"
+        )));
+    }
+
+    let hpke = payload_encrypted
+        .get("hpke")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| CryptoError::DecryptionError("Missing hpke".to_string()))?;
+    validate_hpke_field(hpke, "mode", HPKE_MODE)?;
+    validate_hpke_field(hpke, "kem", HPKE_KEM)?;
+    validate_hpke_field(hpke, "kdf", HPKE_KDF)?;
+    validate_hpke_field(hpke, "aead", HPKE_AEAD)?;
+
+    let recipients = payload_encrypted
+        .get("recipients")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| CryptoError::DecryptionError("Missing recipients".to_string()))?;
+
+    let mut seen = HashSet::new();
+    for recipient in recipients {
+        let Some(recipient_kid) = recipient.get("recipient_kid").and_then(|value| value.as_u64())
+        else {
+            return Err(CryptoError::DecryptionError("Missing recipient_kid".to_string()));
+        };
+        if !seen.insert(recipient_kid) {
+            return Err(CryptoError::DecryptionError(format!(
+                "Duplicate recipient_kid entry: {recipient_kid}"
+            )));
+        }
+    }
+
+    Ok(recipients)
+}
+
+fn validate_hpke_field(
+    hpke: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    expected: &str,
+) -> Result<(), CryptoError> {
+    let value = hpke
+        .get(field)
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| CryptoError::DecryptionError(format!("Missing hpke.{field}")))?;
+    if value != expected {
+        return Err(CryptoError::DecryptionError(format!(
+            "Unsupported hpke.{field}: expected {expected}, got {value}"
+        )));
+    }
+    Ok(())
 }
 
 /// Wrap DEK using X25519 ECDH + HKDF + AES-256-GCM
@@ -470,6 +560,26 @@ mod tests {
     }
 
     #[test]
+    fn encrypt_duplicate_recipient_kids_fail() {
+        let payload = json!({"key": "value"});
+        let plain_hash = [0u8; 32];
+        let aad_params = test_aad_params(&plain_hash);
+
+        let (_, public_key) = generate_x25519_keypair();
+        let recipients =
+            vec![RecipientKey { kid: 7, public_key }, RecipientKey { kid: 7, public_key }];
+
+        let err = encrypt_payload(&payload, &aad_params, &recipients)
+            .expect_err("duplicate recipient ids should be rejected");
+        match err {
+            CryptoError::EncryptionError(message) => {
+                assert!(message.contains("duplicate recipient_kid"))
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
     fn encrypt_multiple_recipients() {
         let payload = json!({"key": "value"});
         let plain_hash = [0u8; 32];
@@ -630,6 +740,73 @@ mod tests {
 
         match err {
             CryptoError::DecryptionError(msg) => assert!(msg.contains("Invalid tag length")),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decrypt_rejects_tampered_metadata() {
+        let payload = json!({"key": "value"});
+        let plain_hash = [0u8; 32];
+        let aad_params = test_aad_params(&plain_hash);
+
+        let (private_key, public_key) = generate_x25519_keypair();
+        let recipients = vec![RecipientKey { kid: 1, public_key }];
+        let enc_result = encrypt_payload(&payload, &aad_params, &recipients).unwrap();
+
+        let dec_aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
+        let dec_payload_aad = crate::hash::compute_payload_aad(&dec_aad_params).unwrap();
+
+        let mut tampered = enc_result.payload_encrypted.clone();
+        tampered["aead"] = serde_json::Value::String("CHACHA20-POLY1305".to_string());
+
+        let err = decrypt_payload(
+            &tampered,
+            &dec_payload_aad,
+            1,
+            &private_key,
+            &enc_result.payload_plain_hash,
+        )
+        .expect_err("tampered metadata should be rejected");
+
+        match err {
+            CryptoError::DecryptionError(message) => assert!(message.contains("Unsupported aead")),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decrypt_rejects_duplicate_recipient_entries() {
+        let payload = json!({"key": "value"});
+        let plain_hash = [0u8; 32];
+        let aad_params = test_aad_params(&plain_hash);
+
+        let (private_key, public_key) = generate_x25519_keypair();
+        let recipients = vec![RecipientKey { kid: 1, public_key }];
+        let enc_result = encrypt_payload(&payload, &aad_params, &recipients).unwrap();
+
+        let dec_aad_params =
+            PayloadAadParams { payload_plain_hash: &enc_result.payload_plain_hash, ..aad_params };
+        let dec_payload_aad = crate::hash::compute_payload_aad(&dec_aad_params).unwrap();
+
+        let mut tampered = enc_result.payload_encrypted.clone();
+        let duplicate = tampered["recipients"][0].clone();
+        tampered["recipients"].as_array_mut().unwrap().push(duplicate);
+
+        let err = decrypt_payload(
+            &tampered,
+            &dec_payload_aad,
+            1,
+            &private_key,
+            &enc_result.payload_plain_hash,
+        )
+        .expect_err("duplicate recipients should be rejected");
+
+        match err {
+            CryptoError::DecryptionError(message) => {
+                assert!(message.contains("Duplicate recipient_kid entry"))
+            }
             other => panic!("unexpected error variant: {other:?}"),
         }
     }

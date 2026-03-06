@@ -270,7 +270,10 @@ impl AuthzEngineBuilder {
         self
     }
 
-    /// Assigns a role to an actor. The role must be added before building.
+    /// Assigns a role to an actor.
+    ///
+    /// [`build`](Self::build) and [`build_checked`](Self::build_checked) validate
+    /// that every assigned role exists before constructing the engine.
     #[must_use]
     pub fn assign_role(
         mut self,
@@ -313,9 +316,36 @@ impl AuthzEngineBuilder {
         self
     }
 
+    /// Builds the [`AuthzEngine`], returning an error when any assignment
+    /// references a role that has not been added to the builder.
+    pub fn build_checked(self) -> AuthzResult<AuthzEngine> {
+        self.validate_assignments()?;
+        Ok(self.build_unchecked())
+    }
+
     /// Builds the [`AuthzEngine`].
+    ///
+    /// Panics when any assignment references a role that has not been added.
+    /// Use [`build_checked`](Self::build_checked) to surface configuration
+    /// errors without panicking.
     #[must_use]
     pub fn build(self) -> AuthzEngine {
+        match self.build_checked() {
+            Ok(engine) => engine,
+            Err(err) => panic!("invalid AuthzEngineBuilder configuration: {err}"),
+        }
+    }
+
+    fn validate_assignments(&self) -> AuthzResult<()> {
+        if let Some(role_name) =
+            self.actor_roles.values().find(|role_name| !self.roles.contains_key(role_name.as_str()))
+        {
+            return Err(AuthzError::invalid_role(role_name.clone()));
+        }
+        Ok(())
+    }
+
+    fn build_unchecked(self) -> AuthzEngine {
         let mut rate_limiter = RateLimiter::new();
         for rule in self.rate_limit_rules {
             rate_limiter.add_rule(rule);
@@ -536,6 +566,17 @@ mod tests {
 
         assert!(engine.redaction_config().should_redact("custom_field"));
         assert!(!engine.redaction_config().should_redact("password"));
+    }
+
+    #[test]
+    fn builder_build_checked_rejects_unknown_role_assignment() {
+        let err = AuthzEngineBuilder::new()
+            .add_role(Role::admin())
+            .assign_role("alice", "missing")
+            .build_checked()
+            .unwrap_err();
+
+        assert_eq!(err, AuthzError::invalid_role("missing"));
     }
 
     // -- Full flow integration --

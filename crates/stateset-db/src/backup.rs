@@ -177,7 +177,7 @@ impl BackupManager {
     }
 
     /// Restore database from a backup
-    pub fn restore(
+    pub fn restore<V: AsRef<Path>>(
         &self,
         _conn: &Connection,
         backup_path: V,

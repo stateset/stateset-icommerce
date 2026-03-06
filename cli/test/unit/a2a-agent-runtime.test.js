@@ -624,6 +624,23 @@ describe('AgentRuntime — Service Loop', () => {
     const processed = await rt.tick();
     assert.equal(processed, 0);
   });
+
+  it('tick silently skips RFQ expiry when the store does not implement RFQ methods', async () => {
+    const rt = createRuntime();
+    const originalDebug = console.debug;
+    const debugCalls = [];
+    console.debug = (...args) => {
+      debugCalls.push(args);
+    };
+
+    try {
+      await rt.tick();
+    } finally {
+      console.debug = originalDebug;
+    }
+
+    assert.deepEqual(debugCalls, []);
+  });
 });
 
 // ===========================================================================

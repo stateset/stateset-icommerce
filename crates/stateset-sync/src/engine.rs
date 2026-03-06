@@ -144,12 +144,16 @@ impl SyncEngine {
 
         let result = transport.push_events(&events).await?;
         let accepted = result.accepted.min(events.len());
-        if accepted > 0 {
-            let _ = self.outbox.drain(accepted);
-        }
-
         self.state.remote_head = result.remote_head;
         self.state.last_push = Some(Utc::now());
+
+        if accepted > 0 {
+            if let Err(err) = self.outbox.drain(accepted) {
+                self.state.pending_count = self.outbox.count();
+                return Err(err);
+            }
+        }
+
         self.state.pending_count = self.outbox.count();
 
         Ok(result)
@@ -189,24 +193,21 @@ impl SyncEngine {
         for pulled_event in &result.events {
             let mut keep_remote = true;
 
-            for local_event in &pending {
-                if local_event.entity_type == pulled_event.entity_type
+            if let Some(local_event) = pending.iter().rev().find(|local_event| {
+                local_event.entity_type == pulled_event.entity_type
                     && local_event.entity_id == pulled_event.entity_id
-                {
-                    match self.resolver.resolve(local_event, pulled_event) {
-                        Resolution::KeepLocal => {
-                            keep_remote = false;
-                            break;
-                        }
-                        Resolution::KeepRemote => {
-                            drop_local_ids.insert(local_event.id);
-                        }
-                        Resolution::Merge(merged) => {
-                            drop_local_ids.insert(local_event.id);
-                            events_to_buffer.push(merged);
-                            keep_remote = false;
-                            break;
-                        }
+            }) {
+                match self.resolver.resolve(local_event, pulled_event) {
+                    Resolution::KeepLocal => {
+                        keep_remote = false;
+                    }
+                    Resolution::KeepRemote => {
+                        drop_local_ids.insert(local_event.id);
+                    }
+                    Resolution::Merge(merged) => {
+                        drop_local_ids.insert(local_event.id);
+                        events_to_buffer.push(merged);
+                        keep_remote = false;
                     }
                 }
             }
@@ -217,7 +218,7 @@ impl SyncEngine {
         }
 
         if !drop_local_ids.is_empty() {
-            self.outbox.retain(|event| !drop_local_ids.contains(&event.id));
+            self.outbox.try_retain(|event| !drop_local_ids.contains(&event.id))?;
             self.state.pending_count = self.outbox.count();
         }
 
@@ -682,6 +683,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn push_returns_storage_error_when_ack_persist_fails() {
+        #[derive(Debug)]
+        struct AcceptAllTransport;
+
+        #[async_trait::async_trait]
+        impl Transport for AcceptAllTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult { accepted: events.len(), remote_head: events.len() as u64 })
+            }
+
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                Ok(PullResult { events: vec![], remote_head: 0, has_more: false })
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("outbox.json");
+        let config = make_config().with_outbox_path(path.to_string_lossy().into_owned());
+        let mut engine = SyncEngine::new(config).unwrap();
+        engine.record(make_event("a")).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        let err = engine.push(&AcceptAllTransport).await.unwrap_err();
+        assert!(matches!(err, SyncError::Storage(_)));
+        assert_eq!(engine.pending_count(), 0);
+        assert_eq!(engine.state().remote_head, 1);
+        assert!(engine.state().last_push.is_some());
+    }
+
+    #[tokio::test]
     async fn pull_conflict_resolution() {
         /// Transport that returns events conflicting with local outbox.
         #[derive(Debug)]
@@ -717,6 +754,46 @@ mod tests {
         // RemoteWins removes conflicting local outbox events and keeps pulled event.
         assert_eq!(engine.buffered_count(), 1);
         assert_eq!(engine.pending_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn pull_conflict_remote_wins_only_drops_latest_pending_event() {
+        #[derive(Debug)]
+        struct ConflictTransport;
+
+        #[async_trait::async_trait]
+        impl Transport for ConflictTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult { accepted: events.len(), remote_head: 10 })
+            }
+
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                let remote_event =
+                    SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "remote"}))
+                        .with_sequence(5);
+                Ok(PullResult { events: vec![remote_event], remote_head: 5, has_more: false })
+            }
+        }
+
+        let mut engine =
+            SyncEngine::with_strategy(make_config(), ConflictStrategy::RemoteWins).unwrap();
+        engine
+            .record(SyncEvent::new("order.note_added", "order", "ORD-1", json!({"note": "a"})))
+            .unwrap();
+        engine
+            .record(SyncEvent::new("order.updated", "order", "ORD-1", json!({"status": "local"})))
+            .unwrap();
+
+        engine.pull(&ConflictTransport).await.unwrap();
+
+        let pending: Vec<_> = engine.outbox.peek(10).into_iter().cloned().collect();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].event_type, "order.note_added");
+        assert_eq!(engine.buffered_count(), 1);
     }
 
     #[tokio::test]

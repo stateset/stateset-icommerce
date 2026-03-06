@@ -7,7 +7,11 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::error::PricingResult;
 use crate::rounding::{RoundingPolicy, round};
+use crate::validation::{
+    validate_line_discount, validate_non_negative, validate_quantity, validate_tax_rate,
+};
 
 /// Discount applied to a single line item.
 ///
@@ -72,7 +76,7 @@ pub struct LineItem {
 }
 
 impl LineItem {
-    /// Compute the subtotal (unit price times quantity) before discounts.
+    /// Validate that the line item contains only supported pricing inputs.
     ///
     /// ```rust
     /// use stateset_pricing::LineItem;
@@ -83,62 +87,109 @@ impl LineItem {
     ///     unit_price: dec!(10.00), quantity: 5,
     ///     discount: None, tax_rate: None,
     /// };
-    /// assert_eq!(item.subtotal(), dec!(50.00));
+    /// assert!(item.validate().is_ok());
     /// ```
+    pub fn validate(&self) -> PricingResult<()> {
+        validate_quantity(self.quantity)?;
+        validate_non_negative("unit price", self.unit_price)?;
+
+        if let Some(discount) = &self.discount {
+            let subtotal = self.unit_price * Decimal::from(self.quantity);
+            validate_line_discount(discount, subtotal, self.unit_price)?;
+        }
+
+        if let Some(rate) = self.tax_rate {
+            validate_tax_rate(rate)?;
+        }
+
+        Ok(())
+    }
+
+    /// Compute the subtotal (unit price times quantity) before discounts.
+    pub fn try_subtotal(&self) -> PricingResult<Decimal> {
+        validate_quantity(self.quantity)?;
+        validate_non_negative("unit price", self.unit_price)?;
+        Ok(self.unit_price * Decimal::from(self.quantity))
+    }
+
+    /// Compute the subtotal and panic if the line item is invalid.
     #[must_use]
     pub fn subtotal(&self) -> Decimal {
-        self.unit_price * Decimal::from(self.quantity)
+        self.try_subtotal().expect("invalid line item pricing input")
     }
 
     /// Compute the discount amount for this line.
     ///
-    /// Returns zero if no discount is set. The discount is never larger
-    /// than the subtotal (clamped to zero).
+    /// Returns zero if no discount is set.
+    pub fn try_discount_amount(&self) -> PricingResult<Decimal> {
+        self.validate()?;
+        let sub = self.unit_price * Decimal::from(self.quantity);
+        let discount = match &self.discount {
+            None => Decimal::ZERO,
+            Some(LineDiscount::Percentage(pct)) => sub * *pct,
+            Some(LineDiscount::FixedAmount(amt)) => *amt,
+            Some(LineDiscount::FixedPrice(price)) => {
+                let new_total = *price * Decimal::from(self.quantity);
+                sub - new_total
+            }
+        };
+        Ok(discount)
+    }
+
+    /// Compute the discount amount and panic if the line item is invalid.
     #[must_use]
     pub fn discount_amount(&self) -> Decimal {
-        let sub = self.subtotal();
-        match &self.discount {
-            None => Decimal::ZERO,
-            Some(LineDiscount::Percentage(pct)) => {
-                let pct_clamped = (*pct).min(Decimal::ONE).max(Decimal::ZERO);
-                sub * pct_clamped
-            }
-            Some(LineDiscount::FixedAmount(amt)) => amt.min(&sub).max(&Decimal::ZERO).to_owned(),
-            Some(LineDiscount::FixedPrice(price)) => {
-                // Discount = difference between subtotal and the overridden total
-                let new_total = price.max(&Decimal::ZERO).to_owned() * Decimal::from(self.quantity);
-                (sub - new_total).max(Decimal::ZERO)
-            }
-        }
+        self.try_discount_amount().expect("invalid line item pricing input")
     }
 
     /// Compute the taxable amount (subtotal minus discount).
+    pub fn try_taxable_amount(&self) -> PricingResult<Decimal> {
+        Ok((self.try_subtotal()? - self.try_discount_amount()?).max(Decimal::ZERO))
+    }
+
+    /// Compute the taxable amount and panic if the line item is invalid.
     #[must_use]
     pub fn taxable_amount(&self) -> Decimal {
-        (self.subtotal() - self.discount_amount()).max(Decimal::ZERO)
+        self.try_taxable_amount().expect("invalid line item pricing input")
     }
 
     /// Compute the tax amount.
+    pub fn try_tax_amount(&self) -> PricingResult<Decimal> {
+        let taxable = self.try_taxable_amount()?;
+        Ok(match self.tax_rate {
+            Some(rate) => taxable * rate,
+            None => Decimal::ZERO,
+        })
+    }
+
+    /// Compute the tax amount and panic if the line item is invalid.
     #[must_use]
     pub fn tax_amount(&self) -> Decimal {
-        match self.tax_rate {
-            Some(rate) => self.taxable_amount() * rate,
-            None => Decimal::ZERO,
-        }
+        self.try_tax_amount().expect("invalid line item pricing input")
     }
 
     /// Compute the line total (taxable amount + tax).
+    pub fn try_total(&self) -> PricingResult<Decimal> {
+        Ok(self.try_taxable_amount()? + self.try_tax_amount()?)
+    }
+
+    /// Compute the total and panic if the line item is invalid.
     #[must_use]
     pub fn total(&self) -> Decimal {
-        self.taxable_amount() + self.tax_amount()
+        self.try_total().expect("invalid line item pricing input")
     }
 
     /// Compute the line total with rounding applied to intermediate values.
+    pub fn try_total_rounded(&self, policy: &RoundingPolicy) -> PricingResult<Decimal> {
+        let taxable = round(self.try_taxable_amount()?, policy);
+        let tax = round(taxable * self.tax_rate.unwrap_or(Decimal::ZERO), policy);
+        Ok(taxable + tax)
+    }
+
+    /// Compute the rounded total and panic if the line item is invalid.
     #[must_use]
     pub fn total_rounded(&self, policy: &RoundingPolicy) -> Decimal {
-        let taxable = round(self.taxable_amount(), policy);
-        let tax = round(taxable * self.tax_rate.unwrap_or(Decimal::ZERO), policy);
-        taxable + tax
+        self.try_total_rounded(policy).expect("invalid line item pricing input")
     }
 }
 
@@ -173,9 +224,12 @@ mod tests {
     }
 
     #[test]
-    fn subtotal_zero_quantity() {
+    fn subtotal_zero_quantity_is_rejected() {
         let item = simple_item(dec!(10.00), 0);
-        assert_eq!(item.subtotal(), dec!(0));
+        assert_eq!(
+            item.try_subtotal().unwrap_err(),
+            crate::PricingError::InvalidQuantity { value: 0 }
+        );
     }
 
     #[test]
@@ -216,18 +270,23 @@ mod tests {
     }
 
     #[test]
-    fn discount_percentage_clamped_above_one() {
+    fn discount_percentage_above_one_is_rejected() {
         let mut item = simple_item(dec!(50.00), 1);
         item.discount = Some(LineDiscount::Percentage(dec!(1.5)));
-        // Clamped to 100%
-        assert_eq!(item.discount_amount(), dec!(50.00));
+        assert_eq!(
+            item.try_discount_amount().unwrap_err(),
+            crate::PricingError::invalid_discount(dec!(1.5))
+        );
     }
 
     #[test]
-    fn discount_percentage_clamped_below_zero() {
+    fn discount_percentage_below_zero_is_rejected() {
         let mut item = simple_item(dec!(50.00), 1);
         item.discount = Some(LineDiscount::Percentage(dec!(-0.10)));
-        assert_eq!(item.discount_amount(), Decimal::ZERO);
+        assert_eq!(
+            item.try_discount_amount().unwrap_err(),
+            crate::PricingError::invalid_discount(dec!(-0.10))
+        );
     }
 
     // ---- fixed amount discount ----
@@ -241,19 +300,23 @@ mod tests {
     }
 
     #[test]
-    fn discount_fixed_amount_exceeds_subtotal() {
+    fn discount_fixed_amount_exceeds_subtotal_is_rejected() {
         let mut item = simple_item(dec!(5.00), 1);
         item.discount = Some(LineDiscount::FixedAmount(dec!(10.00)));
-        // Clamped to subtotal
-        assert_eq!(item.discount_amount(), dec!(5.00));
-        assert_eq!(item.taxable_amount(), Decimal::ZERO);
+        assert_eq!(
+            item.try_discount_amount().unwrap_err(),
+            crate::PricingError::amount_exceeds_max("discount amount", dec!(10.00), dec!(5.00))
+        );
     }
 
     #[test]
-    fn discount_fixed_amount_negative() {
+    fn discount_fixed_amount_negative_is_rejected() {
         let mut item = simple_item(dec!(50.00), 1);
         item.discount = Some(LineDiscount::FixedAmount(dec!(-5.00)));
-        assert_eq!(item.discount_amount(), Decimal::ZERO);
+        assert_eq!(
+            item.try_discount_amount().unwrap_err(),
+            crate::PricingError::invalid_amount("discount amount", dec!(-5.00))
+        );
     }
 
     // ---- fixed price discount ----
@@ -268,11 +331,16 @@ mod tests {
     }
 
     #[test]
-    fn discount_fixed_price_higher_than_unit() {
+    fn discount_fixed_price_higher_than_unit_is_rejected() {
         let mut item = simple_item(dec!(10.00), 1);
         item.discount = Some(LineDiscount::FixedPrice(dec!(15.00)));
-        // Fixed price higher than original: no discount
-        assert_eq!(item.discount_amount(), Decimal::ZERO);
+        assert_eq!(
+            item.try_discount_amount().unwrap_err(),
+            crate::PricingError::FixedPriceExceedsUnitPrice {
+                price: dec!(15.00),
+                unit_price: dec!(10.00),
+            }
+        );
     }
 
     #[test]
@@ -325,6 +393,25 @@ mod tests {
         let mut item = simple_item(dec!(50.00), 1);
         item.tax_rate = Some(Decimal::ZERO);
         assert_eq!(item.tax_amount(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn tax_rate_above_one_is_rejected() {
+        let mut item = simple_item(dec!(50.00), 1);
+        item.tax_rate = Some(dec!(1.10));
+        assert_eq!(
+            item.try_tax_amount().unwrap_err(),
+            crate::PricingError::invalid_tax_rate(dec!(1.10))
+        );
+    }
+
+    #[test]
+    fn negative_unit_price_is_rejected() {
+        let item = simple_item(dec!(-1.00), 1);
+        assert_eq!(
+            item.try_total().unwrap_err(),
+            crate::PricingError::invalid_amount("unit price", dec!(-1.00))
+        );
     }
 
     // ---- total ----

@@ -678,13 +678,9 @@ fn rounding_half_even_at_midpoint() {
 }
 
 #[test]
-fn rounding_zero_quantity_line_item() {
+fn zero_quantity_line_item_is_rejected() {
     let li = item("ZERO-QTY", dec!(99.99), 0, None, Some(dec!(0.10)));
-    assert_eq!(li.subtotal(), Decimal::ZERO);
-    assert_eq!(li.discount_amount(), Decimal::ZERO);
-    assert_eq!(li.taxable_amount(), Decimal::ZERO);
-    assert_eq!(li.tax_amount(), Decimal::ZERO);
-    assert_eq!(li.total(), Decimal::ZERO);
+    assert_eq!(li.try_total().unwrap_err(), PricingError::InvalidQuantity { value: 0 });
 }
 
 #[test]

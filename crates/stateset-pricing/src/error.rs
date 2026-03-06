@@ -7,6 +7,15 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum PricingError {
+    /// An amount must not be negative.
+    #[error("invalid {field} {value}: must be non-negative")]
+    InvalidAmount {
+        /// The field that failed validation.
+        field: &'static str,
+        /// The invalid value.
+        value: Decimal,
+    },
+
     /// A discount percentage must be between 0 and 1 (inclusive).
     #[error("invalid discount percentage {value}: must be between 0 and 1")]
     InvalidDiscount {
@@ -35,6 +44,17 @@ pub enum PricingError {
     InvalidTaxRate {
         /// The invalid rate.
         value: Decimal,
+    },
+
+    /// An amount exceeded the maximum allowed for the current calculation.
+    #[error("invalid {field} {value}: exceeds maximum {max}")]
+    AmountExceedsMaximum {
+        /// The field that failed validation.
+        field: &'static str,
+        /// The invalid value.
+        value: Decimal,
+        /// The maximum allowed value.
+        max: Decimal,
     },
 
     /// An arithmetic overflow occurred during calculation.
@@ -80,6 +100,12 @@ impl PricingError {
         Self::InvalidDiscount { value }
     }
 
+    /// Create an [`InvalidAmount`](PricingError::InvalidAmount) error.
+    #[must_use]
+    pub const fn invalid_amount(field: &'static str, value: Decimal) -> Self {
+        Self::InvalidAmount { field, value }
+    }
+
     /// Create a [`NoExchangeRate`](PricingError::NoExchangeRate) error.
     #[must_use]
     pub fn no_exchange_rate(from: impl fmt::Display, to: impl fmt::Display) -> Self {
@@ -96,6 +122,12 @@ impl PricingError {
     #[must_use]
     pub const fn invalid_tax_rate(value: Decimal) -> Self {
         Self::InvalidTaxRate { value }
+    }
+
+    /// Create an [`AmountExceedsMaximum`](PricingError::AmountExceedsMaximum) error.
+    #[must_use]
+    pub const fn amount_exceeds_max(field: &'static str, value: Decimal, max: Decimal) -> Self {
+        Self::AmountExceedsMaximum { field, value, max }
     }
 
     /// Create an [`OverflowError`](PricingError::OverflowError) error.
@@ -117,6 +149,12 @@ mod tests {
     }
 
     #[test]
+    fn display_invalid_amount() {
+        let err = PricingError::invalid_amount("shipping cost", dec!(-1.0));
+        assert_eq!(err.to_string(), "invalid shipping cost -1.0: must be non-negative");
+    }
+
+    #[test]
     fn display_no_exchange_rate() {
         let err = PricingError::no_exchange_rate("USD", "XYZ");
         assert_eq!(err.to_string(), "no exchange rate found from USD to XYZ");
@@ -132,6 +170,12 @@ mod tests {
     fn display_invalid_tax_rate() {
         let err = PricingError::invalid_tax_rate(dec!(2.0));
         assert_eq!(err.to_string(), "invalid tax rate 2.0: must be between 0 and 1");
+    }
+
+    #[test]
+    fn display_amount_exceeds_max() {
+        let err = PricingError::amount_exceeds_max("discount amount", dec!(50.0), dec!(10.0));
+        assert_eq!(err.to_string(), "invalid discount amount 50.0: exceeds maximum 10.0");
     }
 
     #[test]

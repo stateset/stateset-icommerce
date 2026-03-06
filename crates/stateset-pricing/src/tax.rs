@@ -5,7 +5,9 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::error::PricingResult;
 use crate::rounding::{RoundingPolicy, round};
+use crate::validation::{validate_non_negative, validate_tax_rate};
 
 /// What a tax rule applies to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +142,23 @@ pub fn calculate_tax(
     context: &TaxContext,
     rounding: &RoundingPolicy,
 ) -> TaxResult {
+    try_calculate_tax(rules, context, rounding).expect("invalid tax input")
+}
+
+/// Calculate taxes after validating rule rates and taxable amounts.
+pub fn try_calculate_tax(
+    rules: &[TaxRule],
+    context: &TaxContext,
+    rounding: &RoundingPolicy,
+) -> PricingResult<TaxResult> {
+    validate_non_negative("shipping amount", context.shipping)?;
+    for item in &context.items {
+        validate_non_negative("taxable amount", item.amount)?;
+    }
+    for rule in rules {
+        validate_tax_rate(rule.rate)?;
+    }
+
     let mut tax_lines = Vec::new();
     let mut cumulative_tax = Decimal::ZERO;
 
@@ -169,7 +188,7 @@ pub fn calculate_tax(
 
     let total_tax = tax_lines.iter().map(|tl| tl.tax_amount).sum();
 
-    TaxResult { tax_lines, total_tax }
+    Ok(TaxResult { tax_lines, total_tax })
 }
 
 /// Compute the taxable base amount for a given rule.
@@ -628,5 +647,43 @@ mod tests {
         assert_eq!(result.tax_lines[0].tax_amount, dec!(0.50));
         assert_eq!(result.tax_lines[1].tax_amount, dec!(10.05));
         assert_eq!(result.total_tax, dec!(10.55));
+    }
+
+    #[test]
+    fn invalid_tax_rule_rate_is_rejected() {
+        let rules = vec![TaxRule {
+            jurisdiction: "BAD".into(),
+            rate: dec!(1.50),
+            applies_to: TaxAppliesTo::AllItems,
+            compound: false,
+        }];
+        assert_eq!(
+            try_calculate_tax(&rules, &simple_context(dec!(100.00)), &usd()).unwrap_err(),
+            crate::PricingError::invalid_tax_rate(dec!(1.50))
+        );
+    }
+
+    #[test]
+    fn negative_taxable_amount_is_rejected() {
+        let ctx = TaxContext {
+            items: vec![TaxableItem { amount: dec!(-5.00), category: None, exempt: false }],
+            shipping: Decimal::ZERO,
+        };
+        assert_eq!(
+            try_calculate_tax(&[], &ctx, &usd()).unwrap_err(),
+            crate::PricingError::invalid_amount("taxable amount", dec!(-5.00))
+        );
+    }
+
+    #[test]
+    fn negative_shipping_amount_is_rejected() {
+        let ctx = TaxContext {
+            items: vec![TaxableItem { amount: dec!(5.00), category: None, exempt: false }],
+            shipping: dec!(-1.00),
+        };
+        assert_eq!(
+            try_calculate_tax(&[], &ctx, &usd()).unwrap_err(),
+            crate::PricingError::invalid_amount("shipping amount", dec!(-1.00))
+        );
     }
 }

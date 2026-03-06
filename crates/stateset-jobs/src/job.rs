@@ -160,9 +160,23 @@ fn next_cron_occurrence(expr: &str, from: DateTime<Utc>) -> Option<DateTime<Utc>
 fn cron_matches(parts: &[&str], dt: DateTime<Utc>) -> bool {
     cron_field_matches(parts[0], dt.minute())
         && cron_field_matches(parts[1], dt.hour())
-        && cron_field_matches(parts[2], dt.day())
         && cron_field_matches(parts[3], dt.month())
-        && cron_field_matches(parts[4], dt.weekday().num_days_from_sunday())
+        && cron_day_matches(parts[2], parts[4], dt)
+}
+
+fn cron_day_matches(day_of_month: &str, day_of_week: &str, dt: DateTime<Utc>) -> bool {
+    let dom_matches = cron_field_matches(day_of_month, dt.day());
+    let dow_matches = cron_field_matches(day_of_week, dt.weekday().num_days_from_sunday());
+
+    if field_is_wildcard(day_of_month) || field_is_wildcard(day_of_week) {
+        dom_matches && dow_matches
+    } else {
+        dom_matches || dow_matches
+    }
+}
+
+fn field_is_wildcard(field: &str) -> bool {
+    field.trim() == "*"
 }
 
 fn cron_field_matches(field: &str, value: u32) -> bool {
@@ -499,6 +513,20 @@ mod tests {
         let from = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
         let next = Schedule::Cron("0 * * * *".into()).next_run_after(from);
         assert_eq!(next, Some(Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap()));
+    }
+
+    #[test]
+    fn cron_day_of_month_and_week_use_standard_or_semantics() {
+        let from = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap(); // Sunday
+        let next = Schedule::Cron("0 0 1 * 1".into()).next_run_after(from);
+        assert_eq!(next, Some(Utc.with_ymd_and_hms(2026, 2, 2, 0, 0, 0).unwrap()));
+    }
+
+    #[test]
+    fn cron_wildcard_day_field_still_requires_restricted_counterpart() {
+        let from = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap(); // Sunday
+        let next = Schedule::Cron("0 0 * * 1".into()).next_run_after(from);
+        assert_eq!(next, Some(Utc.with_ymd_and_hms(2026, 2, 2, 0, 0, 0).unwrap()));
     }
 
     // -----------------------------------------------------------------------

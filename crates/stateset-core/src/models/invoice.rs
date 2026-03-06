@@ -412,5 +412,21 @@ pub struct InvoiceFilter {
 /// Generate a unique invoice number
 pub fn generate_invoice_number() -> String {
     let now = chrono::Utc::now();
-    format!("INV-{}", now.format("%Y%m%d%H%M%S%3f"))
+    let short_id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    format!("INV-{}-{short_id}", now.format("%Y%m%d%H%M%S%3f"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_invoice_number;
+
+    #[test]
+    fn generated_invoice_numbers_include_entropy_suffix() {
+        let first = generate_invoice_number();
+        let second = generate_invoice_number();
+
+        assert!(first.starts_with("INV-"));
+        assert!(first.len() > "INV-20260101120000000".len());
+        assert_ne!(first, second);
+    }
 }

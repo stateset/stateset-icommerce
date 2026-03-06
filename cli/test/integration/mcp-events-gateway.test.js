@@ -31,15 +31,37 @@ async function waitForExit(processHandle, signal = 'SIGINT') {
   }
 }
 
-function startGateway(dbPath, port = '0') {
+function startGateway(dbPathOrOptions, port = '0') {
   return new Promise((resolve, reject) => {
+    const options =
+      typeof dbPathOrOptions === 'object' && dbPathOrOptions !== null
+        ? dbPathOrOptions
+        : { dbPath: dbPathOrOptions, port };
+    const dbPath = options.dbPath;
+    const resolvedPort = options.port ?? port;
+    const useDbEnv = Boolean(options.useDbEnv);
+    const extraEnv = options.env || {};
+    const args = [path.join(BIN_DIR, 'stateset-mcp-events.js')];
+    if (!useDbEnv) {
+      args.push('--db', dbPath);
+    }
+    args.push('--host', '127.0.0.1', '--port', String(resolvedPort));
+
     const proc = spawn(
       process.execPath,
-      [path.join(BIN_DIR, 'stateset-mcp-events.js'), '--db', dbPath, '--host', '127.0.0.1', '--port', String(port)],
-      { stdio: ['pipe', 'pipe', 'pipe'] },
+      args,
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          ...(useDbEnv ? { DB_PATH: dbPath } : {}),
+          ...extraEnv,
+        },
+      },
     );
 
     let stdout = '';
+    let stderr = '';
     let resolved = false;
 
     const cleanup = () => {
@@ -59,7 +81,15 @@ function startGateway(dbPath, port = '0') {
 
     const onStdout = (chunk) => {
       stdout += chunk.toString();
-      const match = stdout.match(/active on http:\/\/127\.0\.0\.1:(\d+)/);
+      if (!resolved && stdout.trim()) {
+        fail(new Error(`Gateway wrote unexpected stdout before MCP traffic: ${stdout.trim()}`));
+      }
+    };
+
+    const onStderr = (chunk) => {
+      const line = chunk.toString();
+      stderr += line;
+      const match = stderr.match(/active on http:\/\/127\.0\.0\.1:(\d+)/);
       if (match?.[1]) {
         resolved = true;
         cleanup();
@@ -68,11 +98,8 @@ function startGateway(dbPath, port = '0') {
           port: Number.parseInt(match[1], 10),
           close: () => waitForExit(proc),
         });
+        return;
       }
-    };
-
-    const onStderr = (chunk) => {
-      const line = chunk.toString();
       if (/EADDRINUSE|Address already in use/i.test(line)) {
         fail(new Error(`Port in use while starting gateway: ${line.trim()}`));
       }
@@ -206,7 +233,7 @@ function createMcpClient(processHandle, options = {}) {
   };
 }
 
-function openEventsStream(port, query = '') {
+function openEventsStream(port, query = '', options = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -216,6 +243,7 @@ function openEventsStream(port, query = '') {
         method: 'GET',
         headers: {
           Accept: 'text/event-stream',
+          ...(options.headers || {}),
         },
       },
       (res) => {
@@ -287,6 +315,7 @@ function openEventsStream(port, query = '') {
 
         const streamState = {
           response: res,
+          headers: res.headers,
           events,
           close: () => {
             cleanup();
@@ -429,6 +458,15 @@ describe('stateset-mcp-events integration', () => {
     assert.equal(response.body.stream, 'stateset-mcp');
   });
 
+  it('accepts DB_PATH from the environment when --db is omitted', async () => {
+    const started = await startGateway({ dbPath, useDbEnv: true });
+    gateway = started;
+
+    const response = await requestJson(started.port, '/ready');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.status, 'ready');
+  });
+
   it('returns empty history and subscriptions by default', async () => {
     const started = await startGateway(dbPath);
     gateway = started;
@@ -457,6 +495,50 @@ describe('stateset-mcp-events integration', () => {
       assert.equal(Array.isArray(subscriptions.body.subscriptions), true);
       assert.equal(subscriptions.body.subscriptions[0].sessionId, 'session-1');
       assert.deepEqual(subscriptions.body.subscriptions[0].eventTypes, ['success', 'error']);
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('only echoes CORS headers for loopback or explicitly allowed origins', async () => {
+    const started = await startGateway(dbPath);
+    gateway = started;
+
+    const loopbackResponse = await requestJson(started.port, '/health', {
+      headers: { Origin: 'http://localhost:3000' },
+    });
+    assert.equal(loopbackResponse.headers['access-control-allow-origin'], 'http://localhost:3000');
+
+    const remoteResponse = await requestJson(started.port, '/health', {
+      headers: { Origin: 'https://evil.example' },
+    });
+    assert.equal(remoteResponse.headers['access-control-allow-origin'], undefined);
+
+    const allowedResponse = await requestJson(started.port, '/ready', {
+      headers: { Origin: 'https://allowed.example' },
+    });
+    assert.equal(allowedResponse.headers['access-control-allow-origin'], undefined);
+  });
+
+  it('allows explicitly configured non-loopback origins while keeping SSE local by default', async () => {
+    const started = await startGateway({
+      dbPath,
+      env: {
+        STATESET_MCP_ALLOWED_ORIGINS: 'https://allowed.example',
+      },
+    });
+    gateway = started;
+
+    const response = await requestJson(started.port, '/health', {
+      headers: { Origin: 'https://allowed.example' },
+    });
+    assert.equal(response.headers['access-control-allow-origin'], 'https://allowed.example');
+
+    const stream = await openEventsStream(started.port, '', {
+      headers: { Origin: 'http://localhost:3000' },
+    });
+    try {
+      assert.equal(stream.headers['access-control-allow-origin'], 'http://localhost:3000');
     } finally {
       stream.close();
     }

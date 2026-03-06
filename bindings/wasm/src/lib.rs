@@ -18,12 +18,24 @@
 
 #![allow(dead_code)]
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
+use stateset_core::BillingInterval;
+use stateset_pricing::{
+    LineDiscount as PricingLineDiscount, Promotion as PricingPromotion,
+    PromotionContext as PricingPromotionContext, RoundingMode as PricingRoundingMode,
+    RoundingPolicy as PricingRoundingPolicy, TaxAppliesTo as PricingTaxAppliesTo,
+    TaxContext as PricingTaxContext, TaxRule as PricingTaxRule, TaxableItem as PricingTaxableItem,
+    round as pricing_round, try_calculate_tax as calculate_pricing_tax,
+    try_evaluate_promotions as evaluate_pricing_promotions,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
+use std::str::FromStr;
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
 
@@ -31,6 +43,124 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(start)]
 pub fn init() {
     console_error_panic_hook::set_once();
+}
+
+fn invalid_uuid_message(label: &str) -> String {
+    format!("Invalid {label} UUID")
+}
+
+fn parse_uuid(value: &str, label: &str) -> Result<Uuid, String> {
+    Uuid::parse_str(value).map_err(|_| invalid_uuid_message(label))
+}
+
+fn parse_optional_uuid(value: Option<&str>, label: &str) -> Result<Option<Uuid>, String> {
+    value.map(|raw| parse_uuid(raw, label)).transpose()
+}
+
+fn parse_uuid_list(values: Option<Vec<String>>, label: &str) -> Result<Vec<Uuid>, String> {
+    values.unwrap_or_default().into_iter().map(|raw| parse_uuid(&raw, label)).collect()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PromotionUsageReferences {
+    coupon_id: Option<Uuid>,
+    customer_id: Option<Uuid>,
+    order_id: Option<Uuid>,
+    cart_id: Option<Uuid>,
+}
+
+fn parse_promotion_usage_references(
+    coupon_id: Option<&str>,
+    customer_id: Option<&str>,
+    order_id: Option<&str>,
+    cart_id: Option<&str>,
+) -> Result<PromotionUsageReferences, String> {
+    Ok(PromotionUsageReferences {
+        coupon_id: parse_optional_uuid(coupon_id, "coupon")?,
+        customer_id: parse_optional_uuid(customer_id, "customer")?,
+        order_id: parse_optional_uuid(order_id, "order")?,
+        cart_id: parse_optional_uuid(cart_id, "cart")?,
+    })
+}
+
+fn parse_rfc3339_utc(value: &str, field: &str) -> Result<DateTime<Utc>, String> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|parsed| parsed.with_timezone(&Utc))
+        .map_err(|_| format!("Invalid {field}"))
+}
+
+fn normalize_billing_interval(value: Option<&str>) -> Result<String, String> {
+    value
+        .unwrap_or("monthly")
+        .parse::<BillingInterval>()
+        .map(|interval| interval.to_string())
+        .map_err(|_| "Invalid billing interval".to_string())
+}
+
+fn billing_interval_duration(interval: &str, count: i32) -> Result<chrono::Duration, String> {
+    if count <= 0 {
+        return Err("billing interval count must be greater than 0".to_string());
+    }
+
+    let interval =
+        interval.parse::<BillingInterval>().map_err(|_| "Invalid billing interval".to_string())?;
+    let days = interval
+        .days()
+        .checked_mul(i64::from(count))
+        .ok_or_else(|| "billing interval is too large".to_string())?;
+
+    Ok(chrono::Duration::days(days))
+}
+
+fn extend_period_end(
+    current_period_end: &str,
+    billing_interval: &str,
+    billing_interval_count: i32,
+) -> Result<String, String> {
+    let period_end = parse_rfc3339_utc(current_period_end, "subscription period end")?;
+    let billing_duration = billing_interval_duration(billing_interval, billing_interval_count)?;
+    Ok((period_end + billing_duration).to_rfc3339())
+}
+
+struct SubscriptionPeriods {
+    status: String,
+    trial_start: Option<DateTime<Utc>>,
+    trial_end: Option<DateTime<Utc>>,
+    current_period_start: DateTime<Utc>,
+    current_period_end: DateTime<Utc>,
+}
+
+fn subscription_periods(
+    now: DateTime<Utc>,
+    plan: &SubscriptionPlanData,
+    skip_trial: bool,
+) -> Result<SubscriptionPeriods, String> {
+    if plan.trial_days < 0 {
+        return Err("trial days must be greater than or equal to 0".to_string());
+    }
+
+    let billing_duration =
+        billing_interval_duration(&plan.billing_interval, plan.billing_interval_count)?;
+    let trial_days = if skip_trial { 0 } else { plan.trial_days };
+
+    if trial_days > 0 {
+        let trial_end = now + chrono::Duration::days(i64::from(trial_days));
+        Ok(SubscriptionPeriods {
+            status: "trialing".to_string(),
+            trial_start: Some(now),
+            trial_end: Some(trial_end),
+            current_period_start: trial_end,
+            current_period_end: trial_end + billing_duration,
+        })
+    } else {
+        Ok(SubscriptionPeriods {
+            status: "active".to_string(),
+            trial_start: None,
+            trial_end: None,
+            current_period_start: now,
+            current_period_end: now + billing_duration,
+        })
+    }
 }
 
 // ============================================================================
@@ -115,16 +245,41 @@ impl Money {
         Money(0)
     }
 
-    fn from_f64(value: f64) -> Self {
-        if value.is_finite() {
-            Money((value * Self::SCALE as f64).round() as i64)
-        } else {
-            Money::zero()
+    fn checked_minor_units_from_f64(value: f64) -> Option<i64> {
+        if !value.is_finite() {
+            return None;
         }
+
+        let scaled = value * Self::SCALE as f64;
+        if !scaled.is_finite() || scaled < i64::MIN as f64 || scaled > i64::MAX as f64 {
+            return None;
+        }
+
+        Some(scaled.round() as i64)
+    }
+
+    fn try_from_f64(value: f64, field: &str) -> Result<Self, String> {
+        Self::checked_minor_units_from_f64(value)
+            .map(Money)
+            .ok_or_else(|| format!("Invalid {field}"))
+    }
+
+    fn from_f64(value: f64) -> Self {
+        Self::checked_minor_units_from_f64(value).map(Money).unwrap_or_else(Money::zero)
     }
 
     fn to_f64(self) -> f64 {
         self.0 as f64 / Self::SCALE as f64
+    }
+
+    fn to_decimal(self) -> Decimal {
+        Decimal::new(self.0, 2)
+    }
+
+    fn from_decimal(value: Decimal) -> Option<Self> {
+        let scaled = value.checked_mul(Decimal::from(Self::SCALE))?;
+        let cents = scaled.round_dp(0).to_i64()?;
+        Some(Money(cents))
     }
 
     fn mul_rate(self, rate: f64) -> Self {
@@ -198,29 +353,36 @@ impl<'de> Deserialize<'de> for Money {
             where
                 E: serde::de::Error,
             {
-                Ok(Money::from_f64(value))
+                Money::try_from_f64(value, "monetary amount").map_err(E::custom)
             }
 
             fn visit_i64<E>(self, value: i64) -> Result<Money, E>
             where
                 E: serde::de::Error,
             {
-                Ok(Money::from_f64(value as f64))
+                value
+                    .checked_mul(Money::SCALE)
+                    .map(Money)
+                    .ok_or_else(|| E::custom("Invalid monetary amount"))
             }
 
             fn visit_u64<E>(self, value: u64) -> Result<Money, E>
             where
                 E: serde::de::Error,
             {
-                Ok(Money::from_f64(value as f64))
+                i64::try_from(value)
+                    .ok()
+                    .and_then(|major| major.checked_mul(Money::SCALE))
+                    .map(Money)
+                    .ok_or_else(|| E::custom("Invalid monetary amount"))
             }
 
             fn visit_str<E>(self, value: &str) -> Result<Money, E>
             where
                 E: serde::de::Error,
             {
-                let parsed: f64 = value.parse().map_err(E::custom)?;
-                Ok(Money::from_f64(parsed))
+                let parsed = Decimal::from_str(value).map_err(E::custom)?;
+                Money::from_decimal(parsed).ok_or_else(|| E::custom("Invalid monetary amount"))
             }
 
             fn visit_string<E>(self, value: String) -> Result<Money, E>
@@ -2597,13 +2759,17 @@ impl Returns {
         let items: Vec<ReturnItemData> = input
             .items
             .into_iter()
-            .map(|i| ReturnItemData {
-                id: Uuid::new_v4(),
-                return_id: id,
-                order_item_id: Uuid::parse_str(&i.order_item_id).unwrap_or_default(),
-                quantity: i.quantity,
+            .map(|i| {
+                let order_item_id = parse_uuid(&i.order_item_id, "order item")
+                    .map_err(|message| JsValue::from_str(&message))?;
+                Ok::<ReturnItemData, JsValue>(ReturnItemData {
+                    id: Uuid::new_v4(),
+                    return_id: id,
+                    order_item_id,
+                    quantity: i.quantity,
+                })
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         store.return_items.insert(id, items);
 
         let js_return: JsReturn = (&data).into();
@@ -2694,8 +2860,10 @@ impl Payments {
         let data = PaymentData {
             id,
             payment_number,
-            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
-            customer_id: input.customer_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+            order_id: parse_optional_uuid(input.order_id.as_deref(), "order")
+                .map_err(|message| JsValue::from_str(&message))?,
+            customer_id: parse_optional_uuid(input.customer_id.as_deref(), "customer")
+                .map_err(|message| JsValue::from_str(&message))?,
             amount: input.amount,
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
             status: "pending".to_string(),
@@ -2926,8 +3094,10 @@ impl Warranties {
             id,
             warranty_number,
             customer_id,
-            product_id: input.product_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
-            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+            product_id: parse_optional_uuid(input.product_id.as_deref(), "product")
+                .map_err(|message| JsValue::from_str(&message))?,
+            order_id: parse_optional_uuid(input.order_id.as_deref(), "order")
+                .map_err(|message| JsValue::from_str(&message))?,
             status: "active".to_string(),
             duration_months,
             start_date: now.to_rfc3339(),
@@ -3204,7 +3374,8 @@ impl Invoices {
             id,
             invoice_number,
             customer_id,
-            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+            order_id: parse_optional_uuid(input.order_id.as_deref(), "order")
+                .map_err(|message| JsValue::from_str(&message))?,
             status: "draft".to_string(),
             subtotal: input.subtotal,
             tax_amount,
@@ -3260,7 +3431,8 @@ impl Invoices {
         let data =
             store.invoices.get_mut(&uuid).ok_or_else(|| JsValue::from_str("Invoice not found"))?;
 
-        let amount = Money::from_f64(amount);
+        let amount = Money::try_from_f64(amount, "payment amount")
+            .map_err(|message| JsValue::from_str(&message))?;
         data.amount_paid += amount;
         data.updated_at = Utc::now().to_rfc3339();
 
@@ -4076,6 +4248,16 @@ impl Subscriptions {
         let input: CreatePlanInput = serde_wasm_bindgen::from_value(input)
             .map_err(|e| JsValue::from_str(&format!("Invalid input: {}", e)))?;
 
+        let billing_interval = normalize_billing_interval(input.billing_interval.as_deref())
+            .map_err(|message| JsValue::from_str(&message))?;
+        let billing_interval_count = input.billing_interval_count.unwrap_or(1);
+        billing_interval_duration(&billing_interval, billing_interval_count)
+            .map_err(|message| JsValue::from_str(&message))?;
+        let trial_days = input.trial_days.unwrap_or(0);
+        if trial_days < 0 {
+            return Err(JsValue::from_str("trial days must be greater than or equal to 0"));
+        }
+
         let now = Utc::now().to_rfc3339();
         let mut store = self.store.borrow_mut();
 
@@ -4085,12 +4267,12 @@ impl Subscriptions {
             code: input.code,
             name: input.name,
             description: input.description,
-            billing_interval: input.billing_interval.unwrap_or_else(|| "monthly".to_string()),
-            billing_interval_count: input.billing_interval_count.unwrap_or(1),
+            billing_interval,
+            billing_interval_count,
             price: input.price,
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
             setup_fee: input.setup_fee.unwrap_or_default(),
-            trial_days: input.trial_days.unwrap_or(0),
+            trial_days,
             status: "draft".to_string(),
             created_at: now.clone(),
             updated_at: now,
@@ -4198,22 +4380,8 @@ impl Subscriptions {
 
         let now = Utc::now();
         let skip_trial = input.skip_trial.unwrap_or(false);
-        let trial_days = if skip_trial { 0 } else { plan.trial_days };
-
-        // Calculate periods
-        let (status, trial_start, trial_end, period_start, period_end) = if trial_days > 0 {
-            let trial_end_dt = now + chrono::Duration::days(trial_days as i64);
-            (
-                "trialing".to_string(),
-                Some(now.to_rfc3339()),
-                Some(trial_end_dt.to_rfc3339()),
-                trial_end_dt.to_rfc3339(),
-                (trial_end_dt + chrono::Duration::days(30)).to_rfc3339(),
-            )
-        } else {
-            let period_end_dt = now + chrono::Duration::days(30);
-            ("active".to_string(), None, None, now.to_rfc3339(), period_end_dt.to_rfc3339())
-        };
+        let periods = subscription_periods(now, &plan, skip_trial)
+            .map_err(|message| JsValue::from_str(&message))?;
 
         let id = Uuid::new_v4();
         store.next_subscription_number += 1;
@@ -4224,11 +4392,11 @@ impl Subscriptions {
             subscription_number,
             customer_id,
             plan_id,
-            status,
-            current_period_start: period_start,
-            current_period_end: period_end,
-            trial_start,
-            trial_end,
+            status: periods.status,
+            current_period_start: periods.current_period_start.to_rfc3339(),
+            current_period_end: periods.current_period_end.to_rfc3339(),
+            trial_start: periods.trial_start.map(|value| value.to_rfc3339()),
+            trial_end: periods.trial_end.map(|value| value.to_rfc3339()),
             cancelled_at: None,
             cancel_at_period_end: false,
             pause_start: None,
@@ -4400,17 +4568,28 @@ impl Subscriptions {
         let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
+        let subscription = store
+            .subscriptions
+            .get(&uuid)
+            .ok_or_else(|| JsValue::from_str("Subscription not found"))?;
+        let plan_id = subscription.plan_id;
+        let plan = store
+            .subscription_plans
+            .get(&plan_id)
+            .ok_or_else(|| JsValue::from_str("Plan not found"))?
+            .clone();
         let sub = store
             .subscriptions
             .get_mut(&uuid)
             .ok_or_else(|| JsValue::from_str("Subscription not found"))?;
 
         let now = Utc::now();
-        // Extend the period by 30 days (simplified)
-        if let Ok(period_end) = chrono::DateTime::parse_from_rfc3339(&sub.current_period_end) {
-            let new_end = period_end + chrono::Duration::days(30);
-            sub.current_period_end = new_end.to_rfc3339();
-        }
+        sub.current_period_end = extend_period_end(
+            &sub.current_period_end,
+            &plan.billing_interval,
+            plan.billing_interval_count,
+        )
+        .map_err(|message| JsValue::from_str(&message))?;
         sub.updated_at = now.to_rfc3339();
 
         // Add skip event
@@ -4475,7 +4654,8 @@ impl Subscriptions {
     #[wasm_bindgen(js_name = listBillingCycles)]
     pub fn list_billing_cycles(&self, subscription_id: Option<String>) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let sub_uuid = subscription_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let sub_uuid = parse_optional_uuid(subscription_id.as_deref(), "subscription")
+            .map_err(|message| JsValue::from_str(&message))?;
 
         let cycles: Vec<JsBillingCycle> = store
             .billing_cycles
@@ -4550,6 +4730,153 @@ impl Default for Promotions {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn apply_promotions_internal(
+    store: &Store,
+    input: &ApplyPromotionsInput,
+    now: DateTime<Utc>,
+) -> Result<JsApplyPromotionsResult, JsValue> {
+    let coupon_codes = input.coupon_codes.clone().unwrap_or_default();
+    let subtotal = input.subtotal;
+    let subtotal_decimal = subtotal.to_decimal();
+    let shipping = input.shipping_amount.unwrap_or_default();
+    let rounding = PricingRoundingPolicy::usd();
+    let mut pricing_promotions = Vec::new();
+    let mut promotion_meta: HashMap<String, (String, String, Option<String>, String)> =
+        HashMap::new();
+    let mut shipping_discount = Money::zero();
+    let mut applied_promotions = Vec::new();
+    let mut free_shipping_applied = false;
+
+    let mut promotions: Vec<&PromotionData> = store.promotions.values().collect();
+    promotions.sort_by_key(|promo| promo.priority);
+
+    for promo in promotions {
+        if promo.status != "active" {
+            continue;
+        }
+
+        if let Ok(starts_at) = DateTime::parse_from_rfc3339(&promo.starts_at) {
+            if now < starts_at.with_timezone(&Utc) {
+                continue;
+            }
+        }
+        if let Some(ends_at) = &promo.ends_at {
+            if let Ok(ends_at) = DateTime::parse_from_rfc3339(ends_at) {
+                if now >= ends_at.with_timezone(&Utc) {
+                    continue;
+                }
+            }
+        }
+
+        let coupon_code = if promo.trigger == "coupon_code" {
+            store
+                .coupons
+                .values()
+                .find(|c| {
+                    c.promotion_id == promo.id
+                        && c.status == "active"
+                        && coupon_codes.contains(&c.code)
+                })
+                .map(|c| c.code.clone())
+        } else {
+            None
+        };
+        if promo.trigger == "coupon_code" && coupon_code.is_none() {
+            continue;
+        }
+
+        if promo.promotion_type == "free_shipping" {
+            if !free_shipping_applied && shipping > Money::zero() {
+                free_shipping_applied = true;
+                shipping_discount = shipping;
+                applied_promotions.push(JsAppliedPromotion {
+                    promotion_id: promo.id.to_string(),
+                    promotion_name: promo.name.clone(),
+                    coupon_code,
+                    discount_amount: shipping,
+                    discount_type: promo.promotion_type.clone(),
+                });
+            }
+            continue;
+        }
+
+        let discount_amount = if let Some(pct) = promo.percentage_off {
+            let rate = Decimal::from_str(&pct.to_string())
+                .map_err(|_| JsValue::from_str("Invalid promotion percentage"))?;
+            subtotal_decimal * rate
+        } else if let Some(fixed) = promo.fixed_amount_off {
+            fixed.to_decimal()
+        } else {
+            continue;
+        };
+        let discount_amount = if let Some(max) = promo.max_discount_amount {
+            discount_amount.min(max.to_decimal())
+        } else {
+            discount_amount
+        };
+
+        pricing_promotions.push(PricingPromotion {
+            code: promo.code.clone(),
+            discount: PricingLineDiscount::FixedAmount(discount_amount),
+            rules: vec![],
+            stackable: promo.stacking == "stackable",
+            max_uses: promo.total_usage_limit.and_then(|limit| u32::try_from(limit).ok()),
+            current_uses: promo.usage_count.max(0) as u32,
+        });
+        promotion_meta.insert(
+            promo.code.clone(),
+            (promo.id.to_string(), promo.name.clone(), coupon_code, promo.promotion_type.clone()),
+        );
+    }
+
+    let pricing_result = evaluate_pricing_promotions(
+        &pricing_promotions,
+        &PricingPromotionContext {
+            order_total: subtotal_decimal,
+            item_count: 0,
+            skus: vec![],
+            now,
+            customer_group: None,
+            is_first_order: false,
+        },
+    )
+    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut total_discount = Money::zero();
+    for applied in pricing_result.applied {
+        let Some((promotion_id, promotion_name, coupon_code, discount_type)) =
+            promotion_meta.get(&applied.code)
+        else {
+            continue;
+        };
+        let rounded_discount = pricing_round(applied.discount_amount, &rounding);
+        let discount_amount = Money::from_decimal(rounded_discount)
+            .ok_or_else(|| JsValue::from_str("Promotion discount overflow"))?;
+        total_discount += discount_amount;
+        applied_promotions.push(JsAppliedPromotion {
+            promotion_id: promotion_id.clone(),
+            promotion_name: promotion_name.clone(),
+            coupon_code: coupon_code.clone(),
+            discount_amount,
+            discount_type: discount_type.clone(),
+        });
+    }
+
+    Ok(JsApplyPromotionsResult {
+        original_subtotal: subtotal,
+        total_discount,
+        discounted_subtotal: std::cmp::max(subtotal - total_discount, Money::zero()),
+        original_shipping: shipping,
+        shipping_discount,
+        final_shipping: std::cmp::max(shipping - shipping_discount, Money::zero()),
+        grand_total: std::cmp::max(
+            subtotal - total_discount + shipping - shipping_discount,
+            Money::zero(),
+        ),
+        applied_promotions,
+    })
 }
 
 #[wasm_bindgen]
@@ -4855,7 +5182,8 @@ impl Promotions {
     #[wasm_bindgen(js_name = listCoupons)]
     pub fn list_coupons(&self, promotion_id: Option<String>) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let promo_uuid = promotion_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let promo_uuid = parse_optional_uuid(promotion_id.as_deref(), "promotion")
+            .map_err(|message| JsValue::from_str(&message))?;
 
         let coupons: Vec<JsCoupon> = store
             .coupons
@@ -4903,92 +5231,8 @@ impl Promotions {
     pub fn apply_promotions(&self, input: JsValue) -> Result<JsValue, JsValue> {
         let input: ApplyPromotionsInput =
             serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
         let store = self.store.borrow();
-        let coupon_codes = input.coupon_codes.unwrap_or_default();
-        let subtotal = input.subtotal;
-        let shipping = input.shipping_amount.unwrap_or_default();
-
-        let mut total_discount = Money::zero();
-        let mut shipping_discount = Money::zero();
-        let mut applied_promotions = Vec::new();
-
-        // Find applicable promotions
-        for promo in store.promotions.values() {
-            if promo.status != "active" {
-                continue;
-            }
-
-            // Check if triggered by coupon
-            let triggered = if promo.trigger == "coupon_code" {
-                // Check if any coupon for this promotion is in coupon_codes
-                store.coupons.values().any(|c| {
-                    c.promotion_id == promo.id
-                        && c.status == "active"
-                        && coupon_codes.contains(&c.code)
-                })
-            } else {
-                // Automatic trigger
-                true
-            };
-
-            if !triggered {
-                continue;
-            }
-
-            // Calculate discount
-            let discount = if let Some(pct) = promo.percentage_off {
-                subtotal.mul_rate(pct)
-            } else if let Some(fixed) = promo.fixed_amount_off {
-                fixed
-            } else {
-                Money::zero()
-            };
-
-            // Apply max discount cap
-            let final_discount = if let Some(max) = promo.max_discount_amount {
-                std::cmp::min(discount, max)
-            } else {
-                discount
-            };
-
-            if final_discount > Money::zero() {
-                // Check if free shipping
-                if promo.promotion_type == "free_shipping" {
-                    shipping_discount += shipping;
-                } else {
-                    total_discount += final_discount;
-                }
-
-                let coupon_code = store
-                    .coupons
-                    .values()
-                    .find(|c| c.promotion_id == promo.id && coupon_codes.contains(&c.code))
-                    .map(|c| c.code.clone());
-
-                applied_promotions.push(JsAppliedPromotion {
-                    promotion_id: promo.id.to_string(),
-                    promotion_name: promo.name.clone(),
-                    coupon_code,
-                    discount_amount: final_discount,
-                    discount_type: promo.promotion_type.clone(),
-                });
-            }
-        }
-
-        let result = JsApplyPromotionsResult {
-            original_subtotal: subtotal,
-            total_discount,
-            discounted_subtotal: std::cmp::max(subtotal - total_discount, Money::zero()),
-            original_shipping: shipping,
-            shipping_discount,
-            final_shipping: std::cmp::max(shipping - shipping_discount, Money::zero()),
-            grand_total: std::cmp::max(
-                subtotal - total_discount + shipping - shipping_discount,
-                Money::zero(),
-            ),
-            applied_promotions,
-        };
+        let result = apply_promotions_internal(&store, &input, Utc::now())?;
 
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -5006,8 +5250,15 @@ impl Promotions {
         discount_amount: f64,
         currency: &str,
     ) -> Result<JsValue, JsValue> {
-        let promo_uuid = Uuid::parse_str(promotion_id)
-            .map_err(|_| JsValue::from_str("Invalid promotion UUID"))?;
+        let promo_uuid =
+            parse_uuid(promotion_id, "promotion").map_err(|message| JsValue::from_str(&message))?;
+        let references = parse_promotion_usage_references(
+            coupon_id.as_deref(),
+            customer_id.as_deref(),
+            order_id.as_deref(),
+            cart_id.as_deref(),
+        )
+        .map_err(|message| JsValue::from_str(&message))?;
 
         let mut store = self.store.borrow_mut();
         let now = Utc::now();
@@ -5018,22 +5269,21 @@ impl Promotions {
         }
 
         // Increment coupon usage
-        if let Some(ref coupon_id_str) = coupon_id {
-            if let Ok(coupon_uuid) = Uuid::parse_str(coupon_id_str) {
-                if let Some(coupon) = store.coupons.get_mut(&coupon_uuid) {
-                    coupon.usage_count += 1;
-                }
+        if let Some(coupon_uuid) = references.coupon_id {
+            if let Some(coupon) = store.coupons.get_mut(&coupon_uuid) {
+                coupon.usage_count += 1;
             }
         }
 
-        let discount_amount = Money::from_f64(discount_amount);
+        let discount_amount = Money::try_from_f64(discount_amount, "discount amount")
+            .map_err(|message| JsValue::from_str(&message))?;
         let usage = PromotionUsageData {
             id: Uuid::new_v4(),
             promotion_id: promo_uuid,
-            coupon_id: coupon_id.and_then(|s| Uuid::parse_str(&s).ok()),
-            customer_id: customer_id.and_then(|s| Uuid::parse_str(&s).ok()),
-            order_id: order_id.and_then(|s| Uuid::parse_str(&s).ok()),
-            cart_id: cart_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            coupon_id: references.coupon_id,
+            customer_id: references.customer_id,
+            order_id: references.order_id,
+            cart_id: references.cart_id,
             discount_amount,
             currency: currency.to_string(),
             used_at: now.to_rfc3339(),
@@ -5478,6 +5728,229 @@ struct UpdateTaxSettingsInput {
     tax_provider: Option<String>,
 }
 
+fn pricing_rounding_policy(settings: Option<&TaxSettingsData>) -> PricingRoundingPolicy {
+    let mode = match settings.map(|s| s.rounding_mode.as_str()) {
+        Some("half_even") => PricingRoundingMode::HalfEven,
+        Some("down") => PricingRoundingMode::Down,
+        Some("up") => PricingRoundingMode::Up,
+        _ => PricingRoundingMode::HalfUp,
+    };
+    // The JS surface stores money in cents, so cap the shared pricing engine to 2dp here.
+    let minor_units = settings.map(|s| s.decimal_places.max(0) as u32).unwrap_or(2).min(2);
+    PricingRoundingPolicy::new(mode, minor_units)
+}
+
+fn line_total_for_tax(item: &TaxLineItemInput) -> Money {
+    let mut line_total =
+        item.unit_price.mul_rate(item.quantity) - item.discount_amount.unwrap_or_default();
+    if line_total < Money::zero() {
+        line_total = Money::zero();
+    }
+    line_total
+}
+
+fn money_from_decimal(value: Decimal, field: &str) -> Result<Money, JsValue> {
+    Money::from_decimal(value).ok_or_else(|| JsValue::from_str(&format!("{} overflow", field)))
+}
+
+fn rate_is_effective(rate: &TaxRateData, now: DateTime<Utc>) -> bool {
+    let starts_ok = DateTime::parse_from_rfc3339(&rate.effective_from)
+        .map(|starts_at| now >= starts_at.with_timezone(&Utc))
+        .unwrap_or(true);
+    let ends_ok = rate
+        .effective_to
+        .as_ref()
+        .map(|ends_at| {
+            DateTime::parse_from_rfc3339(ends_at)
+                .map(|ends_at| now < ends_at.with_timezone(&Utc))
+                .unwrap_or(true)
+        })
+        .unwrap_or(true);
+    starts_ok && ends_ok
+}
+
+fn can_use_shared_pricing_tax(rates: &[&TaxRateData]) -> bool {
+    rates.iter().all(|rate| {
+        rate.fixed_amount.is_none() && rate.threshold_min.is_none() && rate.threshold_max.is_none()
+    })
+}
+
+fn disabled_tax_result(
+    input: &TaxCalculationInput,
+    shipping_amount: Money,
+    now: DateTime<Utc>,
+) -> JsTaxCalculationResult {
+    let subtotal =
+        input.line_items.iter().fold(Money::zero(), |acc, item| acc + line_total_for_tax(item));
+    JsTaxCalculationResult {
+        id: Uuid::new_v4().to_string(),
+        total_tax: Money::zero(),
+        subtotal,
+        total: subtotal + shipping_amount,
+        shipping_tax: Money::zero(),
+        tax_breakdown: vec![],
+        line_item_taxes: input
+            .line_items
+            .iter()
+            .map(|item| JsLineItemTax {
+                line_item_id: item.id.clone(),
+                taxable_amount: line_total_for_tax(item),
+                tax_amount: Money::zero(),
+                effective_rate: 0.0,
+                is_exempt: false,
+                exemption_reason: None,
+            })
+            .collect(),
+        exemptions_applied: false,
+        calculated_at: now.to_rfc3339(),
+        is_estimate: true,
+    }
+}
+
+fn calculate_tax_with_shared_pricing(
+    store: &Store,
+    input: &TaxCalculationInput,
+    applicable_rates: &[&TaxRateData],
+    default_category: &str,
+    shipping_amount: Money,
+    now: DateTime<Utc>,
+) -> Result<JsTaxCalculationResult, JsValue> {
+    let settings = store.tax_settings.as_ref();
+    let rounding = pricing_rounding_policy(settings);
+    let tax_shipping = settings.is_none_or(|s| s.tax_shipping);
+
+    let mut rule_meta: HashMap<String, (&TaxRateData, &TaxJurisdictionData)> = HashMap::new();
+    let mut rules = Vec::new();
+    for rate in applicable_rates {
+        let Some(jurisdiction) = store.tax_jurisdictions.get(&rate.jurisdiction_id) else {
+            continue;
+        };
+        let decimal_rate = Decimal::from_str(&rate.rate.to_string())
+            .map_err(|_| JsValue::from_str("Invalid tax rate"))?;
+        let item_rule_id = format!("item:{}", rate.id);
+        rules.push(PricingTaxRule {
+            jurisdiction: item_rule_id.clone(),
+            rate: decimal_rate,
+            applies_to: PricingTaxAppliesTo::SpecificCategories(vec![
+                rate.product_category.clone(),
+            ]),
+            compound: rate.is_compound,
+        });
+        rule_meta.insert(item_rule_id, (rate, jurisdiction));
+
+        if tax_shipping && shipping_amount > Money::zero() && rate.product_category == "standard" {
+            let shipping_rule_id = format!("shipping:{}", rate.id);
+            rules.push(PricingTaxRule {
+                jurisdiction: shipping_rule_id.clone(),
+                rate: decimal_rate,
+                applies_to: PricingTaxAppliesTo::ShippingOnly,
+                compound: rate.is_compound,
+            });
+            rule_meta.insert(shipping_rule_id, (rate, jurisdiction));
+        }
+    }
+
+    let line_context_items: Vec<PricingTaxableItem> = input
+        .line_items
+        .iter()
+        .map(|item| PricingTaxableItem {
+            amount: line_total_for_tax(item).to_decimal(),
+            category: Some(
+                item.tax_category.clone().unwrap_or_else(|| default_category.to_string()),
+            ),
+            exempt: false,
+        })
+        .collect();
+    let shipping_decimal = if input.shipping_amount.is_some() && tax_shipping {
+        shipping_amount.to_decimal()
+    } else {
+        Decimal::ZERO
+    };
+
+    let summary = calculate_pricing_tax(
+        &rules,
+        &PricingTaxContext { items: line_context_items, shipping: shipping_decimal },
+        &rounding,
+    )
+    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let shipping_summary = calculate_pricing_tax(
+        &rules,
+        &PricingTaxContext { items: vec![], shipping: shipping_decimal },
+        &rounding,
+    )
+    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut subtotal = Money::zero();
+    let mut line_item_taxes = Vec::with_capacity(input.line_items.len());
+    for item in &input.line_items {
+        let line_total = line_total_for_tax(item);
+        subtotal += line_total;
+        let item_result = calculate_pricing_tax(
+            &rules,
+            &PricingTaxContext {
+                items: vec![PricingTaxableItem {
+                    amount: line_total.to_decimal(),
+                    category: Some(
+                        item.tax_category.clone().unwrap_or_else(|| default_category.to_string()),
+                    ),
+                    exempt: false,
+                }],
+                shipping: Decimal::ZERO,
+            },
+            &rounding,
+        )
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let line_tax = money_from_decimal(item_result.total_tax, "line item tax")?;
+        let effective_rate =
+            if line_total > Money::zero() { line_tax.to_f64() / line_total.to_f64() } else { 0.0 };
+        line_item_taxes.push(JsLineItemTax {
+            line_item_id: item.id.clone(),
+            taxable_amount: line_total,
+            tax_amount: line_tax,
+            effective_rate,
+            is_exempt: false,
+            exemption_reason: None,
+        });
+    }
+
+    let tax_breakdown = summary
+        .tax_lines
+        .into_iter()
+        .map(|line| {
+            let Some((rate, jurisdiction)) = rule_meta.get(&line.jurisdiction) else {
+                return Err(JsValue::from_str("Missing tax rule metadata"));
+            };
+            Ok(JsTaxBreakdown {
+                jurisdiction_id: jurisdiction.id.to_string(),
+                jurisdiction_name: jurisdiction.name.clone(),
+                tax_type: rate.tax_type.clone(),
+                rate_name: rate.name.clone(),
+                rate: rate.rate,
+                taxable_amount: money_from_decimal(line.taxable_amount, "taxable amount")?,
+                tax_amount: money_from_decimal(line.tax_amount, "tax amount")?,
+                is_compound: rate.is_compound,
+            })
+        })
+        .collect::<Result<Vec<_>, JsValue>>()?;
+
+    let total_tax = money_from_decimal(summary.total_tax, "total tax")?;
+    let shipping_tax = money_from_decimal(shipping_summary.total_tax, "shipping tax")?;
+
+    Ok(JsTaxCalculationResult {
+        id: Uuid::new_v4().to_string(),
+        total_tax,
+        subtotal,
+        total: subtotal + total_tax + shipping_amount,
+        shipping_tax,
+        tax_breakdown,
+        line_item_taxes,
+        exemptions_applied: false,
+        calculated_at: now.to_rfc3339(),
+        is_estimate: true,
+    })
+}
+
 // --- Tax Struct ---
 
 #[wasm_bindgen]
@@ -5500,13 +5973,15 @@ impl Tax {
     pub fn create_jurisdiction(&self, input: JsValue) -> Result<JsValue, JsValue> {
         let input: CreateJurisdictionInput =
             serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let parent_id = parse_optional_uuid(input.parent_id.as_deref(), "parent jurisdiction")
+            .map_err(|message| JsValue::from_str(&message))?;
 
         let now = Utc::now();
         let id = Uuid::new_v4();
 
         let data = TaxJurisdictionData {
             id,
-            parent_id: input.parent_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            parent_id,
             name: input.name,
             code: input.code,
             level: input.level.unwrap_or_else(|| "country".to_string()),
@@ -5639,7 +6114,8 @@ impl Tax {
     #[wasm_bindgen(js_name = listRates)]
     pub fn list_rates(&self, jurisdiction_id: Option<String>) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let filter_id = jurisdiction_id.and_then(|s| Uuid::parse_str(&s).ok());
+        let filter_id = parse_optional_uuid(jurisdiction_id.as_deref(), "jurisdiction")
+            .map_err(|message| JsValue::from_str(&message))?;
 
         let rates: Vec<JsTaxRate> = store
             .tax_rates
@@ -5666,6 +6142,8 @@ impl Tax {
 
         let now = Utc::now();
         let id = Uuid::new_v4();
+        let jurisdiction_ids = parse_uuid_list(input.jurisdiction_ids, "jurisdiction")
+            .map_err(|message| JsValue::from_str(&message))?;
 
         let data = TaxExemptionData {
             id,
@@ -5673,12 +6151,7 @@ impl Tax {
             exemption_type: input.exemption_type,
             certificate_number: input.certificate_number,
             issuing_authority: input.issuing_authority,
-            jurisdiction_ids: input
-                .jurisdiction_ids
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|s| Uuid::parse_str(&s).ok())
-                .collect(),
+            jurisdiction_ids,
             exempt_categories: input.exempt_categories.unwrap_or_default(),
             effective_from: input.effective_from,
             expires_at: input.expires_at,
@@ -5753,6 +6226,16 @@ impl Tax {
 
         let store = self.store.borrow();
         let now = Utc::now();
+        let settings = store.tax_settings.as_ref();
+        let shipping_amount = input.shipping_amount.unwrap_or_default();
+        let default_category =
+            settings.map(|s| s.default_product_category.as_str()).unwrap_or("standard");
+
+        if settings.is_some_and(|s| !s.enabled) {
+            let result = disabled_tax_result(&input, shipping_amount, now);
+            return serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&e.to_string()));
+        }
 
         // Find applicable rates based on address
         let mut applicable_rates: Vec<&TaxRateData> = store
@@ -5766,21 +6249,27 @@ impl Tax {
                         input.shipping_address.state.as_ref().is_none_or(|s| {
                             jurisdiction.state_code.as_ref().is_none_or(|js| js == s)
                         });
-                    country_match && state_match && r.active
+                    country_match && state_match && r.active && rate_is_effective(r, now)
                 } else {
                     false
                 }
             })
             .collect();
         applicable_rates.sort_by_key(|r| r.priority);
-
-        let shipping_amount = input.shipping_amount.unwrap_or_default();
         let has_shipping = input.shipping_amount.is_some();
-        let default_category = store
-            .tax_settings
-            .as_ref()
-            .map(|s| s.default_product_category.as_str())
-            .unwrap_or("standard");
+
+        if can_use_shared_pricing_tax(&applicable_rates) {
+            let result = calculate_tax_with_shared_pricing(
+                &store,
+                &input,
+                &applicable_rates,
+                default_category,
+                shipping_amount,
+                now,
+            )?;
+            return serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&e.to_string()));
+        }
 
         struct TaxBreakdownAccum {
             jurisdiction_id: Uuid,
@@ -6340,5 +6829,433 @@ impl Tax {
     #[wasm_bindgen(js_name = countExemptions)]
     pub fn count_exemptions(&self) -> u32 {
         self.store.borrow().tax_exemptions.len() as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn now_rfc3339() -> String {
+        Utc::now().to_rfc3339()
+    }
+
+    #[test]
+    fn apply_promotions_uses_shared_pricing_caps_and_best_deal() {
+        let store = Rc::new(RefCell::new(Store::default()));
+        let now = now_rfc3339();
+
+        {
+            let mut store = store.borrow_mut();
+            let capped_pct_id = Uuid::new_v4();
+            store.promotions.insert(
+                capped_pct_id,
+                PromotionData {
+                    id: capped_pct_id,
+                    code: "CAP10".into(),
+                    name: "Capped Ten".into(),
+                    description: None,
+                    promotion_type: "percentage_off".into(),
+                    trigger: "automatic".into(),
+                    target: "order".into(),
+                    stacking: "exclusive".into(),
+                    status: "active".into(),
+                    percentage_off: Some(0.10),
+                    fixed_amount_off: None,
+                    max_discount_amount: Some(Money::from_f64(5.0)),
+                    buy_quantity: None,
+                    get_quantity: None,
+                    starts_at: now.clone(),
+                    ends_at: None,
+                    total_usage_limit: None,
+                    per_customer_limit: None,
+                    usage_count: 0,
+                    currency: "USD".into(),
+                    priority: 0,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                },
+            );
+
+            let fixed_id = Uuid::new_v4();
+            store.promotions.insert(
+                fixed_id,
+                PromotionData {
+                    id: fixed_id,
+                    code: "FIX20".into(),
+                    name: "Fixed Twenty".into(),
+                    description: None,
+                    promotion_type: "fixed_amount".into(),
+                    trigger: "automatic".into(),
+                    target: "order".into(),
+                    stacking: "exclusive".into(),
+                    status: "active".into(),
+                    percentage_off: None,
+                    fixed_amount_off: Some(Money::from_f64(20.0)),
+                    max_discount_amount: None,
+                    buy_quantity: None,
+                    get_quantity: None,
+                    starts_at: now.clone(),
+                    ends_at: None,
+                    total_usage_limit: None,
+                    per_customer_limit: None,
+                    usage_count: 0,
+                    currency: "USD".into(),
+                    priority: 1,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                },
+            );
+        }
+
+        let input = ApplyPromotionsInput {
+            cart_id: None,
+            customer_id: None,
+            coupon_codes: None,
+            subtotal: Money::from_f64(100.0),
+            shipping_amount: Some(Money::zero()),
+            currency: Some("USD".into()),
+        };
+        let result = apply_promotions_internal(&store.borrow(), &input, Utc::now()).unwrap();
+        assert_eq!(result.total_discount, Money::from_f64(20.0));
+        assert_eq!(result.discounted_subtotal, Money::from_f64(80.0));
+        assert_eq!(result.applied_promotions.len(), 1);
+        assert_eq!(result.applied_promotions[0].promotion_name, "Fixed Twenty");
+    }
+
+    #[test]
+    fn shared_tax_pricing_matches_expected_simple_totals() {
+        let mut store = Store::default();
+        let now = Utc::now();
+        let jurisdiction_id = Uuid::new_v4();
+        let rate_id = Uuid::new_v4();
+
+        store.tax_jurisdictions.insert(
+            jurisdiction_id,
+            TaxJurisdictionData {
+                id: jurisdiction_id,
+                parent_id: None,
+                name: "California".into(),
+                code: "CA".into(),
+                level: "state".into(),
+                country_code: "US".into(),
+                state_code: Some("CA".into()),
+                county: None,
+                city: None,
+                postal_codes: vec![],
+                active: true,
+                created_at: now.to_rfc3339(),
+                updated_at: now.to_rfc3339(),
+            },
+        );
+        store.tax_rates.insert(
+            rate_id,
+            TaxRateData {
+                id: rate_id,
+                jurisdiction_id,
+                tax_type: "sales_tax".into(),
+                product_category: "standard".into(),
+                rate: 0.10,
+                name: "CA Sales Tax".into(),
+                description: None,
+                is_compound: false,
+                priority: 0,
+                threshold_min: None,
+                threshold_max: None,
+                fixed_amount: None,
+                effective_from: now.to_rfc3339(),
+                effective_to: None,
+                active: true,
+                created_at: now.to_rfc3339(),
+                updated_at: now.to_rfc3339(),
+            },
+        );
+
+        let rate = store.tax_rates.get(&rate_id).unwrap().clone();
+        let input = TaxCalculationInput {
+            line_items: vec![TaxLineItemInput {
+                id: "line-1".into(),
+                quantity: 1.0,
+                unit_price: Money::from_f64(100.0),
+                discount_amount: None,
+                tax_category: None,
+            }],
+            shipping_address: TaxAddressInput {
+                line1: None,
+                line2: None,
+                city: None,
+                state: Some("CA".into()),
+                postal_code: None,
+                country: "US".into(),
+            },
+            customer_id: None,
+            shipping_amount: Some(Money::from_f64(10.0)),
+            currency: Some("USD".into()),
+        };
+
+        let result = calculate_tax_with_shared_pricing(
+            &store,
+            &input,
+            &[&rate],
+            "standard",
+            Money::from_f64(10.0),
+            now,
+        )
+        .unwrap();
+
+        assert_eq!(result.subtotal, Money::from_f64(100.0));
+        assert_eq!(result.total_tax, Money::from_f64(11.0));
+        assert_eq!(result.shipping_tax, Money::from_f64(1.0));
+        assert_eq!(result.line_item_taxes.len(), 1);
+        assert_eq!(result.line_item_taxes[0].tax_amount, Money::from_f64(10.0));
+        assert_eq!(result.tax_breakdown.len(), 2);
+    }
+
+    #[test]
+    fn disabled_tax_settings_return_zero_tax_from_public_api() {
+        let store = Rc::new(RefCell::new(Store::default()));
+        let now = now_rfc3339();
+        let jurisdiction_id = Uuid::new_v4();
+        let rate_id = Uuid::new_v4();
+
+        {
+            let mut store = store.borrow_mut();
+            store.tax_settings = Some(TaxSettingsData {
+                id: Uuid::new_v4(),
+                enabled: false,
+                calculation_method: "exclusive".into(),
+                compound_method: "combined".into(),
+                tax_shipping: true,
+                tax_handling: true,
+                tax_gift_wrap: true,
+                default_product_category: "standard".into(),
+                rounding_mode: "half_up".into(),
+                decimal_places: 2,
+                validate_addresses: false,
+                tax_provider: None,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            });
+            store.tax_jurisdictions.insert(
+                jurisdiction_id,
+                TaxJurisdictionData {
+                    id: jurisdiction_id,
+                    parent_id: None,
+                    name: "California".into(),
+                    code: "CA".into(),
+                    level: "state".into(),
+                    country_code: "US".into(),
+                    state_code: Some("CA".into()),
+                    county: None,
+                    city: None,
+                    postal_codes: vec![],
+                    active: true,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                },
+            );
+            store.tax_rates.insert(
+                rate_id,
+                TaxRateData {
+                    id: rate_id,
+                    jurisdiction_id,
+                    tax_type: "sales_tax".into(),
+                    product_category: "standard".into(),
+                    rate: 0.10,
+                    name: "CA Sales Tax".into(),
+                    description: None,
+                    is_compound: false,
+                    priority: 0,
+                    threshold_min: None,
+                    threshold_max: None,
+                    fixed_amount: None,
+                    effective_from: now.clone(),
+                    effective_to: None,
+                    active: true,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                },
+            );
+        }
+
+        let input = TaxCalculationInput {
+            line_items: vec![TaxLineItemInput {
+                id: "line-1".into(),
+                quantity: 1.0,
+                unit_price: Money::from_f64(100.0),
+                discount_amount: None,
+                tax_category: None,
+            }],
+            shipping_address: TaxAddressInput {
+                line1: None,
+                line2: None,
+                city: None,
+                state: Some("CA".into()),
+                postal_code: None,
+                country: "US".into(),
+            },
+            customer_id: None,
+            shipping_amount: Some(Money::from_f64(10.0)),
+            currency: Some("USD".into()),
+        };
+        let result = disabled_tax_result(&input, Money::from_f64(10.0), Utc::now());
+        assert_eq!(result.total_tax, Money::zero());
+        assert_eq!(result.shipping_tax, Money::zero());
+        assert_eq!(result.total, Money::from_f64(110.0));
+    }
+
+    #[test]
+    fn parse_uuid_rejects_invalid_required_uuid() {
+        let err = parse_uuid("not-a-uuid", "order item")
+            .expect_err("invalid required uuids should be rejected");
+        assert_eq!(err, "Invalid order item UUID");
+    }
+
+    #[test]
+    fn parse_optional_uuid_rejects_invalid_optional_uuid() {
+        let err = parse_optional_uuid(Some("not-a-uuid"), "order")
+            .expect_err("invalid optional uuids should be rejected");
+        assert_eq!(err, "Invalid order UUID");
+    }
+
+    #[test]
+    fn parse_optional_uuid_accepts_absent_value() {
+        let parsed =
+            parse_optional_uuid(None, "order").expect("missing optional uuids should stay absent");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn parse_uuid_list_rejects_invalid_values() {
+        let err = parse_uuid_list(Some(vec!["not-a-uuid".into()]), "jurisdiction")
+            .expect_err("invalid uuid lists should be rejected");
+        assert_eq!(err, "Invalid jurisdiction UUID");
+    }
+
+    #[test]
+    fn parse_uuid_list_preserves_all_values() {
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let parsed =
+            parse_uuid_list(Some(vec![first.to_string(), second.to_string()]), "jurisdiction")
+                .expect("valid uuid lists should parse");
+        assert_eq!(parsed, vec![first, second]);
+    }
+
+    #[test]
+    fn parse_promotion_usage_references_rejects_invalid_optional_uuid() {
+        let err = parse_promotion_usage_references(Some("not-a-uuid"), None, None, None)
+            .expect_err("invalid optional usage references should be rejected");
+        assert_eq!(err, "Invalid coupon UUID");
+    }
+
+    #[test]
+    fn parse_promotion_usage_references_parse_all_fields() {
+        let coupon_id = Uuid::new_v4();
+        let customer_id = Uuid::new_v4();
+        let order_id = Uuid::new_v4();
+        let cart_id = Uuid::new_v4();
+        let parsed = parse_promotion_usage_references(
+            Some(&coupon_id.to_string()),
+            Some(&customer_id.to_string()),
+            Some(&order_id.to_string()),
+            Some(&cart_id.to_string()),
+        )
+        .expect("valid usage references should parse");
+        assert_eq!(
+            parsed,
+            PromotionUsageReferences {
+                coupon_id: Some(coupon_id),
+                customer_id: Some(customer_id),
+                order_id: Some(order_id),
+                cart_id: Some(cart_id),
+            }
+        );
+    }
+
+    #[test]
+    fn money_try_from_f64_rejects_non_finite_values() {
+        let err =
+            Money::try_from_f64(f64::NAN, "payment amount").expect_err("NaN should be rejected");
+        assert_eq!(err, "Invalid payment amount");
+
+        let err = Money::try_from_f64(f64::INFINITY, "discount amount")
+            .expect_err("infinite amounts should be rejected");
+        assert_eq!(err, "Invalid discount amount");
+    }
+
+    #[test]
+    fn money_deserializes_numeric_values_without_losing_strings() {
+        let from_number: Money =
+            serde_json::from_str("19.99").expect("numeric monetary values should deserialize");
+        let from_string: Money =
+            serde_json::from_str("\"19.99\"").expect("string monetary values should deserialize");
+        let from_integer: Money =
+            serde_json::from_str("19").expect("integer monetary values should deserialize");
+
+        assert_eq!(from_number, Money::from_f64(19.99));
+        assert_eq!(from_string, Money::from_f64(19.99));
+        assert_eq!(from_integer, Money::from_f64(19.0));
+    }
+
+    #[test]
+    fn billing_interval_duration_respects_interval_and_count() {
+        let duration =
+            billing_interval_duration("weekly", 2).expect("weekly interval should parse");
+        assert_eq!(duration, chrono::Duration::days(14));
+    }
+
+    #[test]
+    fn billing_interval_duration_rejects_invalid_values() {
+        let invalid_interval = billing_interval_duration("fortnight-ish", 1)
+            .expect_err("invalid intervals should fail");
+        assert_eq!(invalid_interval, "Invalid billing interval");
+
+        let invalid_count =
+            billing_interval_duration("monthly", 0).expect_err("zero interval counts should fail");
+        assert_eq!(invalid_count, "billing interval count must be greater than 0");
+    }
+
+    #[test]
+    fn subscription_periods_respect_trial_and_interval_count() {
+        let now = Utc::now();
+        let plan = SubscriptionPlanData {
+            id: Uuid::new_v4(),
+            code: "PLAN-1".into(),
+            name: "Biweekly".into(),
+            description: None,
+            billing_interval: "weekly".into(),
+            billing_interval_count: 2,
+            price: Money::from_f64(19.99),
+            currency: "USD".into(),
+            setup_fee: Money::zero(),
+            trial_days: 7,
+            status: "active".into(),
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+
+        let periods = subscription_periods(now, &plan, false).expect("subscription periods");
+        assert_eq!(periods.status, "trialing");
+        assert_eq!(periods.trial_start, Some(now));
+        assert_eq!(periods.trial_end, Some(now + chrono::Duration::days(7)));
+        assert_eq!(periods.current_period_start, now + chrono::Duration::days(7));
+        assert_eq!(periods.current_period_end, now + chrono::Duration::days(21));
+    }
+
+    #[test]
+    fn extend_period_end_respects_interval_count() {
+        let current_period_end = "2026-01-15T00:00:00+00:00";
+        let extended =
+            extend_period_end(current_period_end, "weekly", 2).expect("extend period end");
+        let extended = parse_rfc3339_utc(&extended, "period end").expect("parse extended end");
+        let original = parse_rfc3339_utc(current_period_end, "period end").expect("parse end");
+        assert_eq!(extended.signed_duration_since(original), chrono::Duration::days(14));
+    }
+
+    #[test]
+    fn extend_period_end_rejects_invalid_period_end() {
+        let err = extend_period_end("not-a-timestamp", "monthly", 1)
+            .expect_err("invalid stored timestamps should be rejected");
+        assert_eq!(err, "Invalid subscription period end");
     }
 }

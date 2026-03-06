@@ -176,6 +176,7 @@ describe('stateset-setup wizard', () => {
       const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       assert.ok(parsed.mcpServers, 'should include mcpServers');
       assert.ok(parsed.mcpServers['stateset-commerce'], 'should include stateset-commerce server');
+      assert.equal(parsed.mcpServers['stateset-commerce'].env.DB_PATH, path.join(testHome, 'store.db'));
     });
 
     it('merges into an existing MCP config file', () => {

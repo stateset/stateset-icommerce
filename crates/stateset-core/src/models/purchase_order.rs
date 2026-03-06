@@ -478,7 +478,8 @@ pub struct PurchaseOrderFilter {
 /// Generate a unique supplier code
 pub fn generate_supplier_code() -> String {
     let now = chrono::Utc::now();
-    format!("SUP-{}", now.format("%Y%m%d%H%M%S"))
+    let short_id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    format!("SUP-{}-{short_id}", now.format("%Y%m%d%H%M%S"))
 }
 
 /// Generate a unique purchase order number
@@ -486,4 +487,19 @@ pub fn generate_po_number() -> String {
     let now = chrono::Utc::now();
     let short_id = &uuid::Uuid::new_v4().to_string()[..8];
     format!("PO-{}-{}", now.format("%Y%m%d%H%M%S"), short_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_supplier_code;
+
+    #[test]
+    fn generated_supplier_codes_include_entropy_suffix() {
+        let first = generate_supplier_code();
+        let second = generate_supplier_code();
+
+        assert!(first.starts_with("SUP-"));
+        assert!(first.len() > "SUP-20260101120000".len());
+        assert_ne!(first, second);
+    }
 }

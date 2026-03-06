@@ -332,6 +332,16 @@ function getCorsAllowOrigin(origin, allowlist) {
   return null;
 }
 
+async function defaultDatabaseReadinessCheck(dbPath) {
+  const { Commerce } = await import('@stateset/embedded');
+  if (!Commerce) {
+    throw new Error('Embedded commerce engine is unavailable');
+  }
+
+  const commerce = new Commerce(dbPath);
+  await commerce.orders.list({ limit: 1 });
+}
+
 // ============================================================================
 // HttpGateway
 // ============================================================================
@@ -343,6 +353,7 @@ export class HttpGateway {
    * @param {Object} opts
    * @param {number} [opts.port=0] - Port (0 = random)
    * @param {string} [opts.host='127.0.0.1']
+   * @param {string} [opts.dbPath='./store.db']
    * @param {boolean} [opts.verbose=false]
    * @param {import('./plugin-config.js').PluginConfigState} [opts.configState]
    * @param {Array<{ key: string, name: string, level?: string, channels?: string[] }>} [opts.apiKeys]
@@ -356,10 +367,13 @@ export class HttpGateway {
    * @param {number} [opts.rateLimitUnauth=30]
    * @param {number} [opts.rateLimitWindowMs=60000]
    * @param {boolean} [opts.allowBrowserEvaluate=false] - Enable read-only /browser/evaluate route
+   * @param {(dbPath: string) => Promise<void>} [opts.databaseReadinessCheck]
    */
   constructor(opts = {}) {
     this._port = opts.port || 0;
     this._host = opts.host || '127.0.0.1';
+    this._dbPath = opts.dbPath || process.env.DB_PATH || './store.db';
+    this._databaseReadinessCheck = opts.databaseReadinessCheck || defaultDatabaseReadinessCheck;
     this._verbose = opts.verbose || false;
     this._configState = opts.configState || null;
     this._server = null;
@@ -565,7 +579,7 @@ export class HttpGateway {
           status: 'ok',
           uptime: Date.now() - startTime,
           timestamp: new Date().toISOString(),
-          version: process.env.npm_package_version || '0.7.14',
+          version: process.env.npm_package_version || '0.7.21',
           subsystems: {
             voice: this._subsystems.voice ? 'enabled' : 'disabled',
             browser: this._subsystems.browser ? 'enabled' : 'disabled',
@@ -599,10 +613,8 @@ export class HttpGateway {
 
         // Database connectivity
         try {
-          const { Commerce } = await import('@stateset/embedded');
-          if (Commerce) {
-            checks.database = 'ok';
-          }
+          await this._databaseReadinessCheck(this._dbPath);
+          checks.database = 'ok';
         } catch (err) {
           console.debug('[http-gateway] Database readiness check failed:', err.message || err);
           checks.database = 'unavailable';

@@ -129,15 +129,9 @@ impl EventEnvelope {
         if self.schema_version == 0 {
             return Err(ProtocolError::InvalidEnvelope("schema_version must be >= 1".into()));
         }
-        if self.event_type.is_empty() {
-            return Err(ProtocolError::InvalidEnvelope("event_type must not be empty".into()));
-        }
-        if self.entity_type.is_empty() {
-            return Err(ProtocolError::InvalidEnvelope("entity_type must not be empty".into()));
-        }
-        if self.entity_id.is_empty() {
-            return Err(ProtocolError::InvalidEnvelope("entity_id must not be empty".into()));
-        }
+        validate_required_str("event_type", &self.event_type)?;
+        validate_required_str("entity_type", &self.entity_type)?;
+        validate_required_str("entity_id", &self.entity_id)?;
         if self.payload.is_empty() {
             return Err(ProtocolError::InvalidEnvelope("payload must not be empty".into()));
         }
@@ -193,6 +187,13 @@ impl EventEnvelope {
         update_len_prefixed(&mut hasher, &self.payload);
         hasher.finalize().into()
     }
+}
+
+fn validate_required_str(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(ProtocolError::InvalidEnvelope(format!("{field} must not be empty")));
+    }
+    Ok(())
 }
 
 impl PartialOrd for EventEnvelope {
@@ -584,6 +585,13 @@ mod tests {
     }
 
     #[test]
+    fn validate_whitespace_event_type() {
+        let mut env = sample_envelope();
+        env.event_type = "   ".to_string();
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
     fn validate_empty_entity_type() {
         let mut env = sample_envelope();
         env.entity_type = String::new();
@@ -591,9 +599,23 @@ mod tests {
     }
 
     #[test]
+    fn validate_whitespace_entity_type() {
+        let mut env = sample_envelope();
+        env.entity_type = "\t".to_string();
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
     fn validate_empty_entity_id() {
         let mut env = sample_envelope();
         env.entity_id = String::new();
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_whitespace_entity_id() {
+        let mut env = sample_envelope();
+        env.entity_id = "  ".to_string();
         assert!(env.validate().is_err());
     }
 

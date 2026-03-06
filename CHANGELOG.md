@@ -7,7 +7,7 @@ This project follows Keep a Changelog and Semantic Versioning.
 ## [Unreleased]
 
 ### Changed
-- Updated README versioned install snippets and "What's New" heading to `0.7.14` for release-line consistency.
+- Updated README versioned install snippets and "What's New" heading to `0.7.21` for release-line consistency.
 - Raised Rust threshold in `.github/workflows/coverage.yml` from 70% to 80% to match primary CI policy.
 - Refreshed `docs/TESTING_STRATEGY.md` coverage section to document enforced CI gates instead of stale point-in-time estimates.
 - Expanded `RELEASING.md` with Rust crates.io release flow and generalized binding release examples to `vX.Y.Z`.

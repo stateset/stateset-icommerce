@@ -68,6 +68,15 @@ fn validate_platform_fee_pct(platform_fee_pct: Decimal) -> A2AResult<()> {
     Ok(())
 }
 
+fn validate_scale(label: &str, value: Decimal) -> A2AResult<()> {
+    if value.scale() > DECIMALS_DP {
+        return Err(A2AError::validation(format!(
+            "{label} must have at most {DECIMALS_DP} decimal places"
+        )));
+    }
+    Ok(())
+}
+
 /// Calculate a percentage-based split.
 ///
 /// The last recipient receives the remainder after all others have been
@@ -106,7 +115,9 @@ pub fn calculate_percentage_split(
     if total <= Decimal::ZERO {
         return Err(A2AError::validation("total must be greater than 0"));
     }
+    validate_scale("total", total)?;
     validate_platform_fee_pct(platform_fee_pct)?;
+    validate_scale("platform_fee_pct", platform_fee_pct)?;
     if recipients.len() < 2 {
         return Err(A2AError::validation("recipients must have at least 2 entries"));
     }
@@ -123,6 +134,7 @@ pub fn calculate_percentage_split(
                 "recipients[{i}].percent must be in range [0, 100]"
             )));
         }
+        validate_scale(&format!("recipients[{i}].percent"), percent)?;
     }
 
     // Validate percentages sum to 100
@@ -189,7 +201,9 @@ pub fn calculate_fixed_split(
     if total <= Decimal::ZERO {
         return Err(A2AError::validation("total must be greater than 0"));
     }
+    validate_scale("total", total)?;
     validate_platform_fee_pct(platform_fee_pct)?;
+    validate_scale("platform_fee_pct", platform_fee_pct)?;
     if recipients.len() < 2 {
         return Err(A2AError::validation("recipients must have at least 2 entries"));
     }
@@ -205,6 +219,7 @@ pub fn calculate_fixed_split(
                 "recipients[{i}].amount must be >= 0 for fixed splits"
             )));
         }
+        validate_scale(&format!("recipients[{i}].amount"), amount)?;
     }
 
     // --- Platform fee ---
@@ -337,6 +352,13 @@ mod tests {
     }
 
     #[test]
+    fn percentage_split_rejects_values_over_six_decimal_places() {
+        let r = make_pct_recipients(&[("0xA", dec!(50.0000001)), ("0xB", dec!(49.9999999))]);
+        let err = calculate_percentage_split(dec!(100), dec!(0), &r).unwrap_err();
+        assert!(matches!(err, A2AError::Validation(_)));
+    }
+
+    #[test]
     fn percentage_split_rejects_single_recipient() {
         let r = make_pct_recipients(&[("0xA", dec!(100))]);
         let err = calculate_percentage_split(dec!(100), dec!(0), &r).unwrap_err();
@@ -415,6 +437,13 @@ mod tests {
     fn percentage_split_rejects_negative_platform_fee_pct() {
         let r = make_pct_recipients(&[("0xA", dec!(50)), ("0xB", dec!(50))]);
         let err = calculate_percentage_split(dec!(100), dec!(-1), &r).unwrap_err();
+        assert!(matches!(err, A2AError::Validation(_)));
+    }
+
+    #[test]
+    fn fixed_split_rejects_values_over_six_decimal_places() {
+        let r = make_fixed_recipients(&[("0xA", dec!(60.0000001)), ("0xB", dec!(39.9999999))]);
+        let err = calculate_fixed_split(dec!(100), dec!(0), &r).unwrap_err();
         assert!(matches!(err, A2AError::Validation(_)));
     }
 

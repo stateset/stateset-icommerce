@@ -240,6 +240,11 @@ impl MetricsSnapshot {
 /// Simple sorted-insert histogram for latency percentiles.
 ///
 /// Provides p50/p95/p99 latency tracking for individual operations.
+const MAX_HISTOGRAM_SAMPLES: usize = 4_096;
+
+/// Simple sorted-insert histogram for latency percentiles.
+///
+/// Samples are bounded to keep memory usage stable under sustained traffic.
 ///
 /// # Example
 ///
@@ -273,6 +278,9 @@ impl LatencyHistogram {
 
     /// Record a latency value in microseconds.
     pub fn record(&mut self, duration_micros: u64) {
+        if self.values.len() >= MAX_HISTOGRAM_SAMPLES {
+            self.compact();
+        }
         let pos = self.values.binary_search(&duration_micros).unwrap_or_else(|e| e);
         self.values.insert(pos, duration_micros);
     }
@@ -293,6 +301,10 @@ impl LatencyHistogram {
     #[must_use]
     pub fn count(&self) -> usize {
         self.values.len()
+    }
+
+    fn compact(&mut self) {
+        self.values = self.values.iter().step_by(2).copied().collect();
     }
 }
 
@@ -329,6 +341,7 @@ struct MetricTotals {
     order_amount_total: f64,
     payment_amount_total: f64,
     inventory_delta_total: f64,
+    red_global: RedAccumulator,
     red_by_operation: HashMap<String, RedAccumulator>,
 }
 
@@ -374,6 +387,10 @@ impl Default for Metrics {
 }
 
 impl Metrics {
+    fn is_finite_metric_value(value: f64) -> bool {
+        value.is_finite()
+    }
+
     /// Whether this metrics instance currently records values.
     pub fn is_enabled(&self) -> bool {
         self.inner.enabled.load(Ordering::Relaxed)
@@ -397,11 +414,7 @@ impl Metrics {
             .map(|(operation, acc)| (operation.clone(), acc.snapshot()))
             .collect();
 
-        let red_global = RedSnapshot::from_counts(
-            self.inner.requests_total.load(Ordering::Relaxed),
-            self.inner.request_errors_total.load(Ordering::Relaxed),
-            self.inner.request_duration_micros_total.load(Ordering::Relaxed),
-        );
+        let red_global = totals.red_global.snapshot();
 
         MetricsSnapshot {
             enabled: self.is_enabled(),
@@ -439,11 +452,13 @@ impl Metrics {
             return;
         }
         self.inner.orders_created.fetch_add(1, Ordering::Relaxed);
-        let mut totals = match self.inner.totals.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        totals.order_amount_total += amount;
+        if Self::is_finite_metric_value(amount) {
+            let mut totals = match self.inner.totals.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            totals.order_amount_total += amount;
+        }
     }
 
     /// Record a new customer creation event.
@@ -516,11 +531,13 @@ impl Metrics {
             return;
         }
         self.inner.payments_completed.fetch_add(1, Ordering::Relaxed);
-        let mut totals = match self.inner.totals.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        totals.payment_amount_total += amount;
+        if Self::is_finite_metric_value(amount) {
+            let mut totals = match self.inner.totals.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            totals.payment_amount_total += amount;
+        }
     }
 
     /// Record an inventory adjustment.
@@ -529,11 +546,13 @@ impl Metrics {
             return;
         }
         self.inner.inventory_adjustments.fetch_add(1, Ordering::Relaxed);
-        let mut totals = match self.inner.totals.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        totals.inventory_delta_total += delta;
+        if Self::is_finite_metric_value(delta) {
+            let mut totals = match self.inner.totals.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            totals.inventory_delta_total += delta;
+        }
     }
 
     /// Record an A2A quote creation.
@@ -619,6 +638,7 @@ impl Metrics {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
+        totals.red_global.record(duration_micros, is_error);
         totals.red_by_operation.entry(op).or_default().record(duration_micros, is_error);
     }
 
@@ -796,6 +816,8 @@ mod tests {
         assert_eq!(snapshot.red_global.errors, 1);
         assert_close(snapshot.red_global.error_rate, 1.0 / 3.0);
         assert_close(snapshot.red_global.avg_duration_ms, 140.0);
+        assert!(snapshot.red_global.p50_ms > 0.0);
+        assert!(snapshot.red_global.p95_ms >= snapshot.red_global.p50_ms);
 
         let order = snapshot.red_by_operation.get("order_created").unwrap();
         assert_eq!(order.requests, 2);
@@ -911,6 +933,15 @@ mod tests {
     }
 
     #[test]
+    fn histogram_caps_retained_samples() {
+        let mut h = LatencyHistogram::new();
+        for i in 0..10_000 {
+            h.record(i);
+        }
+        assert!(h.count() <= MAX_HISTOGRAM_SAMPLES);
+    }
+
+    #[test]
     fn red_snapshot_includes_percentiles() {
         let metrics = init_metrics(MetricsConfig::default());
         metrics.record_request_success("test.op", Duration::from_millis(10));
@@ -924,5 +955,21 @@ mod tests {
         } else {
             panic!("Expected test_op in red_by_operation");
         }
+    }
+
+    #[test]
+    fn ignores_non_finite_metric_totals() {
+        let metrics = init_metrics(MetricsConfig::default());
+        metrics.record_order_created("cust-1", f64::NAN);
+        metrics.record_payment_completed("pay-1", f64::INFINITY);
+        metrics.record_inventory_adjusted("sku-1", f64::NEG_INFINITY);
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.orders_created, 1);
+        assert_eq!(snap.payments_completed, 1);
+        assert_eq!(snap.inventory_adjustments, 1);
+        assert_close(snap.order_amount_total, 0.0);
+        assert_close(snap.payment_amount_total, 0.0);
+        assert_close(snap.inventory_delta_total, 0.0);
     }
 }

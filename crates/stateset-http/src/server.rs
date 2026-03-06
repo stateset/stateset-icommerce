@@ -187,9 +187,7 @@ impl ServerBuilder {
     /// Requests to API routes must include `Authorization: Bearer <token>`.
     #[must_use]
     pub fn with_bearer_auth(mut self, token: impl Into<String>) -> Self {
-        let token = token.into();
-        self.api_bearer_token = Some(token.clone());
-        self.state = self.state.with_metrics_bearer_auth(token);
+        self.api_bearer_token = Some(token.into());
         self.generated_default_token = false;
         self
     }
@@ -416,7 +414,6 @@ impl ServerBuilder {
     pub fn without_auth(mut self) -> Self {
         self.api_bearer_token = None;
         self.bound_tenant_id = None;
-        self.state = self.state.without_metrics_auth();
         self.generated_default_token = false;
         self
     }
@@ -608,15 +605,29 @@ mod tests {
 
     #[test]
     fn builder_with_bearer_auth() {
-        let builder = ServerBuilder::new(test_commerce()).with_bearer_auth("test-token");
+        let builder = ServerBuilder::new(test_commerce());
+        let default_metrics_token = builder
+            .metrics_bearer_auth_token()
+            .expect("builder should start with metrics auth")
+            .to_string();
+        let builder = builder.with_bearer_auth("test-token");
         assert_eq!(builder.bearer_auth_token(), Some("test-token"));
-        assert_eq!(builder.metrics_bearer_auth_token(), Some("test-token"));
+        assert_eq!(builder.metrics_bearer_auth_token(), Some(default_metrics_token.as_str()));
         assert!(builder.bound_tenant_id.is_none());
     }
 
     #[test]
     fn builder_with_metrics_bearer_auth() {
         let builder = ServerBuilder::new(test_commerce()).with_metrics_bearer_auth("metrics-token");
+        assert_eq!(builder.metrics_bearer_auth_token(), Some("metrics-token"));
+    }
+
+    #[test]
+    fn builder_with_bearer_auth_keeps_explicit_metrics_token() {
+        let builder = ServerBuilder::new(test_commerce())
+            .with_metrics_bearer_auth("metrics-token")
+            .with_bearer_auth("api-token");
+        assert_eq!(builder.bearer_auth_token(), Some("api-token"));
         assert_eq!(builder.metrics_bearer_auth_token(), Some("metrics-token"));
     }
 
@@ -765,7 +776,7 @@ mod tests {
             .with_bearer_auth_for_tenant("token", "tenant-1")
             .without_auth();
         assert!(builder.bearer_auth_token().is_none());
-        assert!(builder.metrics_bearer_auth_token().is_none());
+        assert!(builder.metrics_bearer_auth_token().is_some());
         assert!(builder.bound_tenant_id.is_none());
     }
 
@@ -969,6 +980,15 @@ mod tests {
         let resp =
             router.oneshot(Request::get("/metrics").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn built_router_keeps_metrics_protected_after_without_auth() {
+        let router = ServerBuilder::new(test_commerce()).without_auth().build();
+
+        let resp =
+            router.oneshot(Request::get("/metrics").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

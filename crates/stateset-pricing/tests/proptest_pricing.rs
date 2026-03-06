@@ -106,6 +106,7 @@ fn arb_order_total_input() -> impl Strategy<Value = OrderTotalInput> {
 proptest! {
     #[test]
     fn line_total_non_negative(item in arb_line_item()) {
+        prop_assume!(item.validate().is_ok());
         let total = item.total();
         prop_assert!(
             total >= Decimal::ZERO,
@@ -123,7 +124,8 @@ proptest! {
 proptest! {
     #[test]
     fn grand_total_non_negative(input in arb_order_total_input()) {
-        let total = compute_order_total(&input);
+        prop_assume!(try_compute_order_total(&input).is_ok());
+        let total = try_compute_order_total(&input).unwrap();
         prop_assert!(
             total.grand_total >= Decimal::ZERO,
             "grand_total was negative: {} for input {:?}",
@@ -276,6 +278,7 @@ proptest! {
 proptest! {
     #[test]
     fn discount_never_exceeds_subtotal(item in arb_line_item()) {
+        prop_assume!(item.validate().is_ok());
         let sub = item.subtotal();
         let disc = item.discount_amount();
         prop_assert!(
@@ -348,7 +351,8 @@ proptest! {
 proptest! {
     #[test]
     fn order_total_components_sum_within_tolerance(input in arb_order_total_input()) {
-        let t = compute_order_total(&input);
+        prop_assume!(try_compute_order_total(&input).is_ok());
+        let t = try_compute_order_total(&input).unwrap();
 
         // The documented invariant:
         let expected = t.subtotal - t.total_discount + t.total_tax

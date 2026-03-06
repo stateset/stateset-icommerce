@@ -39,26 +39,73 @@ use stateset_embedded::{
     SetItemCost,
     TimePeriod,
 };
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_double, c_int};
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // =============================================================================
 // Handle Management
 // =============================================================================
 
-type CommerceHandle = Arc<Mutex<RustCommerce>>;
+type SharedCommerce = Arc<Mutex<RustCommerce>>;
 
-fn create_handle(commerce: RustCommerce) -> *mut CommerceHandle {
-    let handle: CommerceHandle = Arc::new(Mutex::new(commerce));
-    Box::into_raw(Box::new(handle))
+#[repr(C)]
+#[derive(Debug)]
+pub struct CommerceHandle {
+    _private: u8,
 }
 
-fn get_handle(ptr: *mut CommerceHandle) -> Option<CommerceHandle> {
+static HANDLE_REGISTRY: OnceLock<Mutex<HashMap<usize, SharedCommerce>>> = OnceLock::new();
+static NEXT_HANDLE_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn handle_registry() -> &'static Mutex<HashMap<usize, SharedCommerce>> {
+    HANDLE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn with_handle_registry<T>(f: impl FnOnce(&mut HashMap<usize, SharedCommerce>) -> T) -> T {
+    let mut handles = match handle_registry().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    f(&mut handles)
+}
+
+fn next_handle_id() -> usize {
+    loop {
+        let id = NEXT_HANDLE_ID.fetch_add(1, Ordering::Relaxed);
+        if id != 0 {
+            return id;
+        }
+    }
+}
+
+fn create_handle(commerce: RustCommerce) -> *mut CommerceHandle {
+    let shared = Arc::new(Mutex::new(commerce));
+    let id = with_handle_registry(|handles| {
+        let mut candidate = next_handle_id();
+        while handles.contains_key(&candidate) {
+            candidate = next_handle_id();
+        }
+        handles.insert(candidate, Arc::clone(&shared));
+        candidate
+    });
+    id as *mut CommerceHandle
+}
+
+fn get_handle(ptr: *mut CommerceHandle) -> Option<SharedCommerce> {
     if ptr.is_null() {
         return None;
     }
-    Some(unsafe { (*ptr).clone() })
+    with_handle_registry(|handles| handles.get(&(ptr as usize)).cloned())
+}
+
+fn destroy_handle(ptr: *mut CommerceHandle) {
+    if ptr.is_null() {
+        return;
+    }
+    let _ = with_handle_registry(|handles| handles.remove(&(ptr as usize)));
 }
 
 fn use_handle<F, R>(ptr: *mut CommerceHandle, f: F) -> Result<R, String>
@@ -133,9 +180,7 @@ pub extern "C" fn stateset_commerce_new(db_path: *const c_char) -> *mut Commerce
 /// The handle must have been created by `stateset_commerce_new`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn stateset_commerce_free(handle: *mut CommerceHandle) {
-    if !handle.is_null() {
-        drop(unsafe { Box::from_raw(handle) });
-    }
+    destroy_handle(handle);
 }
 
 /// Get the last error message (returns null if no error)
@@ -1609,5 +1654,27 @@ pub extern "C" fn stateset_gl_list_accounts(handle: *mut CommerceHandle) -> *mut
     match result {
         Ok(list) => to_json_cstr(&list),
         Err(_) => ptr::null_mut(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn destroyed_handle_becomes_unusable_and_new_handles_do_not_alias() {
+        let first = create_handle(RustCommerce::new(":memory:").expect("in-memory commerce"));
+        assert!(!first.is_null());
+        assert!(get_handle(first).is_some());
+
+        destroy_handle(first);
+        assert!(get_handle(first).is_none());
+
+        let second = create_handle(RustCommerce::new(":memory:").expect("in-memory commerce"));
+        assert!(!second.is_null());
+        assert_ne!(first as usize, second as usize);
+        assert!(get_handle(second).is_some());
+
+        destroy_handle(second);
     }
 }

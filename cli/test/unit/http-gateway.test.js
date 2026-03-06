@@ -193,6 +193,55 @@ describe('HttpGateway (no keys configured)', () => {
   });
 });
 
+describe('HttpGateway readiness', () => {
+  it('GET /ready returns 200 and probes the configured database path', async () => {
+    let observedDbPath = null;
+    const gw = new HttpGateway({
+      port: 0,
+      host: '127.0.0.1',
+      dbPath: '/tmp/stateset-ready.db',
+      databaseReadinessCheck: async (dbPath) => {
+        observedDbPath = dbPath;
+      },
+    });
+
+    const addr = await startGateway(gw);
+    const baseUrl = `http://${addr.host}:${addr.port}`;
+
+    try {
+      const res = await request(`${baseUrl}/ready`);
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.status, 'ready');
+      assert.strictEqual(res.body.checks.database, 'ok');
+      assert.strictEqual(observedDbPath, '/tmp/stateset-ready.db');
+    } finally {
+      await gw.stop();
+    }
+  });
+
+  it('GET /ready returns 503 when the database probe fails', async () => {
+    const gw = new HttpGateway({
+      port: 0,
+      host: '127.0.0.1',
+      databaseReadinessCheck: async () => {
+        throw new Error('database offline');
+      },
+    });
+
+    const addr = await startGateway(gw);
+    const baseUrl = `http://${addr.host}:${addr.port}`;
+
+    try {
+      const res = await request(`${baseUrl}/ready`);
+      assert.strictEqual(res.status, 503);
+      assert.strictEqual(res.body.status, 'not_ready');
+      assert.strictEqual(res.body.checks.database, 'unavailable');
+    } finally {
+      await gw.stop();
+    }
+  });
+});
+
 // ===========================================================================
 // Gateway with API keys (authenticated mode)
 // ===========================================================================

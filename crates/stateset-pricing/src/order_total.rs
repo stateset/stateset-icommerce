@@ -6,8 +6,10 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::error::PricingResult;
 use crate::line_item::{LineDiscount, LineItem};
 use crate::rounding::{RoundingPolicy, round};
+use crate::validation::{validate_base_discount, validate_non_negative, validate_tax_rate};
 
 /// A fee added to the order (e.g. handling, gift wrap, restocking).
 ///
@@ -107,47 +109,55 @@ pub struct OrderTotal {
 /// assert_eq!(total.subtotal, dec!(50.00));
 /// assert_eq!(total.shipping, dec!(5.99));
 /// ```
-#[must_use]
-pub fn compute_order_total(input: &OrderTotalInput) -> OrderTotal {
+/// Compute the order total while validating all monetary inputs first.
+pub fn try_compute_order_total(input: &OrderTotalInput) -> PricingResult<OrderTotal> {
+    for item in &input.items {
+        item.validate()?;
+    }
+
+    validate_non_negative("shipping cost", input.shipping_cost)?;
+    if let Some(rate) = input.shipping_tax_rate {
+        validate_tax_rate(rate)?;
+    }
+    for fee in &input.fees {
+        validate_non_negative("fee amount", fee.amount)?;
+    }
+
     let r = &input.rounding;
 
     // Step 1: Line-item aggregation
-    let subtotal_raw: Decimal = input.items.iter().map(LineItem::subtotal).sum();
+    let mut subtotal_raw = Decimal::ZERO;
+    let mut line_discount_raw = Decimal::ZERO;
+    let mut line_taxable = Decimal::ZERO;
+    let mut line_tax_raw = Decimal::ZERO;
+    for item in &input.items {
+        subtotal_raw += item.try_subtotal()?;
+        line_discount_raw += item.try_discount_amount()?;
+        line_taxable += item.try_taxable_amount()?;
+        line_tax_raw += item.try_tax_amount()?;
+    }
+
     let subtotal = round(subtotal_raw, r);
-
-    let line_discount_raw: Decimal = input.items.iter().map(LineItem::discount_amount).sum();
     let line_discount = round(line_discount_raw, r);
-
-    let line_taxable: Decimal = input.items.iter().map(LineItem::taxable_amount).sum();
-
-    let line_tax_raw: Decimal = input.items.iter().map(LineItem::tax_amount).sum();
     let line_tax = round(line_tax_raw, r);
 
     // Step 2: Order-level discount
     let order_discount_amount = match &input.order_discount {
         None => Decimal::ZERO,
-        Some(LineDiscount::Percentage(pct)) => {
-            let pct_clamped = (*pct).min(Decimal::ONE).max(Decimal::ZERO);
-            round(line_taxable * pct_clamped, r)
-        }
-        Some(LineDiscount::FixedAmount(amt)) => {
-            round(amt.min(&line_taxable).max(&Decimal::ZERO).to_owned(), r)
-        }
-        Some(LineDiscount::FixedPrice(price)) => {
-            // For order-level, FixedPrice means "set the order to this total"
-            let target = price.max(&Decimal::ZERO).to_owned();
-            round((line_taxable - target).max(Decimal::ZERO), r)
+        Some(discount) => {
+            validate_base_discount(discount, line_taxable)?;
+            match discount {
+                LineDiscount::Percentage(pct) => round(line_taxable * *pct, r),
+                LineDiscount::FixedAmount(amt) => round(*amt, r),
+                LineDiscount::FixedPrice(price) => round(line_taxable - *price, r),
+            }
         }
     };
 
     let total_discount = round(line_discount + order_discount_amount, r);
 
     // Recalculate tax if order discount changes the taxable base
-    // The order-level discount proportionally reduces each item's tax
     let effective_taxable = round((line_taxable - order_discount_amount).max(Decimal::ZERO), r);
-
-    // Proportional tax adjustment: if order discount reduces the taxable base,
-    // scale the tax down proportionally
     let total_tax = if line_taxable.is_zero() {
         Decimal::ZERO
     } else {
@@ -162,10 +172,23 @@ pub fn compute_order_total(input: &OrderTotalInput) -> OrderTotal {
     let fees: Decimal = input.fees.iter().map(|f| f.amount).sum();
     let fees = round(fees, r);
 
-    // Grand total
     let grand_total = round(effective_taxable + total_tax + shipping + shipping_tax + fees, r);
 
-    OrderTotal { subtotal, total_discount, total_tax, shipping, shipping_tax, fees, grand_total }
+    Ok(OrderTotal {
+        subtotal,
+        total_discount,
+        total_tax,
+        shipping,
+        shipping_tax,
+        fees,
+        grand_total,
+    })
+}
+
+#[must_use]
+/// Compute the order total and panic if the input contains invalid pricing data.
+pub fn compute_order_total(input: &OrderTotalInput) -> OrderTotal {
+    try_compute_order_total(input).expect("invalid order pricing input")
 }
 
 #[cfg(test)]
@@ -430,13 +453,13 @@ mod tests {
     // ---- order discount exceeds subtotal ----
 
     #[test]
-    fn order_discount_exceeds_subtotal() {
+    fn order_discount_exceeds_subtotal_is_rejected() {
         let mut input = default_input(vec![make_item(dec!(10.00), 1, None)]);
         input.order_discount = Some(LineDiscount::FixedAmount(dec!(50.00)));
-        let total = compute_order_total(&input);
-        // Clamped to subtotal
-        assert_eq!(total.total_discount, dec!(10.00));
-        assert_eq!(total.grand_total, Decimal::ZERO);
+        assert_eq!(
+            try_compute_order_total(&input).unwrap_err(),
+            crate::PricingError::amount_exceeds_max("discount amount", dec!(50.00), dec!(10.00))
+        );
     }
 
     // ---- zero shipping with tax rate ----
@@ -448,5 +471,35 @@ mod tests {
         input.shipping_tax_rate = Some(dec!(0.10));
         let total = compute_order_total(&input);
         assert_eq!(total.shipping_tax, Decimal::ZERO);
+    }
+
+    #[test]
+    fn negative_shipping_cost_is_rejected() {
+        let mut input = default_input(vec![make_item(dec!(50.00), 1, None)]);
+        input.shipping_cost = dec!(-1.00);
+        assert_eq!(
+            try_compute_order_total(&input).unwrap_err(),
+            crate::PricingError::invalid_amount("shipping cost", dec!(-1.00))
+        );
+    }
+
+    #[test]
+    fn invalid_shipping_tax_rate_is_rejected() {
+        let mut input = default_input(vec![make_item(dec!(50.00), 1, None)]);
+        input.shipping_tax_rate = Some(dec!(1.25));
+        assert_eq!(
+            try_compute_order_total(&input).unwrap_err(),
+            crate::PricingError::invalid_tax_rate(dec!(1.25))
+        );
+    }
+
+    #[test]
+    fn negative_fee_is_rejected() {
+        let mut input = default_input(vec![make_item(dec!(50.00), 1, None)]);
+        input.fees = vec![Fee { name: "Handling".into(), amount: dec!(-2.00) }];
+        assert_eq!(
+            try_compute_order_total(&input).unwrap_err(),
+            crate::PricingError::invalid_amount("fee amount", dec!(-2.00))
+        );
     }
 }

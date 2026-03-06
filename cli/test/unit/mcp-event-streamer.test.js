@@ -63,9 +63,6 @@ describe('createMcpEventStreamer', () => {
     const globalReq = createMockReq();
     const globalRes = createMockRes();
 
-    cleanups.push(service.handleSSEConnection(sessionReq, sessionRes, 'session-1'));
-    cleanups.push(service.handleSSEConnection(globalReq, globalRes));
-
     const sessionSub = await service.subscribe({
       sessionId: 'session-1',
       eventTypes: ['success'],
@@ -73,6 +70,18 @@ describe('createMcpEventStreamer', () => {
     const globalSub = await service.subscribe({
       eventTypes: ['success'],
     });
+
+    cleanups.push(
+      service.handleSSEConnection(sessionReq, sessionRes, {
+        sessionId: 'session-1',
+        subscriptionId: sessionSub.subscription.id,
+      }),
+    );
+    cleanups.push(
+      service.handleSSEConnection(globalReq, globalRes, {
+        subscriptionId: globalSub.subscription.id,
+      }),
+    );
 
     const event = service.publish({
       status: 'success',
@@ -92,6 +101,50 @@ describe('createMcpEventStreamer', () => {
     // One session + global subscriptions both match this event, but clients should only see one event each.
     assert.equal(sessionSub.subscription.id.length > 0, true);
     assert.equal(globalSub.subscription.id.length > 0, true);
+  });
+
+  it('enforces event filters per SSE connection even when session ids match', async () => {
+    const successSub = await service.subscribe({
+      sessionId: 'session-1',
+      eventTypes: ['success'],
+    });
+    const errorSub = await service.subscribe({
+      sessionId: 'session-1',
+      eventTypes: ['error'],
+    });
+    const successReq = createMockReq();
+    const successRes = createMockRes();
+    const errorReq = createMockReq();
+    const errorRes = createMockRes();
+
+    cleanups.push(
+      service.handleSSEConnection(successReq, successRes, {
+        sessionId: 'session-1',
+        subscriptionId: successSub.subscription.id,
+      }),
+    );
+    cleanups.push(
+      service.handleSSEConnection(errorReq, errorRes, {
+        sessionId: 'session-1',
+        subscriptionId: errorSub.subscription.id,
+      }),
+    );
+
+    const successEvent = service.publish({
+      status: 'success',
+      sessionId: 'session-1',
+    });
+    const errorEvent = service.publish({
+      status: 'error',
+      sessionId: 'session-1',
+    });
+
+    assert.equal(successRes.write.mock.calls.length, 2);
+    assert.equal(errorRes.write.mock.calls.length, 2);
+    assert.equal(successRes.write.mock.calls[1].arguments[0].includes(successEvent.id), true);
+    assert.equal(successRes.write.mock.calls[1].arguments[0].includes(errorEvent.id), false);
+    assert.equal(errorRes.write.mock.calls[1].arguments[0].includes(errorEvent.id), true);
+    assert.equal(errorRes.write.mock.calls[1].arguments[0].includes(successEvent.id), false);
   });
 
   it('returns global subscriptions when no session filter is provided', async () => {
@@ -144,11 +197,15 @@ describe('createMcpEventStreamer', () => {
   it('does not fallback to global SSE clients when unmatched global subscription exists', async () => {
     const globalReq = createMockReq();
     const globalRes = createMockRes();
-
-    cleanups.push(service.handleSSEConnection(globalReq, globalRes));
-    await service.subscribe({
+    const globalSub = await service.subscribe({
       eventTypes: ['success'],
     });
+
+    cleanups.push(
+      service.handleSSEConnection(globalReq, globalRes, {
+        subscriptionId: globalSub.subscription.id,
+      }),
+    );
 
     service.publish({
       status: 'error',

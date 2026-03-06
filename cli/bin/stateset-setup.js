@@ -447,6 +447,24 @@ function buildMcpConfig(dbPath, serverName) {
   };
 }
 
+function extractDbPathFromMcpConfig(server) {
+  const dbFromEnv = server?.env?.DB_PATH;
+  if (typeof dbFromEnv === 'string' && dbFromEnv.length > 0) {
+    return dbFromEnv;
+  }
+
+  const args = Array.isArray(server?.args) ? server.args : [];
+  const dbFlagIndex = args.findIndex((arg) => arg === '--db');
+  if (dbFlagIndex >= 0) {
+    const dbFromArgs = args[dbFlagIndex + 1];
+    if (typeof dbFromArgs === 'string' && dbFromArgs.length > 0) {
+      return dbFromArgs;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Resolve a default MCP config target path for a known client.
  * @param {string} target
@@ -739,12 +757,12 @@ function verifyOnboarding({ dbPath, mcpStep, starterStep, handoffStep }) {
           addCheck('mcp_server_entry', 'ok', 'MCP server config is present and valid');
         }
 
-        const dbFromEnv = server?.env?.DB_PATH;
-        if (typeof dbFromEnv === 'string' && dbFromEnv.length > 0) {
-          addCheck('mcp_db_path', 'ok', dbFromEnv);
+        const configuredDbPath = extractDbPathFromMcpConfig(server);
+        if (configuredDbPath) {
+          addCheck('mcp_db_path', 'ok', configuredDbPath);
         } else {
-          addCheck('mcp_db_path', 'warnings', 'DB_PATH not set in MCP server env');
-          recommendations.push('Set DB_PATH in your MCP config to a stable store.db path.');
+          addCheck('mcp_db_path', 'warnings', 'No DB path configured for the MCP server');
+          recommendations.push('Set DB_PATH or --db in your MCP config to a stable store.db path.');
         }
       }
     } catch (err) {

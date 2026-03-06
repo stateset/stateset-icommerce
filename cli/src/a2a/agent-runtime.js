@@ -964,7 +964,9 @@ export function createAgentRuntime(params) {
         try {
           getMarketplaceSvc().expireRFQs();
         } catch (expireErr) {
-          console.debug('marketplace expireRFQs not available:', expireErr.message);
+          if (!expireErr.message?.includes('not a function')) {
+            console.debug('marketplace expireRFQs failed:', expireErr.message || expireErr);
+          }
         }
       } catch (slaErr) {
         if (!slaErr.message?.includes('not a function')) {

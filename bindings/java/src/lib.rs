@@ -14,29 +14,65 @@ use stateset_embedded::{
     TimePeriod,
 };
 use stateset_primitives::CurrencyCode;
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // =============================================================================
 // Handle Management
 // =============================================================================
 
-/// Wrapper around Commerce that's safe to share via JNI
-type CommerceHandle = Arc<Mutex<RustCommerce>>;
+type SharedCommerce = Arc<Mutex<RustCommerce>>;
 
-fn create_handle(commerce: RustCommerce) -> jlong {
-    let handle: CommerceHandle = Arc::new(Mutex::new(commerce));
-    Arc::into_raw(handle) as jlong
+static HANDLE_REGISTRY: OnceLock<Mutex<HashMap<usize, SharedCommerce>>> = OnceLock::new();
+static NEXT_HANDLE_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn handle_registry() -> &'static Mutex<HashMap<usize, SharedCommerce>> {
+    HANDLE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn get_handle(ptr: jlong) -> Option<CommerceHandle> {
+fn with_handle_registry<T>(f: impl FnOnce(&mut HashMap<usize, SharedCommerce>) -> T) -> T {
+    let mut handles = match handle_registry().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    f(&mut handles)
+}
+
+fn next_handle_id() -> usize {
+    loop {
+        let id = NEXT_HANDLE_ID.fetch_add(1, Ordering::Relaxed);
+        if id != 0 {
+            return id;
+        }
+    }
+}
+
+fn create_handle(commerce: RustCommerce) -> jlong {
+    let shared = Arc::new(Mutex::new(commerce));
+    let id = with_handle_registry(|handles| {
+        let mut candidate = next_handle_id();
+        while handles.contains_key(&candidate) {
+            candidate = next_handle_id();
+        }
+        handles.insert(candidate, Arc::clone(&shared));
+        candidate
+    });
+    id as jlong
+}
+
+fn get_handle(ptr: jlong) -> Option<SharedCommerce> {
     if ptr == 0 {
         return None;
     }
-    let raw = ptr as *const Mutex<RustCommerce>;
-    unsafe {
-        Arc::increment_strong_count(raw);
-        Some(Arc::from_raw(raw))
+    with_handle_registry(|handles| handles.get(&(ptr as usize)).cloned())
+}
+
+fn destroy_handle(ptr: jlong) {
+    if ptr == 0 {
+        return;
     }
+    let _ = with_handle_registry(|handles| handles.remove(&(ptr as usize)));
 }
 
 fn use_handle<F, R>(ptr: jlong, f: F) -> Result<R, String>
@@ -442,10 +478,7 @@ pub extern "system" fn Java_com_stateset_embedded_Commerce_nativeDestroy<'local>
     _class: JClass<'local>,
     ptr: jlong,
 ) {
-    if ptr != 0 {
-        // Reconstruct the Arc and let it drop
-        let _ = unsafe { Arc::from_raw(ptr as *const Mutex<RustCommerce>) };
-    }
+    destroy_handle(ptr);
 }
 
 // =============================================================================
@@ -2504,5 +2537,27 @@ pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeGetTrialBa
             throw_exception(&mut env, &e);
             JObject::null()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn destroyed_handle_becomes_unusable_and_new_handles_do_not_alias() {
+        let first = create_handle(RustCommerce::new(":memory:").expect("in-memory commerce"));
+        assert_ne!(first, 0);
+        assert!(get_handle(first).is_some());
+
+        destroy_handle(first);
+        assert!(get_handle(first).is_none());
+
+        let second = create_handle(RustCommerce::new(":memory:").expect("in-memory commerce"));
+        assert_ne!(second, 0);
+        assert_ne!(first, second);
+        assert!(get_handle(second).is_some());
+
+        destroy_handle(second);
     }
 }

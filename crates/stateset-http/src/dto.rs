@@ -29,7 +29,7 @@ impl PaginationParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(Self::DEFAULT_LIMIT).min(Self::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -37,6 +37,11 @@ impl PaginationParams {
     pub fn resolved_offset(&self) -> u32 {
         self.offset.unwrap_or(0)
     }
+}
+
+#[must_use]
+fn resolve_limit(limit: Option<u32>) -> u32 {
+    limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).clamp(1, PaginationParams::MAX_LIMIT)
 }
 
 /// Request one extra row to detect whether another page exists.
@@ -107,7 +112,7 @@ impl OrderFilterParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -140,7 +145,7 @@ impl CustomerFilterParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -179,7 +184,7 @@ impl ProductFilterParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -216,7 +221,7 @@ impl ReturnFilterParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -469,7 +474,7 @@ impl InventoryFilterParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -527,7 +532,7 @@ impl ShipmentFilterParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -605,7 +610,7 @@ impl PaymentFilterParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -678,7 +683,7 @@ impl InvoiceFilterParams {
     /// Resolved limit with bounds checking.
     #[must_use]
     pub fn resolved_limit(&self) -> u32 {
-        self.limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).min(PaginationParams::MAX_LIMIT)
+        resolve_limit(self.limit)
     }
 
     /// Resolved offset.
@@ -1038,6 +1043,12 @@ mod tests {
     fn pagination_clamps_to_max() {
         let p = PaginationParams { limit: Some(999), offset: None };
         assert_eq!(p.resolved_limit(), PaginationParams::MAX_LIMIT);
+    }
+
+    #[test]
+    fn pagination_clamps_zero_to_one() {
+        let p = PaginationParams { limit: Some(0), offset: None };
+        assert_eq!(p.resolved_limit(), 1);
     }
 
     // ============================================================================
@@ -1462,5 +1473,11 @@ mod tests {
     fn filter_params_limit_clamps_to_max() {
         let p = OrderFilterParams { limit: Some(999), ..Default::default() };
         assert_eq!(p.resolved_limit(), PaginationParams::MAX_LIMIT);
+    }
+
+    #[test]
+    fn filter_params_limit_clamps_zero_to_one() {
+        let p = OrderFilterParams { limit: Some(0), ..Default::default() };
+        assert_eq!(p.resolved_limit(), 1);
     }
 }

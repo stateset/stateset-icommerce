@@ -62,15 +62,21 @@ pub mod order_total;
 pub mod promotions;
 pub mod rounding;
 pub mod tax;
+mod validation;
 
 // Re-export primary types for convenience.
 pub use currency::{ConversionResult, CurrencyConverter, ExchangeRate};
 pub use error::{PricingError, PricingResult};
 pub use line_item::{LineDiscount, LineItem};
-pub use order_total::{Fee, OrderTotal, OrderTotalInput, compute_order_total};
+pub use order_total::{
+    Fee, OrderTotal, OrderTotalInput, compute_order_total, try_compute_order_total,
+};
 pub use promotions::{
     AppliedPromotion, Promotion, PromotionContext, PromotionResult, PromotionRule,
-    RejectedPromotion, RejectionReason, evaluate_promotions,
+    RejectedPromotion, RejectionReason, evaluate_promotions, try_evaluate_promotions,
 };
 pub use rounding::{RoundingMode, RoundingPolicy, minor_units_for_currency, round};
-pub use tax::{TaxAppliesTo, TaxContext, TaxLine, TaxResult, TaxRule, TaxableItem, calculate_tax};
+pub use tax::{
+    TaxAppliesTo, TaxContext, TaxLine, TaxResult, TaxRule, TaxableItem, calculate_tax,
+    try_calculate_tax,
+};

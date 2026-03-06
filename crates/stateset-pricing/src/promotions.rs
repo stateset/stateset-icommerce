@@ -7,7 +7,9 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::error::PricingResult;
 use crate::line_item::LineDiscount;
+use crate::validation::{validate_base_discount, validate_non_negative};
 
 /// A single rule that must be satisfied for a promotion to apply.
 ///
@@ -181,11 +183,27 @@ pub fn evaluate_promotions(
     promotions: &[Promotion],
     context: &PromotionContext,
 ) -> PromotionResult {
+    try_evaluate_promotions(promotions, context).expect("invalid promotion input")
+}
+
+/// Evaluate promotions after validating the order total and discount definitions.
+pub fn try_evaluate_promotions(
+    promotions: &[Promotion],
+    context: &PromotionContext,
+) -> PricingResult<PromotionResult> {
+    validate_non_negative("order total", context.order_total)?;
     let mut eligible_stackable: Vec<(usize, Decimal)> = Vec::new();
     let mut eligible_non_stackable: Vec<(usize, Decimal)> = Vec::new();
     let mut rejected: Vec<RejectedPromotion> = Vec::new();
 
     for (i, promo) in promotions.iter().enumerate() {
+        for rule in &promo.rules {
+            if let PromotionRule::MinimumOrderTotal(min) = rule {
+                validate_non_negative("minimum order total", *min)?;
+            }
+        }
+        validate_base_discount(&promo.discount, context.order_total)?;
+
         // Check max uses
         if let Some(max) = promo.max_uses {
             if promo.current_uses >= max {
@@ -208,7 +226,7 @@ pub fn evaluate_promotions(
         }
 
         // Compute discount amount
-        let discount_amount = compute_discount_amount(&promo.discount, context.order_total);
+        let discount_amount = try_compute_discount_amount(&promo.discount, context.order_total)?;
 
         if promo.stackable {
             eligible_stackable.push((i, discount_amount));
@@ -258,7 +276,7 @@ pub fn evaluate_promotions(
 
     let total_discount: Decimal = applied.iter().map(|a| a.discount_amount).sum();
 
-    PromotionResult { applied, rejected, total_discount }
+    Ok(PromotionResult { applied, rejected, total_discount })
 }
 
 fn apply_with_budget(
@@ -330,18 +348,14 @@ fn check_rules(rules: &[PromotionRule], ctx: &PromotionContext) -> Vec<String> {
 }
 
 /// Compute the discount amount given a discount type and the base amount.
-fn compute_discount_amount(discount: &LineDiscount, base: Decimal) -> Decimal {
-    match discount {
-        LineDiscount::Percentage(pct) => {
-            let clamped = (*pct).min(Decimal::ONE).max(Decimal::ZERO);
-            base * clamped
-        }
-        LineDiscount::FixedAmount(amt) => amt.min(&base).max(&Decimal::ZERO).to_owned(),
-        LineDiscount::FixedPrice(price) => {
-            let target = price.max(&Decimal::ZERO).to_owned();
-            (base - target).max(Decimal::ZERO)
-        }
-    }
+fn try_compute_discount_amount(discount: &LineDiscount, base: Decimal) -> PricingResult<Decimal> {
+    validate_base_discount(discount, base)?;
+    let amount = match discount {
+        LineDiscount::Percentage(pct) => base * *pct,
+        LineDiscount::FixedAmount(amt) => *amt,
+        LineDiscount::FixedPrice(price) => base - *price,
+    };
+    Ok(amount)
 }
 
 #[cfg(test)]
@@ -785,13 +799,14 @@ mod tests {
     // ---- FixedAmount discount with zero base ----
 
     #[test]
-    fn discount_on_zero_base() {
+    fn discount_on_zero_base_is_rejected() {
         let mut ctx = base_context();
         ctx.order_total = Decimal::ZERO;
         let promos = vec![simple_promo("FREE", LineDiscount::FixedAmount(dec!(10.00)), false)];
-        let result = evaluate_promotions(&promos, &ctx);
-        assert_eq!(result.applied.len(), 1);
-        assert_eq!(result.total_discount, Decimal::ZERO); // clamped to base
+        assert_eq!(
+            try_evaluate_promotions(&promos, &ctx).unwrap_err(),
+            crate::PricingError::amount_exceeds_max("discount amount", dec!(10.00), Decimal::ZERO)
+        );
     }
 
     #[test]
@@ -806,5 +821,32 @@ mod tests {
         assert_eq!(result.applied[0].discount_amount, dec!(80.00));
         assert_eq!(result.applied[1].discount_amount, dec!(20.00));
         assert_eq!(result.total_discount, dec!(100.00));
+    }
+
+    #[test]
+    fn negative_order_total_is_rejected() {
+        let mut ctx = base_context();
+        ctx.order_total = dec!(-1.00);
+        let promos = vec![simple_promo("SAVE", LineDiscount::Percentage(dec!(0.10)), false)];
+        assert_eq!(
+            try_evaluate_promotions(&promos, &ctx).unwrap_err(),
+            crate::PricingError::invalid_amount("order total", dec!(-1.00))
+        );
+    }
+
+    #[test]
+    fn negative_minimum_order_total_rule_is_rejected() {
+        let promos = vec![Promotion {
+            code: "SAVE".into(),
+            discount: LineDiscount::Percentage(dec!(0.10)),
+            rules: vec![PromotionRule::MinimumOrderTotal(dec!(-5.00))],
+            stackable: false,
+            max_uses: None,
+            current_uses: 0,
+        }];
+        assert_eq!(
+            try_evaluate_promotions(&promos, &base_context()).unwrap_err(),
+            crate::PricingError::invalid_amount("minimum order total", dec!(-5.00))
+        );
     }
 }

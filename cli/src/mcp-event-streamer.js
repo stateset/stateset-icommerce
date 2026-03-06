@@ -88,8 +88,8 @@ export function createMcpEventStreamer(options = {}) {
 
   /**
    * In-memory SSE clients map.
-   * sessionId => Set<ServerResponse>
-   * @type {Map<string, Set<import('node:http').ServerResponse>>}
+   * subscriptionId => { res, sessionId }
+   * @type {Map<string, { res: import('node:http').ServerResponse, sessionId: string }>}
    */
   const _sseClients = new Map();
 
@@ -166,17 +166,19 @@ export function createMcpEventStreamer(options = {}) {
     }
   };
 
-  const sendToClients = (sessionId, event) => {
+  const sendToClient = (subscriptionId, event) => {
     const eventPayload = JSON.stringify(event);
     const sseEvent = `event: ${event.type}\ndata: ${eventPayload}\n\n`;
 
-    const clientSet = _sseClients.get(sessionId) || new Set();
-    for (const client of clientSet) {
-      try {
-        client.write(sseEvent);
-      } catch (error) {
-        console.warn('[MCP Event Streamer] failed to write SSE event:', error.message);
-      }
+    const client = _sseClients.get(subscriptionId);
+    if (!client?.res) {
+      return;
+    }
+
+    try {
+      client.res.write(sseEvent);
+    } catch (error) {
+      console.warn('[MCP Event Streamer] failed to write SSE event:', error.message);
     }
   };
 
@@ -192,14 +194,9 @@ export function createMcpEventStreamer(options = {}) {
       while (_eventHistory.length > historyLimit) _eventHistory.shift();
 
       notifyListeners(normalized);
-      const notifiedSessions = new Set();
-      let hasActiveGlobalSubscription = false;
 
       for (const subscription of _subscriptions.values()) {
         if (!subscription.active) continue;
-        if (subscription.sessionId === GLOBAL_SESSION) {
-          hasActiveGlobalSubscription = true;
-        }
         if (
           subscription.sessionId !== normalized.sessionId &&
           subscription.sessionId !== GLOBAL_SESSION
@@ -211,21 +208,7 @@ export function createMcpEventStreamer(options = {}) {
         }
 
         subscription.lastEventId = normalized.id;
-        if (notifiedSessions.has(subscription.sessionId)) {
-          continue;
-        }
-
-        notifiedSessions.add(subscription.sessionId);
-        sendToClients(subscription.sessionId, normalized);
-      }
-
-      // Send to global clients even without explicit subscription so dashboard users can monitor all.
-      if (
-        !hasActiveGlobalSubscription &&
-        !notifiedSessions.has(GLOBAL_SESSION) &&
-        (_sseClients.get(GLOBAL_SESSION) || new Set()).size > 0
-      ) {
-        sendToClients(GLOBAL_SESSION, normalized);
+        sendToClient(subscription.id, normalized);
       }
 
       return normalized;
@@ -355,24 +338,33 @@ export function createMcpEventStreamer(options = {}) {
      *
      * @param {import('node:http').IncomingMessage} req
      * @param {import('node:http').ServerResponse} res
-     * @param {string} [sessionId]
+     * @param {Object} options
+     * @param {string} [options.sessionId]
+     * @param {string} options.subscriptionId
+     * @param {Record<string, string>} [options.headers]
      */
-    handleSSEConnection(req, res, sessionId) {
-      const normalizedSession = normalizeSession(sessionId);
+    handleSSEConnection(req, res, options = {}) {
+      const normalizedSession = normalizeSession(options.sessionId);
+      const subscriptionId =
+        typeof options.subscriptionId === 'string' ? options.subscriptionId.trim() : '';
+      if (!subscriptionId) {
+        throw new Error('subscriptionId is required for SSE connection');
+      }
       res.writeHead(200, {
+        ...(options.headers || {}),
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
       });
 
-      if (!_sseClients.has(normalizedSession)) {
-        _sseClients.set(normalizedSession, new Set());
-      }
-      const clients = _sseClients.get(normalizedSession);
-      clients.add(res);
+      _sseClients.set(subscriptionId, {
+        res,
+        sessionId: normalizedSession,
+      });
 
       const connectedPayload = JSON.stringify({
+        subscriptionId,
         sessionId: normalizedSession,
         stream: streamName,
         timestamp: new Date().toISOString(),
@@ -391,13 +383,7 @@ export function createMcpEventStreamer(options = {}) {
       if (heartbeatInterval.unref) heartbeatInterval.unref();
 
       const cleanup = () => {
-        const active = _sseClients.get(normalizedSession);
-        if (active) {
-          active.delete(res);
-          if (active.size === 0) {
-            _sseClients.delete(normalizedSession);
-          }
-        }
+        _sseClients.delete(subscriptionId);
         clearInterval(heartbeatInterval);
       };
 
@@ -414,9 +400,6 @@ export function createMcpEventStreamer(options = {}) {
       _eventHistory.length = 0;
       _subscriptions.clear();
       _listeners.clear();
-      for (const clients of _sseClients.values()) {
-        clients.clear();
-      }
       _sseClients.clear();
     },
   };
