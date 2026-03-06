@@ -6,15 +6,20 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.22] - 2026-03-06
+
+### Added
+- Added `stateset simulate` and the A2A simulation runtime for sandboxed scenario execution with virtual time, snapshots, and failure injection.
+- Added the built-in `supplier-goes-offline` scenario plus simulation-focused CLI and unit coverage.
+- Added CI `version-sync` gate (`scripts/ci/check_version_sync.sh`) and wired it into root `npm run check`.
+- Added Rust crate publish automation: `scripts/publish-rust-crates.sh` and `.github/workflows/publish-rust-crates.yml`.
+
 ### Changed
-- Updated README versioned install snippets and "What's New" heading to `0.7.21` for release-line consistency.
+- Bumped workspace and cross-language release metadata from `0.7.21` to `0.7.22`.
+- Updated CLI/runtime version references and packaging metadata to `0.7.22` across manifests, config constants, templates, and version assertion tests.
 - Raised Rust threshold in `.github/workflows/coverage.yml` from 70% to 80% to match primary CI policy.
 - Refreshed `docs/TESTING_STRATEGY.md` coverage section to document enforced CI gates instead of stale point-in-time estimates.
 - Expanded `RELEASING.md` with Rust crates.io release flow and generalized binding release examples to `vX.Y.Z`.
-
-### Added
-- Added CI `version-sync` gate (`scripts/ci/check_version_sync.sh`) and wired it into root `npm run check`.
-- Added Rust crate publish automation: `scripts/publish-rust-crates.sh` and `.github/workflows/publish-rust-crates.yml`.
 
 ### Removed
 - Removed tracked SQLite WAL/SHM artifacts from `cli/` (`checkout-demo`, `demo`, `store`) to keep repository state clean.

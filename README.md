@@ -13,10 +13,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.7.21    # Python
-gem install stateset_embedded -v 0.7.21  # Ruby
-npm install @stateset/embedded@0.7.21    # Node.js
-npm install -g @stateset/cli@0.7.21      # CLI
+pip install stateset-embedded==0.7.22    # Python
+gem install stateset_embedded -v 0.7.22  # Ruby
+npm install @stateset/embedded@0.7.22    # Node.js
+npm install -g @stateset/cli@0.7.22      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -93,12 +93,13 @@ npm run check                # root quality checks
 
 ---
 
-## What's New in v0.7.21
+## What's New in v0.7.22
 
-**21-crate Rust workspace** — The engine now ships as a modular workspace of 21 specialized crates covering protocol, policy, transport, operations, interchange, and cross-cutting concerns. 2,671 Rust tests, 0 failures.
+**Agent simulation playground** — This release adds `stateset simulate` for sandboxed A2A scenario execution with virtual time, state snapshots, and failure injection, while keeping the broader 21-crate workspace and cross-language bindings in sync.
 
 | Feature | Description |
 |---------|-------------|
+| **Agent Simulation Playground** | New `stateset simulate` flow for sandboxed A2A runs with scenario selection, virtual clocks, snapshots, and supplier-offline failure injection |
 | **21 Rust Crates** | Fully modular workspace: primitives, core, db, embedded, crypto, protocol, policy, authz, pricing, migrations, jobs, http, sync, a2a, ffi, sdk, observability, macros, test-utils, integration-tests, benches |
 | **stateset-protocol** | Wire types: `EventEnvelope`, `SyncBatch`, Merkle trees, JCS canonical JSON, schema versioning (148 tests) |
 | **stateset-http** | Axum REST + SSE server: 19 endpoints, middleware (auth, CORS, tracing), `ServerBuilder` (92 tests) |
@@ -1258,7 +1259,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.7.21"
+stateset-embedded = "0.7.22"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1308,14 +1309,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.7.21</version>
+    <version>0.7.22</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.7.21'
+implementation 'com.stateset:embedded:0.7.22'
 ```
 
 ### Kotlin (Gradle)
@@ -1323,7 +1324,7 @@ implementation 'com.stateset:embedded:0.7.21'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.7.21")
+    implementation("com.stateset:embedded-kotlin:0.7.22")
 }
 ```
 
@@ -1332,32 +1333,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.21")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.22")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.7.21'
+pod 'StateSet', '~> 0.7.22'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.7.21
+dotnet add package StateSet.Embedded --version 0.7.22
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.7.21" />
+<PackageReference Include="StateSet.Embedded" Version="0.7.22" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.21
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.22
 ```
 
 ### CLI

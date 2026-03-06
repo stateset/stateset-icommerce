@@ -1,6 +1,6 @@
 [package]
 name = "stateset-embedded-ruby"
-version = "0.7.21"
+version = "0.7.22"
 edition = "2021"
 description = "Ruby bindings for StateSet Embedded Commerce"
 license = "MIT OR Apache-2.0"
@@ -14,8 +14,8 @@ crate-type = ["cdylib"]
 doc = false
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded", version = "0.7.21" }
-stateset-core = { path = "../../crates/stateset-core", version = "0.7.21" }
+stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded", version = "0.7.22" }
+stateset-core = { path = "../../crates/stateset-core", version = "0.7.22" }
 magnus = "0.7"
 rust_decimal = { version = "1.36", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }

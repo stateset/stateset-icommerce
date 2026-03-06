@@ -83,6 +83,11 @@ function routeLifecycleCommands(argv) {
     return true;
   }
 
+  if (first === 'simulate') {
+    runLifecycleScript('stateset-simulate.js', argv.slice(1));
+    return true;
+  }
+
   return false;
 }
 
@@ -271,6 +276,7 @@ SPECIALIZED COMMANDS:
   stateset-channels        Messaging channel orchestration
   stateset-events          Legacy event streaming (DB webhooks + feed)
   stateset-mcp-events      MCP execution event stream gateway
+  stateset-simulate        A2A simulation playground with snapshots
   stateset-skills          Skills marketplace
   stateset-x402            x402 config + key setup
   stateset-x402-mcp        x402 MCP server for paid API calls
@@ -287,6 +293,7 @@ EXAMPLES:
   # Lifecycle shortcuts
   stateset doctor --checks api,db
   stateset update status
+  stateset simulate --scenario supplier-goes-offline --agents inventory,procurement
 
   # List customers (read-only)
   stateset "show me all customers"

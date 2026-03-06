@@ -319,6 +319,12 @@ export { wireRuntimeEvents, createWiredAgentRuntime, EVENT_MAP } from './a2a/eve
 
 // A2A Demo Scenarios
 export { runDemoScenario, DEMO_SCENARIOS } from './a2a/demo-scenarios.js';
+export {
+  runSimulationScenario,
+  SIMULATION_SCENARIOS,
+  captureSimulationSnapshot,
+  withSimulatedClock,
+} from './a2a/simulator.js';
 
 // A2A Settlement (On-Chain)
 export { createSettlementService } from './a2a/settlement.js';
