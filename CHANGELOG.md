@@ -6,6 +6,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.23] - 2026-03-10
+
+### Changed
+- Bumped workspace and cross-language release metadata from `0.7.22` to `0.7.23`.
+- Tightened root quality gates so `npm run check` enforces the admin lane plus the CLI supported typecheck lane under explicit Node/npm runtime guards.
+- Expanded the CLI supported typecheck surface to cover the x402 package, `src/x402-mcp-server.js`, `src/tools/x402.js`, and `src/sync/crypto.js`.
+
+### Fixed
+- Reduced type drift across the x402/runtime surfaces, including crypto helpers, lazy dependency loading, and chain helper JSDoc contracts.
+- Added admin test-suite typechecking and fixed test/runtime mismatches needed for the stricter gate to pass cleanly.
+- Fixed the stale migration snapshot and hardened cart number generation to avoid collisions during fast concurrent test runs.
+
 ## [0.7.22] - 2026-03-06
 
 ### Added

@@ -18,12 +18,65 @@ import crypto from 'crypto';
 // Native Module (optional — falls back to JS)
 // =============================================================================
 
-/** @type {import('@stateset/embedded') | null} */
+/**
+ * @typedef {{
+ *   jcsCanonicalize?: (json: string) => string,
+ *   jcs_canonicalize?: (json: string) => string,
+ *   ed25519Sign?: (hash: Buffer, privateKey: Buffer) => Buffer,
+ *   ed25519_sign?: (hash: Buffer, privateKey: Buffer) => Buffer,
+ *   ed25519Verify?: (hash: Buffer, signature: Buffer, publicKey: Buffer) => boolean,
+ *   ed25519_verify?: (hash: Buffer, signature: Buffer, publicKey: Buffer) => boolean,
+ *   merkleRoot?: (leaves: Buffer[]) => Buffer | Uint8Array,
+ *   merkle_root?: (leaves: Buffer[]) => Buffer | Uint8Array,
+ * }} NativeCryptoCompat
+ */
+
+/** @type {NativeCryptoCompat | null} */
 let _native = null;
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function messageFromError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 try {
-  _native = await import('@stateset/embedded');
+  _native = /** @type {NativeCryptoCompat} */ (await import('@stateset/embedded'));
 } catch (nativeErr) {
-  console.debug('native crypto module not available, using JS fallback:', nativeErr.message);
+  console.debug(
+    'native crypto module not available, using JS fallback:',
+    messageFromError(nativeErr),
+  );
+}
+
+/**
+ * @returns {((json: string) => string) | null}
+ */
+function getNativeJcsCanonicalize() {
+  return _native?.jcsCanonicalize || _native?.jcs_canonicalize || null;
+}
+
+/**
+ * @returns {((hash: Buffer, privateKey: Buffer) => Buffer) | null}
+ */
+function getNativeEd25519Sign() {
+  return _native?.ed25519Sign || _native?.ed25519_sign || null;
+}
+
+/**
+ * @returns {((hash: Buffer, signature: Buffer, publicKey: Buffer) => boolean) | null}
+ */
+function getNativeEd25519Verify() {
+  return _native?.ed25519Verify || _native?.ed25519_verify || null;
+}
+
+/**
+ * @returns {((leaves: Buffer[]) => Buffer | Uint8Array) | null}
+ */
+function getNativeMerkleRoot() {
+  return _native?.merkleRoot || _native?.merkle_root || null;
 }
 
 // =============================================================================
@@ -180,11 +233,12 @@ function escapeString(s) {
  * @returns {string}
  */
 export function canonicalizeJson(value) {
-  if (_native?.jcsCanonicalize) {
+  const nativeJcsCanonicalize = getNativeJcsCanonicalize();
+  if (nativeJcsCanonicalize) {
     try {
-      return _native.jcsCanonicalize(JSON.stringify(value));
+      return nativeJcsCanonicalize(JSON.stringify(value));
     } catch (nativeErr) {
-      console.debug('native crypto call failed, using JS fallback:', nativeErr.message);
+      console.debug('native crypto call failed, using JS fallback:', messageFromError(nativeErr));
     }
   }
   if (value === null) return 'null';
@@ -218,7 +272,7 @@ export function canonicalizeJson(value) {
 /**
  * Compute payload_plain_hash per VES v1.0 Section 5.2
  * @param {Object} payload - JSON payload
- * @param {Buffer} [salt] - Optional 16-byte salt for encrypted payloads
+ * @param {Buffer | null} [salt] - Optional 16-byte salt for encrypted payloads
  * @returns {Buffer} - 32-byte hash
  */
 export function computePayloadPlainHash(payload, salt = null) {
@@ -247,9 +301,19 @@ export function computeLegacyPayloadHash(payload) {
 }
 
 /**
+ * @typedef {{
+ *   nonce: Buffer,
+ *   payloadAad: Buffer,
+ *   ciphertext: Buffer,
+ *   tag: Buffer,
+ *   recipientsHash: Buffer,
+ * }} PayloadCipherHashParams
+ */
+
+/**
  * Compute payload_cipher_hash per VES v1.0 Section 5.3
  * For plaintext events, returns 32 zero bytes
- * @param {Object} params - Encryption parameters (null for plaintext)
+ * @param {PayloadCipherHashParams | null} params - Encryption parameters (null for plaintext)
  * @returns {Buffer} - 32-byte hash
  */
 export function computePayloadCipherHash(params = null) {
@@ -326,11 +390,12 @@ export function computeEventSigningHash(params) {
  * @returns {Buffer} - 64-byte signature
  */
 export function signEventHash(eventSigningHash, privateKey) {
-  if (_native?.ed25519Sign) {
+  const nativeEd25519Sign = getNativeEd25519Sign();
+  if (nativeEd25519Sign) {
     try {
-      return _native.ed25519Sign(eventSigningHash, privateKey);
+      return nativeEd25519Sign(eventSigningHash, privateKey);
     } catch (nativeErr) {
-      console.debug('native crypto call failed, using JS fallback:', nativeErr.message);
+      console.debug('native crypto call failed, using JS fallback:', messageFromError(nativeErr));
     }
   }
   // Create key object from raw 32-byte seed
@@ -357,11 +422,12 @@ export function signEventHash(eventSigningHash, privateKey) {
  * @returns {boolean}
  */
 export function verifyEventSignature(eventSigningHash, signature, publicKey) {
-  if (_native?.ed25519Verify) {
+  const nativeEd25519Verify = getNativeEd25519Verify();
+  if (nativeEd25519Verify) {
     try {
-      return _native.ed25519Verify(eventSigningHash, signature, publicKey);
+      return nativeEd25519Verify(eventSigningHash, signature, publicKey);
     } catch (nativeErr) {
-      console.debug('native crypto call failed, using JS fallback:', nativeErr.message);
+      console.debug('native crypto call failed, using JS fallback:', messageFromError(nativeErr));
     }
   }
   try {
@@ -378,7 +444,7 @@ export function verifyEventSignature(eventSigningHash, signature, publicKey) {
 
     return crypto.verify(null, eventSigningHash, keyObj, signature);
   } catch (err) {
-    console.debug('[sync-crypto] Signature verification failed:', err.message || err);
+    console.debug('[sync-crypto] Signature verification failed:', messageFromError(err));
     return false;
   }
 }
@@ -448,8 +514,26 @@ export function computeRecipientsHash(recipients) {
 }
 
 /**
+ * @typedef {{ recipient_kid: number, enc_b64u: string, ct_b64u: string }} EncryptedRecipient
+ * @typedef {{
+ *   enc_version: number,
+ *   aead: string,
+ *   nonce_b64u: string,
+ *   ciphertext_b64u: string,
+ *   tag_b64u: string,
+ *   hpke: {
+ *     mode: string,
+ *     kem: string,
+ *     kdf: string,
+ *     aead: string,
+ *   },
+ *   recipients: EncryptedRecipient[],
+ * }} PayloadEncryptedStructure
+ */
+
+/**
  * @typedef {Object} EncryptionResult
- * @property {Object} payloadEncrypted - VES-ENC-1 structure
+ * @property {PayloadEncryptedStructure} payloadEncrypted - VES-ENC-1 structure
  * @property {Buffer} salt - 16-byte salt used
  * @property {Buffer} payloadPlainHash - 32-byte hash
  * @property {Buffer} payloadCipherHash - 32-byte hash
@@ -544,12 +628,12 @@ export function encryptPayload(payload, aadParams, recipientKeys) {
 
 /**
  * Decrypt payload per VES-ENC-1
- * @param {Object} payloadEncrypted - VES-ENC-1 structure
+ * @param {PayloadEncryptedStructure} payloadEncrypted - VES-ENC-1 structure
  * @param {Buffer} payloadAad - 32-byte AAD
  * @param {number} recipientKid - Recipient key ID
  * @param {Buffer} recipientPrivateKey - 32-byte X25519 private key
  * @param {Buffer} expectedPlainHash - Expected payload_plain_hash
- * @returns {Object} - Decrypted JSON payload
+ * @returns {unknown} - Decrypted JSON payload
  */
 export function decryptPayload(
   payloadEncrypted,
@@ -630,7 +714,9 @@ function wrapDek(dek, recipientPublicKey, info) {
   });
 
   // Derive wrapping key using HKDF
-  const wrappingKey = crypto.hkdfSync('sha256', sharedSecret, Buffer.alloc(0), info, 32);
+  const wrappingKey = Buffer.from(
+    crypto.hkdfSync('sha256', sharedSecret, Buffer.alloc(0), info, 32),
+  );
 
   // Wrap DEK with AES-256-GCM
   const wrapNonce = crypto.randomBytes(12);
@@ -679,7 +765,9 @@ function unwrapDek(enc, wrappedKey, recipientPrivateKey, info) {
   });
 
   // Derive wrapping key
-  const wrappingKey = crypto.hkdfSync('sha256', sharedSecret, Buffer.alloc(0), info, 32);
+  const wrappingKey = Buffer.from(
+    crypto.hkdfSync('sha256', sharedSecret, Buffer.alloc(0), info, 32),
+  );
 
   // Unwrap DEK
   const wrapNonce = wrappedKey.subarray(0, 12);
@@ -697,8 +785,18 @@ function unwrapDek(enc, wrappedKey, recipientPrivateKey, info) {
 // =============================================================================
 
 /**
+ * @typedef {{
+ *   tenantId: string,
+ *   storeId: string,
+ *   sequenceNumber: number | bigint,
+ *   eventSigningHash: Buffer,
+ *   agentSignature: Buffer,
+ * }} LeafHashParams
+ */
+
+/**
  * Compute leaf hash per VES v1.0 Section 10.2
- * @param {Object} params
+ * @param {LeafHashParams} params
  * @returns {Buffer} - 32-byte hash
  */
 export function computeLeafHash(params) {
@@ -758,8 +856,18 @@ export function computeStreamId(tenantId, storeId) {
 // =============================================================================
 
 /**
+ * @typedef {{
+ *   tenantId: string,
+ *   storeId: string,
+ *   eventId: string,
+ *   sequenceNumber: number | bigint,
+ *   eventSigningHash: Buffer,
+ * }} ReceiptHashParams
+ */
+
+/**
  * Compute receipt hash per VES v1.0 Section 6.4
- * @param {Object} params
+ * @param {ReceiptHashParams} params
  * @returns {Buffer} - 32-byte hash
  */
 export function computeReceiptHash(params) {
@@ -788,8 +896,9 @@ export function computeReceiptHash(params) {
  */
 export function computeMerkleRoot(leaves) {
   // Delegate to native if available
-  if (_native?.merkleRoot) {
-    return Buffer.from(_native.merkleRoot(leaves.map((l) => Buffer.from(l))));
+  const nativeMerkleRoot = getNativeMerkleRoot();
+  if (nativeMerkleRoot) {
+    return Buffer.from(nativeMerkleRoot(leaves.map((l) => Buffer.from(l))));
   }
 
   if (leaves.length === 0) return computePadLeaf();
@@ -798,12 +907,14 @@ export function computeMerkleRoot(leaves) {
   // Pad to next power of 2
   let nextPow2 = 1;
   while (nextPow2 < leaves.length) nextPow2 <<= 1;
-  const padLeaf = computePadLeaf();
+  const padLeaf = Buffer.from(computePadLeaf());
+  /** @type {Buffer[]} */
   const layer = leaves.map((l) => Buffer.from(l));
   while (layer.length < nextPow2) layer.push(padLeaf);
 
   // Bottom-up merge
   while (layer.length > 1) {
+    /** @type {Buffer[]} */
     const nextLayer = [];
     for (let i = 0; i < layer.length; i += 2) {
       nextLayer.push(computeNodeHash(layer[i], layer[i + 1]));

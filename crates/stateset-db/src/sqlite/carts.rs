@@ -39,9 +39,9 @@ impl SqliteCartRepository {
     }
 
     fn generate_cart_number() -> String {
-        let timestamp = Utc::now().timestamp();
-        let random: u32 = (Uuid::new_v4().as_u128() % 10000) as u32;
-        format!("CART-{}-{:04}", timestamp, random)
+        let timestamp_ms = Utc::now().timestamp_millis();
+        let random_suffix = (Uuid::new_v4().as_u128() & 0xFFFF_FFFF_FFFF_FFFF) as u64;
+        format!("CART-{timestamp_ms}-{random_suffix:016x}")
     }
 
     fn row_to_cart(row: &rusqlite::Row<'_>) -> rusqlite::Result<Cart> {

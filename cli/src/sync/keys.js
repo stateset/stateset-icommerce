@@ -15,11 +15,17 @@ import { bufferToHex, hexToBuffer } from './crypto.js';
 import { getRotationPolicyManager } from './rotation-policy.js';
 
 /**
+ * @typedef {'signing'|'encryption'} ManagedKeyType
+ */
+
+/**
  * @typedef {Object} SigningKeyPair
  * @property {number} keyId - Key identifier
  * @property {Buffer} publicKey - 32-byte Ed25519 public key
  * @property {Buffer} privateKey - 32-byte Ed25519 private key (seed)
  * @property {string} createdAt - ISO timestamp
+ * @property {string} [expiresAt] - ISO timestamp if key expires
+ * @property {string} [graceUntil] - ISO timestamp for post-rotation grace period
  * @property {string} [revokedAt] - ISO timestamp if revoked
  */
 
@@ -29,8 +35,13 @@ import { getRotationPolicyManager } from './rotation-policy.js';
  * @property {Buffer} publicKey - 32-byte X25519 public key
  * @property {Buffer} privateKey - 32-byte X25519 private key
  * @property {string} createdAt - ISO timestamp
+ * @property {string} [expiresAt] - ISO timestamp if key expires
+ * @property {string} [graceUntil] - ISO timestamp for post-rotation grace period
  * @property {string} [revokedAt] - ISO timestamp if revoked
  */
+
+/** @type {ManagedKeyType[]} */
+const KEY_TYPES = ['signing', 'encryption'];
 
 /**
  * Agent Key Manager
@@ -690,7 +701,7 @@ export class AgentKeyManager {
     const policyManager = getRotationPolicyManager(this.keysDir.replace('/keys', ''));
     const results = [];
 
-    for (const keyType of ['signing', 'encryption']) {
+    for (const keyType of KEY_TYPES) {
       const policy = await policyManager.getPolicy(agentId, keyType);
 
       if (!policy.autoRotate) {

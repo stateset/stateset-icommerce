@@ -7,7 +7,198 @@
  */
 
 import { z } from 'zod';
+import { signX402Hash, hashToHex } from '../x402/crypto.js';
 
+const CHAINS_MODULE = '../chains/index.js';
+const SYNC_KEYS_MODULE = '../sync/keys.js';
+const TREASURY_MODULE = '../treasury/index.js';
+
+/**
+ * @typedef {Record<string, unknown>} JsonRecord
+ * @typedef {{ [key: string]: unknown }} RawEntity
+ * @typedef {{
+ *   id?: unknown,
+ *   status?: unknown,
+ *   payerAddress?: unknown,
+ *   payer_address?: unknown,
+ *   payeeAddress?: unknown,
+ *   payee_address?: unknown,
+ *   amount?: unknown,
+ *   amountDecimal?: unknown,
+ *   amount_decimal?: unknown,
+ *   asset?: unknown,
+ *   network?: unknown,
+ *   chainId?: unknown,
+ *   chain_id?: unknown,
+ *   nonce?: unknown,
+ *   signingHash?: unknown,
+ *   signing_hash?: unknown,
+ *   payerSignature?: unknown,
+ *   payer_signature?: unknown,
+ *   payerPublicKey?: unknown,
+ *   payer_public_key?: unknown,
+ *   txHash?: unknown,
+ *   tx_hash?: unknown,
+ *   blockNumber?: unknown,
+ *   block_number?: unknown,
+ * }} IntentLike
+ * @typedef {{
+ *   id: unknown,
+ *   status: unknown,
+ *   payerAddress: unknown,
+ *   payeeAddress: unknown,
+ *   amount: unknown,
+ *   amountDecimal: unknown,
+ *   asset: unknown,
+ *   network: unknown,
+ *   chainId: unknown,
+ *   nonce: unknown,
+ *   signingHash: unknown,
+ *   payerSignature: unknown,
+ *   payerPublicKey: unknown,
+ *   txHash: unknown,
+ *   blockNumber: unknown,
+ * }} NormalizedIntent
+ * @typedef {{ keyId?: number | null, privateKey?: Buffer, publicKey?: Buffer }} SigningKey
+ * @typedef {{
+ *   getSigningKey: (agentId: string, keyId: number) => Promise<SigningKey | null>,
+ *   getCurrentSigningKey: (agentId: string) => Promise<SigningKey | null>,
+ *   ensureKeys: (agentId: string) => Promise<{ signingKey: SigningKey }>,
+ * }} KeyManagerLike
+ * @typedef {{ symbol: string, decimals: number }} TokenConfigLike
+ * @typedef {{ chainId?: number }} ChainConfigLike
+ * @typedef {{
+ *   success: boolean,
+ *   error?: string,
+ *   blockNumber?: number | string | null,
+ *   txHash?: string | null,
+ *   confirmations?: number | null,
+ *   explorerUrl?: string | null,
+ * }} PaymentResultLike
+ * @typedef {{
+ *   getChain: (chainId: string) => ChainConfigLike | null | undefined,
+ *   listChains: () => string[],
+ *   getWalletAddress: (agentId: string, chainId: string, options?: JsonRecord) => Promise<string>,
+ *   isEvmChain: (chainId: string) => boolean,
+ *   getToken: (chainId: string, token: string) => TokenConfigLike | null | undefined,
+ *   getDefaultStablecoin: (chainId: string) => TokenConfigLike | null | undefined,
+ *   fromSmallestUnit: (amount: bigint, decimals: number) => string,
+ *   executePayment: (
+ *     params: {
+ *       agentId: string,
+ *       chainId: string,
+ *       toAddress: string,
+ *       amount: string | number,
+ *       tokenSymbol?: string,
+ *       metadata?: JsonRecord,
+ *     },
+ *     options?: JsonRecord,
+ *   ) => Promise<PaymentResultLike>,
+ * }} ChainsModuleLike
+ * @typedef {{ store: { findByTx?: (query: JsonRecord) => unknown } }} TreasuryContextLike
+ * @typedef {{
+ *   loadTreasuryContext: (options?: JsonRecord) => Promise<TreasuryContextLike>,
+ *   recordWithdrawal: (entry: JsonRecord, context: TreasuryContextLike) => Promise<unknown>,
+ *   recordDeposit: (entry: JsonRecord, context: TreasuryContextLike) => Promise<JsonRecord>,
+ * }} TreasuryModuleLike
+ * @typedef {{
+ *   createIntent: (payload: JsonRecord) => Promise<JsonRecord>,
+ *   signIntent: (intentId: string, payload: JsonRecord) => Promise<JsonRecord>,
+ *   getIntent: (intentId: string) => Promise<JsonRecord | null>,
+ *   listIntents: (params: JsonRecord) => Promise<JsonRecord[]>,
+ *   markSettled: (intentId: string, txHash: string, blockNumber: number) => Promise<JsonRecord>,
+ *   getNextNonce: (payerAddress: string) => Promise<unknown>,
+ *   getCreditBalance: (params: JsonRecord) => Promise<unknown>,
+ *   creditAccount: (params: JsonRecord) => Promise<JsonRecord>,
+ *   debitAccount: (params: JsonRecord) => Promise<JsonRecord>,
+ *   listCreditTransactions: (params: JsonRecord) => Promise<JsonRecord[]>,
+ * }} CommerceX402ApiLike
+ * @typedef {{ x402: () => CommerceX402ApiLike }} CommerceLike
+ * @typedef {{
+ *   commerce: CommerceLike,
+ *   params: JsonRecord,
+ *   allowApply?: boolean,
+ *   resolveTreasuryAgentId?: (() => Promise<string>) | undefined,
+ *   treasuryContextOptions?: JsonRecord | undefined,
+ *   buildAuditContext?: ((extra: unknown, toolName: string) => JsonRecord) | undefined,
+ *   buildTreasuryIdentityMetadata?: (() => Promise<JsonRecord> | JsonRecord) | undefined,
+ *   extra?: unknown,
+ * }} ToolHandlerInput
+ * @typedef {{
+ *   commerce: CommerceLike,
+ *   intentId: string,
+ *   agentId: string,
+ *   keyId?: number,
+ *   chain?: string,
+ *   configDir?: string,
+ * }} SignIntentWithLocalAgentInput
+ * @typedef {{ payerAddress: string, payeeAddress: string, amount: number, asset?: string, network?: string, cartId?: string, orderId?: string, description?: string, validitySeconds?: number }} CreatePaymentIntentParams
+ * @typedef {{ intentId: string, signature?: string, publicKey?: string, agentId?: string, keyId?: number, chain?: string }} SignIntentParams
+ * @typedef {{ intentId: string }} GetIntentParams
+ * @typedef {{ payerAddress?: string, payeeAddress?: string, status?: string, network?: string, limit?: number }} ListIntentsParams
+ * @typedef {{ intentId: string, agentId?: string, payeeAgentId?: string, chain?: string, token?: string }} SettleIntentParams
+ * @typedef {{ amount: number, payerAgentId?: string, payeeAgentId?: string, payerAddress?: string, payeeAddress?: string, asset?: string, network?: string, chain?: string, token?: string, keyId?: number, cartId?: string, orderId?: string, description?: string, validitySeconds?: number, recordIncoming?: boolean }} ExecuteAgentPaymentParams
+ * @typedef {{ intentId: string, payeeAgentId: string, chain?: string, token?: string }} RecordIncomingSettlementParams
+ * @typedef {{ intentId: string, txHash: string, blockNumber: number }} MarkSettledParams
+ * @typedef {{ payerAddress: string }} GetNextNonceParams
+ * @typedef {{ payerAddress: string, asset?: string, network?: string }} CreditBalanceParams
+ * @typedef {{ payerAddress: string, amount: number, asset?: string, network?: string, reason?: string, referenceId?: string, metadata?: string }} CreditMutationParams
+ * @typedef {{ payerAddress?: string, asset?: string, network?: string, direction?: string, limit?: number }} CreditTransactionsParams
+ * @typedef {ToolHandlerInput & { params: SettleIntentParams }} SettleIntentHandlerInput
+ * @typedef {{
+ *   success: boolean,
+ *   [key: string]: unknown,
+ *   error?: string,
+ *   message?: string,
+ *   settlement?: JsonRecord | null,
+ *   incomingSettlement?: JsonRecord | null,
+ *   intent?: JsonRecord | null,
+ * }} SettleIntentToolResult
+ * @typedef {{
+ *   name: string,
+ *   description: string,
+ *   inputSchema: JsonRecord,
+ *   permission: 'read' | 'write',
+ *   handler: (input: any) => Promise<JsonRecord>,
+ * }} X402Tool
+ */
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function messageFromError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * @returns {Promise<ChainsModuleLike>}
+ */
+async function loadChainsModule() {
+  return /** @type {Promise<ChainsModuleLike>} */ (import(CHAINS_MODULE));
+}
+
+/**
+ * @returns {Promise<{ getKeyManager: (configDir?: string) => KeyManagerLike }>}
+ */
+async function loadKeyManagerModule() {
+  return /** @type {Promise<{ getKeyManager: (configDir?: string) => KeyManagerLike }>} */ (
+    import(SYNC_KEYS_MODULE)
+  );
+}
+
+/**
+ * @returns {Promise<TreasuryModuleLike>}
+ */
+async function loadTreasuryModule() {
+  return /** @type {Promise<TreasuryModuleLike>} */ (import(TREASURY_MODULE));
+}
+
+/**
+ * @param {RawEntity | null | undefined} object
+ * @param {string[]} keys
+ * @returns {unknown}
+ */
 function firstValue(object, keys) {
   if (!object || typeof object !== 'object') return undefined;
   for (const key of keys) {
@@ -19,6 +210,10 @@ function firstValue(object, keys) {
   return undefined;
 }
 
+/**
+ * @param {IntentLike | JsonRecord | null | undefined} intent
+ * @returns {NormalizedIntent}
+ */
 function normalizeIntent(intent) {
   return {
     id: firstValue(intent, ['id']),
@@ -39,26 +234,53 @@ function normalizeIntent(intent) {
   };
 }
 
+/** @type {Record<string, string>} */
+const ASSET_TO_TOKEN = {
+  usdc: 'USDC',
+  usdt: 'USDT',
+  ssusd: 'ssUSD',
+  ss_usd: 'ssUSD',
+  wssusd: 'wssUSD',
+  wss_usd: 'wssUSD',
+  dai: 'DAI',
+  eth: 'ETH',
+  ether: 'ETH',
+  sol: 'SOL',
+  btc: 'BTC',
+  zec: 'ZEC',
+};
+
+/**
+ * @param {unknown} asset
+ * @returns {string | null}
+ */
 function normalizeAssetToToken(asset) {
   if (!asset) return null;
   const key = String(asset).toLowerCase();
-  const mapping = {
-    usdc: 'USDC',
-    usdt: 'USDT',
-    ssusd: 'ssUSD',
-    ss_usd: 'ssUSD',
-    wssusd: 'wssUSD',
-    wss_usd: 'wssUSD',
-    dai: 'DAI',
-    eth: 'ETH',
-    ether: 'ETH',
-    sol: 'SOL',
-    btc: 'BTC',
-    zec: 'ZEC',
-  };
-  return mapping[key] || String(asset);
+  return ASSET_TO_TOKEN[key] || String(asset);
 }
 
+/** @type {Record<string, string>} */
+const X402_NETWORK_TO_CHAIN = {
+  set: 'set_chain',
+  setchain: 'set_chain',
+  set_chain: 'set_chain',
+  set_testnet: 'set_chain_testnet',
+  set_chain_testnet: 'set_chain_testnet',
+  arc: 'arc',
+  arc_testnet: 'arc_testnet',
+  base: 'base',
+  ethereum: 'ethereum',
+  eth: 'ethereum',
+  arbitrum: 'arbitrum',
+  solana: 'solana',
+  solana_devnet: 'solana_devnet',
+};
+
+/**
+ * @param {unknown} network
+ * @returns {string | null}
+ */
 function normalizeX402NetworkToChain(network) {
   if (!network) return null;
 
@@ -66,25 +288,28 @@ function normalizeX402NetworkToChain(network) {
   if (!value) return null;
 
   const key = value.toLowerCase();
-  const mapping = {
-    set: 'set_chain',
-    setchain: 'set_chain',
-    set_chain: 'set_chain',
-    set_testnet: 'set_chain_testnet',
-    set_chain_testnet: 'set_chain_testnet',
-    arc: 'arc',
-    arc_testnet: 'arc_testnet',
-    base: 'base',
-    ethereum: 'ethereum',
-    eth: 'ethereum',
-    arbitrum: 'arbitrum',
-    solana: 'solana',
-    solana_devnet: 'solana_devnet',
-  };
-
-  return mapping[key] || key;
+  return X402_NETWORK_TO_CHAIN[key] || key;
 }
 
+/** @type {Record<string, string>} */
+const CHAIN_TO_X402_NETWORK = {
+  set: 'set_chain',
+  setchain: 'set_chain',
+  set_chain: 'set_chain',
+  set_testnet: 'set_chain_testnet',
+  set_chain_testnet: 'set_chain_testnet',
+  arc: 'arc',
+  arc_testnet: 'arc_testnet',
+  base: 'base',
+  ethereum: 'ethereum',
+  eth: 'ethereum',
+  arbitrum: 'arbitrum',
+};
+
+/**
+ * @param {unknown} chain
+ * @returns {string | null}
+ */
 function normalizeChainToX402Network(chain) {
   if (!chain) return null;
 
@@ -92,23 +317,13 @@ function normalizeChainToX402Network(chain) {
   if (!value) return null;
 
   const key = value.toLowerCase();
-  const mapping = {
-    set: 'set_chain',
-    setchain: 'set_chain',
-    set_chain: 'set_chain',
-    set_testnet: 'set_chain_testnet',
-    set_chain_testnet: 'set_chain_testnet',
-    arc: 'arc',
-    arc_testnet: 'arc_testnet',
-    base: 'base',
-    ethereum: 'ethereum',
-    eth: 'ethereum',
-    arbitrum: 'arbitrum',
-  };
-
-  return mapping[key] || null;
+  return CHAIN_TO_X402_NETWORK[key] || null;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {Buffer}
+ */
 function decodeHashBytes(value) {
   if (!value) {
     throw new Error('Missing signing hash');
@@ -127,14 +342,32 @@ function decodeHashBytes(value) {
   return Buffer.from(raw, 'base64');
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
 function normalizeMaybeString(value) {
   if (value === undefined || value === null) return null;
   const raw = String(value).trim();
   return raw || null;
 }
 
+/**
+ * @param {string} chainId
+ * @param {(chainId: string) => boolean} isEvmChain
+ * @returns {(address: unknown) => string}
+ */
+function createAddressNormalizer(chainId, isEvmChain) {
+  return (address) => (isEvmChain(chainId) ? String(address).toLowerCase() : String(address));
+}
+
+/**
+ * @param {NormalizedIntent} intent
+ * @param {unknown} chainOverride
+ * @returns {Promise<string | null>}
+ */
 async function resolveIntentChainId(intent, chainOverride) {
-  const { getChain, listChains } = await import('../chains/index.js');
+  const { getChain, listChains } = await loadChainsModule();
   let chainId = normalizeX402NetworkToChain(chainOverride || intent.network);
 
   if ((!chainId || !getChain(chainId)) && intent.chainId !== undefined && intent.chainId !== null) {
@@ -151,6 +384,18 @@ async function resolveIntentChainId(intent, chainOverride) {
   return chainId && getChain(chainId) ? chainId : null;
 }
 
+/**
+ * @param {SignIntentWithLocalAgentInput} input
+ * @returns {Promise<{
+ *   signed: JsonRecord,
+ *   intent: NormalizedIntent,
+ *   chainId: string | null,
+ *   signature: string,
+ *   publicKey: string,
+ *   agentId: string,
+ *   keyId: number | null,
+ * }>}
+ */
 async function signIntentWithLocalAgent({
   commerce,
   intentId,
@@ -175,10 +420,9 @@ async function signIntentWithLocalAgent({
 
   const chainId = await resolveIntentChainId(intent, chain);
   if (chainId && intent.payerAddress) {
-    const { getWalletAddress, isEvmChain } = await import('../chains/index.js');
+    const { getWalletAddress, isEvmChain } = await loadChainsModule();
     const walletAddress = await getWalletAddress(agentId, chainId, { configDir });
-    const normalizeAddress = (address) =>
-      isEvmChain(chainId) ? String(address).toLowerCase() : String(address);
+    const normalizeAddress = createAddressNormalizer(chainId, isEvmChain);
     if (normalizeAddress(walletAddress) !== normalizeAddress(intent.payerAddress)) {
       throw new Error(
         `Agent wallet does not match intent payer address (expected: ${intent.payerAddress}, agent wallet: ${walletAddress})`,
@@ -186,9 +430,7 @@ async function signIntentWithLocalAgent({
     }
   }
 
-  const { getKeyManager } = await import('../sync/keys.js');
-  const { signX402Hash, hashToHex } = await import('../x402/crypto.js');
-
+  const { getKeyManager } = await loadKeyManagerModule();
   const manager = getKeyManager(configDir);
   const parsedKeyId =
     keyId === undefined || keyId === null ? null : Number.parseInt(String(keyId), 10);
@@ -236,8 +478,329 @@ async function signIntentWithLocalAgent({
 }
 
 /**
+ * @param {SettleIntentHandlerInput} input
+ * @returns {Promise<SettleIntentToolResult>}
+ */
+async function handleSettleIntentOnchain({
+  commerce,
+  params,
+  allowApply,
+  resolveTreasuryAgentId,
+  treasuryContextOptions,
+  buildAuditContext,
+  buildTreasuryIdentityMetadata,
+  extra,
+}) {
+  const { intentId, agentId, payeeAgentId, chain, token } = params;
+  if (!allowApply) {
+    return {
+      success: false,
+      error: 'Settling an x402 intent on-chain requires --apply flag.',
+      wouldSettle: {
+        intentId,
+        agentId,
+        payeeAgentId: payeeAgentId || null,
+        chain: chain || null,
+        token: token || null,
+      },
+      instruction: 'Run with --apply to execute and settle this intent',
+    };
+  }
+
+  const rawIntent = await commerce.x402().getIntent(intentId);
+  if (!rawIntent) {
+    return { success: false, error: 'Payment intent not found' };
+  }
+
+  const intent = normalizeIntent(rawIntent);
+  if (!intent.payerAddress || !intent.payeeAddress) {
+    return { success: false, error: 'Intent is missing payer/payee addresses' };
+  }
+  if (!intent.status) {
+    return { success: false, error: 'Intent status is missing' };
+  }
+  if (!['signed', 'sequenced', 'batched'].includes(String(intent.status).toLowerCase())) {
+    return {
+      success: false,
+      error: `Intent must be signed, sequenced, or batched before settlement (current: ${intent.status})`,
+    };
+  }
+  if (intent.txHash) {
+    return {
+      success: false,
+      error: 'Intent already has a transaction hash and appears settled or in-progress',
+      intent: {
+        id: intent.id,
+        status: intent.status,
+        txHash: intent.txHash,
+        blockNumber: intent.blockNumber ?? null,
+      },
+    };
+  }
+
+  const {
+    executePayment,
+    getToken,
+    getDefaultStablecoin,
+    getWalletAddress,
+    getChain,
+    listChains,
+    fromSmallestUnit,
+    isEvmChain,
+  } = await loadChainsModule();
+
+  let chainId = normalizeX402NetworkToChain(chain || intent.network);
+  if ((!chainId || !getChain(chainId)) && intent.chainId !== undefined && intent.chainId !== null) {
+    const numericChainId = Number(intent.chainId);
+    if (Number.isFinite(numericChainId)) {
+      chainId =
+        listChains().find((candidate) => {
+          const config = getChain(candidate);
+          return config?.chainId === numericChainId;
+        }) || chainId;
+    }
+  }
+
+  if (!chainId || !getChain(chainId)) {
+    return { success: false, error: 'Unable to determine target chain (provide --chain)' };
+  }
+
+  const inferredToken = token || normalizeAssetToToken(intent.asset);
+  const tokenConfig = inferredToken
+    ? getToken(chainId, inferredToken)
+    : getDefaultStablecoin(chainId);
+  if (!tokenConfig) {
+    return {
+      success: false,
+      error: `Unable to resolve token for intent asset=${intent.asset || 'unknown'} on chain=${chainId}`,
+    };
+  }
+
+  const effectiveAgentId =
+    agentId || (resolveTreasuryAgentId ? await resolveTreasuryAgentId() : 'default');
+  const payerWallet = await getWalletAddress(effectiveAgentId, chainId, {
+    configDir: '.stateset',
+  });
+  const normalizeAddress = createAddressNormalizer(chainId, isEvmChain);
+  const payerAddress = String(intent.payerAddress);
+  const payeeAddress = String(intent.payeeAddress);
+  if (normalizeAddress(payerWallet) !== normalizeAddress(payerAddress)) {
+    return {
+      success: false,
+      error: 'Agent wallet does not match intent payer address',
+      expectedPayer: intent.payerAddress,
+      agentWallet: payerWallet,
+      chain: chainId,
+      agentId: effectiveAgentId,
+    };
+  }
+  if (payeeAgentId) {
+    const payeeWallet = await getWalletAddress(payeeAgentId, chainId, {
+      configDir: '.stateset',
+    });
+    if (normalizeAddress(payeeWallet) !== normalizeAddress(payeeAddress)) {
+      return {
+        success: false,
+        error: 'Payee agent wallet does not match intent payee address',
+        expectedPayee: intent.payeeAddress,
+        payeeAgentWallet: payeeWallet,
+        chain: chainId,
+        payeeAgentId,
+      };
+    }
+  }
+
+  const amount =
+    intent.amountDecimal !== undefined && intent.amountDecimal !== null
+      ? String(intent.amountDecimal)
+      : intent.amount !== undefined && intent.amount !== null
+        ? fromSmallestUnit(BigInt(String(intent.amount)), tokenConfig.decimals)
+        : null;
+  if (!amount) {
+    return { success: false, error: 'Intent amount is missing' };
+  }
+  const numericAmount = Number.parseFloat(String(amount));
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return {
+      success: false,
+      error: `Intent amount must be greater than zero (resolved: ${amount})`,
+    };
+  }
+
+  const paymentResult = await executePayment(
+    {
+      agentId: effectiveAgentId,
+      chainId,
+      toAddress: payeeAddress,
+      amount,
+      tokenSymbol: tokenConfig.symbol,
+      metadata: {
+        x402_intent_id: intentId,
+        x402_nonce: intent.nonce ?? null,
+        x402_asset: intent.asset ?? null,
+        x402_network: intent.network ?? null,
+      },
+    },
+    {
+      configDir: '.stateset',
+      simulate: false,
+    },
+  );
+
+  if (!paymentResult.success) {
+    return {
+      success: false,
+      error: paymentResult.error || 'On-chain settlement failed',
+      intentId,
+      chain: chainId,
+      token: tokenConfig.symbol,
+    };
+  }
+
+  const settledBlockNumber = Number(paymentResult.blockNumber ?? 0);
+  if (!Number.isFinite(settledBlockNumber) || settledBlockNumber < 0) {
+    return {
+      success: false,
+      error: `Invalid block number from payment confirmation: ${paymentResult.blockNumber}`,
+      intentId,
+      chain: chainId,
+      token: tokenConfig.symbol,
+      txHash: paymentResult.txHash || null,
+    };
+  }
+  if (!paymentResult.txHash) {
+    return {
+      success: false,
+      error: 'Payment confirmation did not include a transaction hash',
+      intentId,
+      chain: chainId,
+      token: tokenConfig.symbol,
+    };
+  }
+
+  const settledIntent = await commerce
+    .x402()
+    .markSettled(intentId, paymentResult.txHash, settledBlockNumber);
+
+  /** @type {JsonRecord | null} */
+  let incomingSettlement = null;
+  try {
+    const { loadTreasuryContext, recordWithdrawal, recordDeposit } = await loadTreasuryModule();
+    const ctx = await loadTreasuryContext(treasuryContextOptions || {});
+    const audit = buildAuditContext ? buildAuditContext(extra, 'x402_settle_intent_onchain') : {};
+    const identityMeta = buildTreasuryIdentityMetadata ? await buildTreasuryIdentityMetadata() : {};
+    await recordWithdrawal(
+      {
+        agentId: effectiveAgentId,
+        chainId,
+        tokenSymbol: tokenConfig.symbol,
+        amount,
+        txId: paymentResult.txHash || null,
+        toAddress: payeeAddress,
+        source: 'x402_settlement',
+        metadata: {
+          x402IntentId: intentId,
+          x402Nonce: intent.nonce ?? null,
+          x402Asset: intent.asset ?? null,
+          x402Network: intent.network ?? null,
+          ...identityMeta,
+        },
+        ...audit,
+      },
+      ctx,
+    );
+
+    if (payeeAgentId) {
+      const duplicate =
+        typeof ctx.store.findByTx === 'function'
+          ? ctx.store.findByTx({
+              agentId: payeeAgentId,
+              chainId,
+              tokenSymbol: tokenConfig.symbol,
+              direction: 'deposit',
+              source: 'x402_settlement_incoming',
+              txId: paymentResult.txHash,
+            })
+          : null;
+
+      if (duplicate) {
+        incomingSettlement = {
+          recorded: false,
+          reason: 'already_recorded',
+          payeeAgentId,
+          chain: chainId,
+          token: tokenConfig.symbol,
+          txHash: paymentResult.txHash,
+        };
+      } else {
+        const payeeAudit = buildAuditContext
+          ? buildAuditContext(extra, 'x402_settle_intent_onchain')
+          : {};
+        const payeeEntry = await recordDeposit(
+          {
+            agentId: payeeAgentId,
+            chainId,
+            tokenSymbol: tokenConfig.symbol,
+            amount,
+            txId: paymentResult.txHash || null,
+            fromAddress: payerAddress,
+            source: 'x402_settlement_incoming',
+            metadata: {
+              x402IntentId: intentId,
+              x402Nonce: intent.nonce ?? null,
+              x402Asset: intent.asset ?? null,
+              x402Network: intent.network ?? null,
+            },
+            ...payeeAudit,
+          },
+          ctx,
+        );
+        incomingSettlement = {
+          recorded: true,
+          payeeAgentId,
+          chain: chainId,
+          token: tokenConfig.symbol,
+          txHash: paymentResult.txHash,
+          entryEventId: payeeEntry.event_id ?? null,
+        };
+      }
+    }
+  } catch (auditError) {
+    console.warn(
+      `[Treasury] Failed to record x402 settlement withdrawal: ${messageFromError(auditError)}`,
+    );
+  }
+
+  return {
+    success: true,
+    message: 'x402 intent settled on-chain and marked settled.',
+    settlement: {
+      intentId,
+      agentId: effectiveAgentId,
+      payeeAgentId: payeeAgentId || null,
+      chain: chainId,
+      token: tokenConfig.symbol,
+      amount,
+      txHash: paymentResult.txHash,
+      blockNumber: paymentResult.blockNumber ?? null,
+      confirmations: paymentResult.confirmations ?? null,
+      explorerUrl: paymentResult.explorerUrl ?? null,
+    },
+    incomingSettlement,
+    intent: {
+      id: firstValue(settledIntent, ['id']),
+      status: firstValue(settledIntent, ['status']),
+      txHash: firstValue(settledIntent, ['txHash', 'tx_hash']),
+      blockNumber: firstValue(settledIntent, ['blockNumber', 'block_number']),
+      settledAt: firstValue(settledIntent, ['settledAt', 'settled_at']),
+    },
+  };
+}
+
+/**
  * x402 tool definitions
  */
+/** @type {X402Tool[]} */
 export const x402Tools = [
   {
     name: 'x402_create_payment_intent',
@@ -374,7 +937,7 @@ export const x402Tools = [
             configDir: '.stateset',
           });
         } catch (err) {
-          return { success: false, error: `Local signing failed: ${err.message}` };
+          return { success: false, error: `Local signing failed: ${messageFromError(err)}` };
         }
 
         return {
@@ -474,13 +1037,15 @@ export const x402Tools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const intents = await commerce.x402().listIntents({
-        payer_address: params.payerAddress,
-        payee_address: params.payeeAddress,
-        status: params.status,
-        network: params.network,
-        limit: params.limit || 50,
-      });
+      const intents = /** @type {JsonRecord[]} */ (
+        await commerce.x402().listIntents({
+          payer_address: params.payerAddress,
+          payee_address: params.payeeAddress,
+          status: params.status,
+          network: params.network,
+          limit: params.limit || 50,
+        })
+      );
       return {
         success: true,
         count: intents.length,
@@ -523,319 +1088,7 @@ export const x402Tools = [
         .describe('Optional token override (default: inferred from intent asset)'),
     },
     permission: 'write',
-    handler: async ({
-      commerce,
-      params,
-      allowApply,
-      resolveTreasuryAgentId,
-      treasuryContextOptions,
-      buildAuditContext,
-      buildTreasuryIdentityMetadata,
-      extra,
-    }) => {
-      const { intentId, agentId, payeeAgentId, chain, token } = params;
-      if (!allowApply) {
-        return {
-          success: false,
-          error: 'Settling an x402 intent on-chain requires --apply flag.',
-          wouldSettle: {
-            intentId,
-            agentId,
-            payeeAgentId: payeeAgentId || null,
-            chain: chain || null,
-            token: token || null,
-          },
-          instruction: 'Run with --apply to execute and settle this intent',
-        };
-      }
-
-      const rawIntent = await commerce.x402().getIntent(intentId);
-      if (!rawIntent) {
-        return { success: false, error: 'Payment intent not found' };
-      }
-
-      const intent = normalizeIntent(rawIntent);
-      if (!intent.payerAddress || !intent.payeeAddress) {
-        return { success: false, error: 'Intent is missing payer/payee addresses' };
-      }
-      if (!intent.status) {
-        return { success: false, error: 'Intent status is missing' };
-      }
-      if (!['signed', 'sequenced', 'batched'].includes(String(intent.status).toLowerCase())) {
-        return {
-          success: false,
-          error: `Intent must be signed, sequenced, or batched before settlement (current: ${intent.status})`,
-        };
-      }
-      if (intent.txHash) {
-        return {
-          success: false,
-          error: 'Intent already has a transaction hash and appears settled or in-progress',
-          intent: {
-            id: intent.id,
-            status: intent.status,
-            txHash: intent.txHash,
-            blockNumber: intent.blockNumber ?? null,
-          },
-        };
-      }
-
-      const {
-        executePayment,
-        getToken,
-        getDefaultStablecoin,
-        getWalletAddress,
-        getChain,
-        listChains,
-        fromSmallestUnit,
-        isEvmChain,
-      } = await import('../chains/index.js');
-
-      let chainId = normalizeX402NetworkToChain(chain || intent.network);
-      if (
-        (!chainId || !getChain(chainId)) &&
-        intent.chainId !== undefined &&
-        intent.chainId !== null
-      ) {
-        const numericChainId = Number(intent.chainId);
-        if (Number.isFinite(numericChainId)) {
-          chainId =
-            listChains().find((id) => {
-              const config = getChain(id);
-              return config?.chainId === numericChainId;
-            }) || chainId;
-        }
-      }
-
-      if (!chainId || !getChain(chainId)) {
-        return { success: false, error: 'Unable to determine target chain (provide --chain)' };
-      }
-
-      const inferredToken = token || normalizeAssetToToken(intent.asset);
-      const tokenConfig = inferredToken
-        ? getToken(chainId, inferredToken)
-        : getDefaultStablecoin(chainId);
-      if (!tokenConfig) {
-        return {
-          success: false,
-          error: `Unable to resolve token for intent asset=${intent.asset || 'unknown'} on chain=${chainId}`,
-        };
-      }
-
-      const effectiveAgentId =
-        agentId || (resolveTreasuryAgentId ? await resolveTreasuryAgentId() : 'default');
-      const payerWallet = await getWalletAddress(effectiveAgentId, chainId, {
-        configDir: '.stateset',
-      });
-      const normalizeAddress = (address) =>
-        isEvmChain(chainId) ? String(address).toLowerCase() : String(address);
-      if (normalizeAddress(payerWallet) !== normalizeAddress(intent.payerAddress)) {
-        return {
-          success: false,
-          error: 'Agent wallet does not match intent payer address',
-          expectedPayer: intent.payerAddress,
-          agentWallet: payerWallet,
-          chain: chainId,
-          agentId: effectiveAgentId,
-        };
-      }
-      if (payeeAgentId) {
-        const payeeWallet = await getWalletAddress(payeeAgentId, chainId, {
-          configDir: '.stateset',
-        });
-        if (normalizeAddress(payeeWallet) !== normalizeAddress(intent.payeeAddress)) {
-          return {
-            success: false,
-            error: 'Payee agent wallet does not match intent payee address',
-            expectedPayee: intent.payeeAddress,
-            payeeAgentWallet: payeeWallet,
-            chain: chainId,
-            payeeAgentId,
-          };
-        }
-      }
-
-      const amount =
-        intent.amountDecimal !== undefined && intent.amountDecimal !== null
-          ? String(intent.amountDecimal)
-          : intent.amount !== undefined && intent.amount !== null
-            ? fromSmallestUnit(BigInt(String(intent.amount)), tokenConfig.decimals)
-            : null;
-      if (!amount) {
-        return { success: false, error: 'Intent amount is missing' };
-      }
-      const numericAmount = Number.parseFloat(String(amount));
-      if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-        return {
-          success: false,
-          error: `Intent amount must be greater than zero (resolved: ${amount})`,
-        };
-      }
-
-      const paymentResult = await executePayment(
-        {
-          agentId: effectiveAgentId,
-          chainId,
-          toAddress: intent.payeeAddress,
-          amount,
-          tokenSymbol: tokenConfig.symbol,
-          metadata: {
-            x402_intent_id: intentId,
-            x402_nonce: intent.nonce ?? null,
-            x402_asset: intent.asset ?? null,
-            x402_network: intent.network ?? null,
-          },
-        },
-        {
-          configDir: '.stateset',
-          simulate: false,
-        },
-      );
-
-      if (!paymentResult.success) {
-        return {
-          success: false,
-          error: paymentResult.error || 'On-chain settlement failed',
-          intentId,
-          chain: chainId,
-          token: tokenConfig.symbol,
-        };
-      }
-
-      const settledBlockNumber = Number(paymentResult.blockNumber ?? 0);
-      if (!Number.isFinite(settledBlockNumber) || settledBlockNumber < 0) {
-        return {
-          success: false,
-          error: `Invalid block number from payment confirmation: ${paymentResult.blockNumber}`,
-          intentId,
-          chain: chainId,
-          token: tokenConfig.symbol,
-          txHash: paymentResult.txHash || null,
-        };
-      }
-
-      const settledIntent = await commerce
-        .x402()
-        .markSettled(intentId, paymentResult.txHash, settledBlockNumber);
-
-      let incomingSettlement = null;
-      try {
-        const { loadTreasuryContext, recordWithdrawal, recordDeposit } =
-          await import('../treasury/index.js');
-        const ctx = await loadTreasuryContext(treasuryContextOptions || {});
-        const audit = buildAuditContext
-          ? buildAuditContext(extra, 'x402_settle_intent_onchain')
-          : {};
-        const identityMeta = buildTreasuryIdentityMetadata
-          ? await buildTreasuryIdentityMetadata()
-          : {};
-        await recordWithdrawal(
-          {
-            agentId: effectiveAgentId,
-            chainId,
-            tokenSymbol: tokenConfig.symbol,
-            amount,
-            txId: paymentResult.txHash || null,
-            toAddress: intent.payeeAddress,
-            source: 'x402_settlement',
-            metadata: {
-              x402IntentId: intentId,
-              x402Nonce: intent.nonce ?? null,
-              x402Asset: intent.asset ?? null,
-              x402Network: intent.network ?? null,
-              ...identityMeta,
-            },
-            ...audit,
-          },
-          ctx,
-        );
-
-        if (payeeAgentId) {
-          const duplicate =
-            typeof ctx.store.findByTx === 'function'
-              ? ctx.store.findByTx({
-                  agentId: payeeAgentId,
-                  chainId,
-                  tokenSymbol: tokenConfig.symbol,
-                  direction: 'deposit',
-                  source: 'x402_settlement_incoming',
-                  txId: paymentResult.txHash,
-                })
-              : null;
-
-          if (duplicate) {
-            incomingSettlement = {
-              recorded: false,
-              reason: 'already_recorded',
-              payeeAgentId,
-              chain: chainId,
-              token: tokenConfig.symbol,
-              txHash: paymentResult.txHash,
-            };
-          } else {
-            const payeeAudit = buildAuditContext
-              ? buildAuditContext(extra, 'x402_settle_intent_onchain')
-              : {};
-            const payeeEntry = await recordDeposit(
-              {
-                agentId: payeeAgentId,
-                chainId,
-                tokenSymbol: tokenConfig.symbol,
-                amount,
-                txId: paymentResult.txHash || null,
-                fromAddress: intent.payerAddress || null,
-                source: 'x402_settlement_incoming',
-                metadata: {
-                  x402IntentId: intentId,
-                  x402Nonce: intent.nonce ?? null,
-                  x402Asset: intent.asset ?? null,
-                  x402Network: intent.network ?? null,
-                },
-                ...payeeAudit,
-              },
-              ctx,
-            );
-            incomingSettlement = {
-              recorded: true,
-              payeeAgentId,
-              chain: chainId,
-              token: tokenConfig.symbol,
-              txHash: paymentResult.txHash,
-              entryEventId: payeeEntry.event_id ?? null,
-            };
-          }
-        }
-      } catch (auditError) {
-        console.warn(
-          `[Treasury] Failed to record x402 settlement withdrawal: ${auditError.message}`,
-        );
-      }
-
-      return {
-        success: true,
-        message: 'x402 intent settled on-chain and marked settled.',
-        settlement: {
-          intentId,
-          agentId: effectiveAgentId,
-          payeeAgentId: payeeAgentId || null,
-          chain: chainId,
-          token: tokenConfig.symbol,
-          amount,
-          txHash: paymentResult.txHash,
-          blockNumber: paymentResult.blockNumber ?? null,
-          confirmations: paymentResult.confirmations ?? null,
-          explorerUrl: paymentResult.explorerUrl ?? null,
-        },
-        incomingSettlement,
-        intent: {
-          id: firstValue(settledIntent, ['id']),
-          status: firstValue(settledIntent, ['status']),
-          txHash: firstValue(settledIntent, ['txHash', 'tx_hash']),
-          blockNumber: firstValue(settledIntent, ['blockNumber', 'block_number']),
-          settledAt: firstValue(settledIntent, ['settledAt', 'settled_at']),
-        },
-      };
-    },
+    handler: handleSettleIntentOnchain,
   },
 
   {
@@ -981,7 +1234,7 @@ export const x402Tools = [
         }
       }
 
-      const { getChain, getWalletAddress, isEvmChain } = await import('../chains/index.js');
+      const { getChain, getWalletAddress, isEvmChain } = await loadChainsModule();
       if (!getChain(chainId)) {
         return {
           success: false,
@@ -995,8 +1248,7 @@ export const x402Tools = [
       const requestedPayerAddress = normalizeMaybeString(payerAddress);
       const resolvedPayerAddress = requestedPayerAddress || derivedPayerWallet;
 
-      const normalizeAddress = (address) =>
-        isEvmChain(chainId) ? String(address).toLowerCase() : String(address);
+      const normalizeAddress = createAddressNormalizer(chainId, isEvmChain);
       if (
         requestedPayerAddress &&
         normalizeAddress(requestedPayerAddress) !== normalizeAddress(derivedPayerWallet)
@@ -1054,30 +1306,26 @@ export const x402Tools = [
       if (!normalizedIntent.id) {
         return { success: false, error: 'x402 createIntent did not return an intent id' };
       }
+      const createdIntentId = String(normalizedIntent.id);
 
       let localSigning;
       try {
         localSigning = await signIntentWithLocalAgent({
           commerce,
-          intentId: normalizedIntent.id,
+          intentId: createdIntentId,
           agentId: effectivePayerAgentId,
           keyId,
           chain: chainId,
           configDir: '.stateset',
         });
       } catch (err) {
-        return { success: false, error: `Local signing failed: ${err.message}` };
+        return { success: false, error: `Local signing failed: ${messageFromError(err)}` };
       }
 
-      const settleTool = x402Tools.find((tool) => tool.name === 'x402_settle_intent_onchain');
-      if (!settleTool) {
-        return { success: false, error: 'x402_settle_intent_onchain tool is not registered' };
-      }
-
-      const settlement = await settleTool.handler({
+      const settlement = await handleSettleIntentOnchain({
         commerce,
         params: {
-          intentId: normalizedIntent.id,
+          intentId: createdIntentId,
           agentId: effectivePayerAgentId,
           payeeAgentId:
             shouldRecordIncoming && requestedPayeeAgentId ? requestedPayeeAgentId : undefined,
@@ -1097,7 +1345,7 @@ export const x402Tools = [
           success: false,
           error: settlement?.error || 'Failed to settle x402 intent',
           intent: {
-            id: normalizedIntent.id,
+            id: createdIntentId,
             status: firstValue(localSigning.signed, ['status']),
           },
           signing: {
@@ -1114,7 +1362,7 @@ export const x402Tools = [
         success: true,
         message: 'x402 agentic payment executed end-to-end.',
         payment: {
-          intentId: normalizedIntent.id,
+          intentId: createdIntentId,
           payerAgentId: effectivePayerAgentId,
           payeeAgentId: requestedPayeeAgentId || null,
           payerAddress: resolvedPayerAddress,
@@ -1132,7 +1380,7 @@ export const x402Tools = [
         settlement: settlement.settlement || null,
         incomingSettlement: settlement.incomingSettlement || null,
         intent: settlement.intent || {
-          id: normalizedIntent.id,
+          id: createdIntentId,
           status: firstValue(localSigning.signed, ['status']),
         },
       };
@@ -1208,8 +1456,8 @@ export const x402Tools = [
         listChains,
         fromSmallestUnit,
         isEvmChain,
-      } = await import('../chains/index.js');
-      const { loadTreasuryContext, recordDeposit } = await import('../treasury/index.js');
+      } = await loadChainsModule();
+      const { loadTreasuryContext, recordDeposit } = await loadTreasuryModule();
 
       let chainId = normalizeX402NetworkToChain(chain || intent.network);
       if (
@@ -1242,8 +1490,7 @@ export const x402Tools = [
         };
       }
 
-      const normalizeAddress = (address) =>
-        isEvmChain(chainId) ? String(address).toLowerCase() : String(address);
+      const normalizeAddress = createAddressNormalizer(chainId, isEvmChain);
       const payeeWallet = await getWalletAddress(payeeAgentId, chainId, {
         configDir: '.stateset',
       });
@@ -1545,13 +1792,15 @@ export const x402Tools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const txns = await commerce.x402().listCreditTransactions({
-        payer_address: params.payerAddress,
-        asset: params.asset,
-        network: params.network,
-        direction: params.direction,
-        limit: params.limit || 50,
-      });
+      const txns = /** @type {JsonRecord[]} */ (
+        await commerce.x402().listCreditTransactions({
+          payer_address: params.payerAddress,
+          asset: params.asset,
+          network: params.network,
+          direction: params.direction,
+          limit: params.limit || 50,
+        })
+      );
       return {
         success: true,
         count: txns.length,

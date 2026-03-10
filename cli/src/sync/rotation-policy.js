@@ -12,6 +12,10 @@ import fs from 'fs/promises';
 import path from 'path';
 
 /**
+ * @typedef {'signing'|'encryption'} ManagedKeyType
+ */
+
+/**
  * @typedef {Object} RotationPolicy
  * @property {number} [maxAgeHours] - Rotate after this many hours
  * @property {number} [maxUsageCount] - Rotate after this many uses
@@ -25,7 +29,7 @@ import path from 'path';
  * @typedef {Object} KeyExpiryWarning
  * @property {string} agentId
  * @property {number} keyId
- * @property {string} keyType - 'signing' | 'encryption'
+ * @property {ManagedKeyType} keyType
  * @property {string} expiresAt
  * @property {number} hoursRemaining
  * @property {string} severity - 'info' | 'warning' | 'critical'
@@ -35,7 +39,7 @@ import path from 'path';
  * @typedef {Object} ScheduledRotation
  * @property {string} id
  * @property {string} agentId
- * @property {string} keyType
+ * @property {ManagedKeyType} keyType
  * @property {number} currentKeyId
  * @property {string} scheduledAt
  * @property {string} reason - 'age_limit' | 'usage_limit' | 'manual' | 'expiry'
@@ -49,10 +53,13 @@ import path from 'path';
  * @typedef {Object} KeyUsage
  * @property {string} agentId
  * @property {number} keyId
- * @property {string} keyType
+ * @property {ManagedKeyType} keyType
  * @property {number} usageCount
  * @property {string} [lastUsedAt]
  */
+
+/** @type {ManagedKeyType[]} */
+const KEY_TYPES = ['signing', 'encryption'];
 
 /**
  * Rotation Policy Manager
@@ -109,7 +116,7 @@ export class RotationPolicyManager {
   /**
    * Get policy key for storage
    * @param {string} agentId
-   * @param {string} keyType
+   * @param {ManagedKeyType} keyType
    * @returns {string}
    */
   _policyKey(agentId, keyType) {
@@ -170,12 +177,13 @@ export class RotationPolicyManager {
 
   /**
    * List all configured policies
-   * @returns {Promise<Array<{agentId: string, keyType: string, policy: RotationPolicy}>>}
+   * @returns {Promise<Array<{agentId: string, keyType: ManagedKeyType, policy: RotationPolicy}>>}
    */
   async listPolicies() {
     const policies = await this._loadPolicies();
     return Object.entries(policies).map(([key, policy]) => {
-      const [agentId, keyType] = key.split(':');
+      const [agentId, rawKeyType] = key.split(':');
+      const keyType = /** @type {ManagedKeyType} */ (rawKeyType);
       return { agentId, keyType, policy };
     });
   }
@@ -210,7 +218,7 @@ export class RotationPolicyManager {
   /**
    * Get usage key for storage
    * @param {string} agentId
-   * @param {string} keyType
+   * @param {ManagedKeyType} keyType
    * @param {number} keyId
    * @returns {string}
    */
@@ -349,7 +357,7 @@ export class RotationPolicyManager {
       : [...new Set(Object.keys(policies).map((k) => k.split(':')[0]))];
 
     for (const aid of agentIds) {
-      for (const keyType of ['signing', 'encryption']) {
+      for (const keyType of KEY_TYPES) {
         const policy = await this.getPolicy(aid, keyType);
         if (!policy.maxAgeHours) continue;
 
@@ -555,7 +563,7 @@ export class RotationPolicyManager {
     }
 
     // Sort by scheduled date (newest first)
-    rotations.sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+    rotations.sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime());
 
     if (options.limit) {
       rotations = rotations.slice(0, options.limit);

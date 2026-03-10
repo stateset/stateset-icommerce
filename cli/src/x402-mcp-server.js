@@ -9,17 +9,119 @@ import { z } from 'zod';
 import { X402SequencerClient, createX402Agent, BudgetExceededError } from './x402/index.js';
 import { createBudgetState, getDefaultBudgetStateFile } from './x402/budget.js';
 import { loadX402Config, resolveX402ConfigPath, pickConfigValue } from './x402/config.js';
-import { getKeyManager } from './sync/keys.js';
-import { PolicyEngine } from './policies/engine.js';
 
 const MAX_RESPONSE_CHARS = 12000;
+const SYNC_KEYS_MODULE = './sync/keys.js';
+const POLICY_ENGINE_MODULE = './policies/engine.js';
+const CHAINS_MODULE = './chains/index.js';
 
+/**
+ * @typedef {Record<string, unknown>} JsonRecord
+ * @typedef {{ keyId?: number, privateKey?: string | Buffer, publicKey?: string | Buffer }} SigningKeyJson
+ * @typedef {{ keyId?: number, privateKey: Buffer, publicKey: Buffer }} SigningKey
+ * @typedef {{
+ *   filePath: string,
+ *   getSpentToday: () => number,
+ *   getBalance: () => number | null,
+ *   recordSpend: (amount: number, metadata?: Record<string, unknown>) => void,
+ *   listHistory: (limit?: number) => unknown[],
+ * }} BudgetState
+ * @typedef {{
+ *   getSigningKey: (agentId: string, keyId: number) => Promise<SigningKey | null>,
+ *   getCurrentSigningKey: (agentId: string) => Promise<SigningKey | null>,
+ * }} KeyManagerLike
+ * @typedef {{ type?: string, transform?: JsonRecord, reason?: string, metadata?: JsonRecord }} PolicyAction
+ * @typedef {{ actions?: PolicyAction[], shouldDeny?: boolean }} PolicyEvaluation
+ * @typedef {{ requestId?: string | null, sessionId?: string | null }} PolicyExtra
+ * @typedef {{ allowed: boolean, params: JsonRecord, reason?: string, actions?: PolicyAction[], evaluation?: PolicyEvaluation | null }} PolicyDecision
+ * @typedef {{
+ *   load: () => Promise<unknown>,
+ *   evaluate: (domain: string, context: JsonRecord) => Promise<PolicyEvaluation>,
+ * }} PolicyEngineLike
+ * @typedef {{
+ *   sequencerClient: X402SequencerClient,
+ *   tenantId: string,
+ *   storeId: string,
+ *   agentId: string,
+ *   agentKeyId: number,
+ *   payerAddress: string,
+ *   signingKey: SigningKey,
+ *   preferredNetworks: string[],
+ *   requireReceipt: boolean,
+ *   receiptTimeoutMs?: number,
+ *   receiptPollMs?: number,
+ *   maxAmount?: number,
+ *   maxAmountPerCall?: number,
+ *   dailyBudget?: number,
+ *   budgetState: BudgetState | null,
+ * }} ResolvedX402Config
+ * @typedef {{ url: string, method?: string, headers?: Record<string, string>, body?: unknown, maxAmount?: number, requireReceipt?: boolean }} X402CallArgs
+ * @typedef {{ limit?: number }} X402HistoryArgs
+ * @typedef {{ intentId: string }} X402ReceiptArgs
+ * @typedef {{ chain?: string, token?: string, address?: string }} X402BalanceArgs
+ * @typedef {{ env?: NodeJS.ProcessEnv, configDir?: string, policyEngine?: PolicyEngineLike | null, policyStorePath?: string | null }} CreateX402McpServerOptions
+ * @typedef {{ agentId?: string | null, keyId?: number | null | undefined, configDir?: string, keyJson?: SigningKeyJson | null, keyPath?: string | null }} ResolveSigningKeyOptions
+ */
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function messageFromError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function asOptionalString(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return String(value);
+}
+
+/**
+ * @returns {Promise<{ getKeyManager: (configDir?: string) => KeyManagerLike }>}
+ */
+async function loadKeyManagerModule() {
+  return /** @type {Promise<{ getKeyManager: (configDir?: string) => KeyManagerLike }>} */ (
+    import(SYNC_KEYS_MODULE)
+  );
+}
+
+/**
+ * @returns {Promise<{ PolicyEngine: new (options?: { storePath?: string | null, unknownDomainMode?: 'allow' | 'deny' }) => PolicyEngineLike }>}
+ */
+async function loadPolicyEngineModule() {
+  return /** @type {Promise<{ PolicyEngine: new (options?: { storePath?: string | null, unknownDomainMode?: 'allow' | 'deny' }) => PolicyEngineLike }>} */ (
+    import(POLICY_ENGINE_MODULE)
+  );
+}
+
+/**
+ * @returns {Promise<{ getBalance: (address: string, chain: string, token?: string) => Promise<{ balance: unknown, symbol: unknown }> }>}
+ */
+async function loadChainsModule() {
+  return /** @type {Promise<{ getBalance: (address: string, chain: string, token?: string) => Promise<{ balance: unknown, symbol: unknown }> }>} */ (
+    import(CHAINS_MODULE)
+  );
+}
+
+/**
+ * @param {unknown} value
+ * @param {boolean} [fallback]
+ * @returns {boolean}
+ */
 function parseBool(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value === 'boolean') return value;
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
 }
 
+/**
+ * @param {unknown} value
+ * @returns {number | undefined}
+ */
 function parseNumber(value) {
   if (value === undefined || value === null || value === '') return undefined;
   if (typeof value === 'number') {
@@ -29,6 +131,10 @@ function parseNumber(value) {
   return Number.isFinite(num) ? num : undefined;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string[]}
+ */
 function parseList(value) {
   if (!value) return [];
   if (Array.isArray(value)) {
@@ -40,6 +146,10 @@ function parseList(value) {
     .filter(Boolean);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {Buffer | null}
+ */
 function decodeKeyMaterial(value) {
   if (!value) return null;
   const trimmed = String(value).trim();
@@ -49,17 +159,30 @@ function decodeKeyMaterial(value) {
   return Buffer.from(trimmed, 'base64');
 }
 
+/**
+ * @param {SigningKeyJson | null | undefined} keyJson
+ * @returns {SigningKey}
+ */
 function loadKeyFromJson(keyJson) {
   if (!keyJson?.privateKey || !keyJson?.publicKey) {
     throw new Error('Signing key JSON must include privateKey and publicKey');
   }
+  const privateKey = decodeKeyMaterial(keyJson.privateKey);
+  const publicKey = decodeKeyMaterial(keyJson.publicKey);
+  if (!privateKey || !publicKey) {
+    throw new Error('Signing key JSON must include valid privateKey and publicKey');
+  }
   return {
     keyId: keyJson.keyId ?? 1,
-    privateKey: decodeKeyMaterial(keyJson.privateKey),
-    publicKey: decodeKeyMaterial(keyJson.publicKey),
+    privateKey,
+    publicKey,
   };
 }
 
+/**
+ * @param {ResolveSigningKeyOptions} options
+ * @returns {Promise<SigningKey>}
+ */
 async function resolveSigningKey({ agentId, keyId, configDir, keyJson, keyPath }) {
   if (keyJson) return loadKeyFromJson(keyJson);
   if (keyPath) {
@@ -80,6 +203,7 @@ async function resolveSigningKey({ agentId, keyId, configDir, keyJson, keyPath }
   if (!agentId) {
     throw new Error('X402 agentId is required to load signing keys');
   }
+  const { getKeyManager } = await loadKeyManagerModule();
   const manager = getKeyManager(configDir);
   if (keyId) {
     const key = await manager.getSigningKey(agentId, Number(keyId));
@@ -92,16 +216,28 @@ async function resolveSigningKey({ agentId, keyId, configDir, keyJson, keyPath }
   return current;
 }
 
+/**
+ * @param {unknown} body
+ * @returns {unknown}
+ */
 function truncateBody(body) {
   if (typeof body !== 'string') return body;
   if (body.length <= MAX_RESPONSE_CHARS) return body;
   return `${body.slice(0, MAX_RESPONSE_CHARS)}\n... truncated ...`;
 }
 
+/**
+ * @param {unknown} data
+ * @returns {{ content: Array<{ type: 'text', text: string }> }}
+ */
 function result(data) {
   return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
 }
 
+/**
+ * @param {string} error
+ * @returns {{ content: Array<{ type: 'text', text: string }>, isError: true }}
+ */
 function errorResult(error) {
   return {
     content: [{ type: 'text', text: JSON.stringify({ success: false, error }, null, 2) }],
@@ -109,6 +245,9 @@ function errorResult(error) {
   };
 }
 
+/**
+ * @param {CreateX402McpServerOptions} [options]
+ */
 export function createX402McpServer({
   env = process.env,
   configDir = '.stateset',
@@ -119,14 +258,25 @@ export function createX402McpServer({
   const fileConfig = loadX402Config(configPath);
 
   const sequencerUrl =
-    pickConfigValue(env, fileConfig, 'X402_SEQUENCER_URL', 'sequencerUrl', 'sequencer_url') ||
-    pickConfigValue(env, fileConfig, 'X402_SEQUENCER', 'sequencer');
-  const tenantId = pickConfigValue(env, fileConfig, 'X402_TENANT_ID', 'tenantId', 'tenant_id');
-  const storeId = pickConfigValue(env, fileConfig, 'X402_STORE_ID', 'storeId', 'store_id');
-  const agentId = pickConfigValue(env, fileConfig, 'X402_AGENT_ID', 'agentId', 'agent_id');
+    asOptionalString(
+      pickConfigValue(env, fileConfig, 'X402_SEQUENCER_URL', 'sequencerUrl', 'sequencer_url'),
+    ) ?? asOptionalString(pickConfigValue(env, fileConfig, 'X402_SEQUENCER', 'sequencer'));
+  const tenantId = asOptionalString(
+    pickConfigValue(env, fileConfig, 'X402_TENANT_ID', 'tenantId', 'tenant_id'),
+  );
+  const storeId = asOptionalString(
+    pickConfigValue(env, fileConfig, 'X402_STORE_ID', 'storeId', 'store_id'),
+  );
+  const agentId = asOptionalString(
+    pickConfigValue(env, fileConfig, 'X402_AGENT_ID', 'agentId', 'agent_id'),
+  );
   const payerAddress =
-    pickConfigValue(env, fileConfig, 'X402_PAYER_ADDRESS', 'payerAddress', 'payer_address') ||
-    pickConfigValue(env, fileConfig, 'X402_WALLET_ADDRESS', 'walletAddress', 'wallet_address');
+    asOptionalString(
+      pickConfigValue(env, fileConfig, 'X402_PAYER_ADDRESS', 'payerAddress', 'payer_address'),
+    ) ??
+    asOptionalString(
+      pickConfigValue(env, fileConfig, 'X402_WALLET_ADDRESS', 'walletAddress', 'wallet_address'),
+    );
   const agentKeyId = parseNumber(
     pickConfigValue(env, fileConfig, 'X402_AGENT_KEY_ID', 'agentKeyId', 'agent_key_id'),
   );
@@ -188,12 +338,14 @@ export function createX402McpServer({
     ),
   );
   const budgetStateFile =
-    pickConfigValue(
-      env,
-      fileConfig,
-      'X402_BUDGET_STATE_FILE',
-      'budgetStateFile',
-      'budget_state_file',
+    asOptionalString(
+      pickConfigValue(
+        env,
+        fileConfig,
+        'X402_BUDGET_STATE_FILE',
+        'budgetStateFile',
+        'budget_state_file',
+      ),
     ) || getDefaultBudgetStateFile();
 
   const shouldTrackBudget = Boolean(
@@ -211,21 +363,29 @@ export function createX402McpServer({
     ? new X402SequencerClient({
         sequencerUrl,
         auth: {
-          apiKey: pickConfigValue(env, fileConfig, 'X402_API_KEY', 'apiKey', 'api_key'),
-          jwt: pickConfigValue(env, fileConfig, 'X402_JWT', 'jwt'),
+          apiKey: asOptionalString(
+            pickConfigValue(env, fileConfig, 'X402_API_KEY', 'apiKey', 'api_key'),
+          ),
+          jwt: asOptionalString(pickConfigValue(env, fileConfig, 'X402_JWT', 'jwt')),
         },
       })
     : null;
 
+  /** @type {SigningKey | null} */
   let cachedSigningKey = null;
+  /**
+   * @returns {Promise<SigningKey>}
+   */
   const resolveKeyOnce = async () => {
     if (cachedSigningKey) return cachedSigningKey;
-    const keyPath = pickConfigValue(
-      env,
-      fileConfig,
-      'X402_SIGNING_KEY_PATH',
-      'signingKeyPath',
-      'signing_key_path',
+    const keyPath = asOptionalString(
+      pickConfigValue(
+        env,
+        fileConfig,
+        'X402_SIGNING_KEY_PATH',
+        'signingKeyPath',
+        'signing_key_path',
+      ),
     );
     const rawKey = pickConfigValue(
       env,
@@ -234,7 +394,11 @@ export function createX402McpServer({
       'signingKey',
       'signing_key',
     );
-    const keyJson = rawKey ? (typeof rawKey === 'string' ? JSON.parse(rawKey) : rawKey) : null;
+    const keyJson = rawKey
+      ? typeof rawKey === 'string'
+        ? /** @type {SigningKeyJson} */ (JSON.parse(rawKey))
+        : /** @type {SigningKeyJson} */ (rawKey)
+      : null;
     cachedSigningKey = await resolveSigningKey({
       agentId,
       keyId: agentKeyId,
@@ -245,6 +409,9 @@ export function createX402McpServer({
     return cachedSigningKey;
   };
 
+  /**
+   * @returns {Promise<ResolvedX402Config>}
+   */
   const ensureConfig = async () => {
     if (!sequencerClient) throw new Error('X402_SEQUENCER_URL is required');
     if (!tenantId || !storeId || !agentId) {
@@ -259,7 +426,7 @@ export function createX402McpServer({
       tenantId,
       storeId,
       agentId,
-      agentKeyId: agentKeyId ?? signingKey?.keyId,
+      agentKeyId: agentKeyId ?? signingKey?.keyId ?? 1,
       payerAddress,
       signingKey,
       preferredNetworks,
@@ -273,13 +440,18 @@ export function createX402McpServer({
     };
   };
 
+  /**
+   * @param {JsonRecord | null | undefined} input
+   * @param {unknown} transform
+   * @returns {JsonRecord}
+   */
   const applyPolicyTransform = (input, transform) => {
     if (!transform || typeof transform !== 'object' || Array.isArray(transform)) {
-      return input;
+      return input || {};
     }
 
     const output = { ...(input || {}) };
-    for (const [key, value] of Object.entries(transform)) {
+    for (const [key, value] of Object.entries(/** @type {JsonRecord} */ (transform))) {
       if (
         output[key] !== null &&
         output[key] !== undefined &&
@@ -299,27 +471,48 @@ export function createX402McpServer({
   };
 
   const resolvePolicyStorePath =
-    policyStorePath || process.env.STATESET_POLICY_DIR || path.resolve(configDir || '.stateset');
-  const policyEngineInstance =
-    policyEngine ||
-    (resolvePolicyStorePath
-      ? new PolicyEngine({
-          storePath: resolvePolicyStorePath,
-          unknownDomainMode: 'allow',
-        })
-      : null);
-  const policyLoad =
-    policyEngineInstance && !policyEngine
-      ? policyEngineInstance.load().catch((err) => {
-          console.debug('x402 policy load failed:', err.message);
+    policyStorePath || env.STATESET_POLICY_DIR || path.resolve(configDir || '.stateset');
+  /** @type {PolicyEngineLike | null} */
+  let defaultPolicyEngine = null;
+  /** @type {Promise<PolicyEngineLike | null> | null} */
+  let policyEngineLoad = null;
+
+  /**
+   * @returns {Promise<PolicyEngineLike | null>}
+   */
+  const getPolicyEngine = async () => {
+    if (policyEngine) return policyEngine;
+    if (!resolvePolicyStorePath) return null;
+    if (defaultPolicyEngine) return defaultPolicyEngine;
+    if (!policyEngineLoad) {
+      policyEngineLoad = (async () => {
+        try {
+          const { PolicyEngine } = await loadPolicyEngineModule();
+          const engine = new PolicyEngine({
+            storePath: resolvePolicyStorePath,
+            unknownDomainMode: 'allow',
+          });
+          await engine.load();
+          defaultPolicyEngine = engine;
+          return engine;
+        } catch (err) {
+          console.debug('x402 policy load failed:', messageFromError(err));
           return null;
-        })
-      : Promise.resolve();
+        }
+      })();
+    }
+    return policyEngineLoad;
+  };
 
+  /**
+   * @param {string} toolName
+   * @param {JsonRecord} params
+   * @param {PolicyExtra} [extra]
+   * @returns {Promise<PolicyDecision>}
+   */
   const evaluatePolicy = async (toolName, params, extra = {}) => {
+    const policyEngineInstance = await getPolicyEngine();
     if (!policyEngineInstance) return { allowed: true, params };
-
-    await policyLoad;
 
     const context = {
       domain: 'x402',
@@ -329,18 +522,21 @@ export function createX402McpServer({
       sessionId: extra?.sessionId || null,
     };
 
-    let result;
+    /** @type {PolicyEvaluation | null} */
+    let evaluation = null;
     try {
-      result = await policyEngineInstance.evaluate('x402', context);
+      evaluation = /** @type {PolicyEvaluation} */ (
+        await policyEngineInstance.evaluate('x402', context)
+      );
     } catch (err) {
       console.debug(
         '[x402-mcp-server] Policy evaluation failed, allowing by default:',
-        err.message || err,
+        messageFromError(err),
       );
       return { allowed: true, params };
     }
 
-    const actions = Array.isArray(result?.actions) ? result.actions : [];
+    const actions = Array.isArray(evaluation?.actions) ? evaluation.actions : [];
     let transformedParams = params;
     for (const action of actions) {
       if (action?.type === 'transform') {
@@ -348,7 +544,7 @@ export function createX402McpServer({
       }
     }
 
-    if (result?.shouldDeny) {
+    if (evaluation?.shouldDeny) {
       const reason = actions
         .filter((action) => action?.type === 'deny')
         .map((action) => action?.reason || action?.metadata?.reason || 'Tool denied by policy')
@@ -360,7 +556,7 @@ export function createX402McpServer({
         params: transformedParams,
         reason: reason || 'Tool denied by policy',
         actions,
-        evaluation: result,
+        evaluation,
       };
     }
 
@@ -368,10 +564,14 @@ export function createX402McpServer({
       allowed: true,
       params: transformedParams,
       actions,
-      evaluation: result,
+      evaluation,
     };
   };
 
+  /**
+   * @param {string} toolName
+   * @param {PolicyDecision} policy
+   */
   const policyError = (toolName, policy) => ({
     content: [
       {
@@ -394,13 +594,24 @@ export function createX402McpServer({
     isError: true,
   });
 
-  const withPolicy = (toolName, handler) => async (args, extra) => {
-    const policy = await evaluatePolicy(toolName, args, extra);
-    if (!policy.allowed) {
-      return policyError(toolName, policy);
-    }
-    return handler(policy.params, extra);
-  };
+  /**
+   * @param {string} toolName
+   * @param {(args: JsonRecord, extra?: PolicyExtra) => Promise<unknown> | unknown} handler
+   * @returns {any}
+   */
+  const withPolicy =
+    (toolName, handler) =>
+    /**
+     * @param {JsonRecord | null | undefined} args
+     * @param {PolicyExtra} [extra]
+     */
+    async (args, extra) => {
+      const policy = await evaluatePolicy(toolName, args || {}, extra);
+      if (!policy.allowed) {
+        return policyError(toolName, policy);
+      }
+      return handler(policy.params, extra);
+    };
 
   return createSdkMcpServer({
     name: 'stateset-x402',
@@ -419,14 +630,16 @@ export function createX402McpServer({
         },
         withPolicy(
           'x402_call',
-          async ({
-            url,
-            method = 'GET',
-            headers = {},
-            body,
-            maxAmount: perCallMax,
-            requireReceipt: perCallReceipt,
-          }) => {
+          /** @param {JsonRecord} rawArgs */
+          async (rawArgs) => {
+            const {
+              url,
+              method = 'GET',
+              headers = {},
+              body,
+              maxAmount: perCallMax,
+              requireReceipt: perCallReceipt,
+            } = /** @type {X402CallArgs} */ (rawArgs);
             try {
               const config = await ensureConfig();
               const agent = createX402Agent({
@@ -435,9 +648,21 @@ export function createX402McpServer({
                 requireReceipt: perCallReceipt ?? config.requireReceipt,
               });
 
+              /** @type {Record<string, string>} */
               const requestHeaders = { ...headers };
-              let requestBody = body;
-              if (body && typeof body === 'object' && !(body instanceof Buffer)) {
+              /** @type {BodyInit | null | undefined} */
+              let requestBody;
+              if (
+                typeof body === 'string' ||
+                body instanceof Buffer ||
+                body instanceof URLSearchParams ||
+                body instanceof FormData ||
+                body instanceof Blob ||
+                body instanceof ArrayBuffer ||
+                ArrayBuffer.isView(body)
+              ) {
+                requestBody = /** @type {BodyInit} */ (body);
+              } else if (body !== undefined && body !== null) {
                 requestBody = JSON.stringify(body);
                 if (!requestHeaders['content-type']) {
                   requestHeaders['content-type'] = 'application/json';
@@ -478,7 +703,7 @@ export function createX402McpServer({
               const message =
                 error instanceof BudgetExceededError
                   ? `Budget exceeded: ${error.message}`
-                  : error.message;
+                  : messageFromError(error);
               return errorResult(message);
             }
           },
@@ -516,7 +741,8 @@ export function createX402McpServer({
         {
           limit: z.number().optional().describe('Number of entries to return (default: 50)'),
         },
-        withPolicy('x402_history', ({ limit = 50 }) => {
+        withPolicy('x402_history', (rawArgs) => {
+          const { limit = 50 } = /** @type {X402HistoryArgs} */ (rawArgs);
           if (!budgetState) {
             return result({
               success: true,
@@ -538,13 +764,14 @@ export function createX402McpServer({
         {
           intentId: z.string().describe('Payment intent ID'),
         },
-        withPolicy('x402_receipt', async ({ intentId }) => {
+        withPolicy('x402_receipt', async (rawArgs) => {
+          const { intentId } = /** @type {X402ReceiptArgs} */ (rawArgs);
           try {
             if (!sequencerClient) throw new Error('X402_SEQUENCER_URL is required');
             const receipt = await sequencerClient.getPaymentReceipt(intentId);
             return result({ success: true, receipt });
           } catch (error) {
-            return errorResult(error.message);
+            return errorResult(messageFromError(error));
           }
         }),
       ),
@@ -563,7 +790,8 @@ export function createX402McpServer({
             .optional()
             .describe('Wallet address (defaults to X402_PAYER_ADDRESS)'),
         },
-        withPolicy('x402_balance', async ({ chain, token, address }) => {
+        withPolicy('x402_balance', async (rawArgs) => {
+          const { chain, token, address } = /** @type {X402BalanceArgs} */ (rawArgs);
           if (!chain) {
             return result({
               success: true,
@@ -572,7 +800,7 @@ export function createX402McpServer({
             });
           }
           try {
-            const { getBalance } = await import('./chains/index.js');
+            const { getBalance } = await loadChainsModule();
             const walletAddress = address || payerAddress;
             if (!walletAddress) {
               throw new Error(
@@ -588,7 +816,7 @@ export function createX402McpServer({
               symbol: balance.symbol,
             });
           } catch (error) {
-            return errorResult(error.message);
+            return errorResult(messageFromError(error));
           }
         }),
       ),

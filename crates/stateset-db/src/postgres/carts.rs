@@ -343,9 +343,9 @@ impl PgCartRepository {
     }
 
     fn generate_cart_number() -> String {
-        let timestamp = Utc::now().timestamp();
-        let random: u32 = (Uuid::new_v4().as_u128() % 10000) as u32;
-        format!("CART-{}-{:04}", timestamp, random)
+        let timestamp_ms = Utc::now().timestamp_millis();
+        let random_suffix = (Uuid::new_v4().as_u128() & 0xFFFF_FFFF_FFFF_FFFF) as u64;
+        format!("CART-{timestamp_ms}-{random_suffix:016x}")
     }
 
     async fn get_cart_items_async(&self, cart_id: Uuid) -> Result<Vec<CartItem>> {

@@ -24,11 +24,16 @@ export function isSafeDisplayUrl(url) {
     const parsed = new URL(url);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:';
   } catch (err) {
-    console.debug('[url-validator] URL parse failed:', err.message || err);
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.debug('[url-validator] URL parse failed:', error.message);
     return false;
   }
 }
 
+/**
+ * @param {string} url
+ * @returns {void}
+ */
 export function validateFetchUrl(url) {
   const parsed = new URL(url);
   if (!['http:', 'https:'].includes(parsed.protocol)) {

@@ -161,6 +161,8 @@ function buildUnsupportedPreviewTransaction(intent, chainId) {
  * @property {string} intentId
  * @property {string} chainId
  * @property {string} tokenSymbol
+ * @property {string} tokenAddress
+ * @property {number} tokenDecimals
  * @property {string} fromAddress
  * @property {string} toAddress
  * @property {string} amount
@@ -174,12 +176,16 @@ function buildUnsupportedPreviewTransaction(intent, chainId) {
 /**
  * @typedef {Object} PaymentResult
  * @property {boolean} success
- * @property {string} intentId
+ * @property {string | undefined} intentId
  * @property {string} [txHash]
+ * @property {string} [txSignature]
  * @property {string} [explorerUrl]
  * @property {number} [blockNumber]
  * @property {number} [confirmations]
  * @property {string} [error]
+ * @property {boolean} [simulated]
+ * @property {PaymentIntent} [intent]
+ * @property {unknown} [txPreview]
  * @property {Array<string>} vesEventIds
  */
 
@@ -193,6 +199,7 @@ function buildUnsupportedPreviewTransaction(intent, chainId) {
  * @param {string} [params.tokenSymbol]
  * @param {Object} [params.metadata]
  * @param {Object} [options]
+ * @param {string} [options.configDir]
  * @returns {Promise<PaymentIntent>}
  */
 export async function createPaymentIntent(params, options = {}) {
@@ -262,6 +269,7 @@ export async function createPaymentIntent(params, options = {}) {
  * @param {string} [params.tokenSymbol]
  * @param {Object} [params.metadata]
  * @param {Object} [options]
+ * @param {string} [options.configDir]
  * @param {boolean} [options.simulate]
  * @param {Function} [options.onProgress]
  * @returns {Promise<PaymentResult>}

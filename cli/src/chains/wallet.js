@@ -106,7 +106,7 @@ export async function deriveWallet(agentId, chainId, options = {}) {
  * Derive Ed25519 wallet for Solana, NEAR, etc.
  * @param {Buffer} seed - 32-byte seed
  * @param {string} chainId - Chain identifier
- * @param {Object} chain - Chain config
+ * @param {Object} _chain - Chain config
  * @returns {DerivedWallet}
  */
 function deriveEd25519Wallet(seed, chainId, _chain) {
@@ -180,7 +180,7 @@ function deriveEd25519Wallet(seed, chainId, _chain) {
  * Derive EVM wallet (secp256k1) for Ethereum, Base, Arbitrum, SET Chain, etc.
  * @param {Buffer} seed - 32-byte seed
  * @param {string} chainId - Chain identifier
- * @param {Object} chain - Chain config
+ * @param {Object} _chain - Chain config
  * @returns {DerivedWallet}
  */
 function deriveEvmWallet(seed, chainId, _chain) {
@@ -251,7 +251,7 @@ function compressPublicKey(uncompressedKey) {
  *
  * @param {Buffer} seed - 32-byte seed from VES signing key
  * @param {string} chainId - Chain identifier (zcash or zcash_testnet)
- * @param {Object} chain - Chain config
+ * @param {Object} _chain - Chain config
  * @returns {DerivedWallet}
  */
 function deriveZcashWallet(seed, chainId, _chain) {
@@ -322,7 +322,7 @@ const BITCOIN_ADDRESS_VERSIONS = {
  *
  * @param {Buffer} seed - 32-byte seed from VES signing key
  * @param {string} chainId - Chain identifier (bitcoin or bitcoin_testnet)
- * @param {Object} chain - Chain config
+ * @param {Object} _chain - Chain config
  * @returns {DerivedWallet}
  */
 function deriveBitcoinWallet(seed, chainId, _chain) {
@@ -407,6 +407,7 @@ export async function getWalletAddress(agentId, chainId, options = {}) {
  * @returns {Promise<Object.<string, string>>}
  */
 export async function listWalletAddresses(agentId, options = {}) {
+  /** @type {Record<string, string>} */
   const addresses = {};
 
   for (const chainId of Object.keys(CHAINS)) {

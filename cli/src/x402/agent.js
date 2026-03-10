@@ -18,6 +18,108 @@ import {
   verifyX402Signature,
 } from './crypto.js';
 
+/**
+ * @typedef {{
+ *   networks?: string[],
+ *   network?: string,
+ *   amount?: number | string,
+ *   amount_required?: number | string,
+ *   max_amount_required?: number | string,
+ *   amountRequired?: number | string,
+ *   maxAmountRequired?: number | string,
+ *   asset?: string,
+ *   token?: string,
+ *   x402Version?: number,
+ *   version?: number,
+ *   validity_seconds?: number | string,
+ *   validitySeconds?: number | string,
+ *   payee_address?: string,
+ *   payment_address?: string,
+ *   recipient?: string,
+ *   payeeAddress?: string,
+ *   paymentAddress?: string,
+ *   resource_uri?: string,
+ *   resourceUri?: string,
+ *   resource?: string,
+ *   description?: string,
+ *   merchant_id?: string,
+ *   idempotency_key?: string,
+ *   idempotencyKey?: string,
+ *   metadata?: Record<string, unknown> | null,
+ * }} PaymentRequirement
+ * @typedef {{
+ *   requirements?: PaymentRequirement,
+ *   accepts?: PaymentRequirement[],
+ *   paymentRequirements?: PaymentRequirement[],
+ *   resource?: string,
+ *   resource_uri?: string,
+ *   description?: string,
+ *   metadata?: Record<string, unknown> | null,
+ *   merchant_id?: string,
+ *   idempotency_key?: string,
+ * }} PaymentRequiredPayload
+ * @typedef {{ keyId?: number, privateKey: Buffer, publicKey: Buffer }} SigningKey
+ * @typedef {{
+ *   filePath: string,
+ *   getSpentToday: () => number,
+ *   getBalance: () => number | null,
+ *   recordSpend: (amount: number, metadata?: Record<string, unknown>) => void,
+ *   listHistory: (limit?: number) => unknown[],
+ * }} BudgetState
+ * @typedef {{
+ *   submitPaymentIntent: (payload: unknown) => Promise<{ intent_id: string }>,
+ *   createBatch: (payload: unknown) => Promise<unknown>,
+ *   waitForReceipt: (intentId: string, options?: { timeoutMs?: number, intervalMs?: number }) => Promise<unknown>,
+ * }} X402SequencerClientLike
+ * @typedef {{
+ *   sequencerClient: X402SequencerClientLike,
+ *   tenantId: string,
+ *   storeId: string,
+ *   agentId: string,
+ *   agentKeyId?: number,
+ *   payerAddress: string,
+ *   signingKey: SigningKey,
+ *   preferredNetworks?: string[],
+ *   requireReceipt?: boolean,
+ *   autoBatch?: boolean,
+ *   receiptTimeoutMs?: number,
+ *   receiptPollMs?: number,
+ *   maxAmount?: number,
+ *   maxAmountPerCall?: number,
+ *   dailyBudget?: number,
+ *   budgetState?: BudgetState | null,
+ *   budgetStateFile?: string,
+ *   startingBalance?: number,
+ * }} X402FetchConfig
+ * @typedef {{ requirements: PaymentRequirement | null, version: 'v1' | 'v2' | null, raw: unknown }} ParsedPaymentRequired
+ */
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function messageFromError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * @param {HeadersInit | undefined} headers
+ * @returns {Record<string, string>}
+ */
+function headersToObject(headers) {
+  if (!headers) return {};
+  if (headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers.map(([key, value]) => [key, String(value)]));
+  }
+  return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key, String(value)]));
+}
+
+/**
+ * @returns {number}
+ */
 function randomNonce() {
   const buf = crypto.randomBytes(8);
   const value = BigInt('0x' + buf.toString('hex'));
@@ -25,6 +127,10 @@ function randomNonce() {
   return Number(value % maxSafe);
 }
 
+/**
+ * @param {Response} response
+ * @returns {{ value: string | null, version: 'v1' | 'v2' | null }}
+ */
 function getPaymentRequiredHeader(response) {
   const paymentRequired = response.headers.get('payment-required');
   if (paymentRequired) {
@@ -37,6 +143,11 @@ function getPaymentRequiredHeader(response) {
   return { value: null, version: null };
 }
 
+/**
+ * @param {PaymentRequirement[] | null | undefined} candidates
+ * @param {string[]} [preferredNetworks]
+ * @returns {PaymentRequirement | null}
+ */
 function pickRequirement(candidates, preferredNetworks = []) {
   if (!Array.isArray(candidates) || candidates.length === 0) return null;
   if (preferredNetworks.length > 0) {
@@ -49,31 +160,42 @@ function pickRequirement(candidates, preferredNetworks = []) {
   return candidates[0];
 }
 
+/**
+ * @param {PaymentRequiredPayload | PaymentRequirement | null | undefined} payload
+ * @param {string[]} [preferredNetworks]
+ * @returns {PaymentRequirement | null}
+ */
 function normalizeRequirements(payload, preferredNetworks = []) {
   if (!payload) return null;
-  if (payload.requirements) return payload.requirements;
-  if (Array.isArray(payload.accepts)) {
-    const selected = pickRequirement(payload.accepts, preferredNetworks);
+  const candidatePayload = /** @type {PaymentRequiredPayload} */ (payload);
+  if (candidatePayload.requirements) return candidatePayload.requirements;
+  if (Array.isArray(candidatePayload.accepts)) {
+    const selected = pickRequirement(candidatePayload.accepts, preferredNetworks);
     if (!selected) return null;
     return {
       ...selected,
-      resource_uri: selected.resource || payload.resource || payload.resource_uri,
-      description: selected.description ?? payload.description,
-      metadata: selected.metadata ?? payload.metadata,
-      merchant_id: selected.merchant_id ?? payload.merchant_id,
-      idempotency_key: selected.idempotency_key ?? payload.idempotency_key,
+      resource_uri: selected.resource || candidatePayload.resource || candidatePayload.resource_uri,
+      description: selected.description ?? candidatePayload.description,
+      metadata: selected.metadata ?? candidatePayload.metadata,
+      merchant_id: selected.merchant_id ?? candidatePayload.merchant_id,
+      idempotency_key: selected.idempotency_key ?? candidatePayload.idempotency_key,
     };
   }
-  if (Array.isArray(payload.paymentRequirements)) {
-    return pickRequirement(payload.paymentRequirements, preferredNetworks);
+  if (Array.isArray(candidatePayload.paymentRequirements)) {
+    return pickRequirement(candidatePayload.paymentRequirements, preferredNetworks);
   }
-  return payload;
+  return /** @type {PaymentRequirement} */ (payload);
 }
 
+/**
+ * @param {Response} response
+ * @param {string[]} [preferredNetworks]
+ * @returns {Promise<ParsedPaymentRequired>}
+ */
 async function parsePaymentRequired(response, preferredNetworks = []) {
   const header = getPaymentRequiredHeader(response);
   if (header.value) {
-    const payload = decodeBase64Json(header.value);
+    const payload = /** @type {PaymentRequiredPayload} */ (decodeBase64Json(header.value));
     return {
       requirements: normalizeRequirements(payload, preferredNetworks),
       version: header.version,
@@ -88,18 +210,26 @@ async function parsePaymentRequired(response, preferredNetworks = []) {
       raw: body,
     };
   } catch (err) {
-    console.debug('[x402-agent] Payment requirements parse failed:', err.message || err);
+    console.debug('[x402-agent] Payment requirements parse failed:', messageFromError(err));
     return { requirements: null, version: null, raw: null };
   }
 }
 
 export class BudgetExceededError extends Error {
+  /**
+   * @param {string} message
+   */
   constructor(message) {
     super(message);
     this.name = 'BudgetExceededError';
   }
 }
 
+/**
+ * @param {PaymentRequirement | null | undefined} requirements
+ * @param {string[]} [preferred]
+ * @returns {string}
+ */
 function selectNetwork(requirements, preferred = []) {
   const networks = requirements?.networks || (requirements?.network ? [requirements.network] : []);
   if (!networks || networks.length === 0) {
@@ -112,6 +242,10 @@ function selectNetwork(requirements, preferred = []) {
   return networks[0];
 }
 
+/**
+ * @param {PaymentRequirement | null | undefined} requirements
+ * @returns {number}
+ */
 function resolveAmount(requirements) {
   const amount =
     requirements?.amount ??
@@ -125,6 +259,12 @@ function resolveAmount(requirements) {
   return Number(amount);
 }
 
+/**
+ * @param {string} url
+ * @param {RequestInit | undefined} options
+ * @param {X402FetchConfig} config
+ * @returns {Promise<Response>}
+ */
 export async function x402Fetch(url, options, config) {
   const {
     sequencerClient,
@@ -156,7 +296,7 @@ export async function x402Fetch(url, options, config) {
 
   validateFetchUrl(url);
 
-  const baseHeaders = options?.headers ? { ...options.headers } : {};
+  const baseHeaders = headersToObject(options?.headers);
 
   const response = await fetch(url, {
     ...options,
@@ -246,6 +386,7 @@ export async function x402Fetch(url, options, config) {
 
   const signature = signX402Hash(signingHash, signingKey.privateKey);
 
+  /** @type {Record<string, unknown>} */
   const submitPayload = {
     tenant_id: tenantId,
     store_id: storeId,
@@ -270,7 +411,9 @@ export async function x402Fetch(url, options, config) {
     metadata: requirements.metadata || null,
   };
 
+  /** @type {{ intent_id: string }} */
   const submitResponse = await sequencerClient.submitPaymentIntent(submitPayload);
+  /** @type {unknown | null} */
   let receipt = null;
   if (requireReceipt && autoBatch) {
     try {
@@ -280,7 +423,7 @@ export async function x402Fetch(url, options, config) {
         network,
       });
     } catch (err) {
-      console.debug('[x402-agent] Batch creation failed (best-effort):', err.message || err);
+      console.debug('[x402-agent] Batch creation failed (best-effort):', messageFromError(err));
     }
   }
 
@@ -312,6 +455,10 @@ export async function x402Fetch(url, options, config) {
   return finalResponse;
 }
 
+/**
+ * @param {X402FetchConfig} config
+ * @returns {{ fetch: (url: string, options?: RequestInit) => Promise<Response>, budget: BudgetState | null }}
+ */
 export function createX402Agent(config) {
   const shouldTrackBudget = Boolean(
     config?.budgetState ||
@@ -339,14 +486,26 @@ export function createX402Agent(config) {
   };
 }
 
+/**
+ * @param {string} value
+ * @returns {unknown}
+ */
 export function decodePaymentHeader(value) {
   return decodeBase64Json(value);
 }
 
+/**
+ * @param {string} value
+ * @returns {unknown}
+ */
 export function decodeReceiptHeader(value) {
   return decodeBase64Json(value);
 }
 
+/**
+ * @param {Record<string, unknown>} payload
+ * @returns {{ ok: false, reason: string } | { ok: true, signingHash: Buffer }}
+ */
 export function verifyPaymentHeader(payload) {
   const now = Math.floor(Date.now() / 1000);
   if (payload.valid_until && Number(payload.valid_until) < now) {

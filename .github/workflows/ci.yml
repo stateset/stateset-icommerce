@@ -537,9 +537,9 @@ jobs:
         working-directory: cli
         run: npm run lint
 
-      - name: Typecheck
+      - name: Typecheck (Supported Surface)
         working-directory: cli
-        run: npm run typecheck
+        run: npm run typecheck:supported
 
       - name: Test
         working-directory: cli
@@ -594,6 +594,10 @@ jobs:
       - name: Typecheck
         working-directory: admin
         run: npm run typecheck
+
+      - name: Typecheck Tests
+        working-directory: admin
+        run: npm run typecheck:tests
 
       - name: Lint
         working-directory: admin
