@@ -1,6 +1,6 @@
 {
   "name": "@stateset/embedded",
-  "version": "0.7.24",
+  "version": "0.7.25",
   "description": "The SQLite of commerce - embeddable commerce library powered by Rust",
   "main": "index.js",
   "types": "index.d.ts",

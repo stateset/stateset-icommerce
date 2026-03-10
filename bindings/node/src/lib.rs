@@ -635,14 +635,16 @@ pub struct OrderOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::Order> for OrderOutput {
-    fn from(o: stateset_core::Order) -> Self {
-        Self {
+impl TryFrom<stateset_core::Order> for OrderOutput {
+    type Error = Error;
+
+    fn try_from(o: stateset_core::Order) -> Result<Self> {
+        Ok(Self {
             id: o.id.to_string(),
             order_number: o.order_number,
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
-            total_amount: to_f64_or_nan(o.total_amount),
+            total_amount: to_f64_result(o.total_amount, "order total amount")?,
             currency: o.currency.to_string(),
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
@@ -650,19 +652,21 @@ impl From<stateset_core::Order> for OrderOutput {
             items: o
                 .items
                 .into_iter()
-                .map(|i| OrderItemOutput {
-                    id: i.id.to_string(),
-                    sku: i.sku,
-                    name: i.name,
-                    quantity: i.quantity,
-                    unit_price: to_f64_or_nan(i.unit_price),
-                    total: to_f64_or_nan(i.total),
+                .map(|i| {
+                    Ok(OrderItemOutput {
+                        id: i.id.to_string(),
+                        sku: i.sku,
+                        name: i.name,
+                        quantity: i.quantity,
+                        unit_price: to_f64_result(i.unit_price, "order item unit price")?,
+                        total: to_f64_result(i.total, "order item total")?,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
             version: o.version,
             created_at: o.created_at.to_rfc3339(),
             updated_at: o.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -710,7 +714,7 @@ impl Orders {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create order: {}", e)))?;
 
-        Ok(order.into())
+        convert_output(order)
     }
 
     #[napi]
@@ -723,7 +727,7 @@ impl Orders {
             .get(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get order: {}", e)))?;
 
-        Ok(order.map(|o| o.into()))
+        convert_optional_output(order)
     }
 
     #[napi]
@@ -734,7 +738,7 @@ impl Orders {
             .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list orders: {}", e)))?;
 
-        Ok(orders.into_iter().map(|o| o.into()).collect())
+        convert_outputs(orders)
     }
 
     #[napi]
@@ -758,7 +762,7 @@ impl Orders {
             .update_status(uuid.into(), order_status)
             .map_err(|e| Error::from_reason(format!("Failed to update order: {}", e)))?;
 
-        Ok(order.into())
+        convert_output(order)
     }
 
     #[napi]
@@ -771,7 +775,7 @@ impl Orders {
             .ship(uuid.into(), tracking_number.as_deref())
             .map_err(|e| Error::from_reason(format!("Failed to ship order: {}", e)))?;
 
-        Ok(order.into())
+        convert_output(order)
     }
 
     #[napi]
@@ -784,7 +788,7 @@ impl Orders {
             .cancel(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to cancel order: {}", e)))?;
 
-        Ok(order.into())
+        convert_output(order)
     }
 
     #[napi]
@@ -858,17 +862,22 @@ pub struct ProductVariantOutput {
     pub is_default: bool,
 }
 
-impl From<stateset_core::ProductVariant> for ProductVariantOutput {
-    fn from(v: stateset_core::ProductVariant) -> Self {
-        Self {
+impl TryFrom<stateset_core::ProductVariant> for ProductVariantOutput {
+    type Error = Error;
+
+    fn try_from(v: stateset_core::ProductVariant) -> Result<Self> {
+        Ok(Self {
             id: v.id.to_string(),
             product_id: v.product_id.to_string(),
             sku: v.sku,
             name: v.name,
-            price: to_f64_or_nan(v.price),
-            compare_at_price: v.compare_at_price.map(to_f64_or_nan),
+            price: to_f64_result(v.price, "product variant price")?,
+            compare_at_price: optional_to_f64_result(
+                v.compare_at_price,
+                "product variant compare at price",
+            )?,
             is_default: v.is_default,
-        }
+        })
     }
 }
 
@@ -937,7 +946,7 @@ impl Products {
             .get_variant_by_sku(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get variant: {}", e)))?;
 
-        Ok(variant.map(|v| v.into()))
+        convert_optional_output(variant)
     }
 
     #[napi]
@@ -1441,15 +1450,17 @@ pub struct StockLevelOutput {
     pub total_available: f64,
 }
 
-impl From<stateset_core::StockLevel> for StockLevelOutput {
-    fn from(s: stateset_core::StockLevel) -> Self {
-        Self {
+impl TryFrom<stateset_core::StockLevel> for StockLevelOutput {
+    type Error = Error;
+
+    fn try_from(s: stateset_core::StockLevel) -> Result<Self> {
+        Ok(Self {
             sku: s.sku,
             name: s.name,
-            total_on_hand: to_f64_or_nan(s.total_on_hand),
-            total_allocated: to_f64_or_nan(s.total_allocated),
-            total_available: to_f64_or_nan(s.total_available),
-        }
+            total_on_hand: to_f64_result(s.total_on_hand, "stock total on hand")?,
+            total_allocated: to_f64_result(s.total_allocated, "stock total allocated")?,
+            total_available: to_f64_result(s.total_available, "stock total available")?,
+        })
     }
 }
 
@@ -1462,14 +1473,16 @@ pub struct ReservationOutput {
     pub status: String,
 }
 
-impl From<stateset_core::InventoryReservation> for ReservationOutput {
-    fn from(r: stateset_core::InventoryReservation) -> Self {
-        Self {
+impl TryFrom<stateset_core::InventoryReservation> for ReservationOutput {
+    type Error = Error;
+
+    fn try_from(r: stateset_core::InventoryReservation) -> Result<Self> {
+        Ok(Self {
             id: r.id.to_string(),
             item_id: r.item_id,
-            quantity: to_f64_or_nan(r.quantity),
+            quantity: to_f64_result(r.quantity, "reservation quantity")?,
             status: format!("{}", r.status),
-        }
+        })
     }
 }
 
@@ -1516,7 +1529,7 @@ impl Inventory {
             .get_stock(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get stock: {}", e)))?;
 
-        Ok(stock.map(|s| s.into()))
+        convert_optional_output(stock)
     }
 
     #[napi]
@@ -1551,7 +1564,7 @@ impl Inventory {
             .reserve(&sku, qty, &reference_type, &reference_id, expires_in_seconds)
             .map_err(|e| Error::from_reason(format!("Failed to reserve inventory: {}", e)))?;
 
-        Ok(reservation.into())
+        convert_output(reservation)
     }
 
     #[napi]
@@ -1776,22 +1789,24 @@ pub struct PaymentOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::Payment> for PaymentOutput {
-    fn from(p: stateset_core::Payment) -> Self {
-        Self {
+impl TryFrom<stateset_core::Payment> for PaymentOutput {
+    type Error = Error;
+
+    fn try_from(p: stateset_core::Payment) -> Result<Self> {
+        Ok(Self {
             id: p.id.to_string(),
             payment_number: p.payment_number,
             order_id: p.order_id.map(|id| id.to_string()),
             invoice_id: p.invoice_id.map(|id| id.to_string()),
             customer_id: p.customer_id.map(|id| id.to_string()),
             idempotency_key: p.idempotency_key,
-            amount: to_f64_or_nan(p.amount),
+            amount: to_f64_result(p.amount, "payment amount")?,
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             version: p.version,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -1817,18 +1832,20 @@ pub struct RefundOutput {
     pub idempotency_key: Option<String>,
 }
 
-impl From<stateset_core::Refund> for RefundOutput {
-    fn from(r: stateset_core::Refund) -> Self {
-        Self {
+impl TryFrom<stateset_core::Refund> for RefundOutput {
+    type Error = Error;
+
+    fn try_from(r: stateset_core::Refund) -> Result<Self> {
+        Ok(Self {
             id: r.id.to_string(),
             refund_number: r.refund_number,
             payment_id: r.payment_id.to_string(),
-            amount: to_f64_or_nan(r.amount),
+            amount: to_f64_result(r.amount, "refund amount")?,
             status: format!("{}", r.status),
             reason: r.reason,
             created_at: r.created_at.to_rfc3339(),
             idempotency_key: r.idempotency_key,
-        }
+        })
     }
 }
 
@@ -1891,7 +1908,7 @@ impl Payments {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create payment: {}", e)))?;
 
-        Ok(payment.into())
+        convert_output(payment)
     }
 
     #[napi]
@@ -1904,7 +1921,7 @@ impl Payments {
             .get(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get payment: {}", e)))?;
 
-        Ok(payment.map(|p| p.into()))
+        convert_optional_output(payment)
     }
 
     #[napi]
@@ -1915,7 +1932,7 @@ impl Payments {
             .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list payments: {}", e)))?;
 
-        Ok(payments.into_iter().map(|p| p.into()).collect())
+        convert_outputs(payments)
     }
 
     #[napi]
@@ -1928,7 +1945,7 @@ impl Payments {
             .mark_completed(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to complete payment: {}", e)))?;
 
-        Ok(payment.into())
+        convert_output(payment)
     }
 
     #[napi]
@@ -1946,7 +1963,7 @@ impl Payments {
             .mark_failed(uuid.into(), &reason, code.as_deref())
             .map_err(|e| Error::from_reason(format!("Failed to fail payment: {}", e)))?;
 
-        Ok(payment.into())
+        convert_output(payment)
     }
 
     #[napi]
@@ -1959,7 +1976,7 @@ impl Payments {
             .cancel(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to cancel payment: {}", e)))?;
 
-        Ok(payment.into())
+        convert_output(payment)
     }
 
     #[napi]
@@ -1979,7 +1996,7 @@ impl Payments {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create refund: {}", e)))?;
 
-        Ok(refund.into())
+        convert_output(refund)
     }
 
     #[napi]
@@ -2959,16 +2976,18 @@ pub struct BomComponentOutput {
     pub unit_of_measure: String,
 }
 
-impl From<stateset_core::BomComponent> for BomComponentOutput {
-    fn from(c: stateset_core::BomComponent) -> Self {
-        Self {
+impl TryFrom<stateset_core::BomComponent> for BomComponentOutput {
+    type Error = Error;
+
+    fn try_from(c: stateset_core::BomComponent) -> Result<Self> {
+        Ok(Self {
             id: c.id.to_string(),
             bom_id: c.bom_id.to_string(),
             component_sku: c.component_sku,
             name: c.name,
-            quantity: to_f64_or_nan(c.quantity),
+            quantity: to_f64_result(c.quantity, "bom component quantity")?,
             unit_of_measure: c.unit_of_measure,
-        }
+        })
     }
 }
 
@@ -3047,7 +3066,7 @@ impl Bom {
             )
             .map_err(|e| Error::from_reason(format!("Failed to add component: {}", e)))?;
 
-        Ok(component.into())
+        convert_output(component)
     }
 
     #[napi]
@@ -3060,7 +3079,7 @@ impl Bom {
             .get_components(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get components: {}", e)))?;
 
-        Ok(components.into_iter().map(|c| c.into()).collect())
+        convert_outputs(components)
     }
 
     #[napi]
@@ -3118,21 +3137,26 @@ pub struct WorkOrderOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::WorkOrder> for WorkOrderOutput {
-    fn from(wo: stateset_core::WorkOrder) -> Self {
-        Self {
+impl TryFrom<stateset_core::WorkOrder> for WorkOrderOutput {
+    type Error = Error;
+
+    fn try_from(wo: stateset_core::WorkOrder) -> Result<Self> {
+        Ok(Self {
             id: wo.id.to_string(),
             work_order_number: wo.work_order_number,
             product_id: wo.product_id.to_string(),
             bom_id: wo.bom_id.map(|id| id.to_string()),
             status: format!("{}", wo.status),
             priority: format!("{}", wo.priority),
-            quantity_to_build: to_f64_or_nan(wo.quantity_to_build),
-            quantity_completed: to_f64_or_nan(wo.quantity_completed),
+            quantity_to_build: to_f64_result(wo.quantity_to_build, "work order quantity to build")?,
+            quantity_completed: to_f64_result(
+                wo.quantity_completed,
+                "work order quantity completed",
+            )?,
             version: wo.version,
             created_at: wo.created_at.to_rfc3339(),
             updated_at: wo.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -3179,7 +3203,7 @@ impl WorkOrders {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create work order: {}", e)))?;
 
-        Ok(wo.into())
+        convert_output(wo)
     }
 
     #[napi]
@@ -3192,7 +3216,7 @@ impl WorkOrders {
             .get(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get work order: {}", e)))?;
 
-        Ok(wo.map(|w| w.into()))
+        convert_optional_output(wo)
     }
 
     #[napi]
@@ -3203,7 +3227,7 @@ impl WorkOrders {
             .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list work orders: {}", e)))?;
 
-        Ok(orders.into_iter().map(|w| w.into()).collect())
+        convert_outputs(orders)
     }
 
     #[napi]
@@ -3216,7 +3240,7 @@ impl WorkOrders {
             .start(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to start work order: {}", e)))?;
 
-        Ok(wo.into())
+        convert_output(wo)
     }
 
     #[napi]
@@ -3229,7 +3253,7 @@ impl WorkOrders {
             .complete(uuid, decimal_from_f64(quantity_completed, "work order quantity completed")?)
             .map_err(|e| Error::from_reason(format!("Failed to complete work order: {}", e)))?;
 
-        Ok(wo.into())
+        convert_output(wo)
     }
 
     #[napi]
@@ -3242,7 +3266,7 @@ impl WorkOrders {
             .cancel(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel work order: {}", e)))?;
 
-        Ok(wo.into())
+        convert_output(wo)
     }
 
     #[napi]
@@ -3362,9 +3386,11 @@ pub struct CartItemOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::CartItem> for CartItemOutput {
-    fn from(item: stateset_core::CartItem) -> Self {
-        Self {
+impl TryFrom<stateset_core::CartItem> for CartItemOutput {
+    type Error = Error;
+
+    fn try_from(item: stateset_core::CartItem) -> Result<Self> {
+        Ok(Self {
             id: item.id.to_string(),
             cart_id: item.cart_id.to_string(),
             product_id: item.product_id.map(|id| id.to_string()),
@@ -3374,15 +3400,18 @@ impl From<stateset_core::CartItem> for CartItemOutput {
             description: item.description,
             image_url: item.image_url,
             quantity: item.quantity,
-            unit_price: to_f64_or_nan(item.unit_price),
-            original_price: item.original_price.map(to_f64_or_nan),
-            discount_amount: to_f64_or_nan(item.discount_amount),
-            tax_amount: to_f64_or_nan(item.tax_amount),
-            total: to_f64_or_nan(item.total),
+            unit_price: to_f64_result(item.unit_price, "cart item unit price")?,
+            original_price: optional_to_f64_result(
+                item.original_price,
+                "cart item original price",
+            )?,
+            discount_amount: to_f64_result(item.discount_amount, "cart item discount amount")?,
+            tax_amount: to_f64_result(item.tax_amount, "cart item tax amount")?,
+            total: to_f64_result(item.total, "cart item total")?,
             requires_shipping: item.requires_shipping,
             created_at: item.created_at.to_rfc3339(),
             updated_at: item.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -3453,21 +3482,23 @@ pub struct CartOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::Cart> for CartOutput {
-    fn from(cart: stateset_core::Cart) -> Self {
+impl TryFrom<stateset_core::Cart> for CartOutput {
+    type Error = Error;
+
+    fn try_from(cart: stateset_core::Cart) -> Result<Self> {
         // Compute item_count first before any fields are moved
         let item_count = cart.item_count();
-        Self {
+        Ok(Self {
             id: cart.id.to_string(),
             cart_number: cart.cart_number,
             customer_id: cart.customer_id.map(|id| id.to_string()),
             status: format!("{}", cart.status),
             currency: cart.currency.to_string(),
-            subtotal: to_f64_or_nan(cart.subtotal),
-            tax_amount: to_f64_or_nan(cart.tax_amount),
-            shipping_amount: to_f64_or_nan(cart.shipping_amount),
-            discount_amount: to_f64_or_nan(cart.discount_amount),
-            grand_total: to_f64_or_nan(cart.grand_total),
+            subtotal: to_f64_result(cart.subtotal, "cart subtotal")?,
+            tax_amount: to_f64_result(cart.tax_amount, "cart tax amount")?,
+            shipping_amount: to_f64_result(cart.shipping_amount, "cart shipping amount")?,
+            discount_amount: to_f64_result(cart.discount_amount, "cart discount amount")?,
+            grand_total: to_f64_result(cart.grand_total, "cart grand total")?,
             customer_email: cart.customer_email,
             customer_phone: cart.customer_phone,
             customer_name: cart.customer_name,
@@ -3486,7 +3517,7 @@ impl From<stateset_core::Cart> for CartOutput {
             item_count,
             created_at: cart.created_at.to_rfc3339(),
             updated_at: cart.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -3501,16 +3532,18 @@ pub struct CheckoutResultOutput {
     pub currency: String,
 }
 
-impl From<stateset_core::CheckoutResult> for CheckoutResultOutput {
-    fn from(result: stateset_core::CheckoutResult) -> Self {
-        Self {
+impl TryFrom<stateset_core::CheckoutResult> for CheckoutResultOutput {
+    type Error = Error;
+
+    fn try_from(result: stateset_core::CheckoutResult) -> Result<Self> {
+        Ok(Self {
             cart_id: result.cart_id.to_string(),
             order_id: result.order_id.to_string(),
             order_number: result.order_number,
             payment_id: result.payment_id.map(|id| id.to_string()),
-            total_charged: to_f64_or_nan(result.total_charged),
+            total_charged: to_f64_result(result.total_charged, "checkout total charged")?,
             currency: result.currency.to_string(),
-        }
+        })
     }
 }
 
@@ -3526,17 +3559,19 @@ pub struct ShippingRateOutput {
     pub estimated_days: Option<i32>,
 }
 
-impl From<stateset_core::ShippingRate> for ShippingRateOutput {
-    fn from(rate: stateset_core::ShippingRate) -> Self {
-        Self {
+impl TryFrom<stateset_core::ShippingRate> for ShippingRateOutput {
+    type Error = Error;
+
+    fn try_from(rate: stateset_core::ShippingRate) -> Result<Self> {
+        Ok(Self {
             id: rate.id,
             carrier: rate.carrier,
             service: rate.service,
             description: rate.description,
-            price: to_f64_or_nan(rate.price),
+            price: to_f64_result(rate.price, "shipping rate price")?,
             currency: rate.currency.to_string(),
             estimated_days: rate.estimated_days,
-        }
+        })
     }
 }
 
@@ -3589,7 +3624,7 @@ impl Carts {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create cart: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Get a cart by ID
@@ -3603,7 +3638,7 @@ impl Carts {
             .get(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get cart: {}", e)))?;
 
-        Ok(cart.map(|c| c.into()))
+        convert_optional_output(cart)
     }
 
     /// Get a cart by cart number
@@ -3616,7 +3651,7 @@ impl Carts {
             .get_by_number(&cart_number)
             .map_err(|e| Error::from_reason(format!("Failed to get cart: {}", e)))?;
 
-        Ok(cart.map(|c| c.into()))
+        convert_optional_output(cart)
     }
 
     /// Update a cart
@@ -3641,7 +3676,7 @@ impl Carts {
             )
             .map_err(|e| Error::from_reason(format!("Failed to update cart: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// List all carts
@@ -3653,7 +3688,7 @@ impl Carts {
             .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list carts: {}", e)))?;
 
-        Ok(carts.into_iter().map(|c| c.into()).collect())
+        convert_outputs(carts)
     }
 
     /// List carts for a customer
@@ -3668,7 +3703,7 @@ impl Carts {
             .for_customer(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get customer carts: {}", e)))?;
 
-        Ok(carts.into_iter().map(|c| c.into()).collect())
+        convert_outputs(carts)
     }
 
     /// Delete a cart
@@ -3732,7 +3767,7 @@ impl Carts {
             )
             .map_err(|e| Error::from_reason(format!("Failed to add item: {}", e)))?;
 
-        Ok(cart_item.into())
+        convert_output(cart_item)
     }
 
     /// Update a cart item
@@ -3760,7 +3795,7 @@ impl Carts {
             )
             .map_err(|e| Error::from_reason(format!("Failed to update item: {}", e)))?;
 
-        Ok(cart_item.into())
+        convert_output(cart_item)
     }
 
     /// Remove an item from the cart
@@ -3789,7 +3824,7 @@ impl Carts {
             .get_items(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get items: {}", e)))?;
 
-        Ok(items.into_iter().map(|i| i.into()).collect())
+        convert_outputs(items)
     }
 
     /// Clear all items from the cart
@@ -3822,7 +3857,7 @@ impl Carts {
             .set_shipping_address(uuid.into(), input_to_cart_address(address))
             .map_err(|e| Error::from_reason(format!("Failed to set shipping address: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Set shipping selection (address + method/carrier/amount)
@@ -3856,7 +3891,7 @@ impl Carts {
             )
             .map_err(|e| Error::from_reason(format!("Failed to set shipping: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Set the billing address
@@ -3874,7 +3909,7 @@ impl Carts {
             .set_billing_address(uuid.into(), input_to_cart_address(address))
             .map_err(|e| Error::from_reason(format!("Failed to set billing address: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Get available shipping rates
@@ -3888,7 +3923,7 @@ impl Carts {
             .get_shipping_rates(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get shipping rates: {}", e)))?;
 
-        Ok(rates.into_iter().map(|r| r.into()).collect())
+        convert_outputs(rates)
     }
 
     /// Set payment method
@@ -3909,7 +3944,7 @@ impl Carts {
             )
             .map_err(|e| Error::from_reason(format!("Failed to set payment: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Apply a discount/coupon code
@@ -3923,7 +3958,7 @@ impl Carts {
             .apply_discount(uuid.into(), &coupon_code)
             .map_err(|e| Error::from_reason(format!("Failed to apply discount: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Remove discount from cart
@@ -3937,7 +3972,7 @@ impl Carts {
             .remove_discount(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to remove discount: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Mark cart as ready for payment
@@ -3951,7 +3986,7 @@ impl Carts {
             .mark_ready_for_payment(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to mark ready: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Begin checkout process
@@ -3965,7 +4000,7 @@ impl Carts {
             .begin_checkout(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to begin checkout: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Complete checkout and create order
@@ -3979,7 +4014,7 @@ impl Carts {
             .complete(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to complete checkout: {}", e)))?;
 
-        Ok(result.into())
+        convert_output(result)
     }
 
     /// Cancel a cart
@@ -3993,7 +4028,7 @@ impl Carts {
             .cancel(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to cancel cart: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Mark cart as abandoned
@@ -4007,7 +4042,7 @@ impl Carts {
             .abandon(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to abandon cart: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Mark cart as expired
@@ -4021,7 +4056,7 @@ impl Carts {
             .expire(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to expire cart: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Reserve inventory for cart items
@@ -4035,7 +4070,7 @@ impl Carts {
             .reserve_inventory(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to reserve inventory: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Release reserved inventory for cart items
@@ -4049,7 +4084,7 @@ impl Carts {
             .release_inventory(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to release inventory: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Recalculate cart totals
@@ -4063,7 +4098,7 @@ impl Carts {
             .recalculate(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to recalculate: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Set tax amount
@@ -4077,7 +4112,7 @@ impl Carts {
             .set_tax(uuid.into(), decimal_from_f64(tax_amount, "tax amount")?)
             .map_err(|e| Error::from_reason(format!("Failed to set tax: {}", e)))?;
 
-        Ok(cart.into())
+        convert_output(cart)
     }
 
     /// Get abandoned carts
@@ -4089,7 +4124,7 @@ impl Carts {
             .get_abandoned()
             .map_err(|e| Error::from_reason(format!("Failed to get abandoned carts: {}", e)))?;
 
-        Ok(carts.into_iter().map(|c| c.into()).collect())
+        convert_outputs(carts)
     }
 
     /// Get expired carts
@@ -4101,7 +4136,7 @@ impl Carts {
             .get_expired()
             .map_err(|e| Error::from_reason(format!("Failed to get expired carts: {}", e)))?;
 
-        Ok(carts.into_iter().map(|c| c.into()).collect())
+        convert_outputs(carts)
     }
 
     /// Count carts
@@ -6382,28 +6417,37 @@ pub struct AppliedPromotionOutput {
     pub discount_type: String,
 }
 
-impl From<stateset_core::ApplyPromotionsResult> for ApplyPromotionsOutput {
-    fn from(r: stateset_core::ApplyPromotionsResult) -> Self {
-        Self {
-            original_subtotal: to_f64_or_nan(r.original_subtotal),
-            total_discount: to_f64_or_nan(r.total_discount),
-            discounted_subtotal: to_f64_or_nan(r.discounted_subtotal),
-            original_shipping: to_f64_or_nan(r.original_shipping),
-            shipping_discount: to_f64_or_nan(r.shipping_discount),
-            final_shipping: to_f64_or_nan(r.final_shipping),
-            grand_total: to_f64_or_nan(r.grand_total),
-            applied_promotions: r
-                .applied_promotions
-                .into_iter()
-                .map(|a| AppliedPromotionOutput {
-                    promotion_id: a.promotion_id.to_string(),
-                    promotion_name: a.promotion_name,
-                    coupon_code: a.coupon_code,
-                    discount_amount: to_f64_or_nan(a.discount_amount),
-                    discount_type: format!("{:?}", a.discount_type).to_lowercase(),
-                })
-                .collect(),
-        }
+impl TryFrom<stateset_core::AppliedPromotion> for AppliedPromotionOutput {
+    type Error = Error;
+
+    fn try_from(a: stateset_core::AppliedPromotion) -> Result<Self> {
+        Ok(Self {
+            promotion_id: a.promotion_id.to_string(),
+            promotion_name: a.promotion_name,
+            coupon_code: a.coupon_code,
+            discount_amount: to_f64_result(a.discount_amount, "applied promotion discount amount")?,
+            discount_type: format!("{:?}", a.discount_type).to_lowercase(),
+        })
+    }
+}
+
+impl TryFrom<stateset_core::ApplyPromotionsResult> for ApplyPromotionsOutput {
+    type Error = Error;
+
+    fn try_from(r: stateset_core::ApplyPromotionsResult) -> Result<Self> {
+        Ok(Self {
+            original_subtotal: to_f64_result(r.original_subtotal, "promotion original subtotal")?,
+            total_discount: to_f64_result(r.total_discount, "promotion total discount")?,
+            discounted_subtotal: to_f64_result(
+                r.discounted_subtotal,
+                "promotion discounted subtotal",
+            )?,
+            original_shipping: to_f64_result(r.original_shipping, "promotion original shipping")?,
+            shipping_discount: to_f64_result(r.shipping_discount, "promotion shipping discount")?,
+            final_shipping: to_f64_result(r.final_shipping, "promotion final shipping")?,
+            grand_total: to_f64_result(r.grand_total, "promotion grand total")?,
+            applied_promotions: convert_outputs(r.applied_promotions)?,
+        })
     }
 }
 
@@ -6421,19 +6465,21 @@ pub struct PromotionUsageOutput {
     pub used_at: String,
 }
 
-impl From<stateset_core::PromotionUsage> for PromotionUsageOutput {
-    fn from(u: stateset_core::PromotionUsage) -> Self {
-        Self {
+impl TryFrom<stateset_core::PromotionUsage> for PromotionUsageOutput {
+    type Error = Error;
+
+    fn try_from(u: stateset_core::PromotionUsage) -> Result<Self> {
+        Ok(Self {
             id: u.id.to_string(),
             promotion_id: u.promotion_id.to_string(),
             coupon_id: u.coupon_id.map(|id| id.to_string()),
             customer_id: u.customer_id.map(|id| id.to_string()),
             order_id: u.order_id.map(|id| id.to_string()),
             cart_id: u.cart_id.map(|id| id.to_string()),
-            discount_amount: to_f64_or_nan(u.discount_amount),
+            discount_amount: to_f64_result(u.discount_amount, "promotion usage discount amount")?,
             currency: u.currency.to_string(),
             used_at: u.used_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -6932,7 +6978,7 @@ impl Promotions {
             .apply(request)
             .map_err(|e| Error::from_reason(format!("Failed to apply promotions: {}", e)))?;
 
-        Ok(result.into())
+        convert_output(result)
     }
 
     /// Record promotion usage (after order completion)
@@ -6965,7 +7011,7 @@ impl Promotions {
             )
             .map_err(|e| Error::from_reason(format!("Failed to record usage: {}", e)))?;
 
-        Ok(usage.into())
+        convert_output(usage)
     }
 }
 
@@ -7237,18 +7283,20 @@ pub struct TaxBreakdownOutput {
     pub is_compound: bool,
 }
 
-impl From<stateset_core::TaxBreakdown> for TaxBreakdownOutput {
-    fn from(b: stateset_core::TaxBreakdown) -> Self {
-        Self {
+impl TryFrom<stateset_core::TaxBreakdown> for TaxBreakdownOutput {
+    type Error = Error;
+
+    fn try_from(b: stateset_core::TaxBreakdown) -> Result<Self> {
+        Ok(Self {
             jurisdiction_id: b.jurisdiction_id.to_string(),
             jurisdiction_name: b.jurisdiction_name,
             tax_type: b.tax_type.as_str().to_string(),
             rate_name: b.rate_name,
-            rate: to_f64_or_nan(b.rate),
-            taxable_amount: to_f64_or_nan(b.taxable_amount),
-            tax_amount: to_f64_or_nan(b.tax_amount),
+            rate: to_f64_result(b.rate, "tax breakdown rate")?,
+            taxable_amount: to_f64_result(b.taxable_amount, "tax breakdown taxable amount")?,
+            tax_amount: to_f64_result(b.tax_amount, "tax breakdown tax amount")?,
             is_compound: b.is_compound,
-        }
+        })
     }
 }
 
@@ -7261,14 +7309,16 @@ pub struct TaxDetailOutput {
     pub amount: f64,
 }
 
-impl From<stateset_core::TaxDetail> for TaxDetailOutput {
-    fn from(d: stateset_core::TaxDetail) -> Self {
-        Self {
+impl TryFrom<stateset_core::TaxDetail> for TaxDetailOutput {
+    type Error = Error;
+
+    fn try_from(d: stateset_core::TaxDetail) -> Result<Self> {
+        Ok(Self {
             tax_type: d.tax_type.as_str().to_string(),
             jurisdiction_name: d.jurisdiction_name,
-            rate: to_f64_or_nan(d.rate),
-            amount: to_f64_or_nan(d.amount),
-        }
+            rate: to_f64_result(d.rate, "tax detail rate")?,
+            amount: to_f64_result(d.amount, "tax detail amount")?,
+        })
     }
 }
 
@@ -7284,17 +7334,19 @@ pub struct LineItemTaxOutput {
     pub tax_details: Vec<TaxDetailOutput>,
 }
 
-impl From<stateset_core::LineItemTax> for LineItemTaxOutput {
-    fn from(t: stateset_core::LineItemTax) -> Self {
-        Self {
+impl TryFrom<stateset_core::LineItemTax> for LineItemTaxOutput {
+    type Error = Error;
+
+    fn try_from(t: stateset_core::LineItemTax) -> Result<Self> {
+        Ok(Self {
             line_item_id: t.line_item_id,
-            taxable_amount: to_f64_or_nan(t.taxable_amount),
-            tax_amount: to_f64_or_nan(t.tax_amount),
-            effective_rate: to_f64_or_nan(t.effective_rate),
+            taxable_amount: to_f64_result(t.taxable_amount, "line item tax taxable amount")?,
+            tax_amount: to_f64_result(t.tax_amount, "line item tax amount")?,
+            effective_rate: to_f64_result(t.effective_rate, "line item effective tax rate")?,
             is_exempt: t.is_exempt,
             exemption_reason: t.exemption_reason,
-            tax_details: t.tax_details.into_iter().map(|d| d.into()).collect(),
-        }
+            tax_details: convert_outputs(t.tax_details)?,
+        })
     }
 }
 
@@ -7308,15 +7360,17 @@ pub struct ExemptionDetailsOutput {
     pub tax_saved: f64,
 }
 
-impl From<stateset_core::ExemptionDetails> for ExemptionDetailsOutput {
-    fn from(e: stateset_core::ExemptionDetails) -> Self {
-        Self {
+impl TryFrom<stateset_core::ExemptionDetails> for ExemptionDetailsOutput {
+    type Error = Error;
+
+    fn try_from(e: stateset_core::ExemptionDetails) -> Result<Self> {
+        Ok(Self {
             exemption_id: e.exemption_id.to_string(),
             exemption_type: format!("{:?}", e.exemption_type).to_lowercase(),
             certificate_number: e.certificate_number,
-            amount_exempt: to_f64_or_nan(e.amount_exempt),
-            tax_saved: to_f64_or_nan(e.tax_saved),
-        }
+            amount_exempt: to_f64_result(e.amount_exempt, "tax exemption amount exempt")?,
+            tax_saved: to_f64_result(e.tax_saved, "tax exemption tax saved")?,
+        })
     }
 }
 
@@ -7331,16 +7385,18 @@ pub struct JurisdictionSummaryOutput {
     pub total_tax: f64,
 }
 
-impl From<stateset_core::JurisdictionSummary> for JurisdictionSummaryOutput {
-    fn from(s: stateset_core::JurisdictionSummary) -> Self {
-        Self {
+impl TryFrom<stateset_core::JurisdictionSummary> for JurisdictionSummaryOutput {
+    type Error = Error;
+
+    fn try_from(s: stateset_core::JurisdictionSummary) -> Result<Self> {
+        Ok(Self {
             id: s.id.to_string(),
             name: s.name,
             code: s.code,
             level: format!("{:?}", s.level).to_lowercase(),
-            total_rate: to_f64_or_nan(s.total_rate),
-            total_tax: to_f64_or_nan(s.total_tax),
-        }
+            total_rate: to_f64_result(s.total_rate, "jurisdiction total rate")?,
+            total_tax: to_f64_result(s.total_tax, "jurisdiction total tax")?,
+        })
     }
 }
 
@@ -7361,22 +7417,24 @@ pub struct TaxCalculationOutput {
     pub is_estimate: bool,
 }
 
-impl From<stateset_core::TaxCalculationResult> for TaxCalculationOutput {
-    fn from(r: stateset_core::TaxCalculationResult) -> Self {
-        Self {
+impl TryFrom<stateset_core::TaxCalculationResult> for TaxCalculationOutput {
+    type Error = Error;
+
+    fn try_from(r: stateset_core::TaxCalculationResult) -> Result<Self> {
+        Ok(Self {
             id: r.id.to_string(),
-            total_tax: to_f64_or_nan(r.total_tax),
-            subtotal: to_f64_or_nan(r.subtotal),
-            total: to_f64_or_nan(r.total),
-            shipping_tax: to_f64_or_nan(r.shipping_tax),
-            tax_breakdown: r.tax_breakdown.into_iter().map(|b| b.into()).collect(),
-            line_item_taxes: r.line_item_taxes.into_iter().map(|t| t.into()).collect(),
+            total_tax: to_f64_result(r.total_tax, "tax calculation total tax")?,
+            subtotal: to_f64_result(r.subtotal, "tax calculation subtotal")?,
+            total: to_f64_result(r.total, "tax calculation total")?,
+            shipping_tax: to_f64_result(r.shipping_tax, "tax calculation shipping tax")?,
+            tax_breakdown: convert_outputs(r.tax_breakdown)?,
+            line_item_taxes: convert_outputs(r.line_item_taxes)?,
             exemptions_applied: r.exemptions_applied,
-            exemption_details: r.exemption_details.map(|e| e.into()),
-            jurisdictions: r.jurisdictions.into_iter().map(|s| s.into()).collect(),
+            exemption_details: convert_optional_output(r.exemption_details)?,
+            jurisdictions: convert_outputs(r.jurisdictions)?,
             calculated_at: r.calculated_at.to_rfc3339(),
             is_estimate: r.is_estimate,
-        }
+        })
     }
 }
 
@@ -7434,19 +7492,21 @@ pub struct UsStateTaxInfoOutput {
     pub tax_digital: bool,
 }
 
-impl From<stateset_core::UsStateTaxInfo> for UsStateTaxInfoOutput {
-    fn from(i: stateset_core::UsStateTaxInfo) -> Self {
-        Self {
+impl TryFrom<stateset_core::UsStateTaxInfo> for UsStateTaxInfoOutput {
+    type Error = Error;
+
+    fn try_from(i: stateset_core::UsStateTaxInfo) -> Result<Self> {
+        Ok(Self {
             state_code: i.state_code,
             state_name: i.state_name,
-            state_rate: to_f64_or_nan(i.state_rate),
+            state_rate: to_f64_result(i.state_rate, "US state tax rate")?,
             has_local_taxes: i.has_local_taxes,
             origin_based: i.origin_based,
             tax_shipping: i.tax_shipping,
             tax_clothing: i.tax_clothing,
             tax_food: i.tax_food,
             tax_digital: i.tax_digital,
-        }
+        })
     }
 }
 
@@ -7461,16 +7521,21 @@ pub struct EuVatInfoOutput {
     pub parking_rate: Option<f64>,
 }
 
-impl From<stateset_core::EuVatInfo> for EuVatInfoOutput {
-    fn from(i: stateset_core::EuVatInfo) -> Self {
-        Self {
+impl TryFrom<stateset_core::EuVatInfo> for EuVatInfoOutput {
+    type Error = Error;
+
+    fn try_from(i: stateset_core::EuVatInfo) -> Result<Self> {
+        Ok(Self {
             country_code: i.country_code,
             country_name: i.country_name,
-            standard_rate: to_f64_or_nan(i.standard_rate),
-            reduced_rate: i.reduced_rate.map(to_f64_or_nan),
-            super_reduced_rate: i.super_reduced_rate.map(to_f64_or_nan),
-            parking_rate: i.parking_rate.map(to_f64_or_nan),
-        }
+            standard_rate: to_f64_result(i.standard_rate, "EU VAT standard rate")?,
+            reduced_rate: optional_to_f64_result(i.reduced_rate, "EU VAT reduced rate")?,
+            super_reduced_rate: optional_to_f64_result(
+                i.super_reduced_rate,
+                "EU VAT super reduced rate",
+            )?,
+            parking_rate: optional_to_f64_result(i.parking_rate, "EU VAT parking rate")?,
+        })
     }
 }
 
@@ -7486,17 +7551,19 @@ pub struct CanadianTaxInfoOutput {
     pub total_rate: f64,
 }
 
-impl From<stateset_core::CanadianTaxInfo> for CanadianTaxInfoOutput {
-    fn from(i: stateset_core::CanadianTaxInfo) -> Self {
-        Self {
+impl TryFrom<stateset_core::CanadianTaxInfo> for CanadianTaxInfoOutput {
+    type Error = Error;
+
+    fn try_from(i: stateset_core::CanadianTaxInfo) -> Result<Self> {
+        Ok(Self {
             province_code: i.province_code,
             province_name: i.province_name,
-            gst_rate: to_f64_or_nan(i.gst_rate),
-            pst_rate: i.pst_rate.map(to_f64_or_nan),
-            hst_rate: i.hst_rate.map(to_f64_or_nan),
-            qst_rate: i.qst_rate.map(to_f64_or_nan),
-            total_rate: to_f64_or_nan(i.total_rate),
-        }
+            gst_rate: to_f64_result(i.gst_rate, "Canadian tax GST rate")?,
+            pst_rate: optional_to_f64_result(i.pst_rate, "Canadian tax PST rate")?,
+            hst_rate: optional_to_f64_result(i.hst_rate, "Canadian tax HST rate")?,
+            qst_rate: optional_to_f64_result(i.qst_rate, "Canadian tax QST rate")?,
+            total_rate: to_f64_result(i.total_rate, "Canadian tax total rate")?,
+        })
     }
 }
 
@@ -7666,7 +7733,7 @@ impl Tax {
             .calculate(request)
             .map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
 
-        Ok(result.into())
+        convert_output(result)
     }
 
     /// Calculate tax for a single item
@@ -8105,20 +8172,20 @@ impl Tax {
 
     /// Get US state tax information
     #[napi]
-    pub fn get_us_state_info(state_code: String) -> Option<UsStateTaxInfoOutput> {
-        stateset_core::get_us_state_tax_info(&state_code).map(|i| i.into())
+    pub fn get_us_state_info(state_code: String) -> Result<Option<UsStateTaxInfoOutput>> {
+        convert_optional_output(stateset_core::get_us_state_tax_info(&state_code))
     }
 
     /// Get EU VAT information
     #[napi]
-    pub fn get_eu_vat_info(country_code: String) -> Option<EuVatInfoOutput> {
-        stateset_core::get_eu_vat_info(&country_code).map(|i| i.into())
+    pub fn get_eu_vat_info(country_code: String) -> Result<Option<EuVatInfoOutput>> {
+        convert_optional_output(stateset_core::get_eu_vat_info(&country_code))
     }
 
     /// Get Canadian tax information
     #[napi]
-    pub fn get_canadian_tax_info(province_code: String) -> Option<CanadianTaxInfoOutput> {
-        stateset_core::get_canadian_tax_info(&province_code).map(|i| i.into())
+    pub fn get_canadian_tax_info(province_code: String) -> Result<Option<CanadianTaxInfoOutput>> {
+        convert_optional_output(stateset_core::get_canadian_tax_info(&province_code))
     }
 
     /// Check if a country is in the EU
@@ -8197,19 +8264,21 @@ pub struct NcrOutput {
     pub created_at: String,
 }
 
-impl From<stateset_core::NonConformance> for NcrOutput {
-    fn from(n: stateset_core::NonConformance) -> Self {
-        Self {
+impl TryFrom<stateset_core::NonConformance> for NcrOutput {
+    type Error = Error;
+
+    fn try_from(n: stateset_core::NonConformance) -> Result<Self> {
+        Ok(Self {
             id: n.id.to_string(),
             ncr_number: n.ncr_number,
             source: format!("{:?}", n.source),
             severity: format!("{:?}", n.severity),
             sku: n.sku,
-            quantity_affected: to_f64_or_nan(n.quantity_affected),
+            quantity_affected: to_f64_result(n.quantity_affected, "ncr quantity affected")?,
             status: format!("{:?}", n.status),
             description: n.description,
             created_at: n.created_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -8238,13 +8307,15 @@ pub struct QualityHoldOutput {
     pub placed_at: String,
 }
 
-impl From<stateset_core::QualityHold> for QualityHoldOutput {
-    fn from(h: stateset_core::QualityHold) -> Self {
-        Self {
+impl TryFrom<stateset_core::QualityHold> for QualityHoldOutput {
+    type Error = Error;
+
+    fn try_from(h: stateset_core::QualityHold) -> Result<Self> {
+        Ok(Self {
             id: h.id.to_string(),
             sku: h.sku,
             lot_number: h.lot_number,
-            quantity_held: to_f64_or_nan(h.quantity_held),
+            quantity_held: to_f64_result(h.quantity_held, "quality hold quantity held")?,
             reason: h.reason,
             hold_type: format!("{:?}", h.hold_type),
             status: if h.released_at.is_some() {
@@ -8253,7 +8324,7 @@ impl From<stateset_core::QualityHold> for QualityHoldOutput {
                 "held".to_string()
             },
             placed_at: h.placed_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -8404,7 +8475,7 @@ impl Quality {
                 assigned_to: None,
             })
             .map_err(|e| Error::from_reason(format!("Failed to create NCR: {}", e)))?;
-        Ok(ncr.into())
+        convert_output(ncr)
     }
 
     /// Get an NCR by ID
@@ -8416,7 +8487,7 @@ impl Quality {
             .quality()
             .get_ncr(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get NCR: {}", e)))?;
-        Ok(ncr.map(|n| n.into()))
+        convert_optional_output(ncr)
     }
 
     /// List all NCRs
@@ -8427,7 +8498,7 @@ impl Quality {
             .quality()
             .list_ncrs(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list NCRs: {}", e)))?;
-        Ok(ncrs.into_iter().map(|n| n.into()).collect())
+        convert_outputs(ncrs)
     }
 
     /// Close an NCR
@@ -8439,7 +8510,7 @@ impl Quality {
             .quality()
             .close_ncr(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to close NCR: {}", e)))?;
-        Ok(ncr.into())
+        convert_output(ncr)
     }
 
     /// Create a quality hold
@@ -8462,7 +8533,7 @@ impl Quality {
                 expires_at: None,
             })
             .map_err(|e| Error::from_reason(format!("Failed to create hold: {}", e)))?;
-        Ok(hold.into())
+        convert_output(hold)
     }
 
     /// Get a quality hold by ID
@@ -8474,7 +8545,7 @@ impl Quality {
             .quality()
             .get_hold(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get hold: {}", e)))?;
-        Ok(hold.map(|h| h.into()))
+        convert_optional_output(hold)
     }
 
     /// List all quality holds
@@ -8485,7 +8556,7 @@ impl Quality {
             .quality()
             .list_holds(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list holds: {}", e)))?;
-        Ok(holds.into_iter().map(|h| h.into()).collect())
+        convert_outputs(holds)
     }
 
     /// Release a quality hold
@@ -8505,7 +8576,7 @@ impl Quality {
                 stateset_core::ReleaseQualityHold { released_by, release_notes: notes },
             )
             .map_err(|e| Error::from_reason(format!("Failed to release hold: {}", e)))?;
-        Ok(hold.into())
+        convert_output(hold)
     }
 
     /// Get all active holds
@@ -8516,7 +8587,7 @@ impl Quality {
             .quality()
             .get_active_holds()
             .map_err(|e| Error::from_reason(format!("Failed to get active holds: {}", e)))?;
-        Ok(holds.into_iter().map(|h| h.into()).collect())
+        convert_outputs(holds)
     }
 
     /// Count active holds
@@ -8561,21 +8632,23 @@ pub struct LotOutput {
     pub created_at: String,
 }
 
-impl From<stateset_core::Lot> for LotOutput {
-    fn from(l: stateset_core::Lot) -> Self {
+impl TryFrom<stateset_core::Lot> for LotOutput {
+    type Error = Error;
+
+    fn try_from(l: stateset_core::Lot) -> Result<Self> {
         let qty_available = l.quantity_available();
-        Self {
+        Ok(Self {
             id: l.id.to_string(),
             lot_number: l.lot_number,
             sku: l.sku,
-            quantity_produced: to_f64_or_nan(l.quantity_produced),
-            quantity_available: to_f64_or_nan(qty_available),
-            quantity_reserved: to_f64_or_nan(l.quantity_reserved),
+            quantity_produced: to_f64_result(l.quantity_produced, "lot quantity produced")?,
+            quantity_available: to_f64_result(qty_available, "lot quantity available")?,
+            quantity_reserved: to_f64_result(l.quantity_reserved, "lot quantity reserved")?,
             status: format!("{:?}", l.status),
             production_date: Some(l.production_date.to_rfc3339()),
             expiration_date: l.expiration_date.map(|d| d.to_rfc3339()),
             created_at: l.created_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -8610,7 +8683,7 @@ impl Lots {
                 ..Default::default()
             })
             .map_err(|e| Error::from_reason(format!("Failed to create lot: {}", e)))?;
-        Ok(lot.into())
+        convert_output(lot)
     }
 
     /// Get a lot by ID
@@ -8622,7 +8695,7 @@ impl Lots {
             .lots()
             .get(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get lot: {}", e)))?;
-        Ok(lot.map(|l| l.into()))
+        convert_optional_output(lot)
     }
 
     /// Get a lot by lot number
@@ -8633,7 +8706,7 @@ impl Lots {
             .lots()
             .get_by_number(&lot_number)
             .map_err(|e| Error::from_reason(format!("Failed to get lot: {}", e)))?;
-        Ok(lot.map(|l| l.into()))
+        convert_optional_output(lot)
     }
 
     /// List all lots
@@ -8644,7 +8717,7 @@ impl Lots {
             .lots()
             .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list lots: {}", e)))?;
-        Ok(lots.into_iter().map(|l| l.into()).collect())
+        convert_outputs(lots)
     }
 
     /// Get active lots for a SKU
@@ -8655,7 +8728,7 @@ impl Lots {
             .lots()
             .get_active_lots(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get active lots: {}", e)))?;
-        Ok(lots.into_iter().map(|l| l.into()).collect())
+        convert_outputs(lots)
     }
 
     /// Get available lots for a SKU (FIFO order)
@@ -8666,7 +8739,7 @@ impl Lots {
             .lots()
             .get_available_lots_for_sku(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get available lots: {}", e)))?;
-        Ok(lots.into_iter().map(|l| l.into()).collect())
+        convert_outputs(lots)
     }
 
     /// Quarantine a lot
@@ -8678,7 +8751,7 @@ impl Lots {
             .lots()
             .quarantine(uuid, &reason)
             .map_err(|e| Error::from_reason(format!("Failed to quarantine lot: {}", e)))?;
-        Ok(lot.into())
+        convert_output(lot)
     }
 
     /// Release a lot from quarantine
@@ -8690,7 +8763,7 @@ impl Lots {
             .lots()
             .release_quarantine(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to release lot: {}", e)))?;
-        Ok(lot.into())
+        convert_output(lot)
     }
 
     /// Get expiring lots within days
@@ -8701,7 +8774,7 @@ impl Lots {
             .lots()
             .get_expiring_lots(days)
             .map_err(|e| Error::from_reason(format!("Failed to get expiring lots: {}", e)))?;
-        Ok(lots.into_iter().map(|l| l.into()).collect())
+        convert_outputs(lots)
     }
 
     /// Get expired lots
@@ -8712,7 +8785,7 @@ impl Lots {
             .lots()
             .get_expired_lots()
             .map_err(|e| Error::from_reason(format!("Failed to get expired lots: {}", e)))?;
-        Ok(lots.into_iter().map(|l| l.into()).collect())
+        convert_outputs(lots)
     }
 
     /// Get quarantined lots
@@ -8723,7 +8796,7 @@ impl Lots {
             .lots()
             .get_quarantined()
             .map_err(|e| Error::from_reason(format!("Failed to get quarantined lots: {}", e)))?;
-        Ok(lots.into_iter().map(|l| l.into()).collect())
+        convert_outputs(lots)
     }
 
     /// Count lots
@@ -9392,18 +9465,20 @@ pub struct PickTaskOutput {
     pub source_location_id: i32,
 }
 
-impl From<stateset_core::PickTask> for PickTaskOutput {
-    fn from(p: stateset_core::PickTask) -> Self {
-        Self {
+impl TryFrom<stateset_core::PickTask> for PickTaskOutput {
+    type Error = Error;
+
+    fn try_from(p: stateset_core::PickTask) -> Result<Self> {
+        Ok(Self {
             id: p.id.to_string(),
             wave_id: p.wave_id.map(|id| id.to_string()),
             order_id: p.order_id.to_string(),
             sku: p.sku,
-            quantity_requested: to_f64_or_nan(p.quantity_requested),
-            quantity_picked: to_f64_or_nan(p.quantity_picked),
+            quantity_requested: to_f64_result(p.quantity_requested, "pick quantity requested")?,
+            quantity_picked: to_f64_result(p.quantity_picked, "pick quantity picked")?,
             status: format!("{:?}", p.status),
             source_location_id: p.source_location_id,
-        }
+        })
     }
 }
 
@@ -9505,7 +9580,7 @@ impl Fulfillment {
             .fulfillment()
             .get_pick(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get pick: {}", e)))?;
-        Ok(pick.map(|p| p.into()))
+        convert_optional_output(pick)
     }
 
     /// List pick tasks
@@ -9516,7 +9591,7 @@ impl Fulfillment {
             .fulfillment()
             .list_picks(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list picks: {}", e)))?;
-        Ok(picks.into_iter().map(|p| p.into()).collect())
+        convert_outputs(picks)
     }
 
     /// Assign a pick task
@@ -9528,7 +9603,7 @@ impl Fulfillment {
             .fulfillment()
             .assign_pick(uuid, &assigned_to)
             .map_err(|e| Error::from_reason(format!("Failed to assign pick: {}", e)))?;
-        Ok(pick.into())
+        convert_output(pick)
     }
 
     /// Start a pick task
@@ -9540,7 +9615,7 @@ impl Fulfillment {
             .fulfillment()
             .start_pick(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to start pick: {}", e)))?;
-        Ok(pick.into())
+        convert_output(pick)
     }
 
     /// Cancel a pick task
@@ -9552,7 +9627,7 @@ impl Fulfillment {
             .fulfillment()
             .cancel_pick(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel pick: {}", e)))?;
-        Ok(pick.into())
+        convert_output(pick)
     }
 
     /// Check if an order is ready to pack
@@ -11905,14 +11980,16 @@ impl VectorSearch {
             .search_orders(&query, limit.unwrap_or(10) as usize)
             .map_err(|e| Error::from_reason(format!("Failed to search orders: {}", e)))?;
 
-        Ok(results
+        results
             .into_iter()
-            .map(|r| OrderSearchResultOutput {
-                order: r.entity.into(),
-                distance: r.distance as f64,
-                score: r.score as f64,
+            .map(|r| {
+                Ok(OrderSearchResultOutput {
+                    order: convert_output(r.entity)?,
+                    distance: r.distance as f64,
+                    score: r.score as f64,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Search inventory items using natural language query
