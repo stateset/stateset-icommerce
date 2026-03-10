@@ -23,7 +23,7 @@
 use stateset_core::{
     CreateReview, ProductId, Result, Review, ReviewFilter, ReviewId, ReviewSummary, UpdateReview,
 };
-use stateset_db::Database;
+use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 
 /// Product review operations.
@@ -40,6 +40,15 @@ impl std::fmt::Debug for Reviews {
 impl Reviews {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    /// Whether reviews are supported by the active backend.
+    pub fn is_supported(&self) -> bool {
+        self.db.supports_capability(DatabaseCapability::Reviews)
+    }
+
+    fn ensure_supported(&self) -> Result<()> {
+        self.db.ensure_capability(DatabaseCapability::Reviews)
     }
 
     /// Create a new product review.
@@ -62,26 +71,31 @@ impl Reviews {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateReview) -> Result<Review> {
+        self.ensure_supported()?;
         self.db.reviews().create(input)
     }
 
     /// Get a review by ID.
     pub fn get(&self, id: ReviewId) -> Result<Option<Review>> {
+        self.ensure_supported()?;
         self.db.reviews().get(id)
     }
 
     /// Update a review.
     pub fn update(&self, id: ReviewId, input: UpdateReview) -> Result<Review> {
+        self.ensure_supported()?;
         self.db.reviews().update(id, input)
     }
 
     /// List reviews with optional filtering.
     pub fn list(&self, filter: ReviewFilter) -> Result<Vec<Review>> {
+        self.ensure_supported()?;
         self.db.reviews().list(filter)
     }
 
     /// Delete a review.
     pub fn delete(&self, id: ReviewId) -> Result<()> {
+        self.ensure_supported()?;
         self.db.reviews().delete(id)
     }
 
@@ -89,16 +103,19 @@ impl Reviews {
     ///
     /// Returns average rating, total count, and rating distribution.
     pub fn get_summary(&self, product_id: ProductId) -> Result<ReviewSummary> {
+        self.ensure_supported()?;
         self.db.reviews().get_summary(product_id)
     }
 
     /// Mark a review as helpful (increment helpful count).
     pub fn mark_helpful(&self, id: ReviewId) -> Result<()> {
+        self.ensure_supported()?;
         self.db.reviews().mark_helpful(id)
     }
 
     /// Mark a review as reported (increment reported count).
     pub fn mark_reported(&self, id: ReviewId) -> Result<()> {
+        self.ensure_supported()?;
         self.db.reviews().mark_reported(id)
     }
 }

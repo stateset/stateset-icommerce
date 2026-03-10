@@ -327,12 +327,13 @@ impl Scheduler {
         if let Some(def) = self.definitions.get(&instance.definition_name) {
             if instance.should_retry(def.max_retries) {
                 let retry_at = instance.next_retry_at(&def.retry_backoff, now);
+                let timed_out_instance = instance.clone();
                 if instance.mark_retrying(retry_at).is_ok() {
-                    if self.store.save(&instance).is_err() {
-                        return false;
-                    }
-                    if self.queue.enqueue(instance.clone()).is_err() {
-                        return false;
+                    if let Err(err) = self.persist_retry(&instance, &timed_out_instance) {
+                        self.record_internal_error(format!(
+                            "failed to schedule timeout retry for job {job_id}: {err}"
+                        ));
+                        return true;
                     }
                     actions.push(TickAction::Retry { job_id, retry_at });
                     return true;
@@ -419,9 +420,9 @@ impl Scheduler {
         if let Some(def) = def {
             if instance.should_retry(def.max_retries) {
                 let retry_at = instance.next_retry_at(&def.retry_backoff, now);
+                let failed_instance = instance.clone();
                 instance.mark_retrying(retry_at)?;
-                self.store.save(&instance)?;
-                self.queue.enqueue(instance)?;
+                self.persist_retry(&instance, &failed_instance)?;
 
                 return Ok(Some(TickAction::Retry { job_id, retry_at }));
             }
@@ -493,6 +494,28 @@ impl Scheduler {
             let new_instance = JobInstance::new_scheduled(&instance.definition_name, run_at);
             self.store.save(&new_instance)?;
             self.queue.enqueue(new_instance)?;
+        }
+
+        Ok(())
+    }
+
+    fn persist_retry(
+        &mut self,
+        retry_instance: &JobInstance,
+        fallback_instance: &JobInstance,
+    ) -> Result<(), JobError> {
+        if let Err(err) = self.store.save(retry_instance) {
+            return Err(err);
+        }
+
+        if let Err(err) = self.queue.enqueue(retry_instance.clone()) {
+            if let Err(restore_err) = self.store.save(fallback_instance) {
+                self.record_internal_error(format!(
+                    "failed to restore job {} after retry scheduling failure: {restore_err}",
+                    fallback_instance.id
+                ));
+            }
+            return Err(err);
         }
 
         Ok(())
@@ -921,6 +944,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tick_timeout_reverts_to_timed_out_when_retry_enqueue_fails() {
+        let mut s = make_scheduler().with_max_queue_size(1);
+        let (handler, _) = CountingHandler::new("retry_timeout_full_queue");
+        let def = JobDefinition::new("retry_timeout_full_queue", Schedule::Once, Box::new(handler))
+            .with_timeout(std::time::Duration::from_secs(1))
+            .with_max_retries(1)
+            .with_retry_backoff(BackoffStrategy::fixed(std::time::Duration::from_secs(5)));
+        s.register(def).unwrap();
+        register_noop(&mut s, "filler");
+
+        let t0 = Utc::now();
+        let id = s.schedule("retry_timeout_full_queue", t0).unwrap();
+        s.tick(t0);
+        s.schedule("filler", t0 + Duration::hours(1)).unwrap();
+
+        let timeout_actions = s.tick(t0 + Duration::seconds(2));
+        assert!(timeout_actions.iter().any(|a| matches!(a, TickAction::Timeout { .. })));
+        assert!(!timeout_actions.iter().any(|a| matches!(a, TickAction::Retry { .. })));
+        assert_eq!(s.status().running_jobs, 0);
+        assert_eq!(s.status().queued_jobs, 1);
+        assert!(s.last_internal_error().is_some());
+
+        let timed_out = s.store().get(&id).unwrap().unwrap();
+        assert_eq!(timed_out.status, JobStatus::TimedOut);
+        assert_eq!(timed_out.attempt, 0);
+    }
+
     // -----------------------------------------------------------------------
     // Complete & reschedule
     // -----------------------------------------------------------------------
@@ -1081,6 +1132,31 @@ mod tests {
         let action = s.fail(id, "oops").unwrap().unwrap();
         assert!(matches!(action, TickAction::Retry { .. }));
         assert!(s.queue.size() > 0);
+    }
+
+    #[test]
+    fn fail_retry_restores_failed_state_when_retry_enqueue_fails() {
+        let mut s = make_scheduler().with_max_queue_size(1);
+        let (handler, _) = CountingHandler::new("retryable_full_queue");
+        let def = JobDefinition::new("retryable_full_queue", Schedule::Once, Box::new(handler))
+            .with_max_retries(3)
+            .with_retry_backoff(BackoffStrategy::fixed(std::time::Duration::from_secs(5)));
+        s.register(def).unwrap();
+        register_noop(&mut s, "filler");
+
+        let now = Utc::now();
+        let id = s.schedule("retryable_full_queue", now).unwrap();
+        s.tick(now);
+        s.schedule("filler", now + Duration::hours(1)).unwrap();
+
+        let err = s.fail(id, "oops").unwrap_err();
+        assert!(matches!(err, JobError::QueueFull { .. }));
+        assert_eq!(s.queue.size(), 1);
+
+        let failed = s.store().get(&id).unwrap().unwrap();
+        assert_eq!(failed.status, JobStatus::Failed);
+        assert_eq!(failed.attempt, 0);
+        assert_eq!(failed.error.as_deref(), Some("oops"));
     }
 
     #[test]

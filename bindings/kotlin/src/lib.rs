@@ -76,6 +76,11 @@ fn next_handle_id() -> usize {
     }
 }
 
+fn decimal_from_f64(value: f64, field: &str) -> Result<Decimal, String> {
+    Decimal::from_f64_retain(value)
+        .ok_or_else(|| format!("Invalid numeric value for {field}: {value}"))
+}
+
 fn create_handle(commerce: RustCommerce) -> jlong {
     let shared = Arc::new(Mutex::new(commerce));
     let id = with_handle_registry(|handles| {
@@ -124,17 +129,14 @@ fn throw_exception(env: &mut JNIEnv<'_>, msg: &str) {
     let _ = env.throw_new("com/stateset/embedded/StateSetException", msg);
 }
 
-fn to_f64_or_nan<T>(value: T) -> f64
+fn to_f64_result<T>(value: T, field: &str) -> Result<f64, String>
 where
     T: TryInto<f64>,
     <T as TryInto<f64>>::Error: std::fmt::Display,
 {
     match value.try_into() {
-        Ok(converted) => converted,
-        Err(err) => {
-            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
-            f64::NAN
-        }
+        Ok(converted) => Ok(converted),
+        Err(err) => Err(format!("Failed to convert {field} to f64: {err}")),
     }
 }
 
@@ -1378,7 +1380,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeLotsCre
             .create(CreateLot {
                 sku: sku_str,
                 lot_number: Some(lot_str),
-                quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(quantity, "quantity")?,
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1488,7 +1490,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeApCreat
                 items: vec![CreateBillItem {
                     description: "Items".into(),
                     quantity: Decimal::ONE,
-                    unit_price: Decimal::from_f64_retain(amount).unwrap_or_default(),
+                    unit_price: decimal_from_f64(amount, "amount")?,
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -1565,7 +1567,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeArAging
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeArGetDso<'local>(
-    _env: JNIEnv<'local>,
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     ptr: jlong,
     days: jint,
@@ -1574,7 +1576,13 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeArGetDs
         commerce.accounts_receivable().get_dso(days).map_err(|e| e.to_string())
     });
     match result {
-        Ok(dso) => to_f64_or_nan(dso),
+        Ok(dso) => match to_f64_result(dso, "dso") {
+            Ok(value) => value,
+            Err(e) => {
+                throw_exception(&mut env, &e);
+                0.0
+            }
+        },
         Err(_) => 0.0,
     }
 }
@@ -1598,7 +1606,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeCostSet
             .cost_accounting()
             .set_item_cost(SetItemCost {
                 sku: sku_str,
-                standard_cost: Some(Decimal::from_f64_retain(standard_cost).unwrap_or_default()),
+                standard_cost: Some(decimal_from_f64(standard_cost, "standard_cost")?),
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1654,7 +1662,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeCreditC
             .credit()
             .create_credit_account(CreateCreditAccount {
                 customer_id: cust_uuid,
-                credit_limit: Decimal::from_f64_retain(credit_limit).unwrap_or_default(),
+                credit_limit: decimal_from_f64(credit_limit, "credit_limit")?,
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1683,7 +1691,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeCreditC
         let cust_uuid = cust.parse().map_err(|_| "Invalid UUID".to_string())?;
         commerce
             .credit()
-            .check_credit(cust_uuid, Decimal::from_f64_retain(amount).unwrap_or_default())
+            .check_credit(cust_uuid, decimal_from_f64(amount, "amount")?)
             .map_err(|e| e.to_string())
     });
 
@@ -1726,7 +1734,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeBackord
                 order_id: ord_uuid,
                 customer_id: cust_uuid,
                 sku: sku_str,
-                quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(quantity, "quantity")?,
                 priority: Some(BackorderPriority::Normal),
                 order_line_id: None,
                 expected_date: None,

@@ -23,7 +23,7 @@ use stateset_core::{
     CreateGiftCard, GiftCard, GiftCardFilter, GiftCardId, GiftCardTransaction, Result,
     UpdateGiftCard,
 };
-use stateset_db::Database;
+use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 
 /// Gift card operations for issuing, charging, and refunding.
@@ -40,6 +40,15 @@ impl std::fmt::Debug for GiftCards {
 impl GiftCards {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    /// Whether gift cards are supported by the active backend.
+    pub fn is_supported(&self) -> bool {
+        self.db.supports_capability(DatabaseCapability::GiftCards)
+    }
+
+    fn ensure_supported(&self) -> Result<()> {
+        self.db.ensure_capability(DatabaseCapability::GiftCards)
     }
 
     /// Create a new gift card.
@@ -60,26 +69,31 @@ impl GiftCards {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateGiftCard) -> Result<GiftCard> {
+        self.ensure_supported()?;
         self.db.gift_cards().create(input)
     }
 
     /// Get a gift card by ID.
     pub fn get(&self, id: GiftCardId) -> Result<Option<GiftCard>> {
+        self.ensure_supported()?;
         self.db.gift_cards().get(id)
     }
 
     /// Get a gift card by its unique code.
     pub fn get_by_code(&self, code: &str) -> Result<Option<GiftCard>> {
+        self.ensure_supported()?;
         self.db.gift_cards().get_by_code(code)
     }
 
     /// Update a gift card.
     pub fn update(&self, id: GiftCardId, input: UpdateGiftCard) -> Result<GiftCard> {
+        self.ensure_supported()?;
         self.db.gift_cards().update(id, input)
     }
 
     /// List gift cards with optional filtering.
     pub fn list(&self, filter: GiftCardFilter) -> Result<Vec<GiftCard>> {
+        self.ensure_supported()?;
         self.db.gift_cards().list(filter)
     }
 
@@ -92,6 +106,7 @@ impl GiftCards {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<GiftCardTransaction> {
+        self.ensure_supported()?;
         self.db.gift_cards().charge(id, amount, reference_id)
     }
 
@@ -104,16 +119,19 @@ impl GiftCards {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<GiftCardTransaction> {
+        self.ensure_supported()?;
         self.db.gift_cards().refund(id, amount, reference_id)
     }
 
     /// Disable a gift card so it can no longer be used.
     pub fn disable(&self, id: GiftCardId) -> Result<GiftCard> {
+        self.ensure_supported()?;
         self.db.gift_cards().disable(id)
     }
 
     /// Get transaction history for a gift card.
     pub fn get_transactions(&self, gift_card_id: GiftCardId) -> Result<Vec<GiftCardTransaction>> {
+        self.ensure_supported()?;
         self.db.gift_cards().get_transactions(gift_card_id)
     }
 }

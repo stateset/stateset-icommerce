@@ -135,9 +135,13 @@ Requirements:
 - Rust toolchain
 - PHP development headers (`php-dev` / `php-devel`)
 
+Default `cargo` builds compile a portable stub so CI can validate the crate
+without a local PHP runtime. Build the actual extension with the `runtime`
+feature enabled:
+
 ```bash
 cd bindings/php
-cargo build --release
+cargo build --release --features runtime
 
 # The extension will be at:
 # target/release/libstateset_embedded.so (Linux)

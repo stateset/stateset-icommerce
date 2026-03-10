@@ -85,10 +85,13 @@ commerce.orders.deliver(order.id)
 
 ## Building from Source
 
+Default `cargo` builds compile a portable stub so CI can validate the crate
+without local Ruby headers. Build the actual native extension with the
+`runtime` feature enabled:
+
 ```bash
 cd bindings/ruby
-bundle install
-bundle exec rake compile
+cargo build --release --features runtime
 ```
 
 ## Running Tests

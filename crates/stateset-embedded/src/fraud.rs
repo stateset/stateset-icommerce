@@ -21,7 +21,7 @@ use stateset_core::{
     CreateFraudAssessment, CreateFraudRule, FraudAssessment, FraudAssessmentFilter, FraudDecision,
     FraudRule, FraudRuleFilter, FraudRuleId, OrderId, Result, UpdateFraudRule,
 };
-use stateset_db::Database;
+use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 
 /// Fraud detection operations for risk assessment and rules.
@@ -38,6 +38,15 @@ impl std::fmt::Debug for Fraud {
 impl Fraud {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    /// Whether fraud management is supported by the active backend.
+    pub fn is_supported(&self) -> bool {
+        self.db.supports_capability(DatabaseCapability::Fraud)
+    }
+
+    fn ensure_supported(&self) -> Result<()> {
+        self.db.ensure_capability(DatabaseCapability::Fraud)
     }
 
     // ========================================================================
@@ -61,16 +70,19 @@ impl Fraud {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_assessment(&self, input: CreateFraudAssessment) -> Result<FraudAssessment> {
+        self.ensure_supported()?;
         self.db.fraud().create_assessment(input)
     }
 
     /// Get a fraud assessment for an order.
     pub fn get_assessment(&self, order_id: OrderId) -> Result<Option<FraudAssessment>> {
+        self.ensure_supported()?;
         self.db.fraud().get_assessment(order_id)
     }
 
     /// List fraud assessments with optional filtering.
     pub fn list_assessments(&self, filter: FraudAssessmentFilter) -> Result<Vec<FraudAssessment>> {
+        self.ensure_supported()?;
         self.db.fraud().list_assessments(filter)
     }
 
@@ -82,6 +94,7 @@ impl Fraud {
         reviewer: String,
         notes: Option<String>,
     ) -> Result<FraudAssessment> {
+        self.ensure_supported()?;
         self.db.fraud().review_assessment(order_id, decision, reviewer, notes)
     }
 
@@ -91,31 +104,37 @@ impl Fraud {
 
     /// Create a fraud detection rule.
     pub fn create_rule(&self, input: CreateFraudRule) -> Result<FraudRule> {
+        self.ensure_supported()?;
         self.db.fraud().create_rule(input)
     }
 
     /// Get a fraud rule by ID.
     pub fn get_rule(&self, id: FraudRuleId) -> Result<Option<FraudRule>> {
+        self.ensure_supported()?;
         self.db.fraud().get_rule(id)
     }
 
     /// Update a fraud rule.
     pub fn update_rule(&self, id: FraudRuleId, input: UpdateFraudRule) -> Result<FraudRule> {
+        self.ensure_supported()?;
         self.db.fraud().update_rule(id, input)
     }
 
     /// List fraud rules with optional filtering.
     pub fn list_rules(&self, filter: FraudRuleFilter) -> Result<Vec<FraudRule>> {
+        self.ensure_supported()?;
         self.db.fraud().list_rules(filter)
     }
 
     /// Delete a fraud rule.
     pub fn delete_rule(&self, id: FraudRuleId) -> Result<()> {
+        self.ensure_supported()?;
         self.db.fraud().delete_rule(id)
     }
 
     /// Get all enabled (active) fraud rules.
     pub fn get_active_rules(&self) -> Result<Vec<FraudRule>> {
+        self.ensure_supported()?;
         self.db.fraud().get_active_rules()
     }
 }

@@ -25,6 +25,53 @@ where
     }
 }
 
+fn to_f64_result<T>(value: T, field: &str) -> Result<f64>
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    value
+        .try_into()
+        .map_err(|err| Error::from_reason(format!("Failed to convert {field} to f64: {err}")))
+}
+
+fn optional_to_f64_result<T>(value: Option<T>, field: &str) -> Result<Option<f64>>
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    value.map(|inner| to_f64_result(inner, field)).transpose()
+}
+
+fn convert_output<T, U>(value: T) -> Result<U>
+where
+    U: TryFrom<T, Error = Error>,
+{
+    U::try_from(value)
+}
+
+fn convert_optional_output<T, U>(value: Option<T>) -> Result<Option<U>>
+where
+    U: TryFrom<T, Error = Error>,
+{
+    value.map(convert_output).transpose()
+}
+
+fn convert_outputs<T, U>(values: Vec<T>) -> Result<Vec<U>>
+where
+    U: TryFrom<T, Error = Error>,
+{
+    values.into_iter().map(convert_output).collect()
+}
+
+fn decimal_from_f64(value: f64, field: &str) -> Result<Decimal> {
+    Decimal::from_f64_retain(value).ok_or_else(|| Error::from_reason(format!("Invalid {field}")))
+}
+
+fn optional_decimal_from_f64(value: Option<f64>, field: &str) -> Result<Option<Decimal>> {
+    value.map(|value| decimal_from_f64(value, field)).transpose()
+}
+
 /// JavaScript-friendly Commerce instance
 #[napi]
 pub struct Commerce {
@@ -640,17 +687,17 @@ impl Orders {
                 let product_id = i.product_id.and_then(|s| s.parse().ok()).unwrap_or_default();
                 let variant_id = i.variant_id.and_then(|s| s.parse().ok());
 
-                stateset_core::CreateOrderItem {
+                Ok(stateset_core::CreateOrderItem {
                     product_id,
                     variant_id,
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: Decimal::from_f64_retain(i.unit_price).unwrap_or_default(),
+                    unit_price: decimal_from_f64(i.unit_price, "order item unit price")?,
                     ..Default::default()
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let order = commerce
             .orders()
@@ -836,17 +883,25 @@ impl Products {
     pub async fn create(&self, input: CreateProductInput) -> Result<ProductOutput> {
         let commerce = self.commerce.lock().await;
 
-        let variants = input.variants.map(|vs| {
-            vs.into_iter()
-                .map(|v| stateset_core::CreateProductVariant {
-                    sku: v.sku,
-                    name: v.name,
-                    price: Decimal::from_f64_retain(v.price).unwrap_or_default(),
-                    compare_at_price: v.compare_at_price.and_then(Decimal::from_f64_retain),
-                    ..Default::default()
-                })
-                .collect()
-        });
+        let variants = input
+            .variants
+            .map(|vs| {
+                vs.into_iter()
+                    .map(|v| {
+                        Ok(stateset_core::CreateProductVariant {
+                            sku: v.sku,
+                            name: v.name,
+                            price: decimal_from_f64(v.price, "variant price")?,
+                            compare_at_price: optional_decimal_from_f64(
+                                v.compare_at_price,
+                                "variant compare at price",
+                            )?,
+                            ..Default::default()
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?;
 
         let product = commerce
             .products()
@@ -1438,8 +1493,14 @@ impl Inventory {
                 sku: input.sku,
                 name: input.name,
                 description: input.description,
-                initial_quantity: input.initial_quantity.and_then(Decimal::from_f64_retain),
-                reorder_point: input.reorder_point.and_then(Decimal::from_f64_retain),
+                initial_quantity: optional_decimal_from_f64(
+                    input.initial_quantity,
+                    "inventory initial quantity",
+                )?,
+                reorder_point: optional_decimal_from_f64(
+                    input.reorder_point,
+                    "inventory reorder point",
+                )?,
                 ..Default::default()
             })
             .map_err(|e| Error::from_reason(format!("Failed to create inventory item: {}", e)))?;
@@ -1823,7 +1884,7 @@ impl Payments {
                 invoice_id,
                 customer_id,
                 idempotency_key: input.idempotency_key,
-                amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
+                amount: decimal_from_f64(input.amount, "payment amount")?,
                 currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
                 payment_method,
                 ..Default::default()
@@ -1911,7 +1972,7 @@ impl Payments {
             .payments()
             .create_refund(stateset_core::CreateRefund {
                 payment_id,
-                amount: Some(Decimal::from_f64_retain(input.amount).unwrap_or_default()),
+                amount: Some(decimal_from_f64(input.amount, "refund amount")?),
                 reason: input.reason,
                 idempotency_key: input.idempotency_key,
                 ..Default::default()
@@ -2431,18 +2492,20 @@ pub struct PurchaseOrderOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::PurchaseOrder> for PurchaseOrderOutput {
-    fn from(po: stateset_core::PurchaseOrder) -> Self {
-        Self {
+impl TryFrom<stateset_core::PurchaseOrder> for PurchaseOrderOutput {
+    type Error = Error;
+
+    fn try_from(po: stateset_core::PurchaseOrder) -> Result<Self> {
+        Ok(Self {
             id: po.id.to_string(),
             po_number: po.po_number,
             supplier_id: po.supplier_id.to_string(),
             status: format!("{}", po.status),
-            subtotal: to_f64_or_nan(po.subtotal),
-            total: to_f64_or_nan(po.total),
+            subtotal: to_f64_result(po.subtotal, "purchase order subtotal")?,
+            total: to_f64_result(po.total, "purchase order total")?,
             created_at: po.created_at.to_rfc3339(),
             updated_at: po.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -2505,14 +2568,16 @@ impl PurchaseOrders {
         let items: Vec<stateset_core::CreatePurchaseOrderItem> = input
             .items
             .into_iter()
-            .map(|i| stateset_core::CreatePurchaseOrderItem {
-                sku: i.sku,
-                name: i.name,
-                quantity: Decimal::from_f64_retain(i.quantity).unwrap_or_default(),
-                unit_cost: Decimal::from_f64_retain(i.unit_cost).unwrap_or_default(),
-                ..Default::default()
+            .map(|i| {
+                Ok(stateset_core::CreatePurchaseOrderItem {
+                    sku: i.sku,
+                    name: i.name,
+                    quantity: decimal_from_f64(i.quantity, "purchase order item quantity")?,
+                    unit_cost: decimal_from_f64(i.unit_cost, "purchase order item unit cost")?,
+                    ..Default::default()
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let po = commerce
             .purchase_orders()
@@ -2524,7 +2589,7 @@ impl PurchaseOrders {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     #[napi]
@@ -2537,7 +2602,7 @@ impl PurchaseOrders {
             .get(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get PO: {}", e)))?;
 
-        Ok(po.map(|p| p.into()))
+        convert_optional_output(po)
     }
 
     #[napi]
@@ -2548,7 +2613,7 @@ impl PurchaseOrders {
             .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list POs: {}", e)))?;
 
-        Ok(pos.into_iter().map(|p| p.into()).collect())
+        convert_outputs(pos)
     }
 
     #[napi]
@@ -2561,7 +2626,7 @@ impl PurchaseOrders {
             .submit(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to submit PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     #[napi]
@@ -2574,7 +2639,7 @@ impl PurchaseOrders {
             .approve(uuid, &approved_by)
             .map_err(|e| Error::from_reason(format!("Failed to approve PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     #[napi]
@@ -2587,7 +2652,7 @@ impl PurchaseOrders {
             .send(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to send PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     #[napi]
@@ -2600,7 +2665,7 @@ impl PurchaseOrders {
             .cancel(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     #[napi]
@@ -2656,22 +2721,24 @@ pub struct InvoiceOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::Invoice> for InvoiceOutput {
-    fn from(inv: stateset_core::Invoice) -> Self {
-        Self {
+impl TryFrom<stateset_core::Invoice> for InvoiceOutput {
+    type Error = Error;
+
+    fn try_from(inv: stateset_core::Invoice) -> Result<Self> {
+        Ok(Self {
             id: inv.id.to_string(),
             invoice_number: inv.invoice_number,
             customer_id: inv.customer_id.to_string(),
             order_id: inv.order_id.map(|id| id.to_string()),
             status: format!("{}", inv.status),
-            subtotal: to_f64_or_nan(inv.subtotal),
-            tax_amount: to_f64_or_nan(inv.tax_amount),
-            total: to_f64_or_nan(inv.total),
-            amount_paid: to_f64_or_nan(inv.amount_paid),
+            subtotal: to_f64_result(inv.subtotal, "invoice subtotal")?,
+            tax_amount: to_f64_result(inv.tax_amount, "invoice tax amount")?,
+            total: to_f64_result(inv.total, "invoice total")?,
+            amount_paid: to_f64_result(inv.amount_paid, "invoice amount paid")?,
             due_date: inv.due_date.to_rfc3339(),
             created_at: inv.created_at.to_rfc3339(),
             updated_at: inv.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -2706,14 +2773,16 @@ impl Invoices {
         let items: Vec<stateset_core::CreateInvoiceItem> = input
             .items
             .into_iter()
-            .map(|i| stateset_core::CreateInvoiceItem {
-                description: i.description,
-                quantity: Decimal::from_f64_retain(i.quantity).unwrap_or_default(),
-                unit_price: Decimal::from_f64_retain(i.unit_price).unwrap_or_default(),
-                sku: i.sku,
-                ..Default::default()
+            .map(|i| {
+                Ok(stateset_core::CreateInvoiceItem {
+                    description: i.description,
+                    quantity: decimal_from_f64(i.quantity, "invoice item quantity")?,
+                    unit_price: decimal_from_f64(i.unit_price, "invoice item unit price")?,
+                    sku: i.sku,
+                    ..Default::default()
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let invoice = commerce
             .invoices()
@@ -2728,7 +2797,7 @@ impl Invoices {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create invoice: {}", e)))?;
 
-        Ok(invoice.into())
+        convert_output(invoice)
     }
 
     #[napi]
@@ -2741,7 +2810,7 @@ impl Invoices {
             .get(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get invoice: {}", e)))?;
 
-        Ok(invoice.map(|i| i.into()))
+        convert_optional_output(invoice)
     }
 
     #[napi]
@@ -2752,7 +2821,7 @@ impl Invoices {
             .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list invoices: {}", e)))?;
 
-        Ok(invoices.into_iter().map(|i| i.into()).collect())
+        convert_outputs(invoices)
     }
 
     #[napi]
@@ -2765,7 +2834,7 @@ impl Invoices {
             .send(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to send invoice: {}", e)))?;
 
-        Ok(invoice.into())
+        convert_output(invoice)
     }
 
     #[napi]
@@ -2778,7 +2847,7 @@ impl Invoices {
             .void(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to void invoice: {}", e)))?;
 
-        Ok(invoice.into())
+        convert_output(invoice)
     }
 
     #[napi]
@@ -2795,7 +2864,7 @@ impl Invoices {
             .record_payment(
                 uuid,
                 stateset_core::RecordInvoicePayment {
-                    amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
+                    amount: decimal_from_f64(input.amount, "invoice payment amount")?,
                     payment_method: input.payment_method,
                     reference: input.reference,
                     ..Default::default()
@@ -2803,7 +2872,7 @@ impl Invoices {
             )
             .map_err(|e| Error::from_reason(format!("Failed to record payment: {}", e)))?;
 
-        Ok(invoice.into())
+        convert_output(invoice)
     }
 
     #[napi]
@@ -2814,7 +2883,7 @@ impl Invoices {
             .get_overdue()
             .map_err(|e| Error::from_reason(format!("Failed to get overdue invoices: {}", e)))?;
 
-        Ok(invoices.into_iter().map(|i| i.into()).collect())
+        convert_outputs(invoices)
     }
 
     #[napi]
@@ -2971,7 +3040,7 @@ impl Bom {
                 stateset_core::CreateBomComponent {
                     component_sku: input.component_sku,
                     name: input.name,
-                    quantity: Decimal::from_f64_retain(input.quantity).unwrap_or_default(),
+                    quantity: decimal_from_f64(input.quantity, "bom component quantity")?,
                     unit_of_measure: input.unit_of_measure,
                     ..Default::default()
                 },
@@ -3100,8 +3169,10 @@ impl WorkOrders {
             .create(stateset_core::CreateWorkOrder {
                 product_id,
                 bom_id,
-                quantity_to_build: Decimal::from_f64_retain(input.quantity_to_build)
-                    .unwrap_or_default(),
+                quantity_to_build: decimal_from_f64(
+                    input.quantity_to_build,
+                    "work order quantity to build",
+                )?,
                 priority,
                 notes: input.notes,
                 ..Default::default()
@@ -3155,7 +3226,7 @@ impl WorkOrders {
 
         let wo = commerce
             .work_orders()
-            .complete(uuid, Decimal::from_f64_retain(quantity_completed).unwrap_or_default())
+            .complete(uuid, decimal_from_f64(quantity_completed, "work order quantity completed")?)
             .map_err(|e| Error::from_reason(format!("Failed to complete work order: {}", e)))?;
 
         Ok(wo.into())
@@ -3649,11 +3720,12 @@ impl Carts {
                     description: item.description,
                     image_url: item.image_url,
                     quantity: item.quantity,
-                    unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
-                    original_price: item
-                        .original_price
-                        .map(|p| Decimal::from_f64_retain(p).unwrap_or_default()),
-                    weight: item.weight.map(|w| Decimal::from_f64_retain(w).unwrap_or_default()),
+                    unit_price: decimal_from_f64(item.unit_price, "cart item unit price")?,
+                    original_price: optional_decimal_from_f64(
+                        item.original_price,
+                        "cart item original price",
+                    )?,
+                    weight: optional_decimal_from_f64(item.weight, "cart item weight")?,
                     requires_shipping: item.requires_shipping,
                     ..Default::default()
                 },
@@ -3679,9 +3751,10 @@ impl Carts {
                 uuid,
                 stateset_core::UpdateCartItem {
                     quantity: input.quantity,
-                    unit_price: input
-                        .unit_price
-                        .map(|p| Decimal::from_f64_retain(p).unwrap_or_default()),
+                    unit_price: optional_decimal_from_f64(
+                        input.unit_price,
+                        "cart item unit price",
+                    )?,
                     ..Default::default()
                 },
             )
@@ -4001,7 +4074,7 @@ impl Carts {
 
         let cart = commerce
             .carts()
-            .set_tax(uuid.into(), Decimal::from_f64_retain(tax_amount).unwrap_or_default())
+            .set_tax(uuid.into(), decimal_from_f64(tax_amount, "tax amount")?)
             .map_err(|e| Error::from_reason(format!("Failed to set tax: {}", e)))?;
 
         Ok(cart.into())
@@ -4483,7 +4556,7 @@ impl Analytics {
     pub async fn low_stock_items(&self, threshold: Option<f64>) -> Result<Vec<LowStockItemOutput>> {
         let commerce = self.commerce.lock().await;
 
-        let threshold_dec = threshold.map(|t| Decimal::from_f64_retain(t).unwrap_or_default());
+        let threshold_dec = optional_decimal_from_f64(threshold, "low stock threshold")?;
 
         let items = commerce
             .analytics()
@@ -5200,9 +5273,11 @@ pub struct SubscriptionPlanOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
-    fn from(p: stateset_core::SubscriptionPlan) -> Self {
-        Self {
+impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
+    type Error = Error;
+
+    fn try_from(p: stateset_core::SubscriptionPlan) -> Result<Self> {
+        Ok(Self {
             id: p.id.to_string(),
             code: p.code,
             name: p.name,
@@ -5210,18 +5285,24 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
             status: format!("{:?}", p.status).to_lowercase(),
             billing_interval: format!("{}", p.billing_interval),
             custom_interval_days: p.custom_interval_days,
-            price: to_f64_or_nan(p.price),
-            setup_fee: p.setup_fee.map(to_f64_or_nan),
+            price: to_f64_result(p.price, "subscription plan price")?,
+            setup_fee: optional_to_f64_result(p.setup_fee, "subscription plan setup fee")?,
             currency: p.currency.to_string(),
             trial_days: p.trial_days,
             trial_requires_payment_method: p.trial_requires_payment_method,
             min_cycles: p.min_cycles,
             max_cycles: p.max_cycles,
-            discount_percent: p.discount_percent.map(to_f64_or_nan),
-            discount_amount: p.discount_amount.map(to_f64_or_nan),
+            discount_percent: optional_to_f64_result(
+                p.discount_percent,
+                "subscription plan discount percent",
+            )?,
+            discount_amount: optional_to_f64_result(
+                p.discount_amount,
+                "subscription plan discount amount",
+            )?,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -5294,9 +5375,11 @@ pub struct SubscriptionOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::Subscription> for SubscriptionOutput {
-    fn from(s: stateset_core::Subscription) -> Self {
-        Self {
+impl TryFrom<stateset_core::Subscription> for SubscriptionOutput {
+    type Error = Error;
+
+    fn try_from(s: stateset_core::Subscription) -> Result<Self> {
+        Ok(Self {
             id: s.id.to_string(),
             subscription_number: s.subscription_number,
             customer_id: s.customer_id.to_string(),
@@ -5305,7 +5388,7 @@ impl From<stateset_core::Subscription> for SubscriptionOutput {
             status: format!("{}", s.status),
             billing_interval: format!("{}", s.billing_interval),
             custom_interval_days: s.custom_interval_days,
-            price: to_f64_or_nan(s.price),
+            price: to_f64_result(s.price, "subscription price")?,
             currency: s.currency.to_string(),
             payment_method_id: s.payment_method_id,
             started_at: s.started_at.to_rfc3339(),
@@ -5319,12 +5402,18 @@ impl From<stateset_core::Subscription> for SubscriptionOutput {
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
             billing_cycle_count: s.billing_cycle_count,
             failed_payment_attempts: s.failed_payment_attempts,
-            discount_percent: s.discount_percent.map(to_f64_or_nan),
-            discount_amount: s.discount_amount.map(to_f64_or_nan),
+            discount_percent: optional_to_f64_result(
+                s.discount_percent,
+                "subscription discount percent",
+            )?,
+            discount_amount: optional_to_f64_result(
+                s.discount_amount,
+                "subscription discount amount",
+            )?,
             coupon_code: s.coupon_code,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -5509,26 +5598,30 @@ impl Subscriptions {
                 code: input.code,
                 billing_interval,
                 custom_interval_days: input.custom_interval_days,
-                price: Decimal::try_from(input.price)
-                    .map_err(|e| Error::from_reason(format!("Invalid price: {}", e)))?,
-                setup_fee: input.setup_fee.map(|f| Decimal::try_from(f).unwrap_or_default()),
+                price: decimal_from_f64(input.price, "subscription plan price")?,
+                setup_fee: optional_decimal_from_f64(
+                    input.setup_fee,
+                    "subscription plan setup fee",
+                )?,
                 currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
                 trial_days: input.trial_days,
                 trial_requires_payment_method: input.trial_requires_payment_method,
                 min_cycles: input.min_cycles,
                 max_cycles: input.max_cycles,
-                discount_percent: input
-                    .discount_percent
-                    .map(|d| Decimal::try_from(d).unwrap_or_default()),
-                discount_amount: input
-                    .discount_amount
-                    .map(|d| Decimal::try_from(d).unwrap_or_default()),
+                discount_percent: optional_decimal_from_f64(
+                    input.discount_percent,
+                    "subscription plan discount percent",
+                )?,
+                discount_amount: optional_decimal_from_f64(
+                    input.discount_amount,
+                    "subscription plan discount amount",
+                )?,
                 items: None,
                 metadata: None,
             })
             .map_err(|e| Error::from_reason(format!("Failed to create plan: {}", e)))?;
 
-        Ok(plan.into())
+        convert_output(plan)
     }
 
     /// Get a subscription plan by ID
@@ -5543,7 +5636,7 @@ impl Subscriptions {
             .get_plan(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get plan: {}", e)))?;
 
-        Ok(plan.map(|p| p.into()))
+        convert_optional_output(plan)
     }
 
     /// Get a subscription plan by code
@@ -5556,7 +5649,7 @@ impl Subscriptions {
             .get_plan_by_code(&code)
             .map_err(|e| Error::from_reason(format!("Failed to get plan: {}", e)))?;
 
-        Ok(plan.map(|p| p.into()))
+        convert_optional_output(plan)
     }
 
     /// List subscription plans
@@ -5582,7 +5675,7 @@ impl Subscriptions {
             })
             .map_err(|e| Error::from_reason(format!("Failed to list plans: {}", e)))?;
 
-        Ok(plans.into_iter().map(|p| p.into()).collect())
+        convert_outputs(plans)
     }
 
     /// Update a subscription plan
@@ -5604,24 +5697,29 @@ impl Subscriptions {
                     name: input.name,
                     description: input.description,
                     status: None,
-                    price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
-                    setup_fee: input.setup_fee.map(|f| Decimal::try_from(f).unwrap_or_default()),
+                    price: optional_decimal_from_f64(input.price, "subscription plan price")?,
+                    setup_fee: optional_decimal_from_f64(
+                        input.setup_fee,
+                        "subscription plan setup fee",
+                    )?,
                     trial_days: input.trial_days,
                     trial_requires_payment_method: input.trial_requires_payment_method,
                     min_cycles: input.min_cycles,
                     max_cycles: input.max_cycles,
-                    discount_percent: input
-                        .discount_percent
-                        .map(|d| Decimal::try_from(d).unwrap_or_default()),
-                    discount_amount: input
-                        .discount_amount
-                        .map(|d| Decimal::try_from(d).unwrap_or_default()),
+                    discount_percent: optional_decimal_from_f64(
+                        input.discount_percent,
+                        "subscription plan discount percent",
+                    )?,
+                    discount_amount: optional_decimal_from_f64(
+                        input.discount_amount,
+                        "subscription plan discount amount",
+                    )?,
                     metadata: None,
                 },
             )
             .map_err(|e| Error::from_reason(format!("Failed to update plan: {}", e)))?;
 
-        Ok(plan.into())
+        convert_output(plan)
     }
 
     /// Activate a subscription plan
@@ -5636,7 +5734,7 @@ impl Subscriptions {
             .activate_plan(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to activate plan: {}", e)))?;
 
-        Ok(plan.into())
+        convert_output(plan)
     }
 
     /// Archive a subscription plan
@@ -5651,7 +5749,7 @@ impl Subscriptions {
             .archive_plan(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to archive plan: {}", e)))?;
 
-        Ok(plan.into())
+        convert_output(plan)
     }
 
     // ========================================================================
@@ -5678,7 +5776,7 @@ impl Subscriptions {
                 plan_id,
                 payment_method_id: input.payment_method_id,
                 skip_trial: input.skip_trial,
-                price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
+                price: optional_decimal_from_f64(input.price, "subscription price")?,
                 coupon_code: input.coupon_code,
                 start_date,
                 items: None,
@@ -5688,7 +5786,7 @@ impl Subscriptions {
             })
             .map_err(|e| Error::from_reason(format!("Failed to create subscription: {}", e)))?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Get a subscription by ID
@@ -5703,7 +5801,7 @@ impl Subscriptions {
             .get(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get subscription: {}", e)))?;
 
-        Ok(subscription.map(|s| s.into()))
+        convert_optional_output(subscription)
     }
 
     /// Get a subscription by number
@@ -5716,7 +5814,7 @@ impl Subscriptions {
             .get_by_number(&number)
             .map_err(|e| Error::from_reason(format!("Failed to get subscription: {}", e)))?;
 
-        Ok(subscription.map(|s| s.into()))
+        convert_optional_output(subscription)
     }
 
     /// List subscriptions
@@ -5755,7 +5853,7 @@ impl Subscriptions {
             })
             .map_err(|e| Error::from_reason(format!("Failed to list subscriptions: {}", e)))?;
 
-        Ok(subscriptions.into_iter().map(|s| s.into()).collect())
+        convert_outputs(subscriptions)
     }
 
     /// Update a subscription
@@ -5779,15 +5877,17 @@ impl Subscriptions {
                 uuid.into(),
                 stateset_core::UpdateSubscription {
                     status: input.status.as_ref().and_then(|s| parse_subscription_status(s).ok()),
-                    price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
+                    price: optional_decimal_from_f64(input.price, "subscription price")?,
                     payment_method_id: input.payment_method_id,
                     next_billing_date,
-                    discount_percent: input
-                        .discount_percent
-                        .map(|d| Decimal::try_from(d).unwrap_or_default()),
-                    discount_amount: input
-                        .discount_amount
-                        .map(|d| Decimal::try_from(d).unwrap_or_default()),
+                    discount_percent: optional_decimal_from_f64(
+                        input.discount_percent,
+                        "subscription discount percent",
+                    )?,
+                    discount_amount: optional_decimal_from_f64(
+                        input.discount_amount,
+                        "subscription discount amount",
+                    )?,
                     coupon_code: input.coupon_code,
                     shipping_address: None,
                     billing_address: None,
@@ -5796,7 +5896,7 @@ impl Subscriptions {
             )
             .map_err(|e| Error::from_reason(format!("Failed to update subscription: {}", e)))?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Pause a subscription
@@ -5820,7 +5920,7 @@ impl Subscriptions {
             .pause(uuid.into(), stateset_core::PauseSubscription { reason: i.reason, resume_at })
             .map_err(|e| Error::from_reason(format!("Failed to pause subscription: {}", e)))?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Resume a paused subscription
@@ -5835,7 +5935,7 @@ impl Subscriptions {
             .resume(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to resume subscription: {}", e)))?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Cancel a subscription
@@ -5863,7 +5963,7 @@ impl Subscriptions {
             )
             .map_err(|e| Error::from_reason(format!("Failed to cancel subscription: {}", e)))?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Skip the next billing cycle
@@ -5884,7 +5984,7 @@ impl Subscriptions {
             .skip_next_cycle(uuid.into(), stateset_core::SkipBillingCycle { reason: i.reason })
             .map_err(|e| Error::from_reason(format!("Failed to skip billing: {}", e)))?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     // ========================================================================
@@ -6122,9 +6222,11 @@ pub struct PromotionOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::Promotion> for PromotionOutput {
-    fn from(p: stateset_core::Promotion) -> Self {
-        Self {
+impl TryFrom<stateset_core::Promotion> for PromotionOutput {
+    type Error = Error;
+
+    fn try_from(p: stateset_core::Promotion) -> Result<Self> {
+        Ok(Self {
             id: p.id.to_string(),
             code: p.code,
             name: p.name,
@@ -6135,12 +6237,21 @@ impl From<stateset_core::Promotion> for PromotionOutput {
             target: format!("{:?}", p.target).to_lowercase(),
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
-            percentage_off: p.percentage_off.map(to_f64_or_nan),
-            fixed_amount_off: p.fixed_amount_off.map(to_f64_or_nan),
-            max_discount_amount: p.max_discount_amount.map(to_f64_or_nan),
+            percentage_off: optional_to_f64_result(p.percentage_off, "promotion percentage off")?,
+            fixed_amount_off: optional_to_f64_result(
+                p.fixed_amount_off,
+                "promotion fixed amount off",
+            )?,
+            max_discount_amount: optional_to_f64_result(
+                p.max_discount_amount,
+                "promotion max discount amount",
+            )?,
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
-            get_discount_percent: p.get_discount_percent.map(to_f64_or_nan),
+            get_discount_percent: optional_to_f64_result(
+                p.get_discount_percent,
+                "promotion get discount percent",
+            )?,
             starts_at: p.starts_at.to_rfc3339(),
             ends_at: p.ends_at.map(|d| d.to_rfc3339()),
             total_usage_limit: p.total_usage_limit,
@@ -6151,7 +6262,7 @@ impl From<stateset_core::Promotion> for PromotionOutput {
             metadata: p.metadata.map(|m| m.to_string()),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -6410,20 +6521,24 @@ impl Promotions {
             trigger: input.trigger.map(|s| parse_promotion_trigger(&s)).unwrap_or_default(),
             target: input.target.map(|s| parse_promotion_target(&s)).unwrap_or_default(),
             stacking: input.stacking.map(|s| parse_stacking_behavior(&s)).unwrap_or_default(),
-            percentage_off: input
-                .percentage_off
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            fixed_amount_off: input
-                .fixed_amount_off
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            max_discount_amount: input
-                .max_discount_amount
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            percentage_off: optional_decimal_from_f64(
+                input.percentage_off,
+                "promotion percentage off",
+            )?,
+            fixed_amount_off: optional_decimal_from_f64(
+                input.fixed_amount_off,
+                "promotion fixed amount off",
+            )?,
+            max_discount_amount: optional_decimal_from_f64(
+                input.max_discount_amount,
+                "promotion max discount amount",
+            )?,
             buy_quantity: input.buy_quantity,
             get_quantity: input.get_quantity,
-            get_discount_percent: input
-                .get_discount_percent
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            get_discount_percent: optional_decimal_from_f64(
+                input.get_discount_percent,
+                "promotion get discount percent",
+            )?,
             tiers: input.tiers.and_then(|s| serde_json::from_str(&s).ok()),
             bundle_product_ids: input.bundle_product_ids.map(|ids| {
                 ids.into_iter()
@@ -6431,9 +6546,10 @@ impl Promotions {
                     .map(ProductId::from)
                     .collect()
             }),
-            bundle_discount: input
-                .bundle_discount
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            bundle_discount: optional_decimal_from_f64(
+                input.bundle_discount,
+                "promotion bundle discount",
+            )?,
             starts_at: input.starts_at.and_then(|s| {
                 chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
             }),
@@ -6479,7 +6595,7 @@ impl Promotions {
             .create(create)
             .map_err(|e| Error::from_reason(format!("Failed to create promotion: {}", e)))?;
 
-        Ok(promo.into())
+        convert_output(promo)
     }
 
     /// Get a promotion by ID
@@ -6494,7 +6610,7 @@ impl Promotions {
             .get(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
 
-        Ok(promo.map(|p| p.into()))
+        convert_optional_output(promo)
     }
 
     /// Get a promotion by its internal code
@@ -6506,7 +6622,7 @@ impl Promotions {
             .get_by_code(&code)
             .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
 
-        Ok(promo.map(|p| p.into()))
+        convert_optional_output(promo)
     }
 
     /// List promotions with optional filtering
@@ -6530,7 +6646,7 @@ impl Promotions {
             .list(core_filter)
             .map_err(|e| Error::from_reason(format!("Failed to list promotions: {}", e)))?;
 
-        Ok(promos.into_iter().map(|p| p.into()).collect())
+        convert_outputs(promos)
     }
 
     /// Update a promotion
@@ -6545,15 +6661,18 @@ impl Promotions {
             description: input.description,
             internal_notes: input.internal_notes,
             status: input.status.map(|s| parse_promotion_status(&s)),
-            percentage_off: input
-                .percentage_off
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            fixed_amount_off: input
-                .fixed_amount_off
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            max_discount_amount: input
-                .max_discount_amount
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            percentage_off: optional_decimal_from_f64(
+                input.percentage_off,
+                "promotion percentage off",
+            )?,
+            fixed_amount_off: optional_decimal_from_f64(
+                input.fixed_amount_off,
+                "promotion fixed amount off",
+            )?,
+            max_discount_amount: optional_decimal_from_f64(
+                input.max_discount_amount,
+                "promotion max discount amount",
+            )?,
             starts_at: input.starts_at.and_then(|s| {
                 chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))
             }),
@@ -6571,7 +6690,7 @@ impl Promotions {
             .update(uuid.into(), update)
             .map_err(|e| Error::from_reason(format!("Failed to update promotion: {}", e)))?;
 
-        Ok(promo.into())
+        convert_output(promo)
     }
 
     /// Delete a promotion
@@ -6601,7 +6720,7 @@ impl Promotions {
             .activate(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to activate promotion: {}", e)))?;
 
-        Ok(promo.into())
+        convert_output(promo)
     }
 
     /// Deactivate (pause) a promotion
@@ -6616,7 +6735,7 @@ impl Promotions {
             .deactivate(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to deactivate promotion: {}", e)))?;
 
-        Ok(promo.into())
+        convert_output(promo)
     }
 
     /// Get all currently active promotions
@@ -6628,7 +6747,7 @@ impl Promotions {
             .get_active()
             .map_err(|e| Error::from_reason(format!("Failed to get active promotions: {}", e)))?;
 
-        Ok(promos.into_iter().map(|p| p.into()).collect())
+        convert_outputs(promos)
     }
 
     /// Check if a promotion is currently valid
@@ -6763,27 +6882,40 @@ impl Promotions {
             line_items: input
                 .line_items
                 .into_iter()
-                .map(|item| stateset_core::PromotionLineItem {
-                    id: item.id,
-                    product_id: item
-                        .product_id
-                        .and_then(|s| uuid::Uuid::parse_str(&s).ok())
-                        .map(ProductId::from),
-                    variant_id: item.variant_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-                    sku: item.sku,
-                    category_ids: item
-                        .category_ids
-                        .map(|ids| {
-                            ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
-                        })
-                        .unwrap_or_default(),
-                    quantity: item.quantity,
-                    unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
-                    line_total: Decimal::from_f64_retain(item.line_total).unwrap_or_default(),
+                .map(|item| {
+                    Ok(stateset_core::PromotionLineItem {
+                        id: item.id,
+                        product_id: item
+                            .product_id
+                            .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                            .map(ProductId::from),
+                        variant_id: item.variant_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                        sku: item.sku,
+                        category_ids: item
+                            .category_ids
+                            .map(|ids| {
+                                ids.into_iter()
+                                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        quantity: item.quantity,
+                        unit_price: decimal_from_f64(
+                            item.unit_price,
+                            "promotion line item unit price",
+                        )?,
+                        line_total: decimal_from_f64(
+                            item.line_total,
+                            "promotion line item line total",
+                        )?,
+                    })
                 })
-                .collect(),
-            subtotal: Decimal::from_f64_retain(input.subtotal).unwrap_or_default(),
-            shipping_amount: Decimal::from_f64_retain(input.shipping_amount.unwrap_or(0.0))
+                .collect::<Result<Vec<_>>>()?,
+            subtotal: decimal_from_f64(input.subtotal, "promotion subtotal")?,
+            shipping_amount: input
+                .shipping_amount
+                .map(|amount| decimal_from_f64(amount, "promotion shipping amount"))
+                .transpose()?
                 .unwrap_or_default(),
             shipping_country: input.shipping_country,
             shipping_state: input.shipping_state,
@@ -6828,7 +6960,7 @@ impl Promotions {
                 customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CustomerId::from),
                 order_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(OrderId::from),
                 cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()).map(CartId::from),
-                Decimal::from_f64_retain(discount_amount).unwrap_or_default(),
+                decimal_from_f64(discount_amount, "promotion discount amount")?,
                 &currency,
             )
             .map_err(|e| Error::from_reason(format!("Failed to record usage: {}", e)))?;
@@ -7024,27 +7156,29 @@ pub struct TaxRateOutput {
     pub updated_at: String,
 }
 
-impl From<stateset_core::TaxRate> for TaxRateOutput {
-    fn from(r: stateset_core::TaxRate) -> Self {
-        Self {
+impl TryFrom<stateset_core::TaxRate> for TaxRateOutput {
+    type Error = Error;
+
+    fn try_from(r: stateset_core::TaxRate) -> Result<Self> {
+        Ok(Self {
             id: r.id.to_string(),
             jurisdiction_id: r.jurisdiction_id.to_string(),
             tax_type: r.tax_type.as_str().to_string(),
             product_category: r.product_category.as_str().to_string(),
-            rate: to_f64_or_nan(r.rate),
+            rate: to_f64_result(r.rate, "tax rate")?,
             name: r.name,
             description: r.description,
             is_compound: r.is_compound,
             priority: r.priority,
-            threshold_min: r.threshold_min.map(to_f64_or_nan),
-            threshold_max: r.threshold_max.map(to_f64_or_nan),
-            fixed_amount: r.fixed_amount.map(to_f64_or_nan),
+            threshold_min: optional_to_f64_result(r.threshold_min, "tax threshold min")?,
+            threshold_max: optional_to_f64_result(r.threshold_max, "tax threshold max")?,
+            fixed_amount: optional_to_f64_result(r.fixed_amount, "tax fixed amount")?,
             effective_from: r.effective_from.to_string(),
             effective_to: r.effective_to.map(|d| d.to_string()),
             active: r.active,
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -7464,25 +7598,30 @@ impl Tax {
         let line_items: Vec<stateset_core::TaxLineItem> = input
             .line_items
             .into_iter()
-            .map(|item| stateset_core::TaxLineItem {
-                id: item.id,
-                sku: item.sku,
-                product_id: item
-                    .product_id
-                    .and_then(|s| uuid::Uuid::parse_str(&s).ok())
-                    .map(ProductId::from),
-                quantity: Decimal::from_f64_retain(item.quantity).unwrap_or(Decimal::ONE),
-                unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
-                discount_amount: Decimal::from_f64_retain(item.discount_amount.unwrap_or(0.0))
+            .map(|item| {
+                Ok(stateset_core::TaxLineItem {
+                    id: item.id,
+                    sku: item.sku,
+                    product_id: item
+                        .product_id
+                        .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+                        .map(ProductId::from),
+                    quantity: decimal_from_f64(item.quantity, "tax line item quantity")?,
+                    unit_price: decimal_from_f64(item.unit_price, "tax line item unit price")?,
+                    discount_amount: optional_decimal_from_f64(
+                        item.discount_amount,
+                        "tax line item discount amount",
+                    )?
                     .unwrap_or_default(),
-                tax_category: item
-                    .tax_category
-                    .map(|s| parse_product_tax_category(&s))
-                    .unwrap_or_default(),
-                tax_code: item.tax_code,
-                description: item.description,
+                    tax_category: item
+                        .tax_category
+                        .map(|s| parse_product_tax_category(&s))
+                        .unwrap_or_default(),
+                    tax_code: item.tax_code,
+                    description: item.description,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let shipping_address = stateset_core::TaxAddress {
             line1: input.shipping_address.line1,
@@ -7507,9 +7646,10 @@ impl Tax {
             shipping_address,
             billing_address,
             customer_id: input.customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-            shipping_amount: input
-                .shipping_amount
-                .map(|a| Decimal::from_f64_retain(a).unwrap_or_default()),
+            shipping_amount: optional_decimal_from_f64(
+                input.shipping_amount,
+                "tax shipping amount",
+            )?,
             currency: input
                 .currency
                 .unwrap_or_else(|| "USD".to_string())
@@ -7552,14 +7692,14 @@ impl Tax {
         let tax = commerce
             .tax()
             .calculate_for_item(
-                Decimal::from_f64_retain(unit_price).unwrap_or_default(),
-                Decimal::from_f64_retain(quantity).unwrap_or(Decimal::ONE),
+                decimal_from_f64(unit_price, "tax unit price")?,
+                decimal_from_f64(quantity, "tax quantity")?,
                 category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
                 &address,
             )
             .map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
 
-        Ok(to_f64_or_nan(tax))
+        to_f64_result(tax, "tax amount")
     }
 
     /// Get the effective tax rate for an address and category
@@ -7588,7 +7728,7 @@ impl Tax {
             )
             .map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
 
-        Ok(to_f64_or_nan(rate))
+        to_f64_result(rate, "tax rate")
     }
 
     // ========================================================================
@@ -7694,7 +7834,7 @@ impl Tax {
             .get_rate(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
 
-        Ok(rate.map(|r| r.into()))
+        convert_optional_output(rate)
     }
 
     /// List tax rates with optional filtering
@@ -7721,7 +7861,7 @@ impl Tax {
             .list_rates(core_filter)
             .map_err(|e| Error::from_reason(format!("Failed to list rates: {}", e)))?;
 
-        Ok(rates.into_iter().map(|r| r.into()).collect())
+        convert_outputs(rates)
     }
 
     /// Create a new tax rate
@@ -7743,20 +7883,14 @@ impl Tax {
                 .product_category
                 .map(|s| parse_product_tax_category(&s))
                 .unwrap_or_default(),
-            rate: Decimal::from_f64_retain(input.rate).unwrap_or_default(),
+            rate: decimal_from_f64(input.rate, "tax rate")?,
             name: input.name,
             description: input.description,
             is_compound: input.is_compound.unwrap_or(false),
             priority: input.priority.unwrap_or(0),
-            threshold_min: input
-                .threshold_min
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            threshold_max: input
-                .threshold_max
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            fixed_amount: input
-                .fixed_amount
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            threshold_min: optional_decimal_from_f64(input.threshold_min, "tax threshold min")?,
+            threshold_max: optional_decimal_from_f64(input.threshold_max, "tax threshold max")?,
+            fixed_amount: optional_decimal_from_f64(input.fixed_amount, "tax fixed amount")?,
             effective_from,
             effective_to: input
                 .effective_to
@@ -7768,7 +7902,7 @@ impl Tax {
             .create_rate(create)
             .map_err(|e| Error::from_reason(format!("Failed to create rate: {}", e)))?;
 
-        Ok(rate.into())
+        convert_output(rate)
     }
 
     // ========================================================================
@@ -8262,8 +8396,10 @@ impl Quality {
                 sku: input.sku,
                 lot_number: input.lot_number,
                 serial_number: None,
-                quantity_affected: Decimal::from_f64_retain(input.quantity_affected)
-                    .unwrap_or_default(),
+                quantity_affected: decimal_from_f64(
+                    input.quantity_affected,
+                    "ncr quantity affected",
+                )?,
                 description: input.description,
                 assigned_to: None,
             })
@@ -8317,7 +8453,7 @@ impl Quality {
                 lot_number: input.lot_number,
                 serial_number: None,
                 location_id: input.location_id,
-                quantity: Decimal::from_f64_retain(input.quantity_held).unwrap_or_default(),
+                quantity: decimal_from_f64(input.quantity_held, "quality hold quantity")?,
                 reason: input.reason,
                 hold_type: parse_hold_type(&input.hold_type),
                 ncr_id: None,
@@ -8459,7 +8595,7 @@ impl Lots {
             .create(stateset_core::CreateLot {
                 lot_number: input.lot_number,
                 sku: input.sku,
-                quantity: Decimal::from_f64_retain(input.quantity_produced).unwrap_or_default(),
+                quantity: decimal_from_f64(input.quantity_produced, "lot quantity produced")?,
                 production_date: input.production_date.and_then(|s| {
                     chrono::DateTime::parse_from_rfc3339(&s)
                         .ok()
@@ -9007,7 +9143,7 @@ impl Warehouse {
             .warehouse()
             .get_total_available(warehouse_id, &sku)
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
-        Ok(to_f64_or_nan(total))
+        to_f64_result(total, "warehouse total available")
     }
 
     /// Count warehouses
@@ -9483,19 +9619,21 @@ pub struct BillOutput {
     pub created_at: String,
 }
 
-impl From<stateset_core::Bill> for BillOutput {
-    fn from(b: stateset_core::Bill) -> Self {
-        Self {
+impl TryFrom<stateset_core::Bill> for BillOutput {
+    type Error = Error;
+
+    fn try_from(b: stateset_core::Bill) -> Result<Self> {
+        Ok(Self {
             id: b.id.to_string(),
             bill_number: b.bill_number,
             supplier_id: b.supplier_id.to_string(),
             status: format!("{:?}", b.status),
-            total_amount: to_f64_or_nan(b.total_amount),
-            amount_paid: to_f64_or_nan(b.amount_paid),
-            amount_due: to_f64_or_nan(b.amount_due),
+            total_amount: to_f64_result(b.total_amount, "bill total amount")?,
+            amount_paid: to_f64_result(b.amount_paid, "bill amount paid")?,
+            amount_due: to_f64_result(b.amount_due, "bill amount due")?,
             due_date: b.due_date.to_rfc3339(),
             created_at: b.created_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -9510,16 +9648,18 @@ pub struct ApAgingSummaryOutput {
     pub total: f64,
 }
 
-impl From<stateset_core::ApAgingSummary> for ApAgingSummaryOutput {
-    fn from(a: stateset_core::ApAgingSummary) -> Self {
-        Self {
-            current: to_f64_or_nan(a.current),
-            days_1_30: to_f64_or_nan(a.days_1_30),
-            days_31_60: to_f64_or_nan(a.days_31_60),
-            days_61_90: to_f64_or_nan(a.days_61_90),
-            days_over_90: to_f64_or_nan(a.days_over_90),
-            total: to_f64_or_nan(a.total),
-        }
+impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummaryOutput {
+    type Error = Error;
+
+    fn try_from(a: stateset_core::ApAgingSummary) -> Result<Self> {
+        Ok(Self {
+            current: to_f64_result(a.current, "accounts payable aging current")?,
+            days_1_30: to_f64_result(a.days_1_30, "accounts payable aging 1-30 days")?,
+            days_31_60: to_f64_result(a.days_31_60, "accounts payable aging 31-60 days")?,
+            days_61_90: to_f64_result(a.days_61_90, "accounts payable aging 61-90 days")?,
+            days_over_90: to_f64_result(a.days_over_90, "accounts payable aging over 90 days")?,
+            total: to_f64_result(a.total, "accounts payable aging total")?,
+        })
     }
 }
 
@@ -9554,7 +9694,7 @@ impl AccountsPayable {
                 items: vec![],
             })
             .map_err(|e| Error::from_reason(format!("Failed to create bill: {}", e)))?;
-        Ok(bill.into())
+        convert_output(bill)
     }
 
     /// Get a bill by ID
@@ -9566,7 +9706,7 @@ impl AccountsPayable {
             .accounts_payable()
             .get_bill(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get bill: {}", e)))?;
-        Ok(bill.map(|b| b.into()))
+        convert_optional_output(bill)
     }
 
     /// Get a bill by bill number
@@ -9577,7 +9717,7 @@ impl AccountsPayable {
             .accounts_payable()
             .get_bill_by_number(&number)
             .map_err(|e| Error::from_reason(format!("Failed to get bill: {}", e)))?;
-        Ok(bill.map(|b| b.into()))
+        convert_optional_output(bill)
     }
 
     /// List all bills
@@ -9588,7 +9728,7 @@ impl AccountsPayable {
             .accounts_payable()
             .list_bills(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list bills: {}", e)))?;
-        Ok(bills.into_iter().map(|b| b.into()).collect())
+        convert_outputs(bills)
     }
 
     /// Approve a bill
@@ -9600,7 +9740,7 @@ impl AccountsPayable {
             .accounts_payable()
             .approve_bill(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to approve bill: {}", e)))?;
-        Ok(bill.into())
+        convert_output(bill)
     }
 
     /// Cancel a bill
@@ -9612,7 +9752,7 @@ impl AccountsPayable {
             .accounts_payable()
             .cancel_bill(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel bill: {}", e)))?;
-        Ok(bill.into())
+        convert_output(bill)
     }
 
     /// Get overdue bills
@@ -9623,7 +9763,7 @@ impl AccountsPayable {
             .accounts_payable()
             .get_overdue_bills()
             .map_err(|e| Error::from_reason(format!("Failed to get overdue bills: {}", e)))?;
-        Ok(bills.into_iter().map(|b| b.into()).collect())
+        convert_outputs(bills)
     }
 
     /// Get bills due soon
@@ -9634,7 +9774,7 @@ impl AccountsPayable {
             .accounts_payable()
             .get_bills_due_soon(days)
             .map_err(|e| Error::from_reason(format!("Failed to get bills: {}", e)))?;
-        Ok(bills.into_iter().map(|b| b.into()).collect())
+        convert_outputs(bills)
     }
 
     /// Get aging summary
@@ -9645,7 +9785,7 @@ impl AccountsPayable {
             .accounts_payable()
             .get_aging_summary()
             .map_err(|e| Error::from_reason(format!("Failed to get aging: {}", e)))?;
-        Ok(aging.into())
+        convert_output(aging)
     }
 
     /// Get total outstanding
@@ -9656,7 +9796,7 @@ impl AccountsPayable {
             .accounts_payable()
             .get_total_outstanding()
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
-        Ok(to_f64_or_nan(total))
+        to_f64_result(total, "accounts payable total outstanding")
     }
 
     /// Count bills
@@ -9686,16 +9826,18 @@ pub struct ArAgingSummaryOutput {
     pub total: f64,
 }
 
-impl From<stateset_core::ArAgingSummary> for ArAgingSummaryOutput {
-    fn from(a: stateset_core::ArAgingSummary) -> Self {
-        Self {
-            current: to_f64_or_nan(a.current),
-            days_1_30: to_f64_or_nan(a.days_1_30),
-            days_31_60: to_f64_or_nan(a.days_31_60),
-            days_61_90: to_f64_or_nan(a.days_61_90),
-            days_over_90: to_f64_or_nan(a.days_over_90),
-            total: to_f64_or_nan(a.total),
-        }
+impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummaryOutput {
+    type Error = Error;
+
+    fn try_from(a: stateset_core::ArAgingSummary) -> Result<Self> {
+        Ok(Self {
+            current: to_f64_result(a.current, "accounts receivable aging current")?,
+            days_1_30: to_f64_result(a.days_1_30, "accounts receivable aging 1-30 days")?,
+            days_31_60: to_f64_result(a.days_31_60, "accounts receivable aging 31-60 days")?,
+            days_61_90: to_f64_result(a.days_61_90, "accounts receivable aging 61-90 days")?,
+            days_over_90: to_f64_result(a.days_over_90, "accounts receivable aging over 90 days")?,
+            total: to_f64_result(a.total, "accounts receivable aging total")?,
+        })
     }
 }
 
@@ -9721,17 +9863,19 @@ pub struct CreditMemoOutput {
     pub created_at: String,
 }
 
-impl From<stateset_core::CreditMemo> for CreditMemoOutput {
-    fn from(c: stateset_core::CreditMemo) -> Self {
-        Self {
+impl TryFrom<stateset_core::CreditMemo> for CreditMemoOutput {
+    type Error = Error;
+
+    fn try_from(c: stateset_core::CreditMemo) -> Result<Self> {
+        Ok(Self {
             id: c.id.to_string(),
             credit_memo_number: c.credit_memo_number,
             customer_id: c.customer_id.to_string(),
-            amount: to_f64_or_nan(c.amount),
+            amount: to_f64_result(c.amount, "credit memo amount")?,
             status: format!("{:?}", c.status),
             reason: format!("{:?}", c.reason),
             created_at: c.created_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -9766,7 +9910,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .get_aging_summary()
             .map_err(|e| Error::from_reason(format!("Failed to get aging: {}", e)))?;
-        Ok(aging.into())
+        convert_output(aging)
     }
 
     /// Get total outstanding
@@ -9777,7 +9921,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .get_total_outstanding()
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
-        Ok(to_f64_or_nan(total))
+        to_f64_result(total, "accounts receivable total outstanding")
     }
 
     /// Get Days Sales Outstanding (DSO)
@@ -9788,7 +9932,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .get_dso(days)
             .map_err(|e| Error::from_reason(format!("Failed to get DSO: {}", e)))?;
-        Ok(to_f64_or_nan(dso))
+        to_f64_result(dso, "days sales outstanding")
     }
 
     /// Create a credit memo
@@ -9806,11 +9950,11 @@ impl AccountsReceivable {
                 customer_id,
                 original_invoice_id: input.original_invoice_id.and_then(|s| s.parse().ok()),
                 reason: parse_credit_memo_reason(&input.reason),
-                amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
+                amount: decimal_from_f64(input.amount, "credit memo amount")?,
                 notes: input.notes,
             })
             .map_err(|e| Error::from_reason(format!("Failed to create credit memo: {}", e)))?;
-        Ok(memo.into())
+        convert_output(memo)
     }
 
     /// Get a credit memo by ID
@@ -9822,7 +9966,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .get_credit_memo(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get credit memo: {}", e)))?;
-        Ok(memo.map(|m| m.into()))
+        convert_optional_output(memo)
     }
 
     /// List credit memos
@@ -9833,7 +9977,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .list_credit_memos(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list credit memos: {}", e)))?;
-        Ok(memos.into_iter().map(|m| m.into()).collect())
+        convert_outputs(memos)
     }
 
     /// Void a credit memo
@@ -9845,7 +9989,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .void_credit_memo(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to void credit memo: {}", e)))?;
-        Ok(memo.into())
+        convert_output(memo)
     }
 
     /// Get unapplied credits for a customer
@@ -9860,7 +10004,7 @@ impl AccountsReceivable {
             .accounts_receivable()
             .get_unapplied_credits(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get credits: {}", e)))?;
-        Ok(memos.into_iter().map(|m| m.into()).collect())
+        convert_outputs(memos)
     }
 }
 
@@ -9893,19 +10037,21 @@ pub struct ItemCostOutput {
     pub overhead_cost: f64,
 }
 
-impl From<stateset_core::ItemCost> for ItemCostOutput {
-    fn from(c: stateset_core::ItemCost) -> Self {
-        Self {
+impl TryFrom<stateset_core::ItemCost> for ItemCostOutput {
+    type Error = Error;
+
+    fn try_from(c: stateset_core::ItemCost) -> Result<Self> {
+        Ok(Self {
             id: c.id.to_string(),
             sku: c.sku,
             cost_method: format!("{:?}", c.cost_method),
-            standard_cost: to_f64_or_nan(c.standard_cost),
-            average_cost: to_f64_or_nan(c.average_cost),
-            last_cost: to_f64_or_nan(c.last_cost),
-            material_cost: to_f64_or_nan(c.material_cost),
-            labor_cost: to_f64_or_nan(c.labor_cost),
-            overhead_cost: to_f64_or_nan(c.overhead_cost),
-        }
+            standard_cost: to_f64_result(c.standard_cost, "standard cost")?,
+            average_cost: to_f64_result(c.average_cost, "average cost")?,
+            last_cost: to_f64_result(c.last_cost, "last cost")?,
+            material_cost: to_f64_result(c.material_cost, "material cost")?,
+            labor_cost: to_f64_result(c.labor_cost, "labor cost")?,
+            overhead_cost: to_f64_result(c.overhead_cost, "overhead cost")?,
+        })
     }
 }
 
@@ -9934,7 +10080,7 @@ impl CostAccounting {
             .cost_accounting()
             .get_item_cost(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get cost: {}", e)))?;
-        Ok(cost.map(|c| c.into()))
+        convert_optional_output(cost)
     }
 
     /// Set item cost
@@ -9946,22 +10092,23 @@ impl CostAccounting {
             .set_item_cost(stateset_core::SetItemCost {
                 sku: input.sku,
                 cost_method: input.cost_method.map(|s| parse_cost_method(&s)),
-                standard_cost: input
-                    .standard_cost
-                    .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-                material_cost: input
-                    .material_cost
-                    .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-                labor_cost: input
-                    .labor_cost
-                    .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-                overhead_cost: input
-                    .overhead_cost
-                    .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+                standard_cost: optional_decimal_from_f64(
+                    input.standard_cost,
+                    "item standard cost",
+                )?,
+                material_cost: optional_decimal_from_f64(
+                    input.material_cost,
+                    "item material cost",
+                )?,
+                labor_cost: optional_decimal_from_f64(input.labor_cost, "item labor cost")?,
+                overhead_cost: optional_decimal_from_f64(
+                    input.overhead_cost,
+                    "item overhead cost",
+                )?,
                 ..Default::default()
             })
             .map_err(|e| Error::from_reason(format!("Failed to set cost: {}", e)))?;
-        Ok(cost.into())
+        convert_output(cost)
     }
 
     /// List all item costs
@@ -9972,7 +10119,7 @@ impl CostAccounting {
             .cost_accounting()
             .list_item_costs(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list costs: {}", e)))?;
-        Ok(costs.into_iter().map(|c| c.into()).collect())
+        convert_outputs(costs)
     }
 
     /// Update average cost
@@ -9988,11 +10135,11 @@ impl CostAccounting {
             .cost_accounting()
             .update_average_cost(
                 &sku,
-                Decimal::from_f64_retain(quantity).unwrap_or_default(),
-                Decimal::from_f64_retain(unit_cost).unwrap_or_default(),
+                decimal_from_f64(quantity, "average cost quantity")?,
+                decimal_from_f64(unit_cost, "average cost unit cost")?,
             )
             .map_err(|e| Error::from_reason(format!("Failed to update cost: {}", e)))?;
-        Ok(cost.into())
+        convert_output(cost)
     }
 
     /// Get total inventory value
@@ -10003,7 +10150,7 @@ impl CostAccounting {
             .cost_accounting()
             .get_total_inventory_value()
             .map_err(|e| Error::from_reason(format!("Failed to get value: {}", e)))?;
-        Ok(to_f64_or_nan(total))
+        to_f64_result(total, "inventory value")
     }
 }
 
@@ -10032,17 +10179,19 @@ pub struct CreditAccountOutput {
     pub payment_terms: Option<String>,
 }
 
-impl From<stateset_core::CreditAccount> for CreditAccountOutput {
-    fn from(c: stateset_core::CreditAccount) -> Self {
-        Self {
+impl TryFrom<stateset_core::CreditAccount> for CreditAccountOutput {
+    type Error = Error;
+
+    fn try_from(c: stateset_core::CreditAccount) -> Result<Self> {
+        Ok(Self {
             id: c.id.to_string(),
             customer_id: c.customer_id.to_string(),
-            credit_limit: to_f64_or_nan(c.credit_limit),
-            credit_used: to_f64_or_nan(c.current_balance),
-            credit_available: to_f64_or_nan(c.available_credit),
+            credit_limit: to_f64_result(c.credit_limit, "credit limit")?,
+            credit_used: to_f64_result(c.current_balance, "credit used")?,
+            credit_available: to_f64_result(c.available_credit, "credit available")?,
             status: format!("{:?}", c.status),
             payment_terms: c.payment_terms,
-        }
+        })
     }
 }
 
@@ -10055,14 +10204,16 @@ pub struct CreditCheckOutput {
     pub requires_approval: bool,
 }
 
-impl From<stateset_core::CreditCheckResult> for CreditCheckOutput {
-    fn from(c: stateset_core::CreditCheckResult) -> Self {
-        Self {
+impl TryFrom<stateset_core::CreditCheckResult> for CreditCheckOutput {
+    type Error = Error;
+
+    fn try_from(c: stateset_core::CreditCheckResult) -> Result<Self> {
+        Ok(Self {
             approved: c.approved,
             reason: c.reason,
-            available_credit: to_f64_or_nan(c.available_credit),
+            available_credit: to_f64_result(c.available_credit, "available credit")?,
             requires_approval: c.requires_approval,
-        }
+        })
     }
 }
 
@@ -10086,13 +10237,13 @@ impl Credit {
             .credit()
             .create_credit_account(stateset_core::CreateCreditAccount {
                 customer_id,
-                credit_limit: Decimal::from_f64_retain(input.credit_limit).unwrap_or_default(),
+                credit_limit: decimal_from_f64(input.credit_limit, "credit limit")?,
                 payment_terms: input.payment_terms,
                 notes: input.notes,
                 ..Default::default()
             })
             .map_err(|e| Error::from_reason(format!("Failed to create credit account: {}", e)))?;
-        Ok(account.into())
+        convert_output(account)
     }
 
     /// Get a credit account by ID
@@ -10104,7 +10255,7 @@ impl Credit {
             .credit()
             .get_credit_account(uuid.into())
             .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
-        Ok(account.map(|a| a.into()))
+        convert_optional_output(account)
     }
 
     /// Get credit account by customer
@@ -10119,7 +10270,7 @@ impl Credit {
             .credit()
             .get_credit_account_by_customer(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
-        Ok(account.map(|a| a.into()))
+        convert_optional_output(account)
     }
 
     /// List credit accounts
@@ -10130,7 +10281,7 @@ impl Credit {
             .credit()
             .list_credit_accounts(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list accounts: {}", e)))?;
-        Ok(accounts.into_iter().map(|a| a.into()).collect())
+        convert_outputs(accounts)
     }
 
     /// Check credit
@@ -10144,9 +10295,9 @@ impl Credit {
         let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
         let result = commerce
             .credit()
-            .check_credit(uuid, Decimal::from_f64_retain(order_amount).unwrap_or_default())
+            .check_credit(uuid, decimal_from_f64(order_amount, "order amount")?)
             .map_err(|e| Error::from_reason(format!("Failed to check credit: {}", e)))?;
-        Ok(result.into())
+        convert_output(result)
     }
 
     /// Adjust credit limit
@@ -10161,13 +10312,9 @@ impl Credit {
         let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
         let account = commerce
             .credit()
-            .adjust_credit_limit(
-                uuid,
-                Decimal::from_f64_retain(new_limit).unwrap_or_default(),
-                &reason,
-            )
+            .adjust_credit_limit(uuid, decimal_from_f64(new_limit, "new credit limit")?, &reason)
             .map_err(|e| Error::from_reason(format!("Failed to adjust limit: {}", e)))?;
-        Ok(account.into())
+        convert_output(account)
     }
 
     /// Suspend credit account
@@ -10183,7 +10330,7 @@ impl Credit {
             .credit()
             .suspend_credit_account(uuid, &reason)
             .map_err(|e| Error::from_reason(format!("Failed to suspend account: {}", e)))?;
-        Ok(account.into())
+        convert_output(account)
     }
 
     /// Reactivate credit account
@@ -10198,7 +10345,7 @@ impl Credit {
             .credit()
             .reactivate_credit_account(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to reactivate account: {}", e)))?;
-        Ok(account.into())
+        convert_output(account)
     }
 
     /// Get over-limit customers
@@ -10209,7 +10356,7 @@ impl Credit {
             .credit()
             .get_over_limit_customers()
             .map_err(|e| Error::from_reason(format!("Failed to get accounts: {}", e)))?;
-        Ok(accounts.into_iter().map(|a| a.into()).collect())
+        convert_outputs(accounts)
     }
 }
 
@@ -10244,21 +10391,29 @@ pub struct BackorderOutput {
     pub created_at: String,
 }
 
-impl From<stateset_core::Backorder> for BackorderOutput {
-    fn from(b: stateset_core::Backorder) -> Self {
-        Self {
+impl TryFrom<stateset_core::Backorder> for BackorderOutput {
+    type Error = Error;
+
+    fn try_from(b: stateset_core::Backorder) -> Result<Self> {
+        Ok(Self {
             id: b.id.to_string(),
             backorder_number: b.backorder_number,
             order_id: b.order_id.to_string(),
             customer_id: b.customer_id.to_string(),
             sku: b.sku,
-            quantity_ordered: to_f64_or_nan(b.quantity_ordered),
-            quantity_fulfilled: to_f64_or_nan(b.quantity_fulfilled),
-            quantity_remaining: to_f64_or_nan(b.quantity_remaining),
+            quantity_ordered: to_f64_result(b.quantity_ordered, "backorder quantity ordered")?,
+            quantity_fulfilled: to_f64_result(
+                b.quantity_fulfilled,
+                "backorder quantity fulfilled",
+            )?,
+            quantity_remaining: to_f64_result(
+                b.quantity_remaining,
+                "backorder quantity remaining",
+            )?,
             status: format!("{:?}", b.status),
             priority: format!("{:?}", b.priority),
             created_at: b.created_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -10271,14 +10426,16 @@ pub struct BackorderSummaryOutput {
     pub total_value: f64,
 }
 
-impl From<stateset_core::BackorderSummary> for BackorderSummaryOutput {
-    fn from(s: stateset_core::BackorderSummary) -> Self {
-        Self {
+impl TryFrom<stateset_core::BackorderSummary> for BackorderSummaryOutput {
+    type Error = Error;
+
+    fn try_from(s: stateset_core::BackorderSummary) -> Result<Self> {
+        Ok(Self {
             total_backorders: s.total_backorders,
             critical_count: s.critical_count,
             overdue_count: s.overdue_count,
-            total_value: to_f64_or_nan(s.total_quantity), // Using total_quantity as value proxy
-        }
+            total_value: to_f64_result(s.total_quantity, "backorder total quantity")?,
+        })
     }
 }
 
@@ -10314,7 +10471,7 @@ impl Backorders {
                 order_line_id: None,
                 customer_id,
                 sku: input.sku,
-                quantity: Decimal::from_f64_retain(input.quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(input.quantity, "backorder quantity")?,
                 priority: input.priority.map(|s| parse_backorder_priority(&s)),
                 expected_date: None,
                 promised_date: None,
@@ -10322,7 +10479,7 @@ impl Backorders {
                 notes: input.notes,
             })
             .map_err(|e| Error::from_reason(format!("Failed to create backorder: {}", e)))?;
-        Ok(backorder.into())
+        convert_output(backorder)
     }
 
     /// Get a backorder by ID
@@ -10334,7 +10491,7 @@ impl Backorders {
             .backorder()
             .get_backorder(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get backorder: {}", e)))?;
-        Ok(backorder.map(|b| b.into()))
+        convert_optional_output(backorder)
     }
 
     /// Get a backorder by number
@@ -10345,7 +10502,7 @@ impl Backorders {
             .backorder()
             .get_backorder_by_number(&number)
             .map_err(|e| Error::from_reason(format!("Failed to get backorder: {}", e)))?;
-        Ok(backorder.map(|b| b.into()))
+        convert_optional_output(backorder)
     }
 
     /// List all backorders
@@ -10356,7 +10513,7 @@ impl Backorders {
             .backorder()
             .list_backorders(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list backorders: {}", e)))?;
-        Ok(backorders.into_iter().map(|b| b.into()).collect())
+        convert_outputs(backorders)
     }
 
     /// Cancel a backorder
@@ -10368,7 +10525,7 @@ impl Backorders {
             .backorder()
             .cancel_backorder(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel backorder: {}", e)))?;
-        Ok(backorder.into())
+        convert_output(backorder)
     }
 
     /// Get backorders for an order
@@ -10380,7 +10537,7 @@ impl Backorders {
             .backorder()
             .get_backorders_for_order(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get backorders: {}", e)))?;
-        Ok(backorders.into_iter().map(|b| b.into()).collect())
+        convert_outputs(backorders)
     }
 
     /// Get backorders for a SKU
@@ -10391,7 +10548,7 @@ impl Backorders {
             .backorder()
             .get_backorders_for_sku(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get backorders: {}", e)))?;
-        Ok(backorders.into_iter().map(|b| b.into()).collect())
+        convert_outputs(backorders)
     }
 
     /// Get overdue backorders
@@ -10402,7 +10559,7 @@ impl Backorders {
             .backorder()
             .get_overdue_backorders()
             .map_err(|e| Error::from_reason(format!("Failed to get overdue backorders: {}", e)))?;
-        Ok(backorders.into_iter().map(|b| b.into()).collect())
+        convert_outputs(backorders)
     }
 
     /// Get backorder summary
@@ -10413,7 +10570,7 @@ impl Backorders {
             .backorder()
             .get_summary()
             .map_err(|e| Error::from_reason(format!("Failed to get summary: {}", e)))?;
-        Ok(summary.into())
+        convert_output(summary)
     }
 
     /// Count pending backorders
@@ -10454,17 +10611,19 @@ pub struct GlAccountOutput {
     pub description: Option<String>,
 }
 
-impl From<stateset_core::GlAccount> for GlAccountOutput {
-    fn from(a: stateset_core::GlAccount) -> Self {
-        Self {
+impl TryFrom<stateset_core::GlAccount> for GlAccountOutput {
+    type Error = Error;
+
+    fn try_from(a: stateset_core::GlAccount) -> Result<Self> {
+        Ok(Self {
             id: a.id.to_string(),
             account_number: a.account_number,
             name: a.name,
             account_type: format!("{:?}", a.account_type),
-            balance: to_f64_or_nan(a.current_balance),
+            balance: to_f64_result(a.current_balance, "account balance")?,
             status: format!("{:?}", a.status),
             description: a.description,
-        }
+        })
     }
 }
 
@@ -10501,14 +10660,16 @@ pub struct TrialBalanceOutput {
     pub is_balanced: bool,
 }
 
-impl From<stateset_core::TrialBalance> for TrialBalanceOutput {
-    fn from(t: stateset_core::TrialBalance) -> Self {
-        Self {
+impl TryFrom<stateset_core::TrialBalance> for TrialBalanceOutput {
+    type Error = Error;
+
+    fn try_from(t: stateset_core::TrialBalance) -> Result<Self> {
+        Ok(Self {
             as_of_date: t.as_of_date.to_string(),
-            total_debits: to_f64_or_nan(t.total_debits),
-            total_credits: to_f64_or_nan(t.total_credits),
+            total_debits: to_f64_result(t.total_debits, "trial balance total debits")?,
+            total_credits: to_f64_result(t.total_credits, "trial balance total credits")?,
             is_balanced: t.is_balanced,
-        }
+        })
     }
 }
 
@@ -10521,14 +10682,19 @@ pub struct BalanceSheetOutput {
     pub total_equity: f64,
 }
 
-impl From<stateset_core::BalanceSheet> for BalanceSheetOutput {
-    fn from(b: stateset_core::BalanceSheet) -> Self {
-        Self {
+impl TryFrom<stateset_core::BalanceSheet> for BalanceSheetOutput {
+    type Error = Error;
+
+    fn try_from(b: stateset_core::BalanceSheet) -> Result<Self> {
+        Ok(Self {
             as_of_date: b.as_of_date.to_string(),
-            total_assets: to_f64_or_nan(b.total_assets),
-            total_liabilities: to_f64_or_nan(b.total_liabilities),
-            total_equity: to_f64_or_nan(b.total_equity),
-        }
+            total_assets: to_f64_result(b.total_assets, "balance sheet total assets")?,
+            total_liabilities: to_f64_result(
+                b.total_liabilities,
+                "balance sheet total liabilities",
+            )?,
+            total_equity: to_f64_result(b.total_equity, "balance sheet total equity")?,
+        })
     }
 }
 
@@ -10542,15 +10708,17 @@ pub struct IncomeStatementOutput {
     pub net_income: f64,
 }
 
-impl From<stateset_core::IncomeStatement> for IncomeStatementOutput {
-    fn from(i: stateset_core::IncomeStatement) -> Self {
-        Self {
+impl TryFrom<stateset_core::IncomeStatement> for IncomeStatementOutput {
+    type Error = Error;
+
+    fn try_from(i: stateset_core::IncomeStatement) -> Result<Self> {
+        Ok(Self {
             period_start: i.period_start.to_string(),
             period_end: i.period_end.to_string(),
-            total_revenue: to_f64_or_nan(i.total_revenue),
-            total_expenses: to_f64_or_nan(i.total_expenses),
-            net_income: to_f64_or_nan(i.net_income),
-        }
+            total_revenue: to_f64_result(i.total_revenue, "income statement total revenue")?,
+            total_expenses: to_f64_result(i.total_expenses, "income statement total expenses")?,
+            net_income: to_f64_result(i.net_income, "income statement net income")?,
+        })
     }
 }
 
@@ -10590,7 +10758,7 @@ impl GeneralLedger {
                 currency: input.currency.and_then(|s| s.parse::<CurrencyCode>().ok()),
             })
             .map_err(|e| Error::from_reason(format!("Failed to create account: {}", e)))?;
-        Ok(account.into())
+        convert_output(account)
     }
 
     /// Get a GL account by ID
@@ -10602,7 +10770,7 @@ impl GeneralLedger {
             .general_ledger()
             .get_account(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
-        Ok(account.map(|a| a.into()))
+        convert_optional_output(account)
     }
 
     /// Get a GL account by account number
@@ -10616,7 +10784,7 @@ impl GeneralLedger {
             .general_ledger()
             .get_account_by_number(&account_number)
             .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
-        Ok(account.map(|a| a.into()))
+        convert_optional_output(account)
     }
 
     /// List GL accounts
@@ -10627,7 +10795,7 @@ impl GeneralLedger {
             .general_ledger()
             .list_accounts(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list accounts: {}", e)))?;
-        Ok(accounts.into_iter().map(|a| a.into()).collect())
+        convert_outputs(accounts)
     }
 
     /// Initialize standard chart of accounts
@@ -10638,7 +10806,7 @@ impl GeneralLedger {
             .general_ledger()
             .initialize_chart_of_accounts()
             .map_err(|e| Error::from_reason(format!("Failed to initialize chart: {}", e)))?;
-        Ok(accounts.into_iter().map(|a| a.into()).collect())
+        convert_outputs(accounts)
     }
 
     /// Get a journal entry by ID
@@ -10702,7 +10870,7 @@ impl GeneralLedger {
             .general_ledger()
             .get_trial_balance(date)
             .map_err(|e| Error::from_reason(format!("Failed to get trial balance: {}", e)))?;
-        Ok(balance.into())
+        convert_output(balance)
     }
 
     /// Get balance sheet
@@ -10715,7 +10883,7 @@ impl GeneralLedger {
             .general_ledger()
             .get_balance_sheet(date)
             .map_err(|e| Error::from_reason(format!("Failed to get balance sheet: {}", e)))?;
-        Ok(sheet.into())
+        convert_output(sheet)
     }
 
     /// Get income statement
@@ -10734,7 +10902,7 @@ impl GeneralLedger {
             .general_ledger()
             .get_income_statement(start, end)
             .map_err(|e| Error::from_reason(format!("Failed to get income statement: {}", e)))?;
-        Ok(statement.into())
+        convert_output(statement)
     }
 
     /// Get account balance
@@ -10751,7 +10919,8 @@ impl GeneralLedger {
             .general_ledger()
             .get_account_balance(uuid, date)
             .map_err(|e| Error::from_reason(format!("Failed to get balance: {}", e)))?;
-        Ok(balance.map(to_f64_or_nan).unwrap_or(f64::NAN))
+        optional_to_f64_result(balance, "account balance")?
+            .ok_or_else(|| Error::from_reason("Account balance unavailable"))
     }
 }
 

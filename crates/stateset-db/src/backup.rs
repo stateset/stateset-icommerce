@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use stateset_core::CommerceError;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 /// Backup configuration
@@ -78,6 +78,7 @@ pub struct RestoreResult {
 }
 
 /// Backup manager for SQLite databases
+#[derive(Debug)]
 pub struct BackupManager {
     config: BackupConfig,
     backup_dir: PathBuf,
@@ -109,45 +110,41 @@ impl BackupManager {
     ) -> Result<BackupResult, CommerceError> {
         let timestamp = Utc::now();
         let timestamp_str = timestamp.format("%Y%m%d_%H%M%S").to_string();
-        let db_name = database_path
-            .as_ref()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("database");
+        let db_name =
+            database_path.as_ref().file_stem().and_then(|s| s.to_str()).unwrap_or("database");
 
-        let filename = format!("{}_{}.db", db_name, timestamp_str);
-        let backup_path = self.backup_dir.join(&filename);
+        let (filename, backup_path) = {
+            let mut attempt = 0usize;
+            loop {
+                let suffix = if attempt == 0 { String::new() } else { format!("_{attempt}") };
+                let candidate = format!("{}_{}{}.db", db_name, timestamp_str, suffix);
+                let path = self.backup_dir.join(&candidate);
+                if !path.exists() {
+                    break (candidate, path);
+                }
+                attempt += 1;
+            }
+        };
 
         // Create backup using VACUUM INTO
         let backup_file = backup_path.display().to_string();
-        conn.execute(
-            &format!("VACUUM INTO '{}'", backup_file.replace('\'', "''")),
-            [],
-        )
-        .map_err(|e| CommerceError::DatabaseError(format!("Backup failed: {}", e)))?;
+        conn.execute(&format!("VACUUM INTO '{}'", backup_file.replace('\'', "''")), [])
+            .map_err(|e| CommerceError::DatabaseError(format!("Backup failed: {}", e)))?;
 
         // Get backup metadata
         let size_bytes = fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0);
 
-        let table_count: i32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0) as usize;
-
-        // Get schema version
-        let schema_version: i32 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
+        let table_count: usize = conn
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |r| r.get(0))
             .unwrap_or(0);
 
+        // Get schema version
+        let schema_version: i32 =
+            conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+
         // Calculate checksum if configured
-        let checksum = if self.config.verify {
-            self.calculate_checksum(&backup_path)?
-        } else {
-            String::new()
-        };
+        let checksum =
+            if self.config.verify { self.calculate_checksum(&backup_path)? } else { String::new() };
 
         let metadata = BackupMetadata {
             filename: filename.clone(),
@@ -170,10 +167,7 @@ impl BackupManager {
         // Clean up old backups
         self.cleanup_old_backups(db_name)?;
 
-        Ok(BackupResult {
-            metadata,
-            path: backup_path,
-        })
+        Ok(BackupResult { metadata, path: backup_path })
     }
 
     /// Restore database from a backup
@@ -215,19 +209,11 @@ impl BackupManager {
         }
 
         // Get table count
-        let table_count: i32 = restore_conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0) as usize;
+        let table_count: usize = restore_conn
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |r| r.get(0))
+            .unwrap_or(0);
 
-        Ok(RestoreResult {
-            restored_at: Utc::now(),
-            table_count,
-            success: true,
-        })
+        Ok(RestoreResult { restored_at: Utc::now(), table_count, success: true })
     }
 
     /// List available backups
@@ -317,7 +303,7 @@ impl BackupManager {
 
     /// Save backup metadata to a file
     fn save_metadata(&self, metadata: &BackupMetadata) -> Result<(), CommerceError> {
-        let metadata_path = self.backup_dir.join(format!("{}.meta", metadata.filename));
+        let metadata_path = self.backup_dir.join(&metadata.filename).with_extension("meta");
         let metadata_json = serde_json::to_string_pretty(metadata).map_err(|e| {
             CommerceError::DatabaseError(format!("Failed to serialize metadata: {}", e))
         })?;
@@ -338,16 +324,14 @@ impl BackupManager {
         }
 
         let metadata_json = fs::read_to_string(&metadata_path).ok()?;
-        metadata_json.parse().ok()
+        serde_json::from_str(&metadata_json).ok()
     }
 
     /// Clean up old backups based on retain count
     fn cleanup_old_backups(&self, db_name: &str) -> Result<(), CommerceError> {
         let backups = self.list_backups()?;
-        let db_backups: Vec<_> = backups
-            .into_iter()
-            .filter(|b| b.filename.starts_with(db_name))
-            .collect();
+        let db_backups: Vec<_> =
+            backups.into_iter().filter(|b| b.filename.starts_with(db_name)).collect();
 
         // Remove excess backups
         for backup in db_backups.iter().skip(self.config.retain_count) {
@@ -372,10 +356,8 @@ mod tests {
 
         // Create test database
         let conn = Connection::open(&db_path).unwrap();
-        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)", [])
-            .unwrap();
-        conn.execute("INSERT INTO test VALUES (1, 'test')", [])
-            .unwrap();
+        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)", []).unwrap();
+        conn.execute("INSERT INTO test VALUES (1, 'test')", []).unwrap();
 
         // Create backup
         let manager = BackupManager::new(&backup_dir, BackupConfig::default()).unwrap();
@@ -405,14 +387,10 @@ mod tests {
 
         // Create test database
         let conn = Connection::open(&db_path).unwrap();
-        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)", [])
-            .unwrap();
+        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)", []).unwrap();
 
         // Create backups with retention of 2
-        let config = BackupConfig {
-            retain_count: 2,
-            ..Default::default()
-        };
+        let config = BackupConfig { retain_count: 2, ..Default::default() };
         let manager = BackupManager::new(&backup_dir, config).unwrap();
 
         // Create 3 backups

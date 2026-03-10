@@ -41,6 +41,8 @@
 pub mod error_helpers;
 
 #[cfg(feature = "sqlite")]
+pub mod backup;
+#[cfg(feature = "sqlite")]
 pub mod migrations;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
@@ -65,7 +67,7 @@ use stateset_core::{
     A2ACommerceRepository, AccountsPayableRepository, AccountsReceivableRepository,
     AgentCardRepository, AgentIdentityRepository, AgentReputationRepository,
     AgentValidationRepository, AnalyticsRepository, BackorderRepository, BomRepository,
-    CartRepository, CostAccountingRepository, CreditRepository, CurrencyRepository,
+    CartRepository, CommerceError, CostAccountingRepository, CreditRepository, CurrencyRepository,
     CustomObjectRepository, CustomerRepository, FraudRepository, FulfillmentRepository,
     GeneralLedgerRepository, GiftCardRepository, InventoryRepository, InvoiceRepository,
     LotRepository, LoyaltyProgramRepository, OrderRepository, PaymentRepository, ProductRepository,
@@ -163,6 +165,40 @@ pub enum TransactionIsolation {
     Serializable,
 }
 
+/// Optional domain capability exposed by a database backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatabaseCapability {
+    GiftCards,
+    StoreCredits,
+    Segments,
+    ShippingZones,
+    ZoneShippingMethods,
+    Reviews,
+    Wishlists,
+    LoyaltyPrograms,
+    Rewards,
+    Fraud,
+    SearchConfigs,
+}
+
+impl DatabaseCapability {
+    const fn repository_name(self) -> &'static str {
+        match self {
+            Self::GiftCards => "gift_cards",
+            Self::StoreCredits => "store_credits",
+            Self::Segments => "segments",
+            Self::ShippingZones => "shipping_zones",
+            Self::ZoneShippingMethods => "zone_shipping_methods",
+            Self::Reviews => "reviews",
+            Self::Wishlists => "wishlists",
+            Self::LoyaltyPrograms => "loyalty_programs",
+            Self::Rewards => "rewards",
+            Self::Fraud => "fraud",
+            Self::SearchConfigs => "search_configs",
+        }
+    }
+}
+
 // ============================================================================
 // Database Trait
 // ============================================================================
@@ -170,6 +206,29 @@ pub enum TransactionIsolation {
 /// Unified database trait that both SQLite and PostgreSQL implement.
 /// This allows stateset-embedded to work with either backend.
 pub trait Database: Send + Sync {
+    /// Human-readable backend name.
+    fn backend_name(&self) -> &'static str {
+        "external"
+    }
+
+    /// Whether the backend supports a given optional repository domain.
+    fn supports_capability(&self, _capability: DatabaseCapability) -> bool {
+        true
+    }
+
+    /// Fail fast when a caller requests an unsupported optional repository domain.
+    fn ensure_capability(&self, capability: DatabaseCapability) -> Result<()> {
+        if self.supports_capability(capability) {
+            Ok(())
+        } else {
+            Err(CommerceError::NotPermitted(format!(
+                "{} repository is not implemented for {} backend",
+                capability.repository_name(),
+                self.backend_name()
+            )))
+        }
+    }
+
     /// Get the order repository
     fn orders(&self) -> Box<dyn OrderRepository + '_>;
     /// Get the inventory repository
@@ -483,8 +542,16 @@ impl NewDomainRepositoryFactory for PostgresDatabase {
 /// Macro to eliminate duplicate Database implementations
 /// Generates all 32 repository accessor methods for any concrete Database type
 macro_rules! impl_database_accessors {
-    ($db_type:ty) => {
+    ($db_type:ident) => {
         impl Database for $db_type {
+            fn backend_name(&self) -> &'static str {
+                impl_database_accessors!(@backend_name $db_type)
+            }
+
+            fn supports_capability(&self, capability: DatabaseCapability) -> bool {
+                impl_database_accessors!(@supports_capability $db_type, capability)
+            }
+
             fn orders(&self) -> Box<dyn OrderRepository + '_> {
                 Box::new(<$db_type>::orders(self))
             }
@@ -688,6 +755,31 @@ macro_rules! impl_database_accessors {
             }
         }
     };
+    (@backend_name SqliteDatabase) => {
+        "sqlite"
+    };
+    (@backend_name PostgresDatabase) => {
+        "postgres"
+    };
+    (@supports_capability SqliteDatabase, $capability:expr) => {{
+        let _ = $capability;
+        true
+    }};
+    (@supports_capability PostgresDatabase, $capability:expr) => {{
+        match $capability {
+            DatabaseCapability::GiftCards
+            | DatabaseCapability::StoreCredits
+            | DatabaseCapability::Segments
+            | DatabaseCapability::ShippingZones
+            | DatabaseCapability::ZoneShippingMethods
+            | DatabaseCapability::Reviews
+            | DatabaseCapability::Wishlists
+            | DatabaseCapability::LoyaltyPrograms
+            | DatabaseCapability::Rewards
+            | DatabaseCapability::Fraud
+            | DatabaseCapability::SearchConfigs => false,
+        }
+    }};
 }
 
 // Apply the macro to generate Database implementations

@@ -23,6 +23,16 @@ use ::stateset_embedded::Commerce as RustCommerce;
 use stateset_primitives::CurrencyCode;
 use std::sync::{Arc, Mutex};
 
+fn decimal_from_f64(value: f64, field: &str) -> PyResult<Decimal> {
+    Decimal::from_f64_retain(value).ok_or_else(|| {
+        PyValueError::new_err(format!("Invalid {field}: expected a finite decimal value"))
+    })
+}
+
+fn optional_decimal_from_f64(value: Option<f64>, field: &str) -> PyResult<Option<Decimal>> {
+    value.map(|value| decimal_from_f64(value, field)).transpose()
+}
+
 fn to_f64_or_nan<T>(value: T) -> f64
 where
     T: TryInto<f64>,
@@ -35,6 +45,45 @@ where
             f64::NAN
         }
     }
+}
+
+fn to_f64_result<T>(value: T, field: &str) -> PyResult<f64>
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    value.try_into().map_err(|err| {
+        PyRuntimeError::new_err(format!("Failed to convert {field} to float: {err}"))
+    })
+}
+
+fn optional_to_f64_result<T>(value: Option<T>, field: &str) -> PyResult<Option<f64>>
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    value.map(|inner| to_f64_result(inner, field)).transpose()
+}
+
+fn convert_output<T, U>(value: T) -> PyResult<U>
+where
+    U: TryFrom<T, Error = PyErr>,
+{
+    U::try_from(value)
+}
+
+fn convert_optional_output<T, U>(value: Option<T>) -> PyResult<Option<U>>
+where
+    U: TryFrom<T, Error = PyErr>,
+{
+    value.map(convert_output).transpose()
+}
+
+fn convert_outputs<T, U>(values: Vec<T>) -> PyResult<Vec<U>>
+where
+    U: TryFrom<T, Error = PyErr>,
+{
+    values.into_iter().map(convert_output).collect()
 }
 
 // ============================================================================
@@ -649,17 +698,17 @@ impl Orders {
                 let product_id = i.product_id.and_then(|s| s.parse().ok()).unwrap_or_default();
                 let variant_id = i.variant_id.and_then(|s| s.parse().ok());
 
-                stateset_core::CreateOrderItem {
+                Ok(stateset_core::CreateOrderItem {
                     product_id,
                     variant_id,
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: Decimal::from_f64_retain(i.unit_price).unwrap_or_default(),
+                    unit_price: decimal_from_f64(i.unit_price, "unit_price")?,
                     ..Default::default()
-                }
+                })
             })
-            .collect();
+            .collect::<PyResult<Vec<_>>>()?;
 
         let order = commerce
             .orders()
@@ -960,17 +1009,24 @@ impl Products {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        let variant_inputs = variants.map(|vs| {
-            vs.into_iter()
-                .map(|v| stateset_core::CreateProductVariant {
-                    sku: v.sku,
-                    name: v.name,
-                    price: Decimal::from_f64_retain(v.price).unwrap_or_default(),
-                    compare_at_price: v.compare_at_price.and_then(Decimal::from_f64_retain),
-                    ..Default::default()
-                })
-                .collect()
-        });
+        let variant_inputs = variants
+            .map(|vs| {
+                vs.into_iter()
+                    .map(|v| {
+                        Ok(stateset_core::CreateProductVariant {
+                            sku: v.sku,
+                            name: v.name,
+                            price: decimal_from_f64(v.price, "price")?,
+                            compare_at_price: optional_decimal_from_f64(
+                                v.compare_at_price,
+                                "compare_at_price",
+                            )?,
+                            ..Default::default()
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .transpose()?;
 
         let product = commerce
             .products()
@@ -1700,8 +1756,8 @@ impl Inventory {
                 sku,
                 name,
                 description,
-                initial_quantity: initial_quantity.and_then(Decimal::from_f64_retain),
-                reorder_point: reorder_point.and_then(Decimal::from_f64_retain),
+                initial_quantity: optional_decimal_from_f64(initial_quantity, "initial_quantity")?,
+                reorder_point: optional_decimal_from_f64(reorder_point, "reorder_point")?,
                 ..Default::default()
             })
             .map_err(|e| {
@@ -2248,7 +2304,7 @@ impl Payments {
                 order_id: order_uuid,
                 customer_id: customer_uuid,
                 idempotency_key,
-                amount: Decimal::from_f64_retain(amount).unwrap_or_default(),
+                amount: decimal_from_f64(amount, "amount")?,
                 currency: currency.as_ref().and_then(|s| s.parse::<CurrencyCode>().ok()),
                 payment_method: method,
                 ..Default::default()
@@ -2346,7 +2402,7 @@ impl Payments {
             .payments()
             .create_refund(stateset_core::CreateRefund {
                 payment_id: uuid.into(),
-                amount: Some(Decimal::from_f64_retain(amount).unwrap_or_default()),
+                amount: Some(decimal_from_f64(amount, "amount")?),
                 reason,
                 idempotency_key,
                 ..Default::default()
@@ -2964,17 +3020,19 @@ impl PurchaseOrder {
     }
 }
 
-impl From<stateset_core::PurchaseOrder> for PurchaseOrder {
-    fn from(po: stateset_core::PurchaseOrder) -> Self {
-        Self {
+impl TryFrom<stateset_core::PurchaseOrder> for PurchaseOrder {
+    type Error = PyErr;
+
+    fn try_from(po: stateset_core::PurchaseOrder) -> PyResult<Self> {
+        Ok(Self {
             id: po.id.to_string(),
             po_number: po.po_number,
             supplier_id: po.supplier_id.to_string(),
             status: format!("{}", po.status),
-            total_amount: to_f64_or_nan(po.total),
+            total_amount: to_f64_result(po.total, "purchase order total")?,
             created_at: po.created_at.to_rfc3339(),
             updated_at: po.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -3067,7 +3125,7 @@ impl PurchaseOrders {
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     /// Get a purchase order by ID.
@@ -3084,7 +3142,7 @@ impl PurchaseOrders {
             .get(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get PO: {}", e)))?;
 
-        Ok(po.map(|p| p.into()))
+        convert_optional_output(po)
     }
 
     /// List all purchase orders.
@@ -3099,7 +3157,7 @@ impl PurchaseOrders {
             .list(Default::default())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list POs: {}", e)))?;
 
-        Ok(pos.into_iter().map(|p| p.into()).collect())
+        convert_outputs(pos)
     }
 
     /// Submit PO for approval.
@@ -3116,7 +3174,7 @@ impl PurchaseOrders {
             .submit(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to submit PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     /// Approve a purchase order.
@@ -3133,7 +3191,7 @@ impl PurchaseOrders {
             .approve(uuid, &approved_by)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to approve PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     /// Send PO to supplier.
@@ -3150,7 +3208,7 @@ impl PurchaseOrders {
             .send(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to send PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     /// Cancel a purchase order.
@@ -3167,7 +3225,7 @@ impl PurchaseOrders {
             .cancel(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to cancel PO: {}", e)))?;
 
-        Ok(po.into())
+        convert_output(po)
     }
 
     /// Count purchase orders.
@@ -3233,21 +3291,23 @@ impl Invoice {
     }
 }
 
-impl From<stateset_core::Invoice> for Invoice {
-    fn from(inv: stateset_core::Invoice) -> Self {
-        Self {
+impl TryFrom<stateset_core::Invoice> for Invoice {
+    type Error = PyErr;
+
+    fn try_from(inv: stateset_core::Invoice) -> PyResult<Self> {
+        Ok(Self {
             id: inv.id.to_string(),
             invoice_number: inv.invoice_number,
             customer_id: inv.customer_id.to_string(),
             order_id: inv.order_id.map(|id| id.to_string()),
             status: format!("{}", inv.status),
-            subtotal: to_f64_or_nan(inv.subtotal),
-            tax_amount: to_f64_or_nan(inv.tax_amount),
-            total: to_f64_or_nan(inv.total),
-            amount_paid: to_f64_or_nan(inv.amount_paid),
+            subtotal: to_f64_result(inv.subtotal, "invoice subtotal")?,
+            tax_amount: to_f64_result(inv.tax_amount, "invoice tax amount")?,
+            total: to_f64_result(inv.total, "invoice total")?,
+            amount_paid: to_f64_result(inv.amount_paid, "invoice amount paid")?,
             due_date: inv.due_date.to_rfc3339(),
             created_at: inv.created_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -3295,7 +3355,7 @@ impl Invoices {
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create invoice: {}", e)))?;
 
-        Ok(invoice.into())
+        convert_output(invoice)
     }
 
     /// Get an invoice by ID.
@@ -3312,7 +3372,7 @@ impl Invoices {
             .get(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get invoice: {}", e)))?;
 
-        Ok(invoice.map(|i| i.into()))
+        convert_optional_output(invoice)
     }
 
     /// List all invoices.
@@ -3327,7 +3387,7 @@ impl Invoices {
             .list(Default::default())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list invoices: {}", e)))?;
 
-        Ok(invoices.into_iter().map(|i| i.into()).collect())
+        convert_outputs(invoices)
     }
 
     /// Send an invoice.
@@ -3344,7 +3404,7 @@ impl Invoices {
             .send(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to send invoice: {}", e)))?;
 
-        Ok(invoice.into())
+        convert_output(invoice)
     }
 
     /// Record a payment against an invoice.
@@ -3368,7 +3428,7 @@ impl Invoices {
             .record_payment(
                 uuid,
                 stateset_core::RecordInvoicePayment {
-                    amount: Decimal::from_f64_retain(amount).unwrap_or_default(),
+                    amount: decimal_from_f64(amount, "amount")?,
                     payment_method,
                     reference,
                     ..Default::default()
@@ -3376,7 +3436,7 @@ impl Invoices {
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to record payment: {}", e)))?;
 
-        Ok(invoice.into())
+        convert_output(invoice)
     }
 
     /// Void an invoice.
@@ -3393,7 +3453,7 @@ impl Invoices {
             .void(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to void invoice: {}", e)))?;
 
-        Ok(invoice.into())
+        convert_output(invoice)
     }
 
     /// Get overdue invoices.
@@ -3407,7 +3467,7 @@ impl Invoices {
             PyRuntimeError::new_err(format!("Failed to get overdue invoices: {}", e))
         })?;
 
-        Ok(invoices.into_iter().map(|i| i.into()).collect())
+        convert_outputs(invoices)
     }
 
     /// Count invoices.
@@ -3608,7 +3668,7 @@ impl BomApi {
                 stateset_core::CreateBomComponent {
                     component_sku,
                     name,
-                    quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                    quantity: decimal_from_f64(quantity, "quantity")?,
                     unit_of_measure,
                     ..Default::default()
                 },
@@ -3776,7 +3836,7 @@ impl WorkOrders {
             .create(stateset_core::CreateWorkOrder {
                 product_id: prod_uuid,
                 bom_id: bom_uuid,
-                quantity_to_build: Decimal::from_f64_retain(quantity_to_build).unwrap_or_default(),
+                quantity_to_build: decimal_from_f64(quantity_to_build, "quantity_to_build")?,
                 priority: prio,
                 notes,
                 ..Default::default()
@@ -3846,7 +3906,7 @@ impl WorkOrders {
 
         let wo = commerce
             .work_orders()
-            .complete(uuid, Decimal::from_f64_retain(quantity_completed).unwrap_or_default())
+            .complete(uuid, decimal_from_f64(quantity_completed, "quantity_completed")?)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to complete work order: {}", e))
             })?;
@@ -4583,14 +4643,12 @@ impl Carts {
                     description: item.description,
                     image_url: item.image_url,
                     quantity: item.quantity,
-                    unit_price: Decimal::from_str_exact(&item.unit_price.to_string())
-                        .unwrap_or_default(),
-                    original_price: item
-                        .original_price
-                        .map(|p| Decimal::from_str_exact(&p.to_string()).unwrap_or_default()),
-                    weight: item
-                        .weight
-                        .map(|w| Decimal::from_str_exact(&w.to_string()).unwrap_or_default()),
+                    unit_price: decimal_from_f64(item.unit_price, "unit_price")?,
+                    original_price: optional_decimal_from_f64(
+                        item.original_price,
+                        "original_price",
+                    )?,
+                    weight: optional_decimal_from_f64(item.weight, "weight")?,
                     requires_shipping: item.requires_shipping,
                     metadata: None,
                 },
@@ -5138,10 +5196,7 @@ impl Carts {
 
         let cart = commerce
             .carts()
-            .set_tax(
-                uuid.into(),
-                Decimal::from_str_exact(&tax_amount.to_string()).unwrap_or_default(),
-            )
+            .set_tax(uuid.into(), decimal_from_f64(tax_amount, "tax_amount")?)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to set tax: {}", e)))?;
 
         Ok(cart.into())
@@ -6492,23 +6547,26 @@ pub struct SubscriptionPlan {
     updated_at: String,
 }
 
-impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
-    fn from(p: stateset_core::SubscriptionPlan) -> Self {
-        Self {
+impl TryFrom<stateset_core::SubscriptionPlan> for SubscriptionPlan {
+    type Error = PyErr;
+
+    fn try_from(p: stateset_core::SubscriptionPlan) -> PyResult<Self> {
+        Ok(Self {
             id: p.id.to_string(),
             code: p.code,
             name: p.name,
             description: p.description,
             billing_interval: format!("{:?}", p.billing_interval).to_lowercase(),
             billing_interval_count: 1, // Default to 1 since core doesn't have this field
-            price: to_f64_or_nan(p.price),
+            price: to_f64_result(p.price, "subscription plan price")?,
             currency: p.currency.to_string(),
-            setup_fee: p.setup_fee.map(to_f64_or_nan).unwrap_or(0.0),
+            setup_fee: optional_to_f64_result(p.setup_fee, "subscription plan setup fee")?
+                .unwrap_or(0.0),
             trial_days: p.trial_days,
             status: format!("{:?}", p.status).to_lowercase(),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -6546,9 +6604,11 @@ pub struct Subscription {
     updated_at: String,
 }
 
-impl From<stateset_core::Subscription> for Subscription {
-    fn from(s: stateset_core::Subscription) -> Self {
-        Self {
+impl TryFrom<stateset_core::Subscription> for Subscription {
+    type Error = PyErr;
+
+    fn try_from(s: stateset_core::Subscription) -> PyResult<Self> {
+        Ok(Self {
             id: s.id.to_string(),
             subscription_number: s.subscription_number,
             customer_id: s.customer_id.to_string(),
@@ -6559,11 +6619,11 @@ impl From<stateset_core::Subscription> for Subscription {
             trial_ends_at: s.trial_ends_at.map(|d| d.to_rfc3339()),
             cancelled_at: s.cancelled_at.map(|d| d.to_rfc3339()),
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
-            price: to_f64_or_nan(s.price),
+            price: to_f64_result(s.price, "subscription price")?,
             currency: s.currency.to_string(),
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -6704,21 +6764,20 @@ impl Subscriptions {
                 description,
                 billing_interval: interval,
                 custom_interval_days: billing_interval_count,
-                price: Decimal::from_f64_retain(price)
-                    .ok_or_else(|| PyValueError::new_err("Invalid price"))?,
+                price: decimal_from_f64(price, "price")?,
                 currency: Some(
                     currency
                         .unwrap_or_else(|| "USD".to_string())
                         .parse::<CurrencyCode>()
                         .unwrap_or(CurrencyCode::USD),
                 ),
-                setup_fee: setup_fee.map(|f| Decimal::from_f64_retain(f).unwrap_or_default()),
+                setup_fee: optional_decimal_from_f64(setup_fee, "setup_fee")?,
                 trial_days,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create plan: {}", e)))?;
 
-        Ok(plan.into())
+        convert_output(plan)
     }
 
     /// Get a subscription plan by ID.
@@ -6735,7 +6794,7 @@ impl Subscriptions {
             .get_plan(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get plan: {}", e)))?;
 
-        Ok(plan.map(|p| p.into()))
+        convert_optional_output(plan)
     }
 
     /// List all subscription plans.
@@ -6772,7 +6831,7 @@ impl Subscriptions {
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list plans: {}", e)))?;
 
-        Ok(plans.into_iter().map(|p| p.into()).collect())
+        convert_outputs(plans)
     }
 
     /// Activate a subscription plan.
@@ -6789,7 +6848,7 @@ impl Subscriptions {
             .activate_plan(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to activate plan: {}", e)))?;
 
-        Ok(plan.into())
+        convert_output(plan)
     }
 
     /// Archive a subscription plan.
@@ -6806,7 +6865,7 @@ impl Subscriptions {
             .archive_plan(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to archive plan: {}", e)))?;
 
-        Ok(plan.into())
+        convert_output(plan)
     }
 
     // ========================================================================
@@ -6837,14 +6896,14 @@ impl Subscriptions {
                 customer_id: cust_uuid,
                 plan_id: plan_uuid,
                 skip_trial,
-                price: price.and_then(Decimal::from_f64_retain),
+                price: optional_decimal_from_f64(price, "price")?,
                 ..Default::default()
             })
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create subscription: {}", e))
             })?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Get a subscription by ID.
@@ -6861,7 +6920,7 @@ impl Subscriptions {
             .get(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get subscription: {}", e)))?;
 
-        Ok(subscription.map(|s| s.into()))
+        convert_optional_output(subscription)
     }
 
     /// Get a subscription by number.
@@ -6876,7 +6935,7 @@ impl Subscriptions {
             .get_by_number(&number)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get subscription: {}", e)))?;
 
-        Ok(subscription.map(|s| s.into()))
+        convert_optional_output(subscription)
     }
 
     /// List subscriptions.
@@ -6928,7 +6987,7 @@ impl Subscriptions {
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list subscriptions: {}", e)))?;
 
-        Ok(subscriptions.into_iter().map(|s| s.into()).collect())
+        convert_outputs(subscriptions)
     }
 
     /// Pause a subscription.
@@ -6946,7 +7005,7 @@ impl Subscriptions {
             .pause(uuid.into(), stateset_core::PauseSubscription { reason, resume_at: None })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to pause subscription: {}", e)))?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Resume a paused subscription.
@@ -6962,7 +7021,7 @@ impl Subscriptions {
             PyRuntimeError::new_err(format!("Failed to resume subscription: {}", e))
         })?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Cancel a subscription.
@@ -6994,7 +7053,7 @@ impl Subscriptions {
                 PyRuntimeError::new_err(format!("Failed to cancel subscription: {}", e))
             })?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     /// Skip the next billing cycle.
@@ -7012,7 +7071,7 @@ impl Subscriptions {
             .skip_next_cycle(uuid.into(), stateset_core::SkipBillingCycle { reason })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to skip billing cycle: {}", e)))?;
 
-        Ok(subscription.into())
+        convert_output(subscription)
     }
 
     // ========================================================================
@@ -7162,9 +7221,11 @@ pub struct Promotion {
     updated_at: String,
 }
 
-impl From<stateset_core::Promotion> for Promotion {
-    fn from(p: stateset_core::Promotion) -> Self {
-        Self {
+impl TryFrom<stateset_core::Promotion> for Promotion {
+    type Error = PyErr;
+
+    fn try_from(p: stateset_core::Promotion) -> PyResult<Self> {
+        Ok(Self {
             id: p.id.to_string(),
             code: p.code,
             name: p.name,
@@ -7174,9 +7235,15 @@ impl From<stateset_core::Promotion> for Promotion {
             target: format!("{:?}", p.target).to_lowercase(),
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
-            percentage_off: p.percentage_off.map(to_f64_or_nan),
-            fixed_amount_off: p.fixed_amount_off.map(to_f64_or_nan),
-            max_discount_amount: p.max_discount_amount.map(to_f64_or_nan),
+            percentage_off: optional_to_f64_result(p.percentage_off, "promotion percentage off")?,
+            fixed_amount_off: optional_to_f64_result(
+                p.fixed_amount_off,
+                "promotion fixed amount off",
+            )?,
+            max_discount_amount: optional_to_f64_result(
+                p.max_discount_amount,
+                "promotion max discount amount",
+            )?,
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
             starts_at: p.starts_at.to_rfc3339(),
@@ -7188,7 +7255,7 @@ impl From<stateset_core::Promotion> for Promotion {
             priority: p.priority,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -7448,6 +7515,11 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
+        let percentage_off = optional_decimal_from_f64(percentage_off, "percentage_off")?;
+        let fixed_amount_off = optional_decimal_from_f64(fixed_amount_off, "fixed_amount_off")?;
+        let max_discount_amount =
+            optional_decimal_from_f64(max_discount_amount, "max_discount_amount")?;
+
         let create = stateset_core::CreatePromotion {
             code: None,
             name,
@@ -7457,11 +7529,9 @@ impl PromotionsApi {
             trigger: trigger.map(|s| parse_promotion_trigger(&s)).unwrap_or_default(),
             target: target.map(|s| parse_promotion_target(&s)).unwrap_or_default(),
             stacking: stacking.map(|s| parse_stacking_behavior(&s)).unwrap_or_default(),
-            percentage_off: percentage_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            fixed_amount_off: fixed_amount_off
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            max_discount_amount: max_discount_amount
-                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            percentage_off,
+            fixed_amount_off,
+            max_discount_amount,
             buy_quantity,
             get_quantity,
             get_discount_percent: None,
@@ -7494,7 +7564,7 @@ impl PromotionsApi {
             .create(create)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create promotion: {}", e)))?;
 
-        Ok(promo.into())
+        convert_output(promo)
     }
 
     /// Get a promotion by ID.
@@ -7511,7 +7581,7 @@ impl PromotionsApi {
             .get(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get promotion: {}", e)))?;
 
-        Ok(promo.map(|p| p.into()))
+        convert_optional_output(promo)
     }
 
     /// Get a promotion by its internal code.
@@ -7526,7 +7596,7 @@ impl PromotionsApi {
             .get_by_code(&code)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get promotion: {}", e)))?;
 
-        Ok(promo.map(|p| p.into()))
+        convert_optional_output(promo)
     }
 
     /// List promotions with optional filtering.
@@ -7559,7 +7629,7 @@ impl PromotionsApi {
             .list(filter)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list promotions: {}", e)))?;
 
-        Ok(promos.into_iter().map(|p| p.into()).collect())
+        convert_outputs(promos)
     }
 
     /// Activate a promotion.
@@ -7576,7 +7646,7 @@ impl PromotionsApi {
             .activate(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to activate promotion: {}", e)))?;
 
-        Ok(promo.into())
+        convert_output(promo)
     }
 
     /// Deactivate (pause) a promotion.
@@ -7592,7 +7662,7 @@ impl PromotionsApi {
             PyRuntimeError::new_err(format!("Failed to deactivate promotion: {}", e))
         })?;
 
-        Ok(promo.into())
+        convert_output(promo)
     }
 
     /// Delete a promotion.
@@ -7623,7 +7693,7 @@ impl PromotionsApi {
             PyRuntimeError::new_err(format!("Failed to get active promotions: {}", e))
         })?;
 
-        Ok(promos.into_iter().map(|p| p.into()).collect())
+        convert_outputs(promos)
     }
 
     // ========================================================================
@@ -7766,14 +7836,18 @@ impl PromotionsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
+        let shipping_amount = match shipping_amount {
+            Some(amount) => decimal_from_f64(amount, "shipping_amount")?,
+            None => Decimal::ZERO,
+        };
+
         let request = stateset_core::ApplyPromotionsRequest {
             cart_id: None,
             customer_id: None,
             coupon_codes: coupon_codes.unwrap_or_default(),
             line_items: vec![],
-            subtotal: Decimal::from_f64_retain(subtotal).unwrap_or_default(),
-            shipping_amount: Decimal::from_f64_retain(shipping_amount.unwrap_or(0.0))
-                .unwrap_or_default(),
+            subtotal: decimal_from_f64(subtotal, "subtotal")?,
+            shipping_amount,
             shipping_country: None,
             shipping_state: None,
             currency: currency
@@ -7819,7 +7893,7 @@ impl PromotionsApi {
                 customer_id.and_then(|s| s.parse().ok()),
                 order_id.and_then(|s| s.parse().ok()),
                 cart_id.and_then(|s| s.parse().ok()),
-                Decimal::from_f64_retain(discount_amount).unwrap_or_default(),
+                decimal_from_f64(discount_amount, "discount_amount")?,
                 &currency,
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to record usage: {}", e)))?;
@@ -7918,14 +7992,16 @@ pub struct TaxRate {
     updated_at: String,
 }
 
-impl From<stateset_core::TaxRate> for TaxRate {
-    fn from(r: stateset_core::TaxRate) -> Self {
-        Self {
+impl TryFrom<stateset_core::TaxRate> for TaxRate {
+    type Error = PyErr;
+
+    fn try_from(r: stateset_core::TaxRate) -> PyResult<Self> {
+        Ok(Self {
             id: r.id.to_string(),
             jurisdiction_id: r.jurisdiction_id.to_string(),
             tax_type: r.tax_type.as_str().to_string(),
             product_category: r.product_category.as_str().to_string(),
-            rate: to_f64_or_nan(r.rate),
+            rate: to_f64_result(r.rate, "tax rate")?,
             name: r.name,
             description: r.description,
             is_compound: r.is_compound,
@@ -7935,7 +8011,7 @@ impl From<stateset_core::TaxRate> for TaxRate {
             active: r.active,
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -8400,7 +8476,7 @@ impl TaxApi {
             product_category: product_category
                 .map(|s| parse_product_tax_category(&s))
                 .unwrap_or_default(),
-            rate: Decimal::from_f64_retain(rate).unwrap_or_default(),
+            rate: decimal_from_f64(rate, "rate")?,
             name,
             description,
             is_compound: is_compound.unwrap_or(false),
@@ -8418,7 +8494,7 @@ impl TaxApi {
             .create_rate(create)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create rate: {}", e)))?;
 
-        Ok(rate_result.into())
+        convert_output(rate_result)
     }
 
     /// Get a rate by ID.
@@ -8434,7 +8510,7 @@ impl TaxApi {
             .get_rate(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get rate: {}", e)))?;
 
-        Ok(rate.map(|r| r.into()))
+        convert_optional_output(rate)
     }
 
     /// List tax rates.
@@ -8464,7 +8540,7 @@ impl TaxApi {
             .list_rates(filter)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list rates: {}", e)))?;
 
-        Ok(rates.into_iter().map(|r| r.into()).collect())
+        convert_outputs(rates)
     }
 
     // ========================================================================
@@ -8888,7 +8964,7 @@ impl QualityApi {
             .create_ncr(stateset_core::CreateNonConformance {
                 sku,
                 description,
-                quantity_affected: Decimal::from_f64_retain(quantity_affected).unwrap_or_default(),
+                quantity_affected: decimal_from_f64(quantity_affected, "quantity_affected")?,
                 source: src,
                 severity: sev,
                 ..Default::default()
@@ -8919,7 +8995,7 @@ impl QualityApi {
             .create_hold(stateset_core::CreateQualityHold {
                 sku,
                 reason,
-                quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(quantity, "quantity")?,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
@@ -9014,7 +9090,7 @@ impl LotsApi {
             .create(stateset_core::CreateLot {
                 sku,
                 lot_number: Some(lot_number),
-                quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(quantity, "quantity")?,
                 expiration_date: exp,
                 ..Default::default()
             })
@@ -9676,7 +9752,7 @@ impl FulfillmentApi {
             .fulfillment()
             .complete_pick(stateset_core::CompletePick {
                 pick_id: uuid,
-                quantity_picked: Decimal::from_f64_retain(quantity_picked).unwrap_or_default(),
+                quantity_picked: decimal_from_f64(quantity_picked, "quantity_picked")?,
                 quantity_short: None,
                 short_reason: None,
                 lot_id: None,
@@ -9713,18 +9789,20 @@ pub struct Bill {
     due_date: String,
 }
 
-impl From<stateset_core::Bill> for Bill {
-    fn from(b: stateset_core::Bill) -> Self {
-        Self {
+impl TryFrom<stateset_core::Bill> for Bill {
+    type Error = PyErr;
+
+    fn try_from(b: stateset_core::Bill) -> PyResult<Self> {
+        Ok(Self {
             id: b.id.to_string(),
             bill_number: b.bill_number,
             supplier_id: b.supplier_id.to_string(),
-            total_amount: to_f64_or_nan(b.total_amount),
-            amount_paid: to_f64_or_nan(b.amount_paid),
-            amount_due: to_f64_or_nan(b.amount_due),
+            total_amount: to_f64_result(b.total_amount, "bill total amount")?,
+            amount_paid: to_f64_result(b.amount_paid, "bill amount paid")?,
+            amount_due: to_f64_result(b.amount_due, "bill amount due")?,
             status: format!("{:?}", b.status),
             due_date: b.due_date.to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -9745,16 +9823,18 @@ pub struct ApAgingSummary {
     total: f64,
 }
 
-impl From<stateset_core::ApAgingSummary> for ApAgingSummary {
-    fn from(s: stateset_core::ApAgingSummary) -> Self {
-        Self {
-            current: to_f64_or_nan(s.current),
-            days_1_30: to_f64_or_nan(s.days_1_30),
-            days_31_60: to_f64_or_nan(s.days_31_60),
-            days_61_90: to_f64_or_nan(s.days_61_90),
-            days_over_90: to_f64_or_nan(s.days_over_90),
-            total: to_f64_or_nan(s.total),
-        }
+impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummary {
+    type Error = PyErr;
+
+    fn try_from(s: stateset_core::ApAgingSummary) -> PyResult<Self> {
+        Ok(Self {
+            current: to_f64_result(s.current, "accounts payable aging current")?,
+            days_1_30: to_f64_result(s.days_1_30, "accounts payable aging 1-30 days")?,
+            days_31_60: to_f64_result(s.days_31_60, "accounts payable aging 31-60 days")?,
+            days_61_90: to_f64_result(s.days_61_90, "accounts payable aging 61-90 days")?,
+            days_over_90: to_f64_result(s.days_over_90, "accounts payable aging over 90 days")?,
+            total: to_f64_result(s.total, "accounts payable aging total")?,
+        })
     }
 }
 
@@ -9786,7 +9866,7 @@ impl AccountsPayableApi {
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(bill.into())
+        convert_output(bill)
     }
 
     fn get_bill(&self, id: String) -> PyResult<Option<Bill>> {
@@ -9799,7 +9879,7 @@ impl AccountsPayableApi {
             .accounts_payable()
             .get_bill(uuid)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(bill.map(|b| b.into()))
+        convert_optional_output(bill)
     }
 
     fn list_bills(&self) -> PyResult<Vec<Bill>> {
@@ -9811,7 +9891,7 @@ impl AccountsPayableApi {
             .accounts_payable()
             .list_bills(Default::default())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(bills.into_iter().map(|b| b.into()).collect())
+        convert_outputs(bills)
     }
 
     fn approve_bill(&self, id: String) -> PyResult<Bill> {
@@ -9824,7 +9904,7 @@ impl AccountsPayableApi {
             .accounts_payable()
             .approve_bill(uuid)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(bill.into())
+        convert_output(bill)
     }
 
     #[pyo3(signature = (id, amount, payment_method=None))]
@@ -9849,13 +9929,13 @@ impl AccountsPayableApi {
             .pay_bill(
                 uuid,
                 stateset_core::PayBill {
-                    amount: Decimal::from_f64_retain(amount).unwrap_or_default(),
+                    amount: decimal_from_f64(amount, "amount")?,
                     payment_method: pm,
                     ..Default::default()
                 },
             )
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(bill.into())
+        convert_output(bill)
     }
 
     fn get_aging_summary(&self) -> PyResult<ApAgingSummary> {
@@ -9867,7 +9947,7 @@ impl AccountsPayableApi {
             .accounts_payable()
             .get_aging_summary()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(summary.into())
+        convert_output(summary)
     }
 
     fn get_overdue_bills(&self) -> PyResult<Vec<Bill>> {
@@ -9879,7 +9959,7 @@ impl AccountsPayableApi {
             .accounts_payable()
             .get_overdue_bills()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(bills.into_iter().map(|b| b.into()).collect())
+        convert_outputs(bills)
     }
 }
 
@@ -9904,16 +9984,18 @@ pub struct ArAgingSummary {
     total: f64,
 }
 
-impl From<stateset_core::ArAgingSummary> for ArAgingSummary {
-    fn from(s: stateset_core::ArAgingSummary) -> Self {
-        Self {
-            current: to_f64_or_nan(s.current),
-            days_1_30: to_f64_or_nan(s.days_1_30),
-            days_31_60: to_f64_or_nan(s.days_31_60),
-            days_61_90: to_f64_or_nan(s.days_61_90),
-            days_over_90: to_f64_or_nan(s.days_over_90),
-            total: to_f64_or_nan(s.total),
-        }
+impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummary {
+    type Error = PyErr;
+
+    fn try_from(s: stateset_core::ArAgingSummary) -> PyResult<Self> {
+        Ok(Self {
+            current: to_f64_result(s.current, "accounts receivable aging current")?,
+            days_1_30: to_f64_result(s.days_1_30, "accounts receivable aging 1-30 days")?,
+            days_31_60: to_f64_result(s.days_31_60, "accounts receivable aging 31-60 days")?,
+            days_61_90: to_f64_result(s.days_61_90, "accounts receivable aging 61-90 days")?,
+            days_over_90: to_f64_result(s.days_over_90, "accounts receivable aging over 90 days")?,
+            total: to_f64_result(s.total, "accounts receivable aging total")?,
+        })
     }
 }
 
@@ -9934,16 +10016,18 @@ pub struct CreditMemo {
     status: String,
 }
 
-impl From<stateset_core::CreditMemo> for CreditMemo {
-    fn from(m: stateset_core::CreditMemo) -> Self {
-        Self {
+impl TryFrom<stateset_core::CreditMemo> for CreditMemo {
+    type Error = PyErr;
+
+    fn try_from(m: stateset_core::CreditMemo) -> PyResult<Self> {
+        Ok(Self {
             id: m.id.to_string(),
             credit_memo_number: m.credit_memo_number,
             customer_id: m.customer_id.to_string(),
-            amount: to_f64_or_nan(m.amount),
+            amount: to_f64_result(m.amount, "credit memo amount")?,
             reason: format!("{:?}", m.reason),
             status: format!("{:?}", m.status),
-        }
+        })
     }
 }
 
@@ -9967,7 +10051,7 @@ impl AccountsReceivableApi {
             .accounts_receivable()
             .get_aging_summary()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(summary.into())
+        convert_output(summary)
     }
 
     fn create_credit_memo(
@@ -9994,13 +10078,13 @@ impl AccountsReceivableApi {
             .accounts_receivable()
             .create_credit_memo(stateset_core::CreateCreditMemo {
                 customer_id: uuid,
-                amount: Decimal::from_f64_retain(amount).unwrap_or_default(),
+                amount: decimal_from_f64(amount, "amount")?,
                 reason: r,
                 original_invoice_id: None,
                 notes: None,
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(memo.into())
+        convert_output(memo)
     }
 
     #[pyo3(signature = (days=None))]
@@ -10013,7 +10097,7 @@ impl AccountsReceivableApi {
             .accounts_receivable()
             .get_dso(days.unwrap_or(30))
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(to_f64_or_nan(dso))
+        to_f64_result(dso, "days sales outstanding")
     }
 }
 
@@ -10040,17 +10124,19 @@ pub struct ItemCost {
     overhead_cost: f64,
 }
 
-impl From<stateset_core::ItemCost> for ItemCost {
-    fn from(c: stateset_core::ItemCost) -> Self {
-        Self {
+impl TryFrom<stateset_core::ItemCost> for ItemCost {
+    type Error = PyErr;
+
+    fn try_from(c: stateset_core::ItemCost) -> PyResult<Self> {
+        Ok(Self {
             sku: c.sku,
-            standard_cost: to_f64_or_nan(c.standard_cost),
-            average_cost: to_f64_or_nan(c.average_cost),
-            last_cost: to_f64_or_nan(c.last_cost),
-            material_cost: to_f64_or_nan(c.material_cost),
-            labor_cost: to_f64_or_nan(c.labor_cost),
-            overhead_cost: to_f64_or_nan(c.overhead_cost),
-        }
+            standard_cost: to_f64_result(c.standard_cost, "standard cost")?,
+            average_cost: to_f64_result(c.average_cost, "average cost")?,
+            last_cost: to_f64_result(c.last_cost, "last cost")?,
+            material_cost: to_f64_result(c.material_cost, "material cost")?,
+            labor_cost: to_f64_result(c.labor_cost, "labor cost")?,
+            overhead_cost: to_f64_result(c.overhead_cost, "overhead cost")?,
+        })
     }
 }
 
@@ -10065,13 +10151,15 @@ pub struct InventoryValuation {
     average_unit_cost: f64,
 }
 
-impl From<stateset_core::InventoryValuation> for InventoryValuation {
-    fn from(v: stateset_core::InventoryValuation) -> Self {
-        Self {
-            total_value: to_f64_or_nan(v.total_value),
-            total_quantity: to_f64_or_nan(v.total_quantity),
-            average_unit_cost: to_f64_or_nan(v.average_unit_cost),
-        }
+impl TryFrom<stateset_core::InventoryValuation> for InventoryValuation {
+    type Error = PyErr;
+
+    fn try_from(v: stateset_core::InventoryValuation) -> PyResult<Self> {
+        Ok(Self {
+            total_value: to_f64_result(v.total_value, "total value")?,
+            total_quantity: to_f64_result(v.total_quantity, "total quantity")?,
+            average_unit_cost: to_f64_result(v.average_unit_cost, "average unit cost")?,
+        })
     }
 }
 
@@ -10095,7 +10183,7 @@ impl CostAccountingApi {
             .cost_accounting()
             .get_item_cost(&sku)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(cost.map(|c| c.into()))
+        convert_optional_output(cost)
     }
 
     #[pyo3(signature = (sku, standard_cost=None, material_cost=None, labor_cost=None, overhead_cost=None))]
@@ -10115,14 +10203,14 @@ impl CostAccountingApi {
             .cost_accounting()
             .set_item_cost(stateset_core::SetItemCost {
                 sku,
-                standard_cost: standard_cost.and_then(Decimal::from_f64_retain),
-                material_cost: material_cost.and_then(Decimal::from_f64_retain),
-                labor_cost: labor_cost.and_then(Decimal::from_f64_retain),
-                overhead_cost: overhead_cost.and_then(Decimal::from_f64_retain),
+                standard_cost: optional_decimal_from_f64(standard_cost, "standard_cost")?,
+                material_cost: optional_decimal_from_f64(material_cost, "material_cost")?,
+                labor_cost: optional_decimal_from_f64(labor_cost, "labor_cost")?,
+                overhead_cost: optional_decimal_from_f64(overhead_cost, "overhead_cost")?,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(cost.into())
+        convert_output(cost)
     }
 
     fn update_average_cost(
@@ -10139,11 +10227,11 @@ impl CostAccountingApi {
             .cost_accounting()
             .update_average_cost(
                 &sku,
-                Decimal::from_f64_retain(quantity).unwrap_or_default(),
-                Decimal::from_f64_retain(unit_cost).unwrap_or_default(),
+                decimal_from_f64(quantity, "quantity")?,
+                decimal_from_f64(unit_cost, "unit_cost")?,
             )
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(cost.into())
+        convert_output(cost)
     }
 
     #[pyo3(signature = (cost_method=None))]
@@ -10165,7 +10253,7 @@ impl CostAccountingApi {
             .cost_accounting()
             .get_inventory_valuation(method)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(valuation.into())
+        convert_output(valuation)
     }
 
     fn get_total_inventory_value(&self) -> PyResult<f64> {
@@ -10177,7 +10265,7 @@ impl CostAccountingApi {
             .cost_accounting()
             .get_total_inventory_value()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(to_f64_or_nan(value))
+        to_f64_result(value, "inventory value")
     }
 }
 
@@ -10204,17 +10292,19 @@ pub struct CreditAccount {
     payment_terms: Option<String>,
 }
 
-impl From<stateset_core::CreditAccount> for CreditAccount {
-    fn from(a: stateset_core::CreditAccount) -> Self {
-        Self {
+impl TryFrom<stateset_core::CreditAccount> for CreditAccount {
+    type Error = PyErr;
+
+    fn try_from(a: stateset_core::CreditAccount) -> PyResult<Self> {
+        Ok(Self {
             id: a.id.to_string(),
             customer_id: a.customer_id.to_string(),
-            credit_limit: to_f64_or_nan(a.credit_limit),
-            current_balance: to_f64_or_nan(a.current_balance),
-            available_credit: to_f64_or_nan(a.available_credit),
+            credit_limit: to_f64_result(a.credit_limit, "credit limit")?,
+            current_balance: to_f64_result(a.current_balance, "current balance")?,
+            available_credit: to_f64_result(a.available_credit, "available credit")?,
             status: format!("{:?}", a.status),
             payment_terms: a.payment_terms,
-        }
+        })
     }
 }
 
@@ -10231,14 +10321,16 @@ pub struct CreditCheckResult {
     requires_approval: bool,
 }
 
-impl From<stateset_core::CreditCheckResult> for CreditCheckResult {
-    fn from(r: stateset_core::CreditCheckResult) -> Self {
-        Self {
+impl TryFrom<stateset_core::CreditCheckResult> for CreditCheckResult {
+    type Error = PyErr;
+
+    fn try_from(r: stateset_core::CreditCheckResult) -> PyResult<Self> {
+        Ok(Self {
             approved: r.approved,
             reason: r.reason.map(|r| format!("{:?}", r)),
-            available_credit: to_f64_or_nan(r.available_credit),
+            available_credit: to_f64_result(r.available_credit, "available credit")?,
             requires_approval: r.requires_approval,
-        }
+        })
     }
 }
 
@@ -10269,12 +10361,12 @@ impl CreditApi {
             .credit()
             .create_credit_account(stateset_core::CreateCreditAccount {
                 customer_id: uuid,
-                credit_limit: Decimal::from_f64_retain(credit_limit).unwrap_or_default(),
+                credit_limit: decimal_from_f64(credit_limit, "credit_limit")?,
                 payment_terms,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(account.into())
+        convert_output(account)
     }
 
     fn get_credit_account_by_customer(
@@ -10290,7 +10382,7 @@ impl CreditApi {
             .credit()
             .get_credit_account_by_customer(uuid)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(account.map(|a| a.into()))
+        convert_optional_output(account)
     }
 
     fn check_credit(&self, customer_id: String, order_amount: f64) -> PyResult<CreditCheckResult> {
@@ -10301,9 +10393,9 @@ impl CreditApi {
         let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let result = commerce
             .credit()
-            .check_credit(uuid, Decimal::from_f64_retain(order_amount).unwrap_or_default())
+            .check_credit(uuid, decimal_from_f64(order_amount, "order_amount")?)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(result.into())
+        convert_output(result)
     }
 
     fn adjust_credit_limit(
@@ -10319,13 +10411,9 @@ impl CreditApi {
         let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let account = commerce
             .credit()
-            .adjust_credit_limit(
-                uuid,
-                Decimal::from_f64_retain(new_limit).unwrap_or_default(),
-                &reason,
-            )
+            .adjust_credit_limit(uuid, decimal_from_f64(new_limit, "new_limit")?, &reason)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(account.into())
+        convert_output(account)
     }
 
     fn get_over_limit_customers(&self) -> PyResult<Vec<CreditAccount>> {
@@ -10337,7 +10425,7 @@ impl CreditApi {
             .credit()
             .get_over_limit_customers()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(accounts.into_iter().map(|a| a.into()).collect())
+        convert_outputs(accounts)
     }
 }
 
@@ -10370,20 +10458,28 @@ pub struct Backorder {
     priority: String,
 }
 
-impl From<stateset_core::Backorder> for Backorder {
-    fn from(b: stateset_core::Backorder) -> Self {
-        Self {
+impl TryFrom<stateset_core::Backorder> for Backorder {
+    type Error = PyErr;
+
+    fn try_from(b: stateset_core::Backorder) -> PyResult<Self> {
+        Ok(Self {
             id: b.id.to_string(),
             backorder_number: b.backorder_number,
             order_id: b.order_id.to_string(),
             customer_id: b.customer_id.to_string(),
             sku: b.sku,
-            quantity_ordered: to_f64_or_nan(b.quantity_ordered),
-            quantity_fulfilled: to_f64_or_nan(b.quantity_fulfilled),
-            quantity_remaining: to_f64_or_nan(b.quantity_remaining),
+            quantity_ordered: to_f64_result(b.quantity_ordered, "backorder quantity ordered")?,
+            quantity_fulfilled: to_f64_result(
+                b.quantity_fulfilled,
+                "backorder quantity fulfilled",
+            )?,
+            quantity_remaining: to_f64_result(
+                b.quantity_remaining,
+                "backorder quantity remaining",
+            )?,
             status: format!("{:?}", b.status),
             priority: format!("{:?}", b.priority),
-        }
+        })
     }
 }
 
@@ -10400,14 +10496,16 @@ pub struct BackorderSummary {
     overdue_count: i32,
 }
 
-impl From<stateset_core::BackorderSummary> for BackorderSummary {
-    fn from(s: stateset_core::BackorderSummary) -> Self {
-        Self {
+impl TryFrom<stateset_core::BackorderSummary> for BackorderSummary {
+    type Error = PyErr;
+
+    fn try_from(s: stateset_core::BackorderSummary) -> PyResult<Self> {
+        Ok(Self {
             total_backorders: s.total_backorders,
-            total_quantity: to_f64_or_nan(s.total_quantity),
+            total_quantity: to_f64_result(s.total_quantity, "backorder total quantity")?,
             critical_count: s.critical_count,
             overdue_count: s.overdue_count,
-        }
+        })
     }
 }
 
@@ -10451,7 +10549,7 @@ impl BackorderApi {
                 order_id: ord_uuid,
                 customer_id: cust_uuid,
                 sku,
-                quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(quantity, "quantity")?,
                 priority: prio,
                 order_line_id: None,
                 expected_date: None,
@@ -10460,7 +10558,7 @@ impl BackorderApi {
                 notes: None,
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(backorder.into())
+        convert_output(backorder)
     }
 
     fn get_backorder(&self, id: String) -> PyResult<Option<Backorder>> {
@@ -10473,7 +10571,7 @@ impl BackorderApi {
             .backorder()
             .get_backorder(uuid)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(backorder.map(|b| b.into()))
+        convert_optional_output(backorder)
     }
 
     fn list_backorders(&self) -> PyResult<Vec<Backorder>> {
@@ -10485,7 +10583,7 @@ impl BackorderApi {
             .backorder()
             .list_backorders(Default::default())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(backorders.into_iter().map(|b| b.into()).collect())
+        convert_outputs(backorders)
     }
 
     fn fulfill_backorder(&self, id: String, quantity: f64) -> PyResult<Backorder> {
@@ -10498,14 +10596,14 @@ impl BackorderApi {
             .backorder()
             .fulfill_backorder(stateset_core::FulfillBackorder {
                 backorder_id: uuid,
-                quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(quantity, "quantity")?,
                 source_type: stateset_core::FulfillmentSourceType::Inventory,
                 source_id: None,
                 notes: None,
                 fulfilled_by: None,
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(backorder.into())
+        convert_output(backorder)
     }
 
     fn cancel_backorder(&self, id: String) -> PyResult<Backorder> {
@@ -10518,7 +10616,7 @@ impl BackorderApi {
             .backorder()
             .cancel_backorder(uuid)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(backorder.into())
+        convert_output(backorder)
     }
 
     fn get_summary(&self) -> PyResult<BackorderSummary> {
@@ -10530,7 +10628,7 @@ impl BackorderApi {
             .backorder()
             .get_summary()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(summary.into())
+        convert_output(summary)
     }
 
     fn get_overdue_backorders(&self) -> PyResult<Vec<Backorder>> {
@@ -10542,7 +10640,7 @@ impl BackorderApi {
             .backorder()
             .get_overdue_backorders()
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(backorders.into_iter().map(|b| b.into()).collect())
+        convert_outputs(backorders)
     }
 }
 
@@ -10567,16 +10665,18 @@ pub struct GlAccount {
     status: String,
 }
 
-impl From<stateset_core::GlAccount> for GlAccount {
-    fn from(a: stateset_core::GlAccount) -> Self {
-        Self {
+impl TryFrom<stateset_core::GlAccount> for GlAccount {
+    type Error = PyErr;
+
+    fn try_from(a: stateset_core::GlAccount) -> PyResult<Self> {
+        Ok(Self {
             id: a.id.to_string(),
             account_number: a.account_number,
             name: a.name,
             account_type: format!("{:?}", a.account_type),
-            current_balance: to_f64_or_nan(a.current_balance),
+            current_balance: to_f64_result(a.current_balance, "account balance")?,
             status: format!("{:?}", a.status),
-        }
+        })
     }
 }
 
@@ -10618,13 +10718,15 @@ pub struct TrialBalance {
     is_balanced: bool,
 }
 
-impl From<stateset_core::TrialBalance> for TrialBalance {
-    fn from(t: stateset_core::TrialBalance) -> Self {
-        Self {
-            total_debits: to_f64_or_nan(t.total_debits),
-            total_credits: to_f64_or_nan(t.total_credits),
+impl TryFrom<stateset_core::TrialBalance> for TrialBalance {
+    type Error = PyErr;
+
+    fn try_from(t: stateset_core::TrialBalance) -> PyResult<Self> {
+        Ok(Self {
+            total_debits: to_f64_result(t.total_debits, "trial balance total debits")?,
+            total_credits: to_f64_result(t.total_credits, "trial balance total credits")?,
             is_balanced: t.is_balanced,
-        }
+        })
     }
 }
 
@@ -10673,7 +10775,7 @@ impl GeneralLedgerApi {
                 currency: None,
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(account.into())
+        convert_output(account)
     }
 
     fn get_account(&self, id: String) -> PyResult<Option<GlAccount>> {
@@ -10686,7 +10788,7 @@ impl GeneralLedgerApi {
             .general_ledger()
             .get_account(uuid)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(account.map(|a| a.into()))
+        convert_optional_output(account)
     }
 
     fn get_account_by_number(&self, account_number: String) -> PyResult<Option<GlAccount>> {
@@ -10698,7 +10800,7 @@ impl GeneralLedgerApi {
             .general_ledger()
             .get_account_by_number(&account_number)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(account.map(|a| a.into()))
+        convert_optional_output(account)
     }
 
     fn list_accounts(&self) -> PyResult<Vec<GlAccount>> {
@@ -10710,7 +10812,7 @@ impl GeneralLedgerApi {
             .general_ledger()
             .list_accounts(Default::default())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(accounts.into_iter().map(|a| a.into()).collect())
+        convert_outputs(accounts)
     }
 
     fn get_journal_entry(&self, id: String) -> PyResult<Option<JournalEntry>> {
@@ -10752,7 +10854,7 @@ impl GeneralLedgerApi {
             .general_ledger()
             .get_trial_balance(date)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(balance.into())
+        convert_output(balance)
     }
 }
 

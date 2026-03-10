@@ -133,13 +133,16 @@ impl Outbox {
     ///
     /// # Errors
     ///
-    /// Returns [`SyncError::Storage`] if durable persistence cannot be updated
-    /// after the in-memory drain succeeds.
+    /// Returns [`SyncError::Storage`] if durable persistence cannot be updated.
+    /// In that case, the original in-memory ordering is restored.
     pub fn drain(&mut self, count: usize) -> Result<Vec<SyncEvent>, SyncError> {
         let n = count.min(self.events.len());
         let drained: Vec<SyncEvent> = self.events.drain(..n).collect();
 
         if let Err(err) = self.persist() {
+            for event in drained.iter().rev().cloned() {
+                self.events.push_front(event);
+            }
             return Err(err);
         }
 
@@ -464,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn drain_returns_storage_error_after_in_memory_removal() {
+    fn drain_restores_events_when_persist_fails() {
         let dir = tempdir().unwrap();
         let mut outbox = Outbox::new(10);
         outbox.append(make_event("a")).unwrap();
@@ -476,7 +479,8 @@ mod tests {
 
         let err = outbox.drain(1).unwrap_err();
         assert!(matches!(err, SyncError::Storage(_)));
-        assert_eq!(outbox.count(), 1);
-        assert_eq!(outbox.peek(10)[0].event_type, "b");
+        assert_eq!(outbox.count(), 2);
+        assert_eq!(outbox.peek(10)[0].event_type, "a");
+        assert_eq!(outbox.peek(10)[1].event_type, "b");
     }
 }

@@ -22,7 +22,7 @@ use stateset_core::{
     CreateSearchConfig, Result, SearchConfig, SearchConfigFilter, SearchConfigId,
     UpdateSearchConfig,
 };
-use stateset_db::Database;
+use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 
 /// Search configuration operations.
@@ -41,6 +41,15 @@ impl SearchConfigs {
         Self { db }
     }
 
+    /// Whether search configuration management is supported by the active backend.
+    pub fn is_supported(&self) -> bool {
+        self.db.supports_capability(DatabaseCapability::SearchConfigs)
+    }
+
+    fn ensure_supported(&self) -> Result<()> {
+        self.db.ensure_capability(DatabaseCapability::SearchConfigs)
+    }
+
     /// Create a new search configuration.
     ///
     /// # Example
@@ -57,36 +66,43 @@ impl SearchConfigs {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateSearchConfig) -> Result<SearchConfig> {
+        self.ensure_supported()?;
         self.db.search_configs().create(input)
     }
 
     /// Get a search configuration by ID.
     pub fn get(&self, id: SearchConfigId) -> Result<Option<SearchConfig>> {
+        self.ensure_supported()?;
         self.db.search_configs().get(id)
     }
 
     /// Update a search configuration.
     pub fn update(&self, id: SearchConfigId, input: UpdateSearchConfig) -> Result<SearchConfig> {
+        self.ensure_supported()?;
         self.db.search_configs().update(id, input)
     }
 
     /// List search configurations with optional filtering.
     pub fn list(&self, filter: SearchConfigFilter) -> Result<Vec<SearchConfig>> {
+        self.ensure_supported()?;
         self.db.search_configs().list(filter)
     }
 
     /// Delete a search configuration.
     pub fn delete(&self, id: SearchConfigId) -> Result<()> {
+        self.ensure_supported()?;
         self.db.search_configs().delete(id)
     }
 
     /// Get the currently active search configuration.
     pub fn get_active(&self) -> Result<Option<SearchConfig>> {
+        self.ensure_supported()?;
         self.db.search_configs().get_active()
     }
 
     /// Set a configuration as active (deactivating any current one).
     pub fn set_active(&self, id: SearchConfigId) -> Result<SearchConfig> {
+        self.ensure_supported()?;
         self.db.search_configs().set_active(id)
     }
 }

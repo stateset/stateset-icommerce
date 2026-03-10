@@ -41,6 +41,7 @@ use stateset_embedded::{
     SetItemCost,
     TimePeriod,
 };
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_double, c_int};
 use std::ptr;
@@ -61,6 +62,10 @@ pub struct CommerceHandle {
 
 static HANDLE_REGISTRY: OnceLock<Mutex<HashMap<usize, SharedCommerce>>> = OnceLock::new();
 static NEXT_HANDLE_ID: AtomicUsize = AtomicUsize::new(1);
+
+thread_local! {
+    static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
 
 fn handle_registry() -> &'static Mutex<HashMap<usize, SharedCommerce>> {
     HANDLE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
@@ -130,6 +135,23 @@ fn cstr_to_string(s: *const c_char) -> Option<String> {
     unsafe { CStr::from_ptr(s).to_str().ok().map(|s| s.to_string()) }
 }
 
+fn decimal_from_f64(value: f64, field: &str) -> Result<Decimal, String> {
+    Decimal::from_f64_retain(value)
+        .ok_or_else(|| format!("Invalid numeric value for {field}: {value}"))
+}
+
+fn clear_last_error() {
+    LAST_ERROR.with(|slot| {
+        *slot.borrow_mut() = None;
+    });
+}
+
+fn set_last_error(message: impl Into<String>) {
+    LAST_ERROR.with(|slot| {
+        *slot.borrow_mut() = Some(message.into());
+    });
+}
+
 fn string_to_cstr(s: String) -> *mut c_char {
     match CString::new(s) {
         Ok(cstr) => cstr.into_raw(),
@@ -144,17 +166,14 @@ fn to_json_cstr<T: serde::Serialize>(value: &T) -> *mut c_char {
     }
 }
 
-fn to_f64_or_nan<T>(value: T) -> f64
+fn to_f64_result<T>(value: T, field: &str) -> Result<f64, String>
 where
     T: TryInto<f64>,
     <T as TryInto<f64>>::Error: std::fmt::Display,
 {
     match value.try_into() {
-        Ok(converted) => converted,
-        Err(err) => {
-            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
-            f64::NAN
-        }
+        Ok(converted) => Ok(converted),
+        Err(err) => Err(format!("Failed to convert {field} to f64: {err}")),
     }
 }
 
@@ -170,6 +189,15 @@ pub extern "C" fn stateset_string_free(s: *mut c_char) {
             drop(CString::from_raw(s));
         }
     }
+}
+
+/// Get the last error message, if any. Caller must free the returned string.
+#[unsafe(no_mangle)]
+pub extern "C" fn stateset_get_last_error() -> *mut c_char {
+    LAST_ERROR.with(|slot| match slot.borrow().as_ref() {
+        Some(message) => string_to_cstr(message.clone()),
+        None => ptr::null_mut(),
+    })
 }
 
 // =============================================================================
@@ -1225,7 +1253,7 @@ pub extern "C" fn stateset_lots_create(
             .create(CreateLot {
                 sku: sku_str,
                 lot_number: lot_str,
-                quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(quantity, "quantity")?,
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1317,7 +1345,7 @@ pub extern "C" fn stateset_ap_create_bill(
                 items: vec![CreateBillItem {
                     description: "Items".into(),
                     quantity: Decimal::ONE,
-                    unit_price: Decimal::from_f64_retain(amount).unwrap_or_default(),
+                    unit_price: decimal_from_f64(amount, "amount")?,
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -1378,8 +1406,20 @@ pub extern "C" fn stateset_ar_get_dso(handle: *mut CommerceHandle, days: c_int) 
         commerce.accounts_receivable().get_dso(days).map_err(|e| e.to_string())
     });
     match result {
-        Ok(dso) => to_f64_or_nan(dso),
-        Err(_) => 0.0,
+        Ok(dso) => match to_f64_result(dso, "dso") {
+            Ok(value) => {
+                clear_last_error();
+                value
+            }
+            Err(err) => {
+                set_last_error(err);
+                0.0
+            }
+        },
+        Err(err) => {
+            set_last_error(err);
+            0.0
+        }
     }
 }
 
@@ -1404,7 +1444,7 @@ pub extern "C" fn stateset_cost_set_item_cost(
             .cost_accounting()
             .set_item_cost(SetItemCost {
                 sku: sku_str,
-                standard_cost: Some(Decimal::from_f64_retain(standard_cost).unwrap_or_default()),
+                standard_cost: Some(decimal_from_f64(standard_cost, "standard_cost")?),
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1459,7 +1499,7 @@ pub extern "C" fn stateset_credit_create_account(
             .credit()
             .create_credit_account(CreateCreditAccount {
                 customer_id: cust_uuid,
-                credit_limit: Decimal::from_f64_retain(credit_limit).unwrap_or_default(),
+                credit_limit: decimal_from_f64(credit_limit, "credit_limit")?,
                 ..Default::default()
             })
             .map_err(|e| e.to_string())
@@ -1487,7 +1527,7 @@ pub extern "C" fn stateset_credit_check(
         let cust_uuid = cust.parse().map_err(|_| "Invalid UUID".to_string())?;
         commerce
             .credit()
-            .check_credit(cust_uuid, Decimal::from_f64_retain(amount).unwrap_or_default())
+            .check_credit(cust_uuid, decimal_from_f64(amount, "amount")?)
             .map_err(|e| e.to_string())
     });
 
@@ -1538,7 +1578,7 @@ pub extern "C" fn stateset_backorder_create(
                 order_id: ord_uuid,
                 customer_id: cust_uuid,
                 sku: sku_str,
-                quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                quantity: decimal_from_f64(quantity, "quantity")?,
                 priority: Some(BackorderPriority::Normal),
                 order_line_id: None,
                 expected_date: None,

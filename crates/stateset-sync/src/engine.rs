@@ -144,8 +144,6 @@ impl SyncEngine {
 
         let result = transport.push_events(&events).await?;
         let accepted = result.accepted.min(events.len());
-        self.state.remote_head = result.remote_head;
-        self.state.last_push = Some(Utc::now());
 
         if accepted > 0 {
             if let Err(err) = self.outbox.drain(accepted) {
@@ -154,6 +152,8 @@ impl SyncEngine {
             }
         }
 
+        self.state.remote_head = result.remote_head;
+        self.state.last_push = Some(Utc::now());
         self.state.pending_count = self.outbox.count();
 
         Ok(result)
@@ -713,9 +713,9 @@ mod tests {
 
         let err = engine.push(&AcceptAllTransport).await.unwrap_err();
         assert!(matches!(err, SyncError::Storage(_)));
-        assert_eq!(engine.pending_count(), 0);
-        assert_eq!(engine.state().remote_head, 1);
-        assert!(engine.state().last_push.is_some());
+        assert_eq!(engine.pending_count(), 1);
+        assert_eq!(engine.state().remote_head, 0);
+        assert!(engine.state().last_push.is_none());
     }
 
     #[tokio::test]

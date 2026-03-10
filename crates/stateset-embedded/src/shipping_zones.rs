@@ -25,7 +25,7 @@ use stateset_core::{
     ShippingZoneFilter, ShippingZoneId, UpdateShippingZone, ZoneShippingMethod,
     ZoneShippingMethodFilter, ZoneShippingRate, ZoneShippingRateRequest,
 };
-use stateset_db::Database;
+use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 
 /// Shipping zone and method operations.
@@ -42,6 +42,20 @@ impl std::fmt::Debug for ShippingZones {
 impl ShippingZones {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    /// Whether shipping zones and methods are supported by the active backend.
+    pub fn is_supported(&self) -> bool {
+        self.db.supports_capability(DatabaseCapability::ShippingZones)
+            && self.db.supports_capability(DatabaseCapability::ZoneShippingMethods)
+    }
+
+    fn ensure_zones_supported(&self) -> Result<()> {
+        self.db.ensure_capability(DatabaseCapability::ShippingZones)
+    }
+
+    fn ensure_methods_supported(&self) -> Result<()> {
+        self.db.ensure_capability(DatabaseCapability::ZoneShippingMethods)
     }
 
     // ========================================================================
@@ -65,26 +79,31 @@ impl ShippingZones {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateShippingZone) -> Result<ShippingZone> {
+        self.ensure_zones_supported()?;
         self.db.shipping_zones().create(input)
     }
 
     /// Get a shipping zone by ID.
     pub fn get(&self, id: ShippingZoneId) -> Result<Option<ShippingZone>> {
+        self.ensure_zones_supported()?;
         self.db.shipping_zones().get(id)
     }
 
     /// Update a shipping zone.
     pub fn update(&self, id: ShippingZoneId, input: UpdateShippingZone) -> Result<ShippingZone> {
+        self.ensure_zones_supported()?;
         self.db.shipping_zones().update(id, input)
     }
 
     /// List shipping zones with optional filtering.
     pub fn list(&self, filter: ShippingZoneFilter) -> Result<Vec<ShippingZone>> {
+        self.ensure_zones_supported()?;
         self.db.shipping_zones().list(filter)
     }
 
     /// Delete a shipping zone.
     pub fn delete(&self, id: ShippingZoneId) -> Result<()> {
+        self.ensure_zones_supported()?;
         self.db.shipping_zones().delete(id)
     }
 
@@ -98,6 +117,7 @@ impl ShippingZones {
         region: Option<&str>,
         postal_code: Option<&str>,
     ) -> Result<Vec<ShippingZone>> {
+        self.ensure_zones_supported()?;
         self.db.shipping_zones().find_matching_zones(country, region, postal_code)
     }
 
@@ -107,11 +127,13 @@ impl ShippingZones {
 
     /// Create a shipping method within a zone.
     pub fn create_method(&self, input: CreateZoneShippingMethod) -> Result<ZoneShippingMethod> {
+        self.ensure_methods_supported()?;
         self.db.zone_shipping_methods().create(input)
     }
 
     /// Get a shipping method by ID.
     pub fn get_method(&self, id: ShippingMethodId) -> Result<Option<ZoneShippingMethod>> {
+        self.ensure_methods_supported()?;
         self.db.zone_shipping_methods().get(id)
     }
 
@@ -120,11 +142,13 @@ impl ShippingZones {
         &self,
         filter: ZoneShippingMethodFilter,
     ) -> Result<Vec<ZoneShippingMethod>> {
+        self.ensure_methods_supported()?;
         self.db.zone_shipping_methods().list(filter)
     }
 
     /// Delete a shipping method.
     pub fn delete_method(&self, id: ShippingMethodId) -> Result<()> {
+        self.ensure_methods_supported()?;
         self.db.zone_shipping_methods().delete(id)
     }
 
@@ -135,6 +159,7 @@ impl ShippingZones {
         &self,
         request: ZoneShippingRateRequest,
     ) -> Result<Vec<ZoneShippingRate>> {
+        self.ensure_methods_supported()?;
         self.db.zone_shipping_methods().calculate_rates(request)
     }
 }

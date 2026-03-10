@@ -24,7 +24,7 @@ use stateset_core::{
     AdjustStoreCredit, CreateStoreCredit, Result, StoreCredit, StoreCreditFilter, StoreCreditId,
     StoreCreditTransaction,
 };
-use stateset_db::Database;
+use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 
 /// Store credit operations for managing customer balances.
@@ -41,6 +41,15 @@ impl std::fmt::Debug for StoreCredits {
 impl StoreCredits {
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    /// Whether store credits are supported by the active backend.
+    pub fn is_supported(&self) -> bool {
+        self.db.supports_capability(DatabaseCapability::StoreCredits)
+    }
+
+    fn ensure_supported(&self) -> Result<()> {
+        self.db.ensure_capability(DatabaseCapability::StoreCredits)
     }
 
     /// Create a new store credit.
@@ -62,16 +71,19 @@ impl StoreCredits {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateStoreCredit) -> Result<StoreCredit> {
+        self.ensure_supported()?;
         self.db.store_credits().create(input)
     }
 
     /// Get a store credit by ID.
     pub fn get(&self, id: StoreCreditId) -> Result<Option<StoreCredit>> {
+        self.ensure_supported()?;
         self.db.store_credits().get(id)
     }
 
     /// List store credits with optional filtering.
     pub fn list(&self, filter: StoreCreditFilter) -> Result<Vec<StoreCredit>> {
+        self.ensure_supported()?;
         self.db.store_credits().list(filter)
     }
 
@@ -79,6 +91,7 @@ impl StoreCredits {
     ///
     /// Can increase or decrease the balance with a reason for the adjustment.
     pub fn adjust(&self, id: StoreCreditId, input: AdjustStoreCredit) -> Result<StoreCredit> {
+        self.ensure_supported()?;
         self.db.store_credits().adjust(id, input)
     }
 
@@ -91,6 +104,7 @@ impl StoreCredits {
         amount: Decimal,
         reference_id: Option<String>,
     ) -> Result<StoreCreditTransaction> {
+        self.ensure_supported()?;
         self.db.store_credits().apply(id, amount, reference_id)
     }
 
@@ -99,6 +113,7 @@ impl StoreCredits {
         &self,
         store_credit_id: StoreCreditId,
     ) -> Result<Vec<StoreCreditTransaction>> {
+        self.ensure_supported()?;
         self.db.store_credits().get_transactions(store_credit_id)
     }
 }

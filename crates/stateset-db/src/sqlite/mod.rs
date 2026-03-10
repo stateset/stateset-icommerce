@@ -123,6 +123,68 @@ pub struct SqliteDatabase {
     pool: Pool<SqliteConnectionManager>,
 }
 
+#[derive(Debug)]
+struct PragmaScope {
+    conn: PooledConnection<SqliteConnectionManager>,
+    previous_timeout: u64,
+    previous_read_uncommitted: Option<bool>,
+}
+
+impl PragmaScope {
+    fn new(
+        conn: PooledConnection<SqliteConnectionManager>,
+        timeout_ms: u64,
+        set_read_uncommitted: bool,
+        fallback_timeout_ms: u64,
+    ) -> Result<Self, rusqlite::Error> {
+        let previous_timeout: u64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, u64>(0))
+            .unwrap_or(fallback_timeout_ms);
+
+        conn.execute_batch(&format!("PRAGMA busy_timeout = {timeout_ms}"))?;
+
+        let previous_read_uncommitted = if set_read_uncommitted {
+            let previous: i64 = conn
+                .query_row("PRAGMA read_uncommitted", [], |row| row.get::<_, i64>(0))
+                .unwrap_or(0);
+            let previous_read_uncommitted = previous == 1;
+            conn.execute_batch("PRAGMA read_uncommitted = true")?;
+            Some(previous_read_uncommitted)
+        } else {
+            None
+        };
+
+        Ok(Self { conn, previous_timeout, previous_read_uncommitted })
+    }
+}
+
+impl std::ops::Deref for PragmaScope {
+    type Target = PooledConnection<SqliteConnectionManager>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conn
+    }
+}
+
+impl std::ops::DerefMut for PragmaScope {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.conn
+    }
+}
+
+impl Drop for PragmaScope {
+    fn drop(&mut self) {
+        let _ =
+            self.conn.execute_batch(&format!("PRAGMA busy_timeout = {}", self.previous_timeout));
+        if let Some(previous_read_uncommitted) = self.previous_read_uncommitted {
+            let _ = self.conn.execute_batch(&format!(
+                "PRAGMA read_uncommitted = {}",
+                if previous_read_uncommitted { "true" } else { "false" }
+            ));
+        }
+    }
+}
+
 impl SqliteDatabase {
     /// Create a new SQLite database connection
     pub fn new(config: &DatabaseConfig) -> Result<Self, CommerceError> {
@@ -687,28 +749,14 @@ impl DatabaseExt for SqliteDatabase {
 
         crate::sqlite::with_retry(
             || {
-                let mut conn = self.pool.get().map_err(|e| {
+                let conn = self.pool.get().map_err(|e| {
                     rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
                         Some(e.to_string()),
                     )
                 })?;
-                let previous_timeout: u64 = conn
-                    .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, u64>(0))
-                    .unwrap_or(fallback_timeout_ms);
-
-                conn.execute_batch(&format!("PRAGMA busy_timeout = {}", timeout_ms))?;
-
-                let previous_read_uncommitted = if set_read_uncommitted {
-                    let previous: i64 = conn
-                        .query_row("PRAGMA read_uncommitted", [], |row| row.get::<_, i64>(0))
-                        .unwrap_or(0);
-                    let previous_read_uncommitted = previous == 1;
-                    conn.execute_batch("PRAGMA read_uncommitted = true")?;
-                    Some(previous_read_uncommitted)
-                } else {
-                    None
-                };
+                let mut conn =
+                    PragmaScope::new(conn, timeout_ms, set_read_uncommitted, fallback_timeout_ms)?;
 
                 let result = {
                     let tx =
@@ -726,14 +774,6 @@ impl DatabaseExt for SqliteDatabase {
                         }
                     }
                 };
-
-                let _ = conn.execute_batch(&format!("PRAGMA busy_timeout = {}", previous_timeout));
-                if let Some(previous_read_uncommitted) = previous_read_uncommitted {
-                    let _ = conn.execute_batch(&format!(
-                        "PRAGMA read_uncommitted = {}",
-                        if previous_read_uncommitted { "true" } else { "false" }
-                    ));
-                }
 
                 result
             },
@@ -798,6 +838,43 @@ mod tests {
             .query_row("PRAGMA read_uncommitted", [], |row| row.get::<_, i64>(0))
             .expect("read_uncommitted pragma should be readable");
         assert_eq!(after, 1);
+    }
+
+    #[test]
+    fn with_transaction_restores_pragmas_after_panic() {
+        let db = SqliteDatabase::new(&DatabaseConfig {
+            url: ":memory:".to_string(),
+            max_connections: 1,
+        })
+        .expect("db should initialize");
+
+        {
+            let conn = db.conn().expect("connection should open");
+            conn.execute_batch("PRAGMA busy_timeout = 25; PRAGMA read_uncommitted = false;")
+                .expect("initial pragmas should be set");
+        }
+
+        let panic_result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _ = db.with_transaction_opts(
+                crate::TransactionOptions::new()
+                    .timeout_ms(250)
+                    .isolation(crate::TransactionIsolation::ReadUncommitted),
+                |_conn| -> std::result::Result<(), rusqlite::Error> {
+                    panic!("boom");
+                },
+            );
+        }));
+        assert!(panic_result.is_err());
+
+        let conn = db.conn().expect("connection should reopen");
+        let busy_timeout: u64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, u64>(0))
+            .expect("busy_timeout pragma should be readable");
+        let read_uncommitted: i64 = conn
+            .query_row("PRAGMA read_uncommitted", [], |row| row.get::<_, i64>(0))
+            .expect("read_uncommitted pragma should be readable");
+        assert_eq!(busy_timeout, 25);
+        assert_eq!(read_uncommitted, 0);
     }
 
     #[test]
