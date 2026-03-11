@@ -104,7 +104,11 @@ export function createEmbeddedAgentToolkit(options = {}) {
         callId: toolCall?.callId || toolCall?.id || null,
         name,
         arguments: parseToolArguments(toolCall?.arguments || toolCall?.params || {}),
-        result: await executeTool(name, parseToolArguments(toolCall?.arguments || toolCall?.params || {}), executionOptions),
+        result: await executeTool(
+          name,
+          parseToolArguments(toolCall?.arguments || toolCall?.params || {}),
+          executionOptions,
+        ),
       });
     }
 
@@ -113,7 +117,11 @@ export function createEmbeddedAgentToolkit(options = {}) {
 
   const executeOpenAIToolCall = async (toolCall, executionOptions = {}) => {
     const normalizedCall = normalizeOpenAIToolCall(toolCall);
-    const result = await executeTool(normalizedCall.name, normalizedCall.arguments, executionOptions);
+    const result = await executeTool(
+      normalizedCall.name,
+      normalizedCall.arguments,
+      executionOptions,
+    );
 
     return {
       ...normalizedCall,
@@ -146,7 +154,11 @@ export function createEmbeddedAgentToolkit(options = {}) {
     });
   };
 
-  const createVercelAITools = ({ tool: toolFactory, filter = null, executionOptions = {} } = {}) => {
+  const createVercelAITools = ({
+    tool: toolFactory,
+    filter = null,
+    executionOptions = {},
+  } = {}) => {
     if (typeof toolFactory !== 'function') {
       throw new Error('createVercelAITools requires the Vercel AI tool() factory.');
     }
@@ -179,7 +191,9 @@ export function createEmbeddedAgentToolkit(options = {}) {
     }
 
     return getRawTools()
-      .filter((tool) => (Array.isArray(filter) && filter.length > 0 ? filter.includes(tool.name) : true))
+      .filter((tool) =>
+        Array.isArray(filter) && filter.length > 0 ? filter.includes(tool.name) : true,
+      )
       .map(
         (toolDef) =>
           new DynamicStructuredTool({
@@ -196,7 +210,9 @@ export function createEmbeddedAgentToolkit(options = {}) {
 
   const createToolDescriptors = ({ filter = null, executionOptions = {} } = {}) => {
     return getRawTools()
-      .filter((tool) => (Array.isArray(filter) && filter.length > 0 ? filter.includes(tool.name) : true))
+      .filter((tool) =>
+        Array.isArray(filter) && filter.length > 0 ? filter.includes(tool.name) : true,
+      )
       .map((toolDef) => ({
         name: toolDef.name,
         description: toolDef.description,

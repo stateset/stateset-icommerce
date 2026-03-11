@@ -161,14 +161,20 @@ function convertSchema(schema) {
         type: 'array',
         items: item.jsonSchema,
       };
-      for (const check of inner._def.exactLength ? [inner._def.exactLength] : inner._def.minLength ? [inner._def.minLength] : []) {
+      for (const check of inner._def.exactLength
+        ? [inner._def.exactLength]
+        : inner._def.minLength
+          ? [inner._def.minLength]
+          : []) {
         if (check?.value !== undefined) {
           jsonSchema.minItems = check.value;
           jsonSchema.maxItems = check.value;
         }
       }
-      if (inner._def.minLength?.value !== undefined) jsonSchema.minItems = inner._def.minLength.value;
-      if (inner._def.maxLength?.value !== undefined) jsonSchema.maxItems = inner._def.maxLength.value;
+      if (inner._def.minLength?.value !== undefined)
+        jsonSchema.minItems = inner._def.minLength.value;
+      if (inner._def.maxLength?.value !== undefined)
+        jsonSchema.maxItems = inner._def.maxLength.value;
       break;
     }
     case 'ZodObject': {
