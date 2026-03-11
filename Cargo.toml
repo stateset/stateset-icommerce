@@ -176,7 +176,7 @@ proc-macro2 = "1"
 # Policy engine
 regex = "1"
 serde_yaml = "0.9"
-tempfile = "3.10"
+tempfile = "3.27"
 
 # Internal crates
 stateset-primitives = { path = "crates/stateset-primitives", version = "0.7.26" }

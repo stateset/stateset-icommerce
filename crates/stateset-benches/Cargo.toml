@@ -21,7 +21,7 @@ rust_decimal = { workspace = true }
 rust_decimal_macros = "1.36"
 chrono = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }
-tempfile = "3.10"
+tempfile = "3.27"
 tokio = { workspace = true }
 
 [lints]
