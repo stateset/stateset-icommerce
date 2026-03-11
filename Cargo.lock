@@ -3407,7 +3407,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3418,7 +3418,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3467,7 +3467,7 @@ dependencies = [
  "stateset-primitives",
  "stateset-test-utils",
  "strum",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "uuid",
 ]
@@ -3489,7 +3489,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "subtle",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
  "x25519-dalek",
  "zeroize",
@@ -3514,7 +3514,7 @@ dependencies = [
  "sqlx",
  "stateset-core",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "uuid",
 ]
@@ -3530,7 +3530,7 @@ dependencies = [
  "serde_json",
  "stateset-core",
  "stateset-embedded",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3619,7 +3619,7 @@ dependencies = [
  "serde_json",
  "stateset-core",
  "stateset-pricing",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -3651,7 +3651,7 @@ dependencies = [
  "serde_json",
  "stateset-core",
  "stateset-embedded",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3671,7 +3671,7 @@ dependencies = [
  "stateset-core",
  "stateset-embedded",
  "stateset-primitives",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tower 0.5.3",
@@ -3716,7 +3716,7 @@ dependencies = [
  "stateset-core",
  "stateset-embedded",
  "stateset-primitives",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3728,7 +3728,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "uuid",
 ]
@@ -3744,7 +3744,7 @@ dependencies = [
  "serde_json",
  "stateset-core",
  "stateset-embedded",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3770,7 +3770,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3780,7 +3780,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -3798,7 +3798,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
  "uuid",
 ]
@@ -3813,7 +3813,7 @@ dependencies = [
  "rust_decimal_macros",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3828,7 +3828,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3845,7 +3845,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "stateset-primitives",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3875,7 +3875,7 @@ dependencies = [
  "serde_json",
  "stateset-core",
  "stateset-embedded",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3891,7 +3891,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "uuid",
 ]
