@@ -4,6 +4,10 @@
  * Exports all public modules for programmatic use.
  */
 
+// Embedded Commerce + Agent Toolkit
+export { Commerce, createCommerce, getCommerceCtor } from './commerce.js';
+export { createEmbeddedAgentKit, createEmbeddedAgentToolkit } from './agent-toolkit.js';
+
 // Core harness and agent loop
 export {
   runAgentLoop,

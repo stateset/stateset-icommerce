@@ -7,8 +7,8 @@ Real-world scenarios live in `examples/` with runnable scripts across 9 language
 ### 1) AI customer support agent
 
 - Look up orders, update status, and issue refunds.
-- Pair MCP tools with the CLI for safe, auditable actions.
-- See: `examples/workflows.md` and `examples/cli-reference.md`.
+- Pair MCP tools with the CLI or embed JSON-schema tools directly in your runtime.
+- See: `examples/agents/openai-embedded-toolkit.mjs`, `examples/workflows.md`, and `examples/cli-reference.md`.
 
 ### 2) Offline POS with sync
 

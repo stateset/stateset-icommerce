@@ -7,13 +7,13 @@ The Kotlin binding provides `StateSetCommerce` with idiomatic Kotlin APIs for bu
 ### Gradle (Kotlin DSL)
 
 ```kotlin
-implementation("com.stateset:stateset-embedded:0.7.1")
+implementation("com.stateset:stateset-embedded:0.7.26")
 ```
 
 ### Gradle (Groovy)
 
 ```groovy
-implementation 'com.stateset:stateset-embedded:0.7.1'
+implementation 'com.stateset:stateset-embedded:0.7.26'
 ```
 
 ## Quick Start

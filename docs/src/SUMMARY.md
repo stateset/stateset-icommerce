@@ -2,6 +2,7 @@
 
 - [Overview](index.md)
 - [Getting Started](getting-started.md)
+- [AI Agent Quickstart](ai-agents.md)
 - [Architecture](architecture.md)
 - [Architecture Decisions](adr/README.md)
   - [ADR-0001: Layered Architecture](adr/0001-layered-architecture.md)

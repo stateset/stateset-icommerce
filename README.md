@@ -13,10 +13,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.7.23    # Python
-gem install stateset_embedded -v 0.7.23  # Ruby
-npm install @stateset/embedded@0.7.23    # Node.js
-npm install -g @stateset/cli@0.7.23      # CLI
+pip install stateset-embedded==0.7.26    # Python
+gem install stateset_embedded -v 0.7.26  # Ruby
+npm install @stateset/embedded@0.7.26    # Node.js
+npm install -g @stateset/cli@0.7.26      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -84,6 +84,54 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 
 ---
 
+## Embedded Agent Toolkit (OpenAI / LangGraph / server-side agents)
+
+Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
+
+```bash
+npm install @stateset/cli@0.7.26 @stateset/embedded@0.7.26
+```
+
+```javascript
+import { Commerce } from '@stateset/embedded';
+import { createEmbeddedAgentToolkit } from '@stateset/cli/agent-toolkit';
+
+const commerce = new Commerce('./store.db');
+const toolkit = createEmbeddedAgentToolkit({
+  commerce,
+  allowApply: false,
+});
+
+const tools = toolkit.getTools({ format: 'openai' });
+const result = await toolkit.executeTool('list_customers');
+// result.status === 'success'
+// result.result contains the tool payload
+```
+
+For OpenAI Responses API loops, `executeOpenAIToolCall()` returns a ready-to-send `function_call_output` payload:
+
+```javascript
+const execution = await toolkit.executeOpenAIToolCall(toolCall);
+
+await client.responses.create({
+  model: 'gpt-4.1',
+  previous_response_id: response.id,
+  input: [execution.outputMessage],
+  tools,
+});
+```
+
+For framework-native adapters:
+
+```javascript
+const vercelTools = toolkit.createVercelAITools({ tool });
+const langChainTools = toolkit.createLangChainTools({ DynamicStructuredTool });
+```
+
+Use `simulateMutation()` or `executePlan({ dryRun: true, ... })` before enabling writes, then turn on `allowApply` only for agents that should mutate commerce state.
+
+---
+
 **Development toolchain (repo root):**
 ```bash
 nvm use                      # uses .nvmrc / .node-version (20.20.0)
@@ -96,12 +144,13 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.7.23
+## What's New in v0.7.26
 
-**Agent simulation playground** — This release adds `stateset simulate` for sandboxed A2A scenario execution with virtual time, state snapshots, and failure injection, while keeping the broader 21-crate workspace and cross-language bindings in sync.
+**Embedded agent onboarding** — This release adds a first-class embedded agent toolkit for JSON-schema tool export and direct execution, repairs the public standalone import surface, and syncs the broader docs/bindings release metadata around `0.7.26`.
 
 | Feature | Description |
 |---------|-------------|
+| **Embedded Agent Toolkit** | New `@stateset/cli/agent-toolkit` surface for OpenAI-style tools, direct execution, replay access, and plan/simulation helpers |
 | **Agent Simulation Playground** | New `stateset simulate` flow for sandboxed A2A runs with scenario selection, virtual clocks, snapshots, and supplier-offline failure injection |
 | **21 Rust Crates** | Fully modular workspace: primitives, core, db, embedded, crypto, protocol, policy, authz, pricing, migrations, jobs, http, sync, a2a, ffi, sdk, observability, macros, test-utils, integration-tests, benches |
 | **stateset-protocol** | Wire types: `EventEnvelope`, `SyncBatch`, Merkle trees, JCS canonical JSON, schema versioning (148 tests) |
@@ -968,7 +1017,7 @@ stateset --provider ollama --model llama3 "check inventory"
 stateset "ship order #12345"
 ```
 
-Non-Claude providers operate in chat-only mode (no MCP tool calls). Claude uses the Agent SDK with full access to all 256 MCP tools.
+Non-Claude providers in the CLI operate in chat-only mode. For embedded OpenAI, LangGraph, LangChain, or other server-side agents, use `@stateset/cli/agent-toolkit` to expose the same commerce tools as JSON-schema functions.
 
 ### Validation & Errors
 
@@ -1262,7 +1311,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.7.23"
+stateset-embedded = "0.7.26"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1312,14 +1361,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.7.23</version>
+    <version>0.7.26</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.7.23'
+implementation 'com.stateset:embedded:0.7.26'
 ```
 
 ### Kotlin (Gradle)
@@ -1327,7 +1376,7 @@ implementation 'com.stateset:embedded:0.7.23'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.7.23")
+    implementation("com.stateset:embedded-kotlin:0.7.26")
 }
 ```
 
@@ -1336,32 +1385,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.23")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.26")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.7.23'
+pod 'StateSet', '~> 0.7.26'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.7.23
+dotnet add package StateSet.Embedded --version 0.7.26
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.7.23" />
+<PackageReference Include="StateSet.Embedded" Version="0.7.26" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.23
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.26
 ```
 
 ### CLI

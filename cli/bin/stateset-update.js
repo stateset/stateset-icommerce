@@ -41,7 +41,7 @@ OPTIONS:
 EXAMPLES:
   stateset update
   stateset update status --json
-  stateset update apply --tag 0.7.23 --yes
+  stateset update apply --tag 0.7.26 --yes
 `;
 
 function parseTimeout(value) {

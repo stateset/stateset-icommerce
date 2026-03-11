@@ -1,6 +1,6 @@
 {
   "_description": "StateSet iCommerce Channel Gateway - Example Configuration",
-  "_version": "0.7.23",
+  "_version": "0.7.26",
 
   "channels": {
     "telegram": {

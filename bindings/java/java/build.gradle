@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.stateset'
-version = '0.7.23'
+version = '0.7.26'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_11

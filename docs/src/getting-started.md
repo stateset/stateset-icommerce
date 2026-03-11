@@ -11,13 +11,13 @@ cargo add stateset-embedded
 Node.js:
 
 ```bash
-npm install @stateset/embedded@0.7.1
+npm install @stateset/embedded@0.7.26
 ```
 
 Python:
 
 ```bash
-pip install stateset-embedded==0.7.1
+pip install stateset-embedded==0.7.26
 ```
 
 ## Initialize (Rust)
@@ -51,6 +51,24 @@ export OPENAI_API_KEY=sk-...
 stateset "find products similar to wireless earbuds"
 ```
 
+## AI Agents (Node.js)
+
+```bash
+npm install @stateset/cli@0.7.26 @stateset/embedded@0.7.26
+```
+
+```javascript
+import { Commerce } from '@stateset/embedded';
+import { createEmbeddedAgentToolkit } from '@stateset/cli/agent-toolkit';
+
+const commerce = new Commerce('./store.db');
+const toolkit = createEmbeddedAgentToolkit({ commerce, allowApply: false });
+
+const tools = toolkit.getTools({ format: 'openai' });
+const result = await toolkit.executeTool('list_customers');
+```
+
 Next steps:
+- See [AI Agent Quickstart](ai-agents.md) for embedded and MCP onboarding.
 - See [Examples](examples.md) for end-to-end flows.
 - Browse the [API Reference](api/index.md) for your language.

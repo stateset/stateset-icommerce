@@ -62,6 +62,11 @@ import { circuitBreakerTools } from './tools/circuit-breaker.js';
 import { checkoutTools } from './tools/checkout.js';
 import { complianceTools } from './tools/compliance.js';
 import { catalogTools } from './tools/catalog.js';
+import {
+  formatValidationIssues,
+  inputSchemaDefToJsonSchema,
+  validateToolInput,
+} from './tool-schema.js';
 
 let toolDiscoveryEngine = null;
 
@@ -2329,7 +2334,32 @@ export function createStatesetMcpServer({
       };
     }
 
-    let nextArgs = params || {};
+    const validation = validateToolInput(toolDef.inputSchema || {}, params || {});
+    if (!validation.success) {
+      return {
+        index: stepIndex,
+        tool: resolvedToolName,
+        status: 'invalid',
+        elapsedMs: Date.now() - startedAt,
+        error: `Invalid parameters for tool '${resolvedToolName}'`,
+        simulation: dryRun,
+        runtime: {
+          policyDomain: effectivePolicyDomain,
+          sideEffect: baseMeta.sideEffect,
+          compensations: baseMeta.compensations,
+          idempotent: baseMeta.idempotent,
+        },
+        params: compactReplayValue(params || {}),
+        paramsHash: replayEventHash(params || {}),
+        result: null,
+        resultHash: null,
+        notes: {
+          validation: formatValidationIssues(validation.error),
+        },
+      };
+    }
+
+    let nextArgs = validation.data;
     let policy = null;
     let permission = null;
     let charge = null;
@@ -2473,7 +2503,7 @@ export function createStatesetMcpServer({
         };
       }
 
-      charge = await maybeChargeForTool(resolvedToolName, { requestId, sessionId });
+      charge = await maybeChargeForTool(resolvedToolName, { requestId, sessionId }, { dryRun });
       if (charge?.blocked) {
         return {
           index: stepIndex,
@@ -3776,7 +3806,7 @@ export function createStatesetMcpServer({
     toolName,
   });
 
-  const maybeChargeForTool = async (toolName, extra) => {
+  const maybeChargeForTool = async (toolName, extra, { dryRun = false } = {}) => {
     try {
       const { loadTreasuryContext, getToolPricing, resolveToken, recordFee } =
         await import('./treasury/index.js');
@@ -3825,6 +3855,15 @@ export function createStatesetMcpServer({
           charged: false,
           blocked: true,
           reason: `Insufficient ${token.symbol} balance for ${toolName}. Required ${rule.amount} ${token.symbol}.`,
+        };
+      }
+
+      if (dryRun) {
+        return {
+          charged: false,
+          blocked: false,
+          simulated: true,
+          rule,
         };
       }
 
@@ -4296,6 +4335,119 @@ export function createStatesetMcpServer({
     policyEngine: policyEngineInstance,
   };
 
+  const getToolDefinitions = ({ format = 'generic', mcpPrefix = null } = {}) => {
+    return ALL_TOOL_DEFS.map((toolDef) => {
+      const runtime = getToolRuntimeMeta(toolDef.name);
+      const parameters = inputSchemaDefToJsonSchema(toolDef.inputSchema || {});
+      const baseName = toolDef.name;
+      const resolvedName = mcpPrefix ? `${mcpPrefix}${baseName}` : baseName;
+      const descriptor = {
+        name: resolvedName,
+        toolName: baseName,
+        description: toolDef.description,
+        inputSchema: parameters,
+        permission: toolDef.permission || runtime.permission,
+        policyDomain: runtime.policyDomain,
+        runtime,
+      };
+
+      if (format === 'openai') {
+        return {
+          type: 'function',
+          function: {
+            name: baseName,
+            description: toolDef.description,
+            parameters,
+          },
+          stateset: {
+            permission: descriptor.permission,
+            policyDomain: descriptor.policyDomain,
+          },
+        };
+      }
+
+      if (format === 'mcp') {
+        return {
+          ...descriptor,
+          name: `mcp__stateset-commerce__${baseName}`,
+        };
+      }
+
+      return descriptor;
+    });
+  };
+
+  const getRawToolDefinitions = () => {
+    return ALL_TOOL_DEFS.map((toolDef) => ({
+      name: toolDef.name,
+      description: toolDef.description,
+      inputSchema: toolDef.inputSchema || {},
+      permission: toolDef.permission || 'unknown',
+      policyDomain:
+        toolDef.policyDomain ||
+        TOOL_DOMAIN_BY_TOOL_NAME[toolDef.name] ||
+        inferPolicyDomain(toolDef.name),
+      runtime: getToolRuntimeMeta(toolDef.name),
+    }));
+  };
+
+  const executeTool = async (toolName, params = {}, options = {}) => {
+    const requestId = options.requestId || randomUUID();
+    const sessionId = options.sessionId || requestId;
+    const dryRun = options.dryRun === true;
+    const normalizedToolName = normalizeToolName(toolName);
+
+    const outcome = await executeToolStepInPlan({
+      toolName: normalizedToolName,
+      params,
+      policyDomain: options.policyDomain || null,
+      requestId,
+      sessionId,
+      dryRun,
+      stepIndex: 0,
+      includeHooks: options.includeHooks ?? true,
+      isRollback: options.isRollback || false,
+      extra: options.extra || {},
+    });
+
+    await addAgenticReplayEvent({
+      eventId: randomUUID(),
+      tool: normalizedToolName,
+      status: outcome.status,
+      requestId,
+      sessionId,
+      policyDomain:
+        outcome?.policy?.domain || options.policyDomain || inferPolicyDomain(normalizedToolName),
+      occurredAt: new Date().toISOString(),
+      elapsedMs: outcome.elapsedMs || 0,
+      params: compactReplayValue(outcome.params || params || {}),
+      paramsHash: outcome.paramsHash || replayEventHash(outcome.params || params || {}),
+      result: compactReplayValue(outcome.result || null),
+      resultHash: outcome.resultHash || replayEventHash(outcome.result || null),
+      policy: compactReplayValue(outcome.policy || null),
+      permission: compactReplayValue(outcome.permission || null),
+      charge: compactReplayValue(outcome.charge || null),
+      error: outcome.error || null,
+      notes: compactReplayValue({
+        directExecution: true,
+        dryRun,
+        includeHooks: options.includeHooks ?? true,
+      }),
+      source: 'embedded_agent_toolkit',
+      agentic: true,
+    });
+
+    return {
+      success:
+        outcome.status === 'success' ||
+        outcome.status === 'dry_run_success' ||
+        outcome.status === 'rollback_success',
+      requestId,
+      sessionId,
+      ...outcome,
+    };
+  };
+
   /**
    * Convert a domain tool definition into an SDK-wrapped MCP tool.
    * Bridges the module handler signature `({ commerce, params, ... }) => plainObject`
@@ -4337,6 +4489,15 @@ export function createStatesetMcpServer({
   });
 
   server.mcpEventStream = activeMcpEventStream;
+  server.getToolDefinitions = getToolDefinitions;
+  server.getRawToolDefinitions = getRawToolDefinitions;
+  server.executeTool = executeTool;
+  server.getRuntimeContract = getAgenticRuntimeContract;
+  server.simulatePlan = simulateAgenticPlan;
+  server.executePlan = executeAgenticPlan;
+  server.simulateMutation = simulateMutationToolCall;
+  server.replayMutation = replayMutationToolCall;
+  server.getReplayLog = listAgenticReplayEvents;
   return server;
 }
 

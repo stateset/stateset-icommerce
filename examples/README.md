@@ -10,6 +10,8 @@ Complete examples, guides, and scripts for StateSet Commerce.
 | **[Getting Started with Sync](./getting-started-sync.md)** | Full setup guide for CLI + Sequencer |
 | **[Common Workflows](./workflows.md)** | Step-by-step guides (checkout, returns, inventory, etc.) |
 | **[Troubleshooting](./troubleshooting.md)** | Solutions to common problems |
+| **`examples/agents/openai-embedded-toolkit.mjs`** | Minimal embedded agent example using OpenAI-style JSON-schema tools |
+| **`examples/agents/framework-adapters.mjs`** | Minimal Vercel AI and LangChain adapter example using the embedded toolkit |
 
 ## Scripts
 
@@ -85,7 +87,7 @@ cd examples/kotlin
 ./gradlew run
 # Or build a jar:
 ./gradlew jar
-java -jar build/libs/kotlin-0.7.4.jar
+java -jar build/libs/kotlin-0.7.26.jar
 ```
 
 ### Swift
