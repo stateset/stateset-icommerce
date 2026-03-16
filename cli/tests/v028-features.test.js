@@ -117,8 +117,8 @@ describe('Config v0.2.8', () => {
     assert.ok(opts.memory, 'should have memory option');
   });
 
-  it('should have CLI_VERSION set to 0.7.27', () => {
-    assert.equal(config.CLI_VERSION, '0.7.27');
+  it('should have CLI_VERSION set to 0.8.0', () => {
+    assert.equal(config.CLI_VERSION, '0.8.0');
   });
 });
 
@@ -663,10 +663,10 @@ describe('Deploy Files', () => {
     assert.equal(config.remoteAccess.sshTunnels[0].mode, 'reverse', 'example should be reverse mode');
   });
 
-  it('should have config version 0.7.27', () => {
+  it('should have config version 0.8.0', () => {
     const path = join(__dirname, '..', 'deploy', 'gateway.config.example.json');
     const config = JSON.parse(readFileSync(path, 'utf-8'));
-    assert.equal(config._version, '0.7.27');
+    assert.equal(config._version, '0.8.0');
   });
 
   it('should have gateway service with security hardening', () => {

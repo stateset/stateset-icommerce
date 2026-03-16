@@ -13,7 +13,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-icommerce", from: "0.7.27")
+    .package(url: "https://github.com/stateset/stateset-icommerce", from: "0.8.0")
 ]
 ```
 

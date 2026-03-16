@@ -8,7 +8,7 @@ StateSet supports two onboarding modes for agents:
 ## Install
 
 ```bash
-npm install @stateset/cli@0.7.27 @stateset/embedded@0.7.27
+npm install @stateset/cli@0.8.0 @stateset/embedded@0.8.0
 ```
 
 ## Embedded Toolkit
