@@ -15,8 +15,9 @@ ruby_binding_version="$(grep -E "VERSION = '[0-9]+\.[0-9]+\.[0-9]+'" bindings/ru
 php_binding_version="$(grep -E '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/php/composer.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
 generator_spec_version="$(grep -E '^version: "[0-9]+\.[0-9]+\.[0-9]+"' bindings/generator/spec.yaml | head -n1 | sed -E 's/^[^"]*"([^"]+)".*$/\1/')"
 cli_embedded_dep_version="$(grep -E '^[[:space:]]*"@stateset/embedded":[[:space:]]*"\^?[0-9]+\.[0-9]+\.[0-9]+"' cli/package.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"\^?([^"]+)".*$/\1/')"
+admin_version="$(grep -E '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' admin/package.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
 
-if [[ -z "$workspace_version" || -z "$cli_version" || -z "$cli_runtime_version" || -z "$node_binding_version" || -z "$wasm_binding_version" || -z "$python_binding_version" || -z "$python_wrapper_version" || -z "$ruby_binding_version" || -z "$php_binding_version" || -z "$generator_spec_version" || -z "$cli_embedded_dep_version" ]]; then
+if [[ -z "$workspace_version" || -z "$cli_version" || -z "$cli_runtime_version" || -z "$node_binding_version" || -z "$wasm_binding_version" || -z "$python_binding_version" || -z "$python_wrapper_version" || -z "$ruby_binding_version" || -z "$php_binding_version" || -z "$generator_spec_version" || -z "$cli_embedded_dep_version" || -z "$admin_version" ]]; then
   echo "::error::Failed to parse one or more release versions"
   exit 1
 fi
@@ -70,6 +71,11 @@ fi
 
 if [[ "$workspace_version" != "$cli_embedded_dep_version" ]]; then
   echo "::error file=cli/package.json::CLI embedded dependency (${cli_embedded_dep_version}) does not match workspace version (${workspace_version})"
+  fail=1
+fi
+
+if [[ "$workspace_version" != "$admin_version" ]]; then
+  echo "::error file=admin/package.json::Workspace version (${workspace_version}) does not match Admin version (${admin_version})"
   fail=1
 fi
 

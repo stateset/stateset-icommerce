@@ -11,13 +11,13 @@ cargo add stateset-embedded
 Node.js:
 
 ```bash
-npm install @stateset/embedded@0.7.26
+npm install @stateset/embedded@0.7.27
 ```
 
 Python:
 
 ```bash
-pip install stateset-embedded==0.7.26
+pip install stateset-embedded==0.7.27
 ```
 
 ## Initialize (Rust)
@@ -54,7 +54,7 @@ stateset "find products similar to wireless earbuds"
 ## AI Agents (Node.js)
 
 ```bash
-npm install @stateset/cli@0.7.26 @stateset/embedded@0.7.26
+npm install @stateset/cli@0.7.27 @stateset/embedded@0.7.27
 ```
 
 ```javascript

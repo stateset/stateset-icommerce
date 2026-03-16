@@ -4,7 +4,14 @@
 
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { AgentTelemetry, Span } from '../../src/telemetry.js';
+import {
+  AgentTelemetry,
+  Span,
+  NoOpTelemetry,
+  noOpTelemetry,
+  redactSensitiveFields,
+  SENSITIVE_KEY_PATTERN,
+} from '../../src/telemetry.js';
 
 describe('AgentTelemetry', () => {
   describe('generateId (via Span)', () => {
@@ -120,5 +127,139 @@ describe('AgentTelemetry', () => {
       assert.equal(telemetry.metrics.successfulToolCalls, 2);
       assert.equal(telemetry.metrics.failedToolCalls, 1);
     });
+  });
+});
+
+// ============================================================================
+// SENSITIVE_KEY_PATTERN — crypto field coverage
+// ============================================================================
+
+describe('SENSITIVE_KEY_PATTERN — crypto fields', () => {
+  const cryptoFields = [
+    'signature',
+    'x402_signature',
+    'merkle_proof',
+    'nonce',
+    'agent_nonce',
+    'receipt_hash',
+    'wallet_address',
+    'intent_id',
+    'mnemonic',
+    'seed_phrase',
+    'private_key',
+    'signing_key',
+  ];
+
+  for (const field of cryptoFields) {
+    it(`matches crypto field: ${field}`, () => {
+      assert.ok(SENSITIVE_KEY_PATTERN.test(field), `Expected "${field}" to match`);
+    });
+  }
+
+  const safeFields = ['amount', 'status', 'orderId', 'email', 'currency', 'eventType', 'chain'];
+  for (const field of safeFields) {
+    it(`does not match safe field: ${field}`, () => {
+      assert.ok(!SENSITIVE_KEY_PATTERN.test(field), `"${field}" should NOT match`);
+    });
+  }
+});
+
+// ============================================================================
+// redactSensitiveFields — exported function tests
+// ============================================================================
+
+describe('redactSensitiveFields (exported)', () => {
+  it('redacts all crypto-sensitive fields in a flat object', () => {
+    const input = {
+      orderId: 'ord-1',
+      amount: 100,
+      signature: '0xdeadbeef',
+      merkle_proof: ['h1', 'h2'],
+      nonce: 42,
+      receipt_hash: 'sha256:abc',
+      wallet_address: '0xSeller',
+      intent_id: 'int-123',
+      mnemonic: 'abandon ship',
+      seed_phrase: 'word1 word2',
+    };
+    const result = redactSensitiveFields(input);
+    assert.equal(result.orderId, 'ord-1');
+    assert.equal(result.amount, 100);
+    assert.equal(result.signature, '[REDACTED]');
+    assert.equal(result.merkle_proof, '[REDACTED]');
+    assert.equal(result.nonce, '[REDACTED]');
+    assert.equal(result.receipt_hash, '[REDACTED]');
+    assert.equal(result.wallet_address, '[REDACTED]');
+    assert.equal(result.intent_id, '[REDACTED]');
+    assert.equal(result.mnemonic, '[REDACTED]');
+    assert.equal(result.seed_phrase, '[REDACTED]');
+  });
+
+  it('recursively redacts nested sensitive fields', () => {
+    const result = redactSensitiveFields({
+      payment: { amount: 50, wallet_address: '0xA', signature: '0xB' },
+    });
+    assert.equal(result.payment.amount, 50);
+    assert.equal(result.payment.wallet_address, '[REDACTED]');
+    assert.equal(result.payment.signature, '[REDACTED]');
+  });
+
+  it('handles arrays of objects with sensitive fields', () => {
+    const result = redactSensitiveFields([
+      { id: '1', nonce: 1 },
+      { id: '2', nonce: 2 },
+    ]);
+    assert.ok(Array.isArray(result));
+    assert.equal(result[0].id, '1');
+    assert.equal(result[0].nonce, '[REDACTED]');
+    assert.equal(result[1].nonce, '[REDACTED]');
+  });
+
+  it('returns null/undefined/primitives unchanged', () => {
+    assert.equal(redactSensitiveFields(null), null);
+    assert.equal(redactSensitiveFields(undefined), undefined);
+    assert.equal(redactSensitiveFields('hello'), 'hello');
+    assert.equal(redactSensitiveFields(42), 42);
+  });
+
+  it('stops recursion beyond depth 5', () => {
+    const deep = { a: { b: { c: { d: { e: { f: { password: 'deep' } } } } } } };
+    const result = redactSensitiveFields(deep);
+    // At depth 6, the object is returned as-is
+    assert.equal(result.a.b.c.d.e.f.password, 'deep');
+  });
+});
+
+// ============================================================================
+// NoOpTelemetry tests
+// ============================================================================
+
+describe('NoOpTelemetry', () => {
+  it('all methods are callable without throwing', () => {
+    const noop = new NoOpTelemetry();
+    assert.doesNotThrow(() => {
+      noop.startSpan('x');
+      noop.endSpan();
+      noop.endSpanRef(null);
+      noop.logToolCall('t', {}, {}, 0);
+      noop.startToolCall('t', {});
+      noop.logAgentRouting('r', 'a', 0.9);
+      noop.logAssistantMessage('msg');
+      noop.logError(new Error('e'));
+      noop.logCustomEvent('evt');
+      noop.getTrace();
+      noop.getSummary();
+      noop.printSummary();
+      noop.on('x', () => {});
+      noop.emit('x');
+    });
+  });
+
+  it('traceId returns null', () => {
+    assert.equal(noOpTelemetry.traceId, null);
+  });
+
+  it('singleton is a NoOpTelemetry instance', () => {
+    assert.ok(noOpTelemetry instanceof NoOpTelemetry);
   });
 });

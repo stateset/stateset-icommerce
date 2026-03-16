@@ -13,10 +13,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.7.26    # Python
-gem install stateset_embedded -v 0.7.26  # Ruby
-npm install @stateset/embedded@0.7.26    # Node.js
-npm install -g @stateset/cli@0.7.26      # CLI
+pip install stateset-embedded==0.7.27    # Python
+gem install stateset_embedded -v 0.7.27  # Ruby
+npm install @stateset/embedded@0.7.27    # Node.js
+npm install -g @stateset/cli@0.7.27      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -89,7 +89,7 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/cli@0.7.26 @stateset/embedded@0.7.26
+npm install @stateset/cli@0.7.27 @stateset/embedded@0.7.27
 ```
 
 ```javascript
@@ -144,9 +144,9 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.7.26
+## What's New in v0.7.27
 
-**Embedded agent onboarding** — This release adds a first-class embedded agent toolkit for JSON-schema tool export and direct execution, repairs the public standalone import surface, and syncs the broader docs/bindings release metadata around `0.7.26`.
+**Embedded agent onboarding** — This release adds a first-class embedded agent toolkit for JSON-schema tool export and direct execution, repairs the public standalone import surface, and syncs the broader docs/bindings release metadata around `0.7.27`.
 
 | Feature | Description |
 |---------|-------------|
@@ -1311,7 +1311,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.7.26"
+stateset-embedded = "0.7.27"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1361,14 +1361,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.7.26</version>
+    <version>0.7.27</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.7.26'
+implementation 'com.stateset:embedded:0.7.27'
 ```
 
 ### Kotlin (Gradle)
@@ -1376,7 +1376,7 @@ implementation 'com.stateset:embedded:0.7.26'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.7.26")
+    implementation("com.stateset:embedded-kotlin:0.7.27")
 }
 ```
 
@@ -1385,32 +1385,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.26")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.27")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.7.26'
+pod 'StateSet', '~> 0.7.27'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.7.26
+dotnet add package StateSet.Embedded --version 0.7.27
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.7.26" />
+<PackageReference Include="StateSet.Embedded" Version="0.7.27" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.26
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.27
 ```
 
 ### CLI

@@ -496,6 +496,9 @@ CREATE TABLE IF NOT EXISTS a2a_webhook_config (
   secret TEXT,
   enabled_events TEXT NOT NULL DEFAULT '["*"]',
   active INTEGER NOT NULL DEFAULT 1,
+  client_cert TEXT,
+  client_key TEXT,
+  ca_cert TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -1351,6 +1354,65 @@ export class A2AStore {
 
     this.db.prepare(`UPDATE a2a_escrows SET ${fields.join(', ')} WHERE id = ?`).run(...values);
     return this.getEscrow(id);
+  }
+
+  /**
+   * Atomically release an escrow, preventing double-release via conditional UPDATE.
+   * Uses better-sqlite3's transaction() which acquires BEGIN IMMEDIATE by default.
+   *
+   * @param {string} id - Escrow ID
+   * @returns {object} Updated escrow record
+   * @throws {Error} If escrow not found or not in releasable status
+   */
+  releaseEscrowAtomic(id) {
+    this.init();
+    const txn = this.db.transaction(() => {
+      const now = new Date().toISOString();
+      const result = this.db
+        .prepare(
+          `UPDATE a2a_escrows
+           SET status = 'released', released_at = ?, updated_at = ?
+           WHERE id = ? AND status IN ('funded', 'active')`,
+        )
+        .run(now, now, id);
+
+      if (result.changes === 0) {
+        const current = this.getEscrow(id);
+        if (!current) throw new Error(`Escrow not found: ${id}`);
+        throw new Error(`Cannot release escrow in status: ${current.status}`);
+      }
+      return this.getEscrow(id);
+    });
+    return txn();
+  }
+
+  /**
+   * Atomically refund an escrow, preventing double-refund via conditional UPDATE.
+   *
+   * @param {string} id - Escrow ID
+   * @returns {object} Updated escrow record
+   * @throws {Error} If escrow not found or not in refundable status
+   */
+  refundEscrowAtomic(id) {
+    this.init();
+    const txn = this.db.transaction(() => {
+      const now = new Date().toISOString();
+      const result = this.db
+        .prepare(
+          `UPDATE a2a_escrows
+           SET status = 'refunded', updated_at = ?
+           WHERE id = ? AND status IN ('funded', 'active', 'disputed')`,
+        )
+        .run(now, id);
+
+      if (result.changes === 0) {
+        const current = this.getEscrow(id);
+        if (!current) throw new Error(`Escrow not found: ${id}`);
+        throw new Error(`Cannot refund escrow in status: ${current.status}`);
+      }
+      return this.getEscrow(id);
+    });
+    return txn();
   }
 
   /**
@@ -2293,13 +2355,16 @@ export class A2AStore {
     this.db
       .prepare(
         `INSERT INTO a2a_webhook_config (
-        agent_address, endpoint_url, secret, enabled_events, active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        agent_address, endpoint_url, secret, enabled_events, active, client_cert, client_key, ca_cert, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(agent_address) DO UPDATE SET
         endpoint_url = excluded.endpoint_url,
         secret = excluded.secret,
         enabled_events = excluded.enabled_events,
         active = excluded.active,
+        client_cert = excluded.client_cert,
+        client_key = excluded.client_key,
+        ca_cert = excluded.ca_cert,
         updated_at = excluded.updated_at`,
       )
       .run(
@@ -2308,6 +2373,9 @@ export class A2AStore {
         config.secret || null,
         enabledEvents,
         config.active !== undefined ? (config.active ? 1 : 0) : 1,
+        config.client_cert || null,
+        config.client_key || null,
+        config.ca_cert || null,
         config.created_at || now,
         now,
       );

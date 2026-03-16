@@ -343,16 +343,12 @@ export function createEscrowService(store) {
 
     validateTransition(escrow.status, 'released');
 
-    await store.updateEscrow(escrowId, {
-      status: 'released',
-      released_at: new Date().toISOString(),
-    });
-
-    const updated = await store.getEscrow(escrowId);
+    // Atomic conditional update prevents double-release race conditions
+    const released = store.releaseEscrowAtomic(escrowId);
 
     return {
       success: true,
-      escrow: formatEscrow(updated),
+      escrow: formatEscrow(released),
     };
   }
 
@@ -374,15 +370,12 @@ export function createEscrowService(store) {
 
     validateTransition(escrow.status, 'refunded');
 
-    await store.updateEscrow(escrowId, {
-      status: 'refunded',
-    });
-
-    const updated = await store.getEscrow(escrowId);
+    // Atomic conditional update prevents double-refund race conditions
+    const refunded = store.refundEscrowAtomic(escrowId);
 
     return {
       success: true,
-      escrow: formatEscrow(updated),
+      escrow: formatEscrow(refunded),
     };
   }
 

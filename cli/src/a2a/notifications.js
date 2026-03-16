@@ -31,6 +31,7 @@
  */
 
 import { randomUUID, createHmac } from 'node:crypto';
+import { Agent as HttpsAgent } from 'node:https';
 
 // Try to import SSRF-safe URL validator; fall back to basic protocol check
 let validateFetchUrl;
@@ -79,6 +80,28 @@ function safeValidateUrl(url) {
   ) {
     throw new Error(`SSRF blocked: cannot fetch internal URL ${parsed.origin}`);
   }
+}
+
+/**
+ * Create an HTTPS agent with mTLS client certificate if configured.
+ * Returns undefined if no client certificate is configured.
+ *
+ * @param {Object} config - Webhook configuration
+ * @param {string} [config.client_cert] - PEM-encoded client certificate
+ * @param {string} [config.client_key] - PEM-encoded client private key
+ * @param {string} [config.ca_cert] - PEM-encoded CA certificate for verification
+ * @returns {HttpsAgent|undefined}
+ */
+function createMtlsAgent(config) {
+  if (!config || !config.client_cert || !config.client_key) {
+    return undefined;
+  }
+  return new HttpsAgent({
+    cert: config.client_cert,
+    key: config.client_key,
+    ca: config.ca_cert || undefined,
+    rejectUnauthorized: true,
+  });
 }
 
 /**
@@ -218,7 +241,7 @@ export function createNotificationService(store) {
     const attempts = 1;
 
     try {
-      const response = await fetch(endpointUrl, {
+      const fetchOptions = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -227,7 +250,13 @@ export function createNotificationService(store) {
           'X-StateSet-Event': eventType,
         },
         body: signatureBody,
-      });
+        signal: AbortSignal.timeout(10_000),
+      };
+      const mtlsAgent = createMtlsAgent(config);
+      if (mtlsAgent) {
+        fetchOptions.agent = mtlsAgent;
+      }
+      const response = await fetch(endpointUrl, fetchOptions);
 
       if (response.ok) {
         status = 'delivered';
@@ -311,7 +340,8 @@ export function createNotificationService(store) {
       const newAttempts = currentAttempts + 1;
 
       try {
-        const response = await fetch(notification.endpoint_url, {
+        const recipientConfig = await store.getWebhookConfig(notification.recipient_address);
+        const retryFetchOptions = {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -320,7 +350,13 @@ export function createNotificationService(store) {
             'X-StateSet-Event': notification.event_type,
           },
           body,
-        });
+          signal: AbortSignal.timeout(10_000),
+        };
+        const retryMtlsAgent = createMtlsAgent(recipientConfig);
+        if (retryMtlsAgent) {
+          retryFetchOptions.agent = retryMtlsAgent;
+        }
+        const response = await fetch(notification.endpoint_url, retryFetchOptions);
 
         if (response.ok) {
           succeeded++;
@@ -377,7 +413,15 @@ export function createNotificationService(store) {
    * @returns {Promise<Object>} Stored webhook configuration
    */
   async function configureWebhooks(params) {
-    const { agentAddress, endpointUrl, secret, enabledEvents = ['*'] } = params;
+    const {
+      agentAddress,
+      endpointUrl,
+      secret,
+      enabledEvents = ['*'],
+      clientCert,
+      clientKey,
+      caCert,
+    } = params;
 
     if (!agentAddress) {
       throw new Error('agentAddress is required');
@@ -393,6 +437,9 @@ export function createNotificationService(store) {
       secret: secret || null,
       enabled_events: enabledEvents,
       active: true,
+      client_cert: clientCert || null,
+      client_key: clientKey || null,
+      ca_cert: caCert || null,
     };
 
     await store.upsertWebhookConfig(config);

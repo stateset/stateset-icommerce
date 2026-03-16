@@ -6,15 +6,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-## [0.7.26] - 2026-03-11
+## [0.7.27] - 2026-03-11
 
 ### Added
 - Added an embedded agent onboarding quickstart with `@stateset/cli/agent-toolkit`, OpenAI-style JSON-schema tool export, and framework adapter examples for server-side agent runtimes.
 - Added package export regression coverage for the standalone and embedded agent toolkit surfaces.
 
 ### Changed
-- Bumped workspace and cross-language release metadata from `0.7.25` to `0.7.26`.
-- Synced docs, examples, and release notes around the `0.7.26` embedded agent onboarding flow.
+- Bumped workspace and cross-language release metadata from `0.7.25` to `0.7.27`.
+- Synced docs, examples, and release notes around the `0.7.27` embedded agent onboarding flow.
 
 ### Fixed
 - Published `@stateset/cli/agent-toolkit` as a first-class package export so the documented embedded agent import path works for installed consumers.

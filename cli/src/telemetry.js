@@ -13,7 +13,8 @@ import { randomUUID } from 'node:crypto';
 // ============================================================================
 
 /** @type {RegExp} Pattern matching sensitive field names */
-const SENSITIVE_KEY_PATTERN = /password|token|secret|key|apiKey|api_key|authorization|credential/i;
+const SENSITIVE_KEY_PATTERN =
+  /password|token|secret|key|apiKey|api_key|authorization|credential|signature|merkle_proof|nonce|receipt_hash|wallet_address|intent_id|mnemonic|seed_phrase|private_key|signing_key/i;
 
 /**
  * Generate a unique trace/span ID using crypto.randomUUID
@@ -543,5 +544,7 @@ export class NoOpTelemetry {
 }
 
 export const noOpTelemetry = new NoOpTelemetry();
+
+export { redactSensitiveFields, SENSITIVE_KEY_PATTERN };
 
 export default AgentTelemetry;

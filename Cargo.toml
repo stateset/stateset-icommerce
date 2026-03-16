@@ -59,7 +59,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.7.26"
+version = "0.7.27"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -179,25 +179,25 @@ serde_yaml = "0.9"
 tempfile = "3.10"
 
 # Internal crates
-stateset-primitives = { path = "crates/stateset-primitives", version = "0.7.26" }
-stateset-core = { path = "crates/stateset-core", version = "0.7.26" }
-stateset-db = { path = "crates/stateset-db", version = "0.7.26" }
-stateset-embedded = { path = "crates/stateset-embedded", version = "0.7.26" }
-stateset-observability = { path = "crates/stateset-observability", version = "0.7.26" }
-stateset-crypto = { path = "crates/stateset-crypto", version = "0.7.26" }
+stateset-primitives = { path = "crates/stateset-primitives", version = "0.7.27" }
+stateset-core = { path = "crates/stateset-core", version = "0.7.27" }
+stateset-db = { path = "crates/stateset-db", version = "0.7.27" }
+stateset-embedded = { path = "crates/stateset-embedded", version = "0.7.27" }
+stateset-observability = { path = "crates/stateset-observability", version = "0.7.27" }
+stateset-crypto = { path = "crates/stateset-crypto", version = "0.7.27" }
 stateset-test-utils = { path = "crates/stateset-test-utils" }
-stateset-macros = { path = "crates/stateset-macros", version = "0.7.26" }
-stateset-policy = { path = "crates/stateset-policy", version = "0.7.26" }
-stateset-a2a = { path = "crates/stateset-a2a", version = "0.7.26" }
-stateset-sync = { path = "crates/stateset-sync", version = "0.7.26" }
-stateset-jobs = { path = "crates/stateset-jobs", version = "0.7.26" }
-stateset-sdk = { path = "crates/stateset-sdk", version = "0.7.26" }
-stateset-http = { path = "crates/stateset-http", version = "0.7.26" }
-stateset-protocol = { path = "crates/stateset-protocol", version = "0.7.26" }
-stateset-ffi = { path = "crates/stateset-ffi", version = "0.7.26" }
-stateset-pricing = { path = "crates/stateset-pricing", version = "0.7.26" }
-stateset-migrations = { path = "crates/stateset-migrations", version = "0.7.26" }
-stateset-authz = { path = "crates/stateset-authz", version = "0.7.26" }
+stateset-macros = { path = "crates/stateset-macros", version = "0.7.27" }
+stateset-policy = { path = "crates/stateset-policy", version = "0.7.27" }
+stateset-a2a = { path = "crates/stateset-a2a", version = "0.7.27" }
+stateset-sync = { path = "crates/stateset-sync", version = "0.7.27" }
+stateset-jobs = { path = "crates/stateset-jobs", version = "0.7.27" }
+stateset-sdk = { path = "crates/stateset-sdk", version = "0.7.27" }
+stateset-http = { path = "crates/stateset-http", version = "0.7.27" }
+stateset-protocol = { path = "crates/stateset-protocol", version = "0.7.27" }
+stateset-ffi = { path = "crates/stateset-ffi", version = "0.7.27" }
+stateset-pricing = { path = "crates/stateset-pricing", version = "0.7.27" }
+stateset-migrations = { path = "crates/stateset-migrations", version = "0.7.27" }
+stateset-authz = { path = "crates/stateset-authz", version = "0.7.27" }
 
 # Testing
 insta = { version = "1.34", features = ["json"] }
