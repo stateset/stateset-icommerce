@@ -6,7 +6,7 @@ Strongly-typed primitive types for commerce applications in Rust. Prevents entir
 
 - **Newtype IDs**: `OrderId`, `CustomerId`, `ProductId`, `ShipmentId`, `PaymentId`, `InventoryItemId`, `SubscriptionId`, `CartId`, and 9 more — all `Copy + Eq + Hash + Serialize + Display`
 - **Money**: Amount + currency pair that prevents arithmetic across currencies
-- **CurrencyCode**: ISO 4217 currency codes (USD, EUR, GBP, ...) plus crypto (BTC, ETH, USDC)
+- **CurrencyCode**: Three-letter uppercase currency codes with zero-allocation storage (USD, EUR, GBP, ...)
 - **Sku**: Validated product SKU (alphanumeric + hyphen/underscore)
 - **Zero unsafe code**, `#[deny(unsafe_code)]`
 
@@ -14,6 +14,7 @@ Strongly-typed primitive types for commerce applications in Rust. Prevents entir
 
 ```rust
 use stateset_primitives::{OrderId, CustomerId, Money, CurrencyCode, Sku};
+use rust_decimal_macros::dec;
 use uuid::Uuid;
 
 // Type-safe IDs — can't accidentally swap them
@@ -21,7 +22,7 @@ let order_id: OrderId = Uuid::new_v4().into();
 let customer_id: CustomerId = Uuid::new_v4().into();
 
 // Money is currency-aware
-let price = Money::new(29.99, CurrencyCode::USD);
+let price = Money::new(dec!(29.99), CurrencyCode::USD);
 
 // SKUs are validated
 let sku: Sku = "WBH-001".parse().unwrap();

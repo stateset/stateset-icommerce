@@ -7,7 +7,7 @@ pub(crate) fn validate_non_negative(field: &'static str, value: Decimal) -> Pric
     if value < Decimal::ZERO { Err(PricingError::InvalidAmount { field, value }) } else { Ok(()) }
 }
 
-pub(crate) fn validate_quantity(quantity: u32) -> PricingResult<()> {
+pub(crate) const fn validate_quantity(quantity: u32) -> PricingResult<()> {
     if quantity == 0 { Err(PricingError::InvalidQuantity { value: quantity }) } else { Ok(()) }
 }
 

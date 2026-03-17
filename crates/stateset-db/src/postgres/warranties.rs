@@ -15,7 +15,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// PostgreSQL warranty repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgWarrantyRepository {
     pool: PgPool,
 }
@@ -76,7 +76,7 @@ struct ClaimRow {
 }
 
 impl PgWarrantyRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

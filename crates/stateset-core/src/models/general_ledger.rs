@@ -26,10 +26,15 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AccountType {
+    /// Cash, receivables, inventory, and other economic resources.
     Asset,
+    /// Obligations owed to creditors and suppliers.
     Liability,
+    /// Owner's residual interest in the business.
     Equity,
+    /// Income earned from sales or services.
     Revenue,
+    /// Costs incurred in earning revenue.
     Expense,
 }
 
@@ -61,8 +66,10 @@ impl AccountType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BalanceSide {
+    /// Increases asset and expense accounts; decreases liabilities, equity, and revenue.
     #[default]
     Debit,
+    /// Increases liability, equity, and revenue accounts; decreases assets and expenses.
     Credit,
 }
 
@@ -73,39 +80,69 @@ pub enum BalanceSide {
 #[non_exhaustive]
 pub enum AccountSubType {
     // Assets
+    /// Cash and cash equivalents.
     Cash,
+    /// Amounts owed by customers for goods or services delivered.
     AccountsReceivable,
+    /// Goods held for sale or used in production.
     Inventory,
+    /// Expenses paid in advance not yet recognized as cost.
     PrepaidExpense,
+    /// Long-lived tangible assets such as equipment and buildings.
     FixedAsset,
+    /// Contra-asset reducing the carrying value of fixed assets.
     AccumulatedDepreciation,
+    /// Current assets not classified elsewhere.
     OtherCurrentAsset,
+    /// Non-current assets not classified elsewhere.
     OtherNonCurrentAsset,
     // Liabilities
+    /// Amounts owed to suppliers for goods or services received.
     AccountsPayable,
+    /// Expenses incurred but not yet paid.
     AccruedLiabilities,
+    /// Customer deposits or payments for goods/services not yet delivered.
     UnearnedRevenue,
+    /// Debt due within one year.
     ShortTermDebt,
+    /// Debt due beyond one year.
     LongTermDebt,
+    /// Current liabilities not classified elsewhere.
     OtherCurrentLiability,
+    /// Non-current liabilities not classified elsewhere.
     OtherNonCurrentLiability,
     // Equity
+    /// Paid-in capital from shareholders.
     CommonStock,
+    /// Cumulative earnings retained in the business.
     RetainedEarnings,
+    /// Equity accounts not classified elsewhere.
     OtherEquity,
     // Revenue
+    /// Revenue from product sales.
     SalesRevenue,
+    /// Revenue from services rendered.
     ServiceRevenue,
+    /// Revenue not classified elsewhere.
     OtherRevenue,
     // Expense
+    /// Direct cost of goods sold to customers.
     CostOfGoodsSold,
+    /// Recurring expenses related to running the business.
     OperatingExpense,
+    /// Wages, salaries, and related employee costs.
     Payroll,
+    /// Costs for leasing office or warehouse space.
     RentExpense,
+    /// Electricity, water, and similar utility costs.
     UtilitiesExpense,
+    /// Allocation of fixed asset cost over its useful life.
     DepreciationExpense,
+    /// Cost of borrowing funds.
     InterestExpense,
+    /// Income tax and other tax charges.
     TaxExpense,
+    /// Expenses not classified elsewhere.
     OtherExpense,
 }
 
@@ -114,9 +151,12 @@ pub enum AccountSubType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AccountStatus {
+    /// Account accepts postings and appears in reports.
     #[default]
     Active,
+    /// Account is temporarily disabled; no new postings allowed.
     Inactive,
+    /// Account is permanently closed and hidden from normal views.
     Archived,
 }
 
@@ -151,10 +191,14 @@ impl FromStr for AccountStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PeriodStatus {
+    /// Period has not yet started; posting is not allowed.
     #[default]
     Future,
+    /// Period is active and accepts journal entry postings.
     Open,
+    /// Period has ended; no further postings permitted without re-opening.
     Closed,
+    /// Period is permanently sealed; cannot be re-opened.
     Locked,
 }
 
@@ -187,11 +231,16 @@ impl FromStr for PeriodStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JournalEntryType {
+    /// Routine transaction entry.
     #[default]
     Standard,
+    /// End-of-period accrual or deferral entry.
     Adjusting,
+    /// Entry to close temporary accounts at period end.
     Closing,
+    /// Auto-generated entry that reverses a prior adjusting entry.
     Reversing,
+    /// Entry to establish opening balances for a new period or entity.
     Opening,
 }
 
@@ -226,15 +275,24 @@ impl FromStr for JournalEntryType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JournalEntrySource {
+    /// Entry created manually by a user.
     #[default]
     Manual,
+    /// Auto-generated when a customer invoice is posted.
     AutoInvoice,
+    /// Auto-generated when a customer payment is received.
     AutoPayment,
+    /// Auto-generated when a supplier bill is approved.
     AutoBill,
+    /// Auto-generated when a supplier bill payment is made.
     AutoBillPayment,
+    /// Auto-generated from an inventory transaction.
     AutoInventory,
+    /// Auto-generated when an AR balance is written off.
     AutoWriteOff,
+    /// Generated automatically during period-close processing.
     SystemClosing,
+    /// Imported from an external system or file.
     Import,
 }
 
@@ -277,11 +335,16 @@ impl FromStr for JournalEntrySource {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JournalEntryStatus {
+    /// Entry is being prepared; not yet submitted for posting.
     #[default]
     Draft,
+    /// Entry is awaiting approval before posting.
     Pending,
+    /// Entry has been posted and affects account balances.
     Posted,
+    /// Entry has been cancelled; has no effect on balances.
     Voided,
+    /// Entry has been offset by a reversing entry.
     Reversed,
 }
 
@@ -318,20 +381,35 @@ impl FromStr for JournalEntryStatus {
 /// A GL Account (Chart of Accounts entry)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlAccount {
+    /// Unique identifier for this account.
     pub id: Uuid,
+    /// Structured account code (e.g. `"1010"`).
     pub account_number: String,
+    /// Human-readable account name.
     pub name: String,
+    /// Optional description of the account's purpose.
     pub description: Option<String>,
+    /// Top-level classification (Asset, Liability, Equity, Revenue, Expense).
     pub account_type: AccountType,
+    /// Finer-grained classification within the account type.
     pub account_sub_type: Option<AccountSubType>,
+    /// Parent account for hierarchy grouping; `None` if top-level.
     pub parent_account_id: Option<Uuid>,
+    /// If `true`, this is a summary header; postings go to child accounts.
     pub is_header: bool,
+    /// If `true`, journal entry lines may be posted directly to this account.
     pub is_posting: bool,
+    /// Expected side (Debit/Credit) that increases this account.
     pub normal_balance: BalanceSide,
+    /// Currency in which this account is maintained.
     pub currency: CurrencyCode,
+    /// Lifecycle status of the account.
     pub status: AccountStatus,
+    /// Running balance as of the last posting.
     pub current_balance: Decimal,
+    /// Timestamp of account creation.
     pub created_at: DateTime<Utc>,
+    /// Timestamp of the last update.
     pub updated_at: DateTime<Utc>,
 }
 
@@ -354,18 +432,31 @@ impl GlAccount {
 /// GL Period (accounting period)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlPeriod {
+    /// Unique identifier for this period.
     pub id: Uuid,
+    /// Display name, typically in `YYYY-MM` format.
     pub period_name: String,
+    /// Fiscal year this period belongs to.
     pub fiscal_year: i32,
+    /// Sequential number within the fiscal year (1–12 for monthly).
     pub period_number: i32,
+    /// First date of the period (inclusive).
     pub start_date: NaiveDate,
+    /// Last date of the period (inclusive).
     pub end_date: NaiveDate,
+    /// Current lifecycle status of the period.
     pub status: PeriodStatus,
+    /// Timestamp when the period was closed.
     pub closed_at: Option<DateTime<Utc>>,
+    /// User who closed the period.
     pub closed_by: Option<String>,
+    /// Timestamp when the period was permanently locked.
     pub locked_at: Option<DateTime<Utc>>,
+    /// User who locked the period.
     pub locked_by: Option<String>,
+    /// Timestamp of period creation.
     pub created_at: DateTime<Utc>,
+    /// Timestamp of the last update.
     pub updated_at: DateTime<Utc>,
 }
 
@@ -384,25 +475,45 @@ impl GlPeriod {
 /// Journal Entry header
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalEntry {
+    /// Unique identifier for this journal entry.
     pub id: Uuid,
+    /// Human-readable entry reference number (e.g. `"JE-20240101-ABCD1234"`).
     pub entry_number: String,
+    /// Date the transaction occurred or is being recorded.
     pub entry_date: NaiveDate,
+    /// Accounting period this entry belongs to.
     pub period_id: Uuid,
+    /// Classification of the entry (standard, adjusting, closing, etc.).
     pub entry_type: JournalEntryType,
+    /// System or process that created the entry.
     pub source: JournalEntrySource,
+    /// Entity type of the originating document (e.g. `"invoice"`).
     pub source_document_type: Option<String>,
+    /// Identifier of the originating document.
     pub source_document_id: Option<Uuid>,
+    /// Narrative description of the transaction.
     pub description: String,
+    /// Sum of all debit line amounts.
     pub total_debits: Decimal,
+    /// Sum of all credit line amounts.
     pub total_credits: Decimal,
+    /// `true` when `total_debits == total_credits`.
     pub is_balanced: bool,
+    /// Current lifecycle status.
     pub status: JournalEntryStatus,
+    /// Timestamp when the entry was posted to the ledger.
     pub posted_at: Option<DateTime<Utc>>,
+    /// User who posted the entry.
     pub posted_by: Option<String>,
+    /// Entry that this one reverses, if applicable.
     pub reversed_entry_id: Option<Uuid>,
+    /// Entry created to reverse this one, if applicable.
     pub reversing_entry_id: Option<Uuid>,
+    /// Individual debit/credit lines that make up this entry.
     pub lines: Vec<JournalEntryLine>,
+    /// Timestamp of entry creation.
     pub created_at: DateTime<Utc>,
+    /// Timestamp of the last update.
     pub updated_at: DateTime<Utc>,
 }
 
@@ -445,18 +556,31 @@ impl JournalEntry {
 /// Journal Entry line (detail)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalEntryLine {
+    /// Unique identifier for this line.
     pub id: Uuid,
+    /// Parent journal entry.
     pub journal_entry_id: Uuid,
+    /// Sequence number within the entry (1-based).
     pub line_number: i32,
+    /// GL account being debited or credited.
     pub account_id: Uuid,
+    /// Denormalized account number for reporting convenience.
     pub account_number: Option<String>,
+    /// Denormalized account name for reporting convenience.
     pub account_name: Option<String>,
+    /// Optional line-level narrative.
     pub description: Option<String>,
+    /// Debit amount; exactly one of `debit_amount` or `credit_amount` must be non-zero.
     pub debit_amount: Decimal,
+    /// Credit amount; exactly one of `debit_amount` or `credit_amount` must be non-zero.
     pub credit_amount: Decimal,
+    /// Currency of the amounts on this line.
     pub currency: CurrencyCode,
+    /// Entity type of a related sub-ledger record (e.g. `"invoice_line"`).
     pub reference_type: Option<String>,
+    /// Identifier of the related sub-ledger record.
     pub reference_id: Option<Uuid>,
+    /// Timestamp of line creation.
     pub created_at: DateTime<Utc>,
 }
 

@@ -8,15 +8,15 @@ use sqlx::postgres::PgPool;
 use stateset_core::{
     BillingCycle, BillingCycleFilter, BillingCycleStatus, BillingInterval, CancelSubscription,
     CommerceError, CreateBillingCycle, CreateSubscription, CreateSubscriptionItem,
-    CreateSubscriptionPlan, CustomerId, OrderId, PauseSubscription, PlanStatus, Result,
-    SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType, SubscriptionFilter,
-    SubscriptionId, SubscriptionItem, SubscriptionPlan, SubscriptionPlanFilter,
-    SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus, UpdateSubscription,
-    UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
+    CreateSubscriptionPlan, CurrencyCode, CustomerId, OrderId, PauseSubscription, PlanStatus,
+    Result, SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType,
+    SubscriptionFilter, SubscriptionId, SubscriptionItem, SubscriptionPlan,
+    SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus,
+    UpdateSubscription, UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgSubscriptionRepository {
     pool: PgPool,
 }
@@ -144,7 +144,7 @@ struct EventRow {
 impl PgSubscriptionRepository {
     const MAX_SUBSCRIPTION_NUMBER_RETRIES: usize = 8;
 
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -206,6 +206,7 @@ impl PgSubscriptionRepository {
                 e
             ))
         })?;
+        let currency: CurrencyCode = currency.parse().unwrap_or(CurrencyCode::USD);
 
         Ok(SubscriptionPlan {
             id,
@@ -312,6 +313,7 @@ impl PgSubscriptionRepository {
                     e
                 ))
             })?;
+        let currency: CurrencyCode = currency.parse().unwrap_or(CurrencyCode::USD);
 
         Ok(Subscription {
             id: SubscriptionId::from(id),
@@ -394,6 +396,7 @@ impl PgSubscriptionRepository {
             ))
         })?;
         let payment_id = payment_id.map(|id| id.to_string());
+        let currency: CurrencyCode = currency.parse().unwrap_or(CurrencyCode::USD);
 
         Ok(BillingCycle {
             id,
@@ -638,7 +641,7 @@ impl PgSubscriptionRepository {
         .bind(input.custom_interval_days)
         .bind(input.price)
         .bind(input.setup_fee)
-        .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
+        .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
         .bind(input.trial_days.unwrap_or(0))
         .bind(input.trial_requires_payment_method.unwrap_or(true))
         .bind(input.min_cycles)
@@ -960,13 +963,13 @@ impl PgSubscriptionRepository {
             .bind(plan.billing_interval.to_string())
             .bind(plan.custom_interval_days)
             .bind(price)
-            .bind(plan.currency.clone())
+            .bind(plan.currency.as_str())
             .bind(input.payment_method_id.clone())
             .bind(now)
             .bind(now)
             .bind(current_period_end)
-            .bind(next_billing_date.clone())
-            .bind(trial_ends_at.clone())
+            .bind(next_billing_date)
+            .bind(trial_ends_at)
             .bind(shipping_address.clone())
             .bind(billing_address.clone())
             .bind(plan.discount_percent)
@@ -1394,7 +1397,7 @@ impl PgSubscriptionRepository {
         let discount = sub.discount_amount.unwrap_or(Decimal::ZERO)
             + (sub.discount_percent.unwrap_or(Decimal::ZERO) * subtotal);
         let total = (subtotal - discount).max(Decimal::ZERO);
-        let currency = sub.currency.clone();
+        let currency = sub.currency;
 
         sqlx::query(
             "INSERT INTO billing_cycles (id, subscription_id, cycle_number, status, period_start, period_end,
@@ -1409,7 +1412,7 @@ impl PgSubscriptionRepository {
         .bind(subtotal)
         .bind(discount)
         .bind(total)
-        .bind(currency)
+        .bind(currency.as_str())
         .bind(Utc::now())
         .bind(Utc::now())
         .execute(&self.pool)
@@ -1677,7 +1680,7 @@ impl SubscriptionRepository for PgSubscriptionRepository {
     }
 }
 
-fn plan_status_str(status: PlanStatus) -> &'static str {
+const fn plan_status_str(status: PlanStatus) -> &'static str {
     match status {
         PlanStatus::Draft => "draft",
         PlanStatus::Active => "active",
@@ -1686,7 +1689,7 @@ fn plan_status_str(status: PlanStatus) -> &'static str {
     }
 }
 
-fn subscription_status_str(status: SubscriptionStatus) -> &'static str {
+const fn subscription_status_str(status: SubscriptionStatus) -> &'static str {
     match status {
         SubscriptionStatus::Trial => "trial",
         SubscriptionStatus::Active => "active",
@@ -1699,7 +1702,7 @@ fn subscription_status_str(status: SubscriptionStatus) -> &'static str {
     }
 }
 
-fn billing_cycle_status_str(status: BillingCycleStatus) -> &'static str {
+const fn billing_cycle_status_str(status: BillingCycleStatus) -> &'static str {
     match status {
         BillingCycleStatus::Scheduled => "scheduled",
         BillingCycleStatus::Processing => "processing",
@@ -1712,7 +1715,7 @@ fn billing_cycle_status_str(status: BillingCycleStatus) -> &'static str {
     }
 }
 
-fn event_type_str(event_type: SubscriptionEventType) -> &'static str {
+const fn event_type_str(event_type: SubscriptionEventType) -> &'static str {
     match event_type {
         SubscriptionEventType::Created => "created",
         SubscriptionEventType::Activated => "activated",

@@ -63,13 +63,21 @@ impl Default for InspectionType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum InspectionStatus {
+    /// Inspection has been created but not yet scheduled.
     Pending,
+    /// Inspection is scheduled for a future time.
     Scheduled,
+    /// Inspector is actively performing the inspection.
     InProgress,
+    /// All items passed the inspection criteria.
     Passed,
+    /// One or more items failed the inspection criteria.
     Failed,
+    /// Some items passed and some failed.
     PartialPass,
+    /// Inspection is temporarily paused pending additional information.
     OnHold,
+    /// Inspection was cancelled before completion.
     Cancelled,
 }
 
@@ -103,9 +111,13 @@ pub struct InspectionItem {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum InspectionResult {
+    /// Result has not yet been recorded.
     Pending,
+    /// Item fully meets the quality criteria.
     Pass,
+    /// Item does not meet the quality criteria.
     Fail,
+    /// Item meets criteria only under specific conditions or with minor rework.
     ConditionalPass,
 }
 
@@ -150,11 +162,17 @@ pub struct NonConformance {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum NonConformanceSource {
+    /// Defect discovered during a formal quality inspection.
     Inspection,
+    /// Non-conformance reported by a customer.
     CustomerComplaint,
+    /// Defect identified during an internal quality audit.
     InternalAudit,
+    /// Problem attributed to a supplier's material or process.
     SupplierIssue,
+    /// Defect introduced during the manufacturing process.
     ProductionDefect,
+    /// Goods damaged in transit or during shipment.
     ShippingDamage,
 }
 
@@ -170,9 +188,13 @@ impl Default for NonConformanceSource {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Severity {
+    /// Defect poses an immediate safety or compliance risk; requires urgent action.
     Critical,
+    /// Significant defect likely to affect product function or customer satisfaction.
     Major,
+    /// Small defect with limited impact on product use or appearance.
     Minor,
+    /// Noteworthy finding that does not rise to the level of a defect.
     Observation,
 }
 
@@ -188,13 +210,21 @@ impl Default for Severity {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum NcrStatus {
+    /// NCR has been created and is awaiting assignment.
     Open,
+    /// NCR is being assessed by the quality team.
     UnderReview,
+    /// Investigation is complete; awaiting a disposition decision.
     PendingDisposition,
+    /// Corrective actions are being implemented to address the root cause.
     CorrectiveAction,
+    /// Preventive actions are being implemented to avoid recurrence.
     PreventiveAction,
+    /// Actions have been taken; effectiveness is being verified.
     Verification,
+    /// All actions verified effective; NCR is closed.
     Closed,
+    /// NCR was opened in error or deemed not applicable.
     Cancelled,
 }
 
@@ -228,12 +258,19 @@ impl std::str::FromStr for NcrStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Disposition {
+    /// Material is accepted in its current state without modification.
     UseAsIs,
+    /// Material will be re-processed to meet the original specification.
     Rework,
+    /// Material will be fixed to an acceptable but possibly different specification.
     Repair,
+    /// Material is disposed of; cannot be used or sold.
     Scrap,
+    /// Material is returned to the supplier for credit or replacement.
     ReturnToVendor,
+    /// Material is reclassified to a lower-grade specification.
     Downgrade,
+    /// Each unit is individually inspected to separate conforming from non-conforming.
     SortAndScreen,
 }
 
@@ -268,13 +305,21 @@ pub struct QualityHold {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum HoldType {
+    /// Held pending a quality inspection decision.
     QualityInspection,
+    /// Returned by a customer; awaiting disposition.
     CustomerReturn,
+    /// Subject to a product recall.
     Recall,
+    /// Goods were damaged and cannot be sold as-is.
     Damaged,
+    /// Goods have passed or are approaching their expiry date.
     Expired,
+    /// Isolated to prevent potential contamination or spread.
     Quarantine,
+    /// Held due to a regulatory agency requirement or investigation.
     RegulatoryHold,
+    /// Held while an internal investigation is in progress.
     InvestigationHold,
 }
 

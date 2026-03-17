@@ -12,7 +12,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// PostgreSQL agent validation repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgAgentValidationRepository {
     pool: PgPool,
 }
@@ -42,7 +42,7 @@ struct ValidationResponseRow {
 }
 
 impl PgAgentValidationRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

@@ -10,16 +10,16 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, CustomerId,
-    FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem, OrderItemId, OrderRepository,
-    OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result, UpdateOrder,
-    validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
+    Address, BatchResult, CommerceError, CreateBackorder, CreateOrder, CreateOrderItem,
+    CurrencyCode, CustomerId, FulfillmentStatus, Order, OrderFilter, OrderId, OrderItem,
+    OrderItemId, OrderRepository, OrderStatus, PaymentStatus, ProductId, ReserveInventory, Result,
+    UpdateOrder, validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku,
 };
 use uuid::Uuid;
 
-/// PostgreSQL implementation of OrderRepository
-#[derive(Clone)]
+/// PostgreSQL implementation of `OrderRepository`
+#[derive(Debug, Clone)]
 pub struct PgOrderRepository {
     pool: PgPool,
 }
@@ -32,7 +32,7 @@ struct OrderRow {
     status: String,
     order_date: DateTime<Utc>,
     total_amount: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     payment_status: String,
     fulfillment_status: String,
     payment_method: Option<String>,
@@ -62,7 +62,7 @@ struct OrderItemRow {
 }
 
 impl PgOrderRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -127,8 +127,8 @@ impl PgOrderRepository {
     fn validate_order_input(input: &CreateOrder) -> Result<()> {
         validate_required_uuid("order.customer_id", input.customer_id.into_uuid())?;
 
-        if let Some(ref currency) = input.currency {
-            validate_currency_code(currency)?;
+        if let Some(currency) = input.currency {
+            validate_currency_code(currency.as_str())?;
         }
 
         if input.items.is_empty() {
@@ -365,7 +365,7 @@ impl PgOrderRepository {
             .bind("pending")
             .bind(now)
             .bind(total)
-            .bind(input.currency.as_deref().unwrap_or("USD"))
+            .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
             .bind("pending")
             .bind("unfulfilled")
             .bind(&input.payment_method)
@@ -395,7 +395,7 @@ impl PgOrderRepository {
             .bind("pending")
             .bind(now)
             .bind(total)
-            .bind(input.currency.as_deref().unwrap_or("USD"))
+            .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
             .bind("pending")
             .bind("unfulfilled")
             .bind(&input.payment_method)
@@ -553,7 +553,7 @@ impl PgOrderRepository {
             status: OrderStatus::Pending,
             order_date: now,
             total_amount: total,
-            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            currency: input.currency.unwrap_or(CurrencyCode::USD),
             payment_status: PaymentStatus::Pending,
             fulfillment_status: FulfillmentStatus::Unfulfilled,
             payment_method: input.payment_method,
@@ -844,6 +844,7 @@ impl PgOrderRepository {
             to_date,
             limit,
             offset,
+            after_cursor: _,
         } = filter;
 
         let mut builder = QueryBuilder::new("SELECT * FROM orders WHERE 1=1");
@@ -982,6 +983,7 @@ impl PgOrderRepository {
             to_date,
             limit: _,
             offset: _,
+            after_cursor: _,
         } = filter;
 
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM orders WHERE 1=1");
@@ -1097,7 +1099,7 @@ impl PgOrderRepository {
             .bind("pending")
             .bind(now)
             .bind(total)
-            .bind(input.currency.as_deref().unwrap_or("USD"))
+            .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
             .bind("pending")
             .bind("unfulfilled")
             .bind(&input.payment_method)
@@ -1169,7 +1171,7 @@ impl PgOrderRepository {
                 status: OrderStatus::Pending,
                 order_date: now,
                 total_amount: total,
-                currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+                currency: input.currency.unwrap_or(CurrencyCode::USD),
                 payment_status: PaymentStatus::Pending,
                 fulfillment_status: FulfillmentStatus::Unfulfilled,
                 payment_method: input.payment_method,

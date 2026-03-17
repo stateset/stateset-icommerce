@@ -7,14 +7,14 @@ use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
     BatchResult, CommerceError, CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier,
-    PaymentTerms, PurchaseOrder, PurchaseOrderFilter, PurchaseOrderId, PurchaseOrderItem,
-    PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItems, Result, Supplier,
-    SupplierFilter, UpdatePurchaseOrder, UpdateSupplier, generate_po_number,
+    CurrencyCode, PaymentTerms, PurchaseOrder, PurchaseOrderFilter, PurchaseOrderId,
+    PurchaseOrderItem, PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItems,
+    Result, Supplier, SupplierFilter, UpdatePurchaseOrder, UpdateSupplier, generate_po_number,
     generate_supplier_code, validate_batch_size,
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgPurchaseOrderRepository {
     pool: PgPool,
 }
@@ -98,7 +98,7 @@ struct PurchaseOrderItemRow {
 }
 
 impl PgPurchaseOrderRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -133,6 +133,7 @@ impl PgPurchaseOrderRepository {
                 payment_terms, e
             ))
         })?;
+        let currency: CurrencyCode = currency.parse().unwrap_or(CurrencyCode::USD);
 
         Ok(Supplier {
             id,
@@ -203,6 +204,7 @@ impl PgPurchaseOrderRepository {
                 payment_terms, e
             ))
         })?;
+        let currency: CurrencyCode = currency.parse().unwrap_or(CurrencyCode::USD);
 
         Ok(PurchaseOrder {
             id: id.into(),
@@ -332,7 +334,7 @@ impl PgPurchaseOrderRepository {
         .bind(&input.country)
         .bind(&input.tax_id)
         .bind(input.payment_terms.unwrap_or_default().to_string())
-        .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
+        .bind(input.currency.unwrap_or(CurrencyCode::USD).as_str())
         .bind(input.lead_time_days)
         .bind(input.minimum_order)
         .bind(true)
@@ -389,7 +391,7 @@ impl PgPurchaseOrderRepository {
         .bind(input.country.or(supplier.country))
         .bind(input.tax_id.or(supplier.tax_id))
         .bind(input.payment_terms.unwrap_or(supplier.payment_terms).to_string())
-        .bind(input.currency.unwrap_or(supplier.currency))
+        .bind(input.currency.unwrap_or(supplier.currency).as_str())
         .bind(input.lead_time_days.or(supplier.lead_time_days))
         .bind(input.minimum_order.or(supplier.minimum_order))
         .bind(input.is_active.unwrap_or(supplier.is_active))
@@ -466,7 +468,7 @@ impl PgPurchaseOrderRepository {
         .bind(&input.ship_to_postal_code)
         .bind(&input.ship_to_country)
         .bind(input.payment_terms.unwrap_or(supplier.payment_terms).to_string())
-        .bind(input.currency.unwrap_or(supplier.currency))
+        .bind(input.currency.unwrap_or(supplier.currency).as_str())
         .bind(Decimal::ZERO)
         .bind(input.tax_amount.unwrap_or_default())
         .bind(input.shipping_cost.unwrap_or_default())
@@ -1051,12 +1053,13 @@ impl PgPurchaseOrderRepository {
             }
 
             // Get supplier info for defaults
-            let (payment_terms, currency): (String, String) =
+            let (payment_terms, currency_str): (String, String) =
                 sqlx::query_as("SELECT payment_terms, currency FROM suppliers WHERE id = $1")
                     .bind(input.supplier_id)
                     .fetch_one(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
+            let currency: CurrencyCode = currency_str.parse().unwrap_or(CurrencyCode::USD);
 
             let id = Uuid::new_v4();
             let now = Utc::now();
@@ -1087,7 +1090,7 @@ impl PgPurchaseOrderRepository {
                     .map(|pt| pt.to_string())
                     .unwrap_or(payment_terms),
             )
-            .bind(input.currency.unwrap_or(currency))
+            .bind(input.currency.unwrap_or(currency).as_str())
             .bind(Decimal::ZERO)
             .bind(input.tax_amount.unwrap_or_default())
             .bind(input.shipping_cost.unwrap_or_default())

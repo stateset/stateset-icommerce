@@ -15,7 +15,7 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgQualityRepository {
     pool: PgPool,
 }
@@ -111,7 +111,7 @@ struct DefectRow {
 }
 
 impl PgQualityRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

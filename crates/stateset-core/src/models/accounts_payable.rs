@@ -17,26 +17,47 @@ use uuid::Uuid;
 /// A bill/invoice from a supplier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bill {
+    /// Unique identifier for this bill.
     pub id: Uuid,
+    /// System-generated or supplier-provided bill reference (e.g. `"BILL-20240101-ABC123"`).
     pub bill_number: String,
+    /// Supplier who issued this bill.
     pub supplier_id: Uuid,
+    /// Denormalized supplier name for display.
     pub supplier_name: Option<String>,
+    /// Purchase order this bill fulfils, if any.
     pub purchase_order_id: Option<Uuid>,
+    /// Current payment lifecycle status.
     pub status: BillStatus,
+    /// Date the supplier issued the bill.
     pub bill_date: DateTime<Utc>,
+    /// Date by which payment must be made.
     pub due_date: DateTime<Utc>,
+    /// Payment terms string (e.g. `"Net 30"`).
     pub payment_terms: Option<String>,
+    /// Sum of line-item amounts before tax and adjustments.
     pub subtotal: Decimal,
+    /// Total tax charged on the bill.
     pub tax_amount: Decimal,
+    /// Freight or shipping charges billed separately.
     pub shipping_amount: Decimal,
+    /// Any negotiated discount applied to the bill.
     pub discount_amount: Decimal,
+    /// Final amount owed: `subtotal + tax + shipping - discount`.
     pub total_amount: Decimal,
+    /// Amount already paid against this bill.
     pub amount_paid: Decimal,
+    /// Remaining balance: `total_amount - amount_paid`.
     pub amount_due: Decimal,
+    /// Currency of all monetary amounts.
     pub currency: CurrencyCode,
+    /// Supplier's own invoice or reference number.
     pub reference_number: Option<String>,
+    /// Free-text notes for internal use.
     pub memo: Option<String>,
+    /// Timestamp of record creation.
     pub created_at: DateTime<Utc>,
+    /// Timestamp of the last update.
     pub updated_at: DateTime<Utc>,
 }
 
@@ -60,19 +81,33 @@ pub struct BillItem {
 /// A payment made to a supplier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillPayment {
+    /// Unique identifier for this payment.
     pub id: Uuid,
+    /// System-generated payment reference (e.g. `"APMT-20240101-ABC123"`).
     pub payment_number: String,
+    /// Supplier receiving the payment.
     pub supplier_id: Uuid,
+    /// Date the payment was or will be made.
     pub payment_date: DateTime<Utc>,
+    /// Method used to disburse the funds.
     pub payment_method: PaymentMethodAP,
+    /// Total amount disbursed.
     pub amount: Decimal,
+    /// Currency of the payment.
     pub currency: CurrencyCode,
+    /// External transaction or confirmation reference.
     pub reference_number: Option<String>,
+    /// Bank account from which the payment was made.
     pub bank_account: Option<String>,
+    /// Check number, if payment method is `Check`.
     pub check_number: Option<String>,
+    /// Free-text notes for internal use.
     pub memo: Option<String>,
+    /// Current processing status.
     pub status: PaymentStatusAP,
+    /// Timestamp of record creation.
     pub created_at: DateTime<Utc>,
+    /// Timestamp of the last update.
     pub updated_at: DateTime<Utc>,
 }
 
@@ -115,14 +150,22 @@ pub struct PaymentRun {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BillStatus {
+    /// Bill is being entered; not yet submitted for approval.
     #[default]
     Draft,
+    /// Bill has been submitted and is awaiting approval.
     Pending,
+    /// Bill is approved and scheduled for payment.
     Approved,
+    /// Bill has been partially paid; a balance remains.
     PartiallyPaid,
+    /// Bill has been paid in full.
     Paid,
+    /// Payment is past the due date.
     Overdue,
+    /// Bill has been cancelled and will not be paid.
     Cancelled,
+    /// Bill is under dispute with the supplier.
     Disputed,
 }
 
@@ -151,13 +194,19 @@ impl FromStr for BillStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentMethodAP {
+    /// Paper check mailed or hand-delivered to the supplier.
     #[default]
     Check,
+    /// Automated Clearing House electronic transfer.
     Ach,
+    /// Domestic or international wire transfer.
     Wire,
+    /// Corporate credit or charge card payment.
     #[strum(serialize = "credit_card", serialize = "creditcard")]
     CreditCard,
+    /// Physical currency payment.
     Cash,
+    /// Any payment method not covered by the other variants.
     Other,
 }
 
@@ -167,11 +216,16 @@ pub enum PaymentMethodAP {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentStatusAP {
+    /// Payment has been created but not yet submitted to the bank.
     #[default]
     Pending,
+    /// Payment has been submitted to the bank for processing.
     Processed,
+    /// Bank has confirmed the funds have been debited.
     Cleared,
+    /// Payment was cancelled before or after submission.
     Voided,
+    /// Payment was rejected or returned by the bank.
     Failed,
 }
 
@@ -195,12 +249,18 @@ impl FromStr for PaymentStatusAP {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PaymentRunStatus {
+    /// Run is being assembled; bills can still be added or removed.
     #[default]
     Draft,
+    /// Run has been submitted and is awaiting approval.
     Pending,
+    /// Run is approved and queued for disbursement.
     Approved,
+    /// Payments are actively being transmitted to the bank.
     Processing,
+    /// All payments in the run have been submitted successfully.
     Completed,
+    /// Run has been cancelled; no payments were made.
     Cancelled,
 }
 

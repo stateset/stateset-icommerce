@@ -14,7 +14,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 /// PostgreSQL currency repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgCurrencyRepository {
     pool: PgPool,
 }
@@ -40,7 +40,7 @@ struct SettingsRow {
 }
 
 impl PgCurrencyRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

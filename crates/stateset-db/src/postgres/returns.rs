@@ -12,8 +12,8 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// PostgreSQL implementation of ReturnRepository
-#[derive(Clone)]
+/// PostgreSQL implementation of `ReturnRepository`
+#[derive(Debug, Clone)]
 pub struct PgReturnRepository {
     pool: PgPool,
 }
@@ -49,7 +49,7 @@ struct ReturnItemRow {
 }
 
 impl PgReturnRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -336,6 +336,7 @@ impl PgReturnRepository {
             to_date,
             limit,
             offset,
+            after_cursor: _,
         } = filter;
 
         let mut builder = QueryBuilder::new("SELECT * FROM returns WHERE 1=1");
@@ -451,6 +452,7 @@ impl PgReturnRepository {
             to_date,
             limit: _,
             offset: _,
+            after_cursor: _,
         } = filter;
 
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM returns WHERE 1=1");

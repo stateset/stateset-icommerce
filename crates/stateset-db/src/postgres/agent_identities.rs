@@ -12,7 +12,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 /// PostgreSQL agent identity repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgAgentIdentityRepository {
     pool: PgPool,
 }
@@ -38,7 +38,7 @@ struct AgentIdentityRow {
 }
 
 impl PgAgentIdentityRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -231,7 +231,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
             .await
             .map_err(map_db_error)?;
 
-            let repo = PgAgentIdentityRepository::new(pool.clone());
+            let repo = Self::new(pool.clone());
             repo.fetch_identity(&input.agent_registry, &input.agent_id)
                 .await?
                 .ok_or(CommerceError::NotFound)
@@ -243,7 +243,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
         let registry = agent_registry.to_string();
         let agent = agent_id.to_string();
         block_on(async move {
-            let repo = PgAgentIdentityRepository::new(pool);
+            let repo = Self::new(pool);
             repo.fetch_identity(&registry, &agent).await
         })
     }
@@ -252,7 +252,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
         let pool = self.pool.clone();
         let wallet = agent_wallet.to_string();
         block_on(async move {
-            let repo = PgAgentIdentityRepository::new(pool);
+            let repo = Self::new(pool);
             repo.fetch_identity_by_wallet(&wallet).await
         })
     }
@@ -267,7 +267,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
         let registry = agent_registry.to_string();
         let agent = agent_id.to_string();
         block_on(async move {
-            let repo = PgAgentIdentityRepository::new(pool.clone());
+            let repo = Self::new(pool.clone());
             let existing =
                 repo.fetch_identity(&registry, &agent).await?.ok_or(CommerceError::NotFound)?;
 
@@ -361,7 +361,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
             .await
             .map_err(map_db_error)?;
 
-            let repo = PgAgentIdentityRepository::new(pool);
+            let repo = Self::new(pool);
             repo.fetch_identity(&registry, &agent).await?.ok_or(CommerceError::NotFound)
         })
     }
@@ -388,7 +388,7 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
             .await
             .map_err(map_db_error)?;
 
-            let repo = PgAgentIdentityRepository::new(pool);
+            let repo = Self::new(pool);
             repo.fetch_identity(&registry, &agent).await?.ok_or(CommerceError::NotFound)
         })
     }

@@ -9,13 +9,13 @@ use stateset_core::{
     CommerceError, CostAccountingRepository, CostAdjustment, CostAdjustmentFilter,
     CostAdjustmentStatus, CostAdjustmentType, CostLayer, CostLayerFilter, CostLayerSource,
     CostMethod, CostRollup, CostTransaction, CostTransactionFilter, CostTransactionType,
-    CostVariance, CostVarianceFilter, CreateCostAdjustment, CreateCostLayer, InventoryValuation,
-    IssueCostLayers, ItemCost, ItemCostFilter, RecordCostVariance, Result, SetItemCost,
-    SkuCostSummary, VarianceType, generate_cost_adjustment_number,
+    CostVariance, CostVarianceFilter, CreateCostAdjustment, CreateCostLayer, CurrencyCode,
+    InventoryValuation, IssueCostLayers, ItemCost, ItemCostFilter, RecordCostVariance, Result,
+    SetItemCost, SkuCostSummary, VarianceType, generate_cost_adjustment_number,
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgCostAccountingRepository {
     pool: PgPool,
 }
@@ -31,7 +31,7 @@ struct ItemCostRow {
     material_cost: Decimal,
     labor_cost: Decimal,
     overhead_cost: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     effective_date: NaiveDate,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -119,7 +119,7 @@ struct CostRollupRow {
 }
 
 impl PgCostAccountingRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -448,7 +448,7 @@ impl PgCostAccountingRepository {
             let material_cost = input.material_cost.unwrap_or_default();
             let labor_cost = input.labor_cost.unwrap_or_default();
             let overhead_cost = input.overhead_cost.unwrap_or_default();
-            let currency = input.currency.unwrap_or_else(|| "USD".to_string());
+            let currency = input.currency.unwrap_or(CurrencyCode::USD);
 
             sqlx::query(
                 "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
@@ -1450,6 +1450,6 @@ fn to_date(dt: DateTime<Utc>) -> NaiveDate {
     dt.date_naive()
 }
 
-fn from_date(date: NaiveDate) -> DateTime<Utc> {
+const fn from_date(date: NaiveDate) -> DateTime<Utc> {
     DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
 }

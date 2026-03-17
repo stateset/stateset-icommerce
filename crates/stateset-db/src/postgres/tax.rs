@@ -15,7 +15,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// PostgreSQL tax repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgTaxRepository {
     pool: PgPool,
 }
@@ -98,7 +98,7 @@ struct TaxSettingsRow {
 }
 
 impl PgTaxRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

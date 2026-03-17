@@ -8,16 +8,16 @@ use sqlx::postgres::PgPool;
 use stateset_core::{
     AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, CartId, CommerceError,
     ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode,
-    CreatePromotion, CustomerId, DiscountTier, OrderId, Promotion, PromotionCondition,
-    PromotionFilter, PromotionId, PromotionRepository, PromotionStatus, PromotionTarget,
-    PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result,
-    StackingBehavior, UpdatePromotion, generate_promotion_code,
+    CreatePromotion, CurrencyCode, CustomerId, DiscountTier, OrderId, Promotion,
+    PromotionCondition, PromotionFilter, PromotionId, PromotionRepository, PromotionStatus,
+    PromotionTarget, PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion,
+    RejectionReason, Result, StackingBehavior, UpdatePromotion, generate_promotion_code,
 };
 use std::str::FromStr;
 use uuid::Uuid;
 
 /// PostgreSQL promotions repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgPromotionRepository {
     pool: PgPool,
 }
@@ -55,7 +55,7 @@ struct PromotionRow {
     excluded_category_ids: serde_json::Value,
     eligible_customer_ids: serde_json::Value,
     eligible_customer_groups: serde_json::Value,
-    currency: String,
+    currency: CurrencyCode,
     priority: i32,
     metadata: Option<serde_json::Value>,
     created_at: DateTime<Utc>,
@@ -89,7 +89,7 @@ struct CouponRow {
 }
 
 impl PgPromotionRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -441,7 +441,7 @@ impl PgPromotionRepository {
             serde_json::to_value(input.eligible_customer_groups.unwrap_or_default())
                 .unwrap_or_default(),
         )
-        .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
+        .bind(input.currency.unwrap_or(CurrencyCode::USD))
         .bind(input.priority.unwrap_or(0))
         .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
@@ -958,7 +958,7 @@ impl PgPromotionRepository {
             order_id,
             cart_id,
             discount_amount,
-            currency: currency.to_string(),
+            currency: currency.parse().unwrap_or(CurrencyCode::USD),
             used_at: now,
         })
     }
@@ -1068,7 +1068,7 @@ impl PgPromotionRepository {
         }
     }
 
-    fn compare_i32(&self, actual: i32, op: ConditionOperator, expected: i32) -> bool {
+    const fn compare_i32(&self, actual: i32, op: ConditionOperator, expected: i32) -> bool {
         match op {
             ConditionOperator::Equals => actual == expected,
             ConditionOperator::NotEquals => actual != expected,

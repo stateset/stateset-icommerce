@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StateSet iCommerce — The Embedded Commerce Engine for the Agentic Era</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════
+   STATESET iCOMMERCE WHITEPAPER
+   Editorial / Magazine Aesthetic
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+  --navy: #0a1628;
+  --navy-90: #0a1628e6;
+  --navy-light: #132240;
+  --navy-mid: #1a2d4a;
+  --paper: #faf8f5;
+  --paper-dark: #f0ece6;
+  --accent: #2563eb;
+  --accent-light: #3b82f6;
+  --gold: #c9a84c;
+  --gold-light: #d4b96a;
+  --gold-dim: #c9a84c33;
+  --text: #1a1a1a;
+  --text-light: #4a4a4a;
+  --text-muted: #8a8a8a;
+  --rule: #d4cfc7;
+  --rule-dark: #2a3a5a;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-size: 17px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  color: var(--text);
+  background: var(--paper);
+  line-height: 1.7;
+  position: relative;
+}
+
+/* Paper grain texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Typography ── */
+
+h1, h2, h3, h4, h5 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82em;
+  letter-spacing: -0.02em;
+}
+
+/* ── Layout Containers ── */
+
+.page-width {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 60px;
+}
+
+.narrow {
+  max-width: 740px;
+  margin: 0 auto;
+}
+
+/* ── Hairline Rules ── */
+
+.rule {
+  border: none;
+  height: 1px;
+  background: var(--rule);
+  margin: 0;
+}
+
+.rule-gold {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-dim), transparent);
+}
+
+.rule-thick {
+  height: 3px;
+  background: var(--navy);
+}
+
+/* ═══════════════════════════════════════════════════════
+   COVER PAGE
+   ═══════════════════════════════════════════════════════ */
+
+.cover {
+  min-height: 100vh;
+  background: var(--navy);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  overflow: hidden;
+}
+
+.cover::before {
+  content: '';
+  position: absolute;
+  top: -20%;
+  right: -10%;
+  width: 70%;
+  height: 70%;
+  background: radial-gradient(ellipse at center, rgba(37, 99, 235, 0.08), transparent 70%);
+  pointer-events: none;
+}
+
+.cover::after {
+  content: '';
+  position: absolute;
+  bottom: -30%;
+  left: -15%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(ellipse at center, rgba(201, 168, 76, 0.05), transparent 70%);
+  pointer-events: none;
+}
+
+.cover-top {
+  padding: 48px 60px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  position: relative;
+  z-index: 1;
+}
+
+.cover-logo {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cover-logo .dot {
+  width: 8px;
+  height: 8px;
+  background: var(--gold);
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.cover-meta {
+  font-size: 0.75rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.4);
+  text-align: right;
+  line-height: 1.8;
+}
+
+.cover-body {
+  padding: 0 60px;
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 900px;
+}
+
+.cover-eyebrow {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 28px;
+}
+
+.cover h1 {
+  font-size: 4.2rem;
+  font-weight: 800;
+  line-height: 1.05;
+  margin-bottom: 32px;
+  max-width: 800px;
+}
+
+.cover h1 em {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--gold-light);
+}
+
+.cover-subtitle {
+  font-size: 1.15rem;
+  font-weight: 300;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.65);
+  max-width: 580px;
+}
+
+.cover-bottom {
+  padding: 48px 60px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  position: relative;
+  z-index: 1;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.cover-stat {
+  text-align: center;
+}
+
+.cover-stat-value {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: white;
+  line-height: 1;
+}
+
+.cover-stat-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.35);
+  margin-top: 8px;
+}
+
+/* ═══════════════════════════════════════════════════════
+   SECTION STYLING
+   ═══════════════════════════════════════════════════════ */
+
+.section {
+  padding: 100px 0;
+}
+
+.section-number {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 16px;
+  display: block;
+}
+
+.section h2 {
+  font-size: 2.8rem;
+  margin-bottom: 20px;
+  color: var(--navy);
+}
+
+.section h3 {
+  font-size: 1.5rem;
+  margin-bottom: 12px;
+  color: var(--navy);
+  margin-top: 40px;
+}
+
+.section h3:first-child { margin-top: 0; }
+
+.section p {
+  color: var(--text-light);
+  margin-bottom: 16px;
+}
+
+.section-intro {
+  font-size: 1.15rem;
+  font-weight: 300;
+  line-height: 1.8;
+  color: var(--text-light);
+  max-width: 680px;
+  margin-bottom: 48px;
+}
+
+/* ── Two-Column Layout ── */
+
+.cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  align-items: start;
+}
+
+.cols-wide-left {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 60px;
+  align-items: start;
+}
+
+.cols-wide-right {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 60px;
+  align-items: start;
+}
+
+/* ── Pull Quotes ── */
+
+.pullquote {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.65rem;
+  font-weight: 500;
+  font-style: italic;
+  line-height: 1.45;
+  color: var(--navy);
+  padding: 40px 0;
+  border-top: 3px solid var(--navy);
+  border-bottom: 1px solid var(--rule);
+  margin: 48px 0;
+  position: relative;
+}
+
+.pullquote::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 0;
+  width: 60px;
+  height: 3px;
+  background: var(--gold);
+}
+
+.pullquote-attr {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 16px;
+  display: block;
+}
+
+/* ── Stat Blocks ── */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin: 48px 0;
+}
+
+.stat-cell {
+  background: var(--paper);
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.stat-value {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--navy);
+  line-height: 1;
+}
+
+.stat-unit {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+/* ── Dark Section ── */
+
+.section-dark {
+  background: var(--navy);
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+.section-dark::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 50%;
+  height: 100%;
+  background: radial-gradient(ellipse at 80% 30%, rgba(37, 99, 235, 0.06), transparent 70%);
+  pointer-events: none;
+}
+
+.section-dark h2 { color: white; }
+.section-dark h3 { color: var(--gold-light); }
+.section-dark p { color: rgba(255,255,255,0.65); }
+.section-dark .section-intro { color: rgba(255,255,255,0.55); }
+.section-dark .section-number { color: var(--gold); }
+
+.section-dark .stat-grid {
+  background: var(--rule-dark);
+  border-color: var(--rule-dark);
+}
+.section-dark .stat-cell { background: var(--navy); }
+.section-dark .stat-value { color: white; }
+.section-dark .stat-label { color: rgba(255,255,255,0.35); }
+
+/* ── Feature Cards ── */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin: 48px 0;
+}
+
+.card {
+  background: var(--paper);
+  padding: 36px 28px;
+}
+
+.card-icon {
+  font-size: 1.5rem;
+  margin-bottom: 16px;
+  display: block;
+}
+
+.card h4 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--navy);
+}
+
+.card p {
+  font-size: 0.85rem;
+  line-height: 1.65;
+  color: var(--text-light);
+  margin: 0;
+}
+
+.section-dark .card-grid {
+  background: var(--rule-dark);
+  border-color: var(--rule-dark);
+}
+.section-dark .card {
+  background: var(--navy-light);
+}
+.section-dark .card h4 { color: white; }
+.section-dark .card p { color: rgba(255,255,255,0.55); }
+
+/* ── Inline Code ── */
+
+code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82em;
+  background: rgba(37, 99, 235, 0.06);
+  padding: 2px 7px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+.section-dark code {
+  background: rgba(255,255,255,0.08);
+  color: var(--gold-light);
+}
+
+/* ── Domain Table ── */
+
+.domain-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 32px 0;
+  font-size: 0.88rem;
+}
+
+.domain-table th {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 12px 16px;
+  border-bottom: 2px solid var(--navy);
+}
+
+.domain-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--text-light);
+  vertical-align: top;
+}
+
+.domain-table td:first-child {
+  font-weight: 600;
+  color: var(--navy);
+  white-space: nowrap;
+}
+
+.domain-table tr:last-child td { border-bottom: 2px solid var(--navy); }
+
+/* ── Architecture Diagram ── */
+
+.arch-diagram {
+  background: var(--navy);
+  border-radius: 4px;
+  padding: 40px;
+  margin: 40px 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.7);
+  line-height: 1.6;
+  white-space: pre;
+  overflow-x: auto;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.arch-diagram .hl { color: var(--gold-light); }
+.arch-diagram .bl { color: var(--accent-light); }
+.arch-diagram .dm { color: rgba(255,255,255,0.3); }
+
+/* ── Binding Badges ── */
+
+.binding-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 24px 0;
+}
+
+.binding-badge {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 8px 18px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  color: var(--text-light);
+  background: white;
+}
+
+.section-dark .binding-badge {
+  border-color: var(--rule-dark);
+  color: rgba(255,255,255,0.6);
+  background: var(--navy-light);
+}
+
+/* ── Section Divider ── */
+
+.divider {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.divider-ornament {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--rule);
+}
+
+.divider-ornament::before,
+.divider-ornament::after {
+  content: '';
+  width: 60px;
+  height: 1px;
+  background: var(--rule);
+}
+
+.divider-ornament .diamond {
+  width: 6px;
+  height: 6px;
+  background: var(--gold);
+  transform: rotate(45deg);
+}
+
+/* ── Footer ── */
+
+.footer {
+  background: var(--navy);
+  color: rgba(255,255,255,0.3);
+  padding: 60px 0;
+  font-size: 0.75rem;
+}
+
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.footer-logo {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: white;
+  margin-bottom: 12px;
+}
+
+.footer a {
+  color: var(--gold-light);
+  text-decoration: none;
+}
+
+/* ── Closing CTA ── */
+
+.closing {
+  text-align: center;
+  padding: 120px 0;
+  background: var(--paper-dark);
+  position: relative;
+}
+
+.closing h2 {
+  font-size: 3rem;
+  color: var(--navy);
+  margin-bottom: 24px;
+}
+
+.closing p {
+  font-size: 1.1rem;
+  color: var(--text-light);
+  max-width: 560px;
+  margin: 0 auto 40px;
+  line-height: 1.8;
+}
+
+.closing-link {
+  display: inline-block;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--navy);
+  text-decoration: none;
+  padding: 16px 40px;
+  border: 2px solid var(--navy);
+  transition: all 0.3s ease;
+}
+
+.closing-link:hover {
+  background: var(--navy);
+  color: white;
+}
+
+/* ── Print Styles ── */
+
+@media print {
+  body::before { display: none; }
+  .cover { page-break-after: always; }
+  .section { page-break-inside: avoid; }
+}
+
+@media (max-width: 840px) {
+  html { font-size: 15px; }
+  .page-width { padding: 0 28px; }
+  .cover-top, .cover-body, .cover-bottom { padding-left: 28px; padding-right: 28px; }
+  .cover h1 { font-size: 2.6rem; }
+  .cols, .cols-wide-left, .cols-wide-right { grid-template-columns: 1fr; gap: 32px; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .card-grid { grid-template-columns: 1fr; }
+  .section h2 { font-size: 2rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════
+     COVER
+     ═══════════════════════════════════════════════════════ -->
+
+<header class="cover">
+  <div class="cover-top">
+    <div class="cover-logo">
+      <span class="dot"></span>
+      StateSet
+    </div>
+    <div class="cover-meta">
+      White Paper<br>
+      March 2026<br>
+      v0.8.0
+    </div>
+  </div>
+
+  <div class="cover-body">
+    <div class="cover-eyebrow">StateSet iCommerce Platform</div>
+    <h1>The Embedded Commerce Engine for&nbsp;the <em>Agentic&nbsp;Era</em></h1>
+    <p class="cover-subtitle">
+      A 242,000-line Rust platform that gives every application — from AI agents
+      to enterprise ERPs — a complete commerce stack with zero external dependencies.
+      The SQLite of commerce.
+    </p>
+  </div>
+
+  <div class="cover-bottom">
+    <div class="cover-stat">
+      <div class="cover-stat-value">242K</div>
+      <div class="cover-stat-label">Lines of Rust</div>
+    </div>
+    <div class="cover-stat">
+      <div class="cover-stat-value">4,249</div>
+      <div class="cover-stat-label">Passing Tests</div>
+    </div>
+    <div class="cover-stat">
+      <div class="cover-stat-value">21</div>
+      <div class="cover-stat-label">Crates</div>
+    </div>
+    <div class="cover-stat">
+      <div class="cover-stat-value">0</div>
+      <div class="cover-stat-label">Clippy Warnings</div>
+    </div>
+    <div class="cover-stat">
+      <div class="cover-stat-value">10</div>
+      <div class="cover-stat-label">Language Bindings</div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════
+     I. EXECUTIVE SUMMARY
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <div class="page-width">
+    <span class="section-number">I — Executive Summary</span>
+    <h2>Commerce infrastructure<br>should be a library,<br>not a service.</h2>
+
+    <div class="cols-wide-left" style="margin-top: 48px;">
+      <div>
+        <p>
+          StateSet iCommerce is a Rust-native, embeddable commerce engine designed for
+          a world where AI agents autonomously negotiate, purchase, and settle transactions
+          on behalf of humans and organizations. It delivers the full operational surface of
+          enterprise commerce — orders, inventory, payments, fulfillment, accounting,
+          subscriptions, and 40+ additional domains — as a single library call.
+        </p>
+        <p>
+          Built on Edition 2024 Rust with <code>deny(unsafe_code)</code> enforced across
+          every production crate, iCommerce achieves the reliability profile of database
+          engines while maintaining the ergonomics of a modern SDK. Its dual-backend
+          architecture — embedded SQLite for zero-configuration deployments, PostgreSQL
+          for production scale — means the same code runs in a CLI tool, a WASM module,
+          a mobile app, or a cloud-native microservice.
+        </p>
+        <p>
+          The platform introduces the Agent-to-Agent (A2A) commerce protocol, enabling
+          autonomous agents to discover capabilities, negotiate quotes, execute escrow-backed
+          purchases, and resolve disputes — all with cryptographic verifiability through the
+          VES v1.0 protocol.
+        </p>
+      </div>
+      <div>
+        <div class="pullquote">
+          "We didn't set out to build another commerce platform. We set out to make commerce
+          disappear — to make it as invisible and reliable as the filesystem."
+          <span class="pullquote-attr">Design Principle</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="page-width"><hr class="rule"></div>
+
+<!-- ═══════════════════════════════════════════════════════
+     II. THE PROBLEM
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <div class="page-width">
+    <span class="section-number">II — The Problem</span>
+    <h2>Commerce is still<br>a monolith problem.</h2>
+
+    <p class="section-intro">
+      Three structural failures define today's commerce infrastructure. Each one
+      compounds in the agentic era, where machines — not humans — are the primary
+      actors in the transaction graph.
+    </p>
+
+    <div class="cols" style="margin-top: 32px;">
+      <div>
+        <h3>1. The SaaS Tax</h3>
+        <p>
+          Modern commerce platforms charge per-transaction fees on infrastructure
+          that should be a commodity. A $50 order touching Shopify, Stripe, a tax
+          service, and a shipping API accumulates 8–12% in platform costs before
+          the merchant earns a dollar. For AI agents executing thousands of
+          micro-transactions per hour, this fee structure is catastrophic.
+        </p>
+
+        <h3>2. The Integration Ceiling</h3>
+        <p>
+          Enterprise commerce requires stitching together 15–25 services: an OMS,
+          a WMS, an ERP's AP/AR/GL modules, tax engines, payment processors,
+          subscription billing, fraud detection, and returns management. Each
+          integration is a surface for failure, latency, and data inconsistency.
+          The median enterprise spends 40% of its engineering budget maintaining
+          commerce integrations, not building product.
+        </p>
+      </div>
+      <div>
+        <h3>3. The Agent Gap</h3>
+        <p>
+          AI agents are becoming economic actors — procuring cloud resources,
+          negotiating SaaS contracts, managing supply chains. Yet no commerce
+          infrastructure exists for agent-to-agent transactions. Agents cannot
+          discover each other's capabilities, negotiate programmatic quotes,
+          hold funds in escrow pending delivery verification, or resolve disputes
+          through algorithmic arbitration. Every agent-initiated purchase today
+          requires a human in the loop.
+        </p>
+
+        <div class="pullquote" style="margin-top: 48px;">
+          "By 2028, autonomous agents will initiate more commercial transactions
+          than humans. The infrastructure doesn't exist yet."
+          <span class="pullquote-attr">Thesis</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider">
+  <div class="divider-ornament">
+    <div class="diamond"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     III. THE ARCHITECTURE
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="section section-dark">
+  <div class="page-width">
+    <span class="section-number">III — The Architecture</span>
+    <h2>21 crates. Zero<br>runtime dependencies.</h2>
+
+    <p class="section-intro">
+      iCommerce is structured as a Rust workspace of 21 crates, each with a single
+      responsibility. The layered architecture ensures that pure domain logic never
+      touches I/O, database code never knows about HTTP, and the embedded facade
+      composes everything into a single <code>Commerce::new("store.db")</code> call.
+    </p>
+
+    <div class="arch-diagram"><span class="dm">┌──────────────────────────────────────────────────────────────────────┐</span>
+<span class="dm">│</span>  <span class="hl">SDK</span>  ·  <span class="hl">FFI</span>  ·  <span class="hl">HTTP</span>  ·  <span class="hl">CLI</span>  ·  <span class="hl">WASM</span>              <span class="dm">Consumer Layer</span>  <span class="dm">│</span>
+<span class="dm">├──────────────────────────────────────────────────────────────────────┤</span>
+<span class="dm">│</span>  <span class="bl">stateset-embedded</span>         Commerce facade, event bus    <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-a2a</span>              Agent-to-Agent protocol        <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-http</span>             Axum REST + SSE + OpenAPI      <span class="dm">│</span>
+<span class="dm">├──────────────────────────────────────────────────────────────────────┤</span>
+<span class="dm">│</span>  <span class="bl">stateset-db</span>               SQLite │ PostgreSQL backends   <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-sync</span>             Outbox, conflict resolution    <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-jobs</span>             Cron, retry, backoff           <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-migrations</span>       Schema versioning + checksums  <span class="dm">│</span>
+<span class="dm">├──────────────────────────────────────────────────────────────────────┤</span>
+<span class="dm">│</span>  <span class="bl">stateset-core</span>             Pure domain models (0 I/O)     <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-primitives</span>       Money, CurrencyCode, typed IDs <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-crypto</span>           VES v1.0, Ed25519, AES-GCM     <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-policy</span>           Deny-overrides rule engine     <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-pricing</span>          Deterministic pricing engine   <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-authz</span>            RBAC + rate limiting + audit   <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-observability</span>    Metrics, tracing, SLO eval     <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-protocol</span>         Wire-format types (WASM-safe)  <span class="dm">│</span>
+<span class="dm">│</span>  <span class="bl">stateset-macros</span>           StateSetId, GenerateDto, etc.  <span class="dm">│</span>
+<span class="dm">└──────────────────────────────────────────────────────────────────────┘</span></div>
+
+    <div class="stat-grid">
+      <div class="stat-cell">
+        <div class="stat-value">242,428</div>
+        <div class="stat-label">Lines of Rust</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">4,249</div>
+        <div class="stat-label">Tests Passing</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">0</div>
+        <div class="stat-label">Clippy Warnings</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">0</div>
+        <div class="stat-label">Unsafe Blocks</div>
+      </div>
+    </div>
+
+    <div class="cols" style="margin-top: 40px;">
+      <div>
+        <h3>Type Safety by Design</h3>
+        <p>
+          Every entity ID is a distinct newtype — you cannot pass an <code>OrderId</code>
+          where a <code>CustomerId</code> is expected. The <code>Money</code> type pairs
+          amounts with currency codes, making cross-currency arithmetic a compile-time
+          error. <code>#[non_exhaustive]</code> on 241 enums ensures forward-compatible
+          evolution. 496 <code>#[must_use]</code> annotations prevent silent value drops.
+        </p>
+      </div>
+      <div>
+        <h3>Dual Backend Architecture</h3>
+        <p>
+          Feature flags toggle between SQLite (bundled, zero-config, single-file) and
+          PostgreSQL (connection pooling, async, saga coordination). The same domain
+          models and repository traits underpin both — a test written against
+          <code>Commerce::new(":memory:")</code> is valid against a 100-node Postgres cluster.
+          Vector search, event sourcing, and saga patterns activate with additional feature flags.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     IV. COMMERCE DOMAINS
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <div class="page-width">
+    <span class="section-number">IV — Commerce Domains</span>
+    <h2>46 domain models.<br>One library.</h2>
+
+    <p class="section-intro">
+      iCommerce delivers the operational surface of an enterprise ERP as composable
+      Rust modules. Each domain is a pure data model with validation, state-machine
+      transitions, and repository traits — no I/O, no side effects, fully testable.
+    </p>
+
+    <table class="domain-table">
+      <thead>
+        <tr>
+          <th>Domain</th>
+          <th>Capabilities</th>
+          <th>Models</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Order Management</td>
+          <td>Create, confirm, process, ship, cancel with state-machine enforcement</td>
+          <td>Order, OrderItem, OrderFilter</td>
+        </tr>
+        <tr>
+          <td>Inventory</td>
+          <td>Stock tracking, reservations, adjustments, reorder points, lot/serial tracking</td>
+          <td>InventoryItem, Lot, Serial</td>
+        </tr>
+        <tr>
+          <td>Payments</td>
+          <td>Card, ACH, crypto, stablecoins (USDC, ssUSD), store credit, gift cards</td>
+          <td>Payment, X402PaymentIntent</td>
+        </tr>
+        <tr>
+          <td>Fulfillment</td>
+          <td>Wave planning, pick/pack/ship, carton management, label generation</td>
+          <td>Wave, PickTask, PackTask, ShipTask</td>
+        </tr>
+        <tr>
+          <td>Accounting</td>
+          <td>Double-entry GL, accounts payable, accounts receivable, cost accounting</td>
+          <td>JournalEntry, Invoice, CreditMemo</td>
+        </tr>
+        <tr>
+          <td>Subscriptions</td>
+          <td>Recurring billing, plan management, renewal, cancellation, proration</td>
+          <td>Subscription, SubscriptionPlan</td>
+        </tr>
+        <tr>
+          <td>Returns & Warranties</td>
+          <td>RMA processing, refund calculation, warranty claims, quality checks</td>
+          <td>Return, Warranty, QualityCheck</td>
+        </tr>
+        <tr>
+          <td>Manufacturing</td>
+          <td>Bill of Materials, work orders, assembly operations, cost allocation</td>
+          <td>BOM, WorkOrder, BOMComponent</td>
+        </tr>
+        <tr>
+          <td>Tax & Promotions</td>
+          <td>Multi-jurisdiction tax, compound rates, stackable promotions, loyalty programs</td>
+          <td>TaxRule, Promotion, LoyaltyProgram</td>
+        </tr>
+        <tr>
+          <td>Analytics & Fraud</td>
+          <td>Customer segmentation, forecasting, fraud scoring, review management</td>
+          <td>Segment, FraudCheck, Review</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="pullquote">
+      "Most commerce platforms give you 60% of what you need and charge you to build
+      the rest. iCommerce ships with the full ERP surface — AP, AR, GL, cost accounting,
+      manufacturing, fulfillment — because agents don't have time to integrate."
+      <span class="pullquote-attr">Architecture Decision Record #001</span>
+    </div>
+  </div>
+</section>
+
+<div class="page-width"><hr class="rule"></div>
+
+<!-- ═══════════════════════════════════════════════════════
+     V. AGENT COMMERCE
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <div class="page-width">
+    <span class="section-number">V — Agent Commerce</span>
+    <h2>The A2A Protocol</h2>
+
+    <p class="section-intro">
+      Agent-to-Agent commerce is the platform's thesis feature: a protocol
+      layer that enables autonomous AI agents to conduct the full lifecycle
+      of a commercial transaction without human intervention.
+    </p>
+
+    <div class="card-grid">
+      <div class="card">
+        <span class="card-icon">◈</span>
+        <h4>Discovery & Identity</h4>
+        <p>
+          Agent Cards describe capabilities, pricing, and trust scores.
+          ERC-8004 identity documents provide verifiable credentials.
+          Reputation tiers (Bronze → Diamond) gate access to high-value operations.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-icon">◇</span>
+        <h4>Negotiation & Quotes</h4>
+        <p>
+          Structured RFQ protocol with multi-party matching. Agents submit
+          quotes with pricing, SLAs, and conditions. Marketplace module
+          enables automated bid evaluation and counter-offers.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-icon">△</span>
+        <h4>Escrow & Settlement</h4>
+        <p>
+          Conditional escrow with four condition types. Funds are held until
+          delivery verification, quality inspection, or time-lock expiration.
+          x402 protocol settles in USDC or ssUSD stablecoins on-chain.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-icon">◎</span>
+        <h4>Splits & Subscriptions</h4>
+        <p>
+          Percentage or fixed-amount multi-party payment splitting. Recurring
+          A2A subscriptions with automatic renewal. Budget management with
+          spending limits and circuit breakers.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-icon">⬡</span>
+        <h4>Disputes & SLAs</h4>
+        <p>
+          Algorithmic dispute resolution with evidence hashing and deadline
+          tracking. Service Level Agreements with compliance checking.
+          Escalation paths for human review when confidence is low.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-icon">◆</span>
+        <h4>Event Streaming</h4>
+        <p>
+          Real-time event bus with wildcard/prefix filtering. HMAC-SHA256
+          signed webhook delivery with SSRF protection. Server-Sent Events
+          for live transaction monitoring.
+        </p>
+      </div>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-cell">
+        <div class="stat-value">543</div>
+        <div class="stat-label">A2A Protocol Tests</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">186</div>
+        <div class="stat-label">MCP Server Tools</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">53</div>
+        <div class="stat-label">A2A MCP Tools</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">18</div>
+        <div class="stat-label">Agent Definitions</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider">
+  <div class="divider-ornament">
+    <div class="diamond"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     VI. SECURITY & CRYPTOGRAPHY
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="section section-dark">
+  <div class="page-width">
+    <span class="section-number">VI — Security & Cryptography</span>
+    <h2>VES v1.0 — Verifiable<br>Event Streaming</h2>
+
+    <p class="section-intro">
+      The VES protocol provides cryptographic guarantees for every event in
+      the commerce stream. Domain-separated hashing, Ed25519 signatures,
+      and Merkle inclusion proofs create an auditable, tamper-evident
+      transaction history.
+    </p>
+
+    <div class="cols" style="margin-top: 40px;">
+      <div>
+        <h3>Cryptographic Primitives</h3>
+        <p>
+          <strong>Ed25519</strong> — Deterministic ECDSA signatures for agent identity
+          and event signing. Constant-time verification prevents timing attacks.
+        </p>
+        <p>
+          <strong>AES-256-GCM</strong> — Authenticated encryption for payload confidentiality.
+          Random nonces per operation with automatic zeroization of key material.
+        </p>
+        <p>
+          <strong>X25519 ECDH</strong> — Ephemeral key agreement for multi-recipient
+          encryption. HKDF-SHA256 key derivation with payload-bound AAD.
+        </p>
+        <p>
+          <strong>Merkle Trees</strong> — SHA-256 domain-separated leaf and node hashing.
+          Inclusion proofs enable lightweight verification without full state.
+        </p>
+      </div>
+      <div>
+        <h3>Security Posture</h3>
+        <p>
+          <code>deny(unsafe_code)</code> is enforced on every production crate (the FFI
+          crate uses <code>warn</code> with documented, audited blocks).
+          <code>deny(clippy::unwrap_used)</code> prevents panics in production paths.
+          Constant-time comparison via the <code>subtle</code> crate protects hash
+          verification from timing side-channels.
+        </p>
+        <p>
+          The HTTP layer uses constant-time bearer token comparison, explicit CORS
+          allowlists (no wildcards), token-bucket rate limiting, and SSRF validation
+          on all webhook URLs. The policy engine provides deny-overrides semantics
+          with explainable denial reasons for audit compliance.
+        </p>
+
+        <h3>Domain Separation</h3>
+        <p>
+          Ten domain prefixes (<code>VES_PAYLOAD_PLAIN_V1</code>,
+          <code>VES_EVENTSIG_V1</code>, <code>VES_LEAF_V1</code>, etc.) prevent
+          cross-domain hash confusion attacks. Cross-language test vectors ensure
+          bit-exact compatibility between Rust and JavaScript implementations.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     VII. PLATFORM ECOSYSTEM
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <div class="page-width">
+    <span class="section-number">VII — Platform Ecosystem</span>
+    <h2>Every language.<br>Every runtime.</h2>
+
+    <p class="section-intro">
+      iCommerce compiles to native libraries for 10 languages, a WASM module
+      for browser and edge deployment, and a standalone HTTP server. The same
+      Rust core powers every surface.
+    </p>
+
+    <div class="cols-wide-left">
+      <div>
+        <h3>Language Bindings</h3>
+        <p>
+          The FFI crate provides a stable C-ABI surface with <code>#[repr(C)]</code>
+          types, ABI versioning, thread-local error storage, and panic catching across
+          the FFI boundary. Language-specific bindings wrap this surface with idiomatic APIs.
+        </p>
+
+        <div class="binding-row">
+          <span class="binding-badge">Node.js</span>
+          <span class="binding-badge">Python</span>
+          <span class="binding-badge">WASM</span>
+          <span class="binding-badge">Java</span>
+          <span class="binding-badge">Kotlin</span>
+          <span class="binding-badge">Swift</span>
+          <span class="binding-badge">.NET</span>
+          <span class="binding-badge">Go</span>
+          <span class="binding-badge">Ruby</span>
+          <span class="binding-badge">PHP</span>
+        </div>
+
+        <h3>MCP Server</h3>
+        <p>
+          The Model Context Protocol server exposes 186 tools for AI agent integration,
+          covering every commerce operation. Agents can create orders, adjust inventory,
+          process returns, calculate tax, and execute A2A transactions through a structured
+          tool-calling interface.
+        </p>
+
+        <h3>CLI</h3>
+        <p>
+          A branded command-line interface with 143 modules provides interactive commerce
+          management. Built with ES modules, @clack/prompts for UX, and branded theming
+          for professional deployment. The CLI doubles as an MCP host, enabling
+          multi-agent orchestration from the terminal.
+        </p>
+      </div>
+      <div>
+        <h3>HTTP Server</h3>
+        <p>
+          The <code>stateset-http</code> crate wraps the embedded engine in an Axum-based
+          REST API with OpenAPI 3.1 documentation, Server-Sent Events for real-time
+          streaming, cursor-based pagination, and a <code>ServerBuilder</code> fluent API.
+        </p>
+
+        <div class="card-grid" style="grid-template-columns: 1fr; margin-top: 24px;">
+          <div class="card">
+            <h4>Middleware Stack</h4>
+            <p style="font-size: 0.82rem;">
+              <strong>1.</strong> Tracing — structured request logging<br>
+              <strong>2.</strong> ETag + Cache-Control — FNV-1a hash, path-aware caching<br>
+              <strong>3.</strong> Rate Limiting — token-bucket with burst capacity<br>
+              <strong>4.</strong> Bearer Auth — constant-time comparison, tenant binding<br>
+              <strong>5.</strong> CORS — explicit origin allowlist, no wildcards<br>
+              <strong>6.</strong> Request ID — X-Request-ID propagation for distributed tracing
+            </p>
+          </div>
+        </div>
+
+        <h3>Observability</h3>
+        <p>
+          Lock-free atomic counters for business metrics (orders, payments, inventory
+          adjustments). RED snapshots (Rate/Errors/Duration) per operation with SLO
+          evaluation. Optional OpenTelemetry export via feature flag. Latency histograms
+          with p50/p95/p99 percentile tracking.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="page-width"><hr class="rule"></div>
+
+<!-- ═══════════════════════════════════════════════════════
+     VIII. ENGINEERING QUALITY
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <div class="page-width">
+    <span class="section-number">VIII — Engineering Quality</span>
+    <h2>Built to the standard<br>of database engines.</h2>
+
+    <p class="section-intro">
+      iCommerce applies the lint discipline of projects like reth, foundry, and alloy.
+      Every crate inherits workspace-wide lint rules. The result is a codebase where
+      the compiler is the first reviewer.
+    </p>
+
+    <div class="stat-grid">
+      <div class="stat-cell">
+        <div class="stat-value">19<span class="stat-unit">/21</span></div>
+        <div class="stat-label">Crates with deny(unwrap_used)</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">241</div>
+        <div class="stat-label">#[non_exhaustive] Enums</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">496</div>
+        <div class="stat-label">#[must_use] Annotations</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">57</div>
+        <div class="stat-label">Repository Traits</div>
+      </div>
+    </div>
+
+    <div class="cols" style="margin-top: 40px;">
+      <div>
+        <h3>Error Handling</h3>
+        <p>
+          Zero uses of <code>anyhow</code> — every error is a structured
+          <code>thiserror</code> type with categorization helpers (<code>is_retryable</code>,
+          <code>is_not_found</code>, <code>suggested_status_code</code>). Compile-time
+          size assertions on error enums prevent accidental bloat. The <code>ValidationBuilder</code>
+          provides 15+ composable validators with first-error or collect-all semantics.
+        </p>
+
+        <h3>Testing Strategy</h3>
+        <p>
+          4,249 tests span unit tests, integration tests, property-based tests (proptest),
+          snapshot tests (insta), and benchmark regression gates (criterion). Cross-language
+          test vectors ensure Rust and JavaScript implementations produce bit-identical
+          cryptographic outputs. The test suite runs in under 30 seconds on commodity hardware.
+        </p>
+      </div>
+      <div>
+        <h3>Workspace Lints</h3>
+        <p>
+          The workspace enforces <code>deny(unused_must_use)</code>,
+          <code>deny(rust_2018_idioms)</code>, and 15 pedantic Clippy lints including
+          <code>missing_const_for_fn</code>, <code>use_self</code>,
+          <code>derive_partial_eq_without_eq</code>, and <code>doc_markdown</code>.
+          The result: zero warnings across 242K lines and all test targets.
+        </p>
+
+        <h3>Performance</h3>
+        <p>
+          Release builds use <code>opt-level = 3</code>, thin LTO, symbol stripping,
+          and <code>panic = "abort"</code>. A dedicated profiling profile preserves
+          debug symbols for flamegraph analysis. Proptest and rand_chacha are compiled
+          at <code>opt-level = 3</code> even in dev builds to keep test latency low.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     CLOSING
+     ═══════════════════════════════════════════════════════ -->
+
+<section class="closing">
+  <div class="page-width">
+    <span class="section-number" style="color: var(--gold);">◆</span>
+    <h2>Commerce is infrastructure.<br>Infrastructure should be embedded.</h2>
+    <p>
+      StateSet iCommerce is open source under MIT / Apache-2.0 dual license.
+      The platform is available today as Rust crates, language bindings, a CLI,
+      an HTTP server, and a WASM module.
+    </p>
+    <a href="https://github.com/stateset/stateset-icommerce" class="closing-link">
+      View on GitHub →
+    </a>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     FOOTER
+     ═══════════════════════════════════════════════════════ -->
+
+<footer class="footer">
+  <div class="page-width">
+    <div class="footer-inner">
+      <div>
+        <div class="footer-logo">StateSet</div>
+        <div>
+          <a href="https://github.com/stateset/stateset-icommerce">github.com/stateset/stateset-icommerce</a><br>
+          MIT / Apache-2.0 · v0.8.0 · Edition 2024 · Rust 1.85+
+        </div>
+      </div>
+      <div style="text-align: right;">
+        © 2026 StateSet, Inc.<br>
+        This document may be freely distributed.
+      </div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

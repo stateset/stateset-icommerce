@@ -60,6 +60,7 @@ where
 
 /// Active database backend used by a [`Commerce`] instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CommerceBackend {
     /// Embedded SQLite backend.
     Sqlite,

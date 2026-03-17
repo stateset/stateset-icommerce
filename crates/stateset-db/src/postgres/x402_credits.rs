@@ -12,7 +12,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 /// PostgreSQL x402 credit ledger repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgX402CreditRepository {
     pool: PgPool,
 }
@@ -51,7 +51,7 @@ struct AccountBalanceRow {
 }
 
 impl PgX402CreditRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

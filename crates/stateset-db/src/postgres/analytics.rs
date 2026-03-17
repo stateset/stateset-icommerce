@@ -16,16 +16,17 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// PostgreSQL analytics repository
+#[derive(Debug, Clone)]
 pub struct PgAnalyticsRepository {
     pool: PgPool,
 }
 
 impl PgAnalyticsRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    fn start_of_day(date: NaiveDate) -> DateTime<Utc> {
+    const fn start_of_day(date: NaiveDate) -> DateTime<Utc> {
         DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
     }
 

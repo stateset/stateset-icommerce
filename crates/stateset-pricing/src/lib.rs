@@ -53,6 +53,7 @@
 //! ```
 
 #![deny(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![warn(missing_docs)]
 
 pub mod currency;

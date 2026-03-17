@@ -12,8 +12,8 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// PostgreSQL implementation of ProductRepository
-#[derive(Clone)]
+/// PostgreSQL implementation of `ProductRepository`
+#[derive(Debug, Clone)]
 pub struct PgProductRepository {
     pool: PgPool,
 }
@@ -53,7 +53,7 @@ struct VariantRow {
 }
 
 impl PgProductRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -285,6 +285,7 @@ impl PgProductRepository {
             in_stock,
             limit,
             offset,
+            after_cursor: _,
         } = filter;
 
         let mut builder = QueryBuilder::new("SELECT * FROM products WHERE 1=1");
@@ -564,6 +565,7 @@ impl PgProductRepository {
             in_stock,
             limit: _,
             offset: _,
+            after_cursor: _,
         } = filter;
 
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM products WHERE 1=1");

@@ -7,9 +7,9 @@ use sqlx::{FromRow, postgres::PgPool};
 use stateset_core::{
     AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartId, CartItem, CartPaymentStatus,
     CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError, CreateCart,
-    CreateCustomer, CreateOrder, CreateOrderItem, CustomerId, FulfillmentType, OrderStatus,
-    PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
-    UpdateCart, UpdateCartItem, UpdateOrder, X402Asset, X402AwaitingSettlementData,
+    CreateCustomer, CreateOrder, CreateOrderItem, CurrencyCode, CustomerId, FulfillmentType,
+    OrderStatus, PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment,
+    ShippingRate, UpdateCart, UpdateCartItem, UpdateOrder, X402Asset, X402AwaitingSettlementData,
     X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
     X402PaymentRequiredData, validate_batch_size,
 };
@@ -21,7 +21,7 @@ struct CartRow {
     cart_number: String,
     customer_id: Option<Uuid>,
     status: String,
-    currency: String,
+    currency: CurrencyCode,
     subtotal: Decimal,
     tax_amount: Decimal,
     shipping_amount: Decimal,
@@ -61,7 +61,7 @@ struct CartRow {
 
 impl CartRow {
     fn into_cart(self, items: Vec<CartItem>) -> Result<Cart> {
-        let CartRow {
+        let Self {
             id,
             cart_number,
             customer_id,
@@ -243,7 +243,7 @@ struct CartItemRow {
 
 impl From<CartItemRow> for CartItem {
     fn from(row: CartItemRow) -> Self {
-        CartItem {
+        Self {
             id: row.id,
             cart_id: row.cart_id.into(),
             product_id: row.product_id.map(Into::into),
@@ -268,12 +268,13 @@ impl From<CartItemRow> for CartItem {
 }
 
 /// PostgreSQL cart repository
+#[derive(Debug, Clone)]
 pub struct PgCartRepository {
     pool: PgPool,
 }
 
 impl PgCartRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -436,11 +437,11 @@ impl PgCartRepository {
         let billing_address = Self::billing_address_for_cart(&cart);
         let order = order_repo
             .create_from_cart_async(
-                cart_id.into(),
+                cart_id,
                 CreateOrder {
                     customer_id: customer_id.into(),
                     items: order_items,
-                    currency: Some(cart.currency.clone()),
+                    currency: Some(cart.currency),
                     shipping_address,
                     billing_address,
                     notes: cart.notes.clone(),
@@ -495,7 +496,7 @@ impl PgCartRepository {
         let id = Uuid::new_v4();
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
-        let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
         let shipping_address_json =
@@ -518,7 +519,7 @@ impl PgCartRepository {
         .bind(&cart_number)
         .bind(input.customer_id)
         .bind("active")
-        .bind(&currency)
+        .bind(currency)
         .bind(Decimal::ZERO)
         .bind(Decimal::ZERO)
         .bind(Decimal::ZERO)
@@ -1102,7 +1103,7 @@ impl PgCartRepository {
                 service: "Ground".to_string(),
                 description: Some("Standard shipping (5-7 business days)".to_string()),
                 price: Decimal::new(599, 2),
-                currency: "USD".to_string(),
+                currency: CurrencyCode::USD,
                 estimated_days: Some(7),
                 estimated_delivery: None,
             },
@@ -1112,7 +1113,7 @@ impl PgCartRepository {
                 service: "Express".to_string(),
                 description: Some("Express shipping (2-3 business days)".to_string()),
                 price: Decimal::new(1499, 2),
-                currency: "USD".to_string(),
+                currency: CurrencyCode::USD,
                 estimated_days: Some(3),
                 estimated_delivery: None,
             },
@@ -1122,7 +1123,7 @@ impl PgCartRepository {
                 service: "Overnight".to_string(),
                 description: Some("Next business day delivery".to_string()),
                 price: Decimal::new(2999, 2),
-                currency: "USD".to_string(),
+                currency: CurrencyCode::USD,
                 estimated_days: Some(1),
                 estimated_delivery: None,
             },
@@ -1417,11 +1418,11 @@ impl PgCartRepository {
         let order_repo = PgOrderRepository::new(self.pool.clone());
         let order = order_repo
             .create_from_cart_async(
-                id.into(),
+                id,
                 CreateOrder {
                     customer_id: customer_id.into(),
                     items: order_items,
-                    currency: Some(cart.currency.clone()),
+                    currency: Some(cart.currency),
                     shipping_address,
                     billing_address,
                     notes: cart.notes.clone(),
@@ -1625,7 +1626,7 @@ impl PgCartRepository {
             let id = Uuid::new_v4();
             let cart_number = Self::generate_cart_number();
             let now = Utc::now();
-            let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+            let currency = input.currency.unwrap_or(CurrencyCode::USD);
             let expires_at = input.expires_in_minutes.map(|mins| now + Duration::minutes(mins));
 
             let shipping_address_json = input
@@ -1648,7 +1649,7 @@ impl PgCartRepository {
             .bind(&cart_number)
             .bind(input.customer_id)
             .bind("active")
-            .bind(&currency)
+            .bind(currency)
             .bind(Decimal::ZERO)
             .bind(Decimal::ZERO)
             .bind(Decimal::ZERO)

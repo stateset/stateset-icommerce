@@ -13,7 +13,7 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgLotRepository {
     pool: PgPool,
 }
@@ -88,7 +88,7 @@ struct LotReservationRow {
 }
 
 impl PgLotRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -174,7 +174,7 @@ impl PgLotRepository {
         })
     }
 
-    fn row_to_location(row: LotLocationRow) -> LotLocation {
+    const fn row_to_location(row: LotLocationRow) -> LotLocation {
         LotLocation {
             lot_id: row.lot_id,
             location_id: row.location_id,

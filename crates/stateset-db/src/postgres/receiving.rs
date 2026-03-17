@@ -13,7 +13,7 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgReceivingRepository {
     pool: PgPool,
 }
@@ -83,7 +83,7 @@ struct PutAwayRow {
 }
 
 impl PgReceivingRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

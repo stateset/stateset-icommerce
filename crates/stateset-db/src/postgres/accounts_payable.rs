@@ -8,15 +8,15 @@ use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem,
     BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem,
-    CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentMethodAP, PaymentRun,
-    PaymentRunFilter, PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary, UpdateBill,
-    generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
+    CreateBillPayment, CreatePaymentRun, CurrencyCode, PaymentAllocation, PaymentMethodAP,
+    PaymentRun, PaymentRunFilter, PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary,
+    UpdateBill, generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
     validate_batch_size,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgAccountsPayableRepository {
     pool: PgPool,
 }
@@ -39,7 +39,7 @@ struct BillRow {
     total_amount: Decimal,
     amount_paid: Decimal,
     amount_due: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     reference_number: Option<String>,
     memo: Option<String>,
     created_at: DateTime<Utc>,
@@ -70,7 +70,7 @@ struct PaymentRow {
     payment_date: NaiveDate,
     payment_method: String,
     amount: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     reference_number: Option<String>,
     bank_account: Option<String>,
     check_number: Option<String>,
@@ -108,7 +108,7 @@ struct PaymentRunRow {
 }
 
 impl PgAccountsPayableRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -229,7 +229,7 @@ impl PgAccountsPayableRepository {
         })
     }
 
-    fn row_to_payment_allocation(row: PaymentAllocationRow) -> PaymentAllocation {
+    const fn row_to_payment_allocation(row: PaymentAllocationRow) -> PaymentAllocation {
         PaymentAllocation {
             id: row.id,
             payment_id: row.payment_id,
@@ -396,7 +396,7 @@ impl PgAccountsPayableRepository {
         .bind(bill_date)
         .bind(due_date)
         .bind(&input.payment_terms)
-        .bind(input.currency.clone().unwrap_or_else(|| "USD".to_string()))
+        .bind(input.currency.unwrap_or(CurrencyCode::USD))
         .bind(&input.reference_number)
         .bind(&input.memo)
         .bind(now)
@@ -404,7 +404,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        for item in input.items.iter() {
+        for item in &input.items {
             self.add_bill_item_async(
                 id,
                 CreateBillItem {
@@ -799,7 +799,7 @@ impl PgAccountsPayableRepository {
         .bind(payment_date)
         .bind(payment_method.to_string())
         .bind(amount)
-        .bind(currency.unwrap_or_else(|| "USD".to_string()))
+        .bind(currency.unwrap_or(CurrencyCode::USD))
         .bind(&reference_number)
         .bind(&bank_account)
         .bind(&check_number)
@@ -1479,6 +1479,6 @@ fn to_date(dt: DateTime<Utc>) -> NaiveDate {
     dt.date_naive()
 }
 
-fn from_date(date: NaiveDate) -> DateTime<Utc> {
+const fn from_date(date: NaiveDate) -> DateTime<Utc> {
     DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
 }

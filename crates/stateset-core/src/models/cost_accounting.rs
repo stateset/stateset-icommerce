@@ -129,13 +129,18 @@ pub struct CostRollup {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostMethod {
+    /// Weighted average cost recalculated on each receipt.
     #[default]
     #[strum(serialize = "average", serialize = "avg")]
     Average,
+    /// First-in, first-out: oldest cost layers are consumed first.
     Fifo,
+    /// Last-in, first-out: newest cost layers are consumed first.
     Lifo,
+    /// Pre-determined standard cost used for all transactions.
     #[strum(serialize = "standard", serialize = "std")]
     Standard,
+    /// Each unit is tracked with its own specific cost.
     Specific,
 }
 
@@ -147,11 +152,16 @@ pub enum CostMethod {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostLayerSource {
+    /// Layer created from a supplier purchase receipt.
     #[default]
     Purchase,
+    /// Layer created from a completed manufacturing work order.
     Production,
+    /// Layer created by transferring inventory between locations.
     Transfer,
+    /// Layer created by a manual cost adjustment.
     Adjustment,
+    /// Layer representing inventory on hand at system go-live.
     #[strum(serialize = "opening", serialize = "opening_balance")]
     Opening,
 }
@@ -164,11 +174,16 @@ pub enum CostLayerSource {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostTransactionType {
+    /// Goods received into inventory; cost layer is added.
     #[default]
     Receipt,
+    /// Goods consumed or sold; cost is relieved from a layer.
     Issue,
+    /// Manual change to cost without a physical movement.
     Adjustment,
+    /// Physical movement between locations; cost moves with inventory.
     Transfer,
+    /// Cost is updated to reflect a new standard or market value.
     Revaluation,
 }
 
@@ -180,12 +195,18 @@ pub enum CostTransactionType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum VarianceType {
+    /// Difference between purchase price and standard cost.
     #[default]
     Purchase,
+    /// Difference in raw material usage versus the standard bill of materials.
     Material,
+    /// Difference in direct labor hours or rates versus standard.
     Labor,
+    /// Difference in applied overhead versus actual overhead incurred.
     Overhead,
+    /// Difference due to operating at a different efficiency than standard.
     Efficiency,
+    /// Difference due to producing a different volume than the planned level.
     Volume,
 }
 
@@ -197,12 +218,16 @@ pub enum VarianceType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostAdjustmentType {
+    /// Periodic update to the standard cost for a SKU.
     #[default]
     #[strum(serialize = "standard_cost_update", serialize = "standardcostupdate")]
     StandardCostUpdate,
+    /// Restate inventory value to reflect current market or replacement cost.
     Revaluation,
+    /// Remove obsolete or damaged inventory value from the books.
     #[strum(serialize = "write_off", serialize = "writeoff")]
     WriteOff,
+    /// Fix a data entry or calculation error in recorded cost.
     Correction,
 }
 
@@ -214,10 +239,14 @@ pub enum CostAdjustmentType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CostAdjustmentStatus {
+    /// Adjustment has been submitted and is awaiting review.
     #[default]
     Pending,
+    /// Adjustment has been reviewed and approved; ready to apply.
     Approved,
+    /// Adjustment has been applied to inventory cost records.
     Applied,
+    /// Adjustment was reviewed and denied.
     Rejected,
 }
 

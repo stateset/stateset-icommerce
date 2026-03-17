@@ -14,7 +14,7 @@ use stateset_http::{
     AppState, CreateCustomerRequest, CreateOrderItemRequest, CreateOrderRequest,
     MetricsHeaderLimits, PaginationParams, ServerBuilder,
 };
-use stateset_primitives::{CustomerId, OrderId, ProductId};
+use stateset_primitives::{CustomerId, OrderId, PaymentId, ProductId, ReturnId, ShipmentId};
 use std::fs;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -83,6 +83,57 @@ fn seed_product(state: &AppState) -> String {
         })
         .unwrap();
     product.id.to_string()
+}
+
+/// Create an order directly via the Commerce engine.
+///
+/// Returns `(order_id, first_order_item_id)` so callers that need to create
+/// returns (which require at least one real order item) can supply a valid
+/// `order_item_id`.
+fn seed_order(state: &AppState) -> (OrderId, Uuid) {
+    let customer_id = state
+        .commerce()
+        .customers()
+        .create(stateset_core::CreateCustomer {
+            email: format!("order-seed-{}@example.com", Uuid::new_v4()),
+            first_name: "Order".into(),
+            last_name: "Seed".into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .id;
+    let product = state
+        .commerce()
+        .products()
+        .create(stateset_core::CreateProduct {
+            name: "Seed Widget".into(),
+            variants: Some(vec![stateset_core::CreateProductVariant {
+                sku: format!("SEED-SKU-{}", Uuid::new_v4()),
+                price: dec!(9.99),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .unwrap();
+    let product_id = product.id;
+    let order = state
+        .commerce()
+        .orders()
+        .create(stateset_core::CreateOrder {
+            customer_id,
+            items: vec![stateset_core::CreateOrderItem {
+                product_id,
+                sku: format!("SEED-SKU-{}", Uuid::new_v4()),
+                name: "Seed Widget".into(),
+                quantity: 2,
+                unit_price: dec!(9.99),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+    let first_item_id = *order.items[0].id.as_uuid();
+    (order.id, first_item_id)
 }
 
 // ============================================================================
@@ -1153,4 +1204,621 @@ async fn create_multiple_customers_then_list_all() {
     let list = body_json(resp).await;
     assert_eq!(list["total"], 3);
     assert_eq!(list["customers"].as_array().unwrap().len(), 3);
+}
+
+// ============================================================================
+// 5. Returns
+// ============================================================================
+
+#[tokio::test]
+async fn list_returns_returns_200_with_empty_list() {
+    let resp =
+        app().oneshot(Request::get("/api/v1/returns").body(Body::empty()).unwrap()).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["total"], 0);
+    assert!(json["returns"].as_array().unwrap().is_empty());
+    assert_eq!(json["limit"], PaginationParams::DEFAULT_LIMIT);
+    assert_eq!(json["offset"], 0);
+    assert_eq!(json["has_more"], false);
+}
+
+#[tokio::test]
+async fn create_return_returns_201_with_correct_fields() {
+    let state = AppState::new(test_commerce());
+    let (order_id, item_id) = seed_order(&state);
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let payload = json!({
+        "order_id": order_id,
+        "reason": "defective",
+        "items": [{"order_item_id": item_id, "quantity": 1}]
+    });
+
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/returns")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp).await;
+    assert!(json["id"].as_str().is_some());
+    assert_eq!(json["order_id"], order_id.to_string());
+    assert_eq!(json["reason"], "defective");
+    assert!(json["status"].as_str().is_some());
+    assert!(json["created_at"].as_str().is_some());
+    assert!(json["updated_at"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn get_return_by_id_returns_correct_return() {
+    let state = AppState::new(test_commerce());
+    let (order_id, item_id) = seed_order(&state);
+
+    // Create return via API
+    let create_router = stateset_http::routes::api_router().with_state(state.clone());
+    let payload = json!({
+        "order_id": order_id,
+        "reason": "wrong_item",
+        "reason_details": "Received blue widget, expected red",
+        "items": [{"order_item_id": item_id, "quantity": 1}]
+    });
+
+    let resp = create_router
+        .oneshot(
+            Request::post("/api/v1/returns")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp).await;
+    let return_id = created["id"].as_str().unwrap();
+
+    // Get return by ID
+    let get_router = stateset_http::routes::api_router().with_state(state);
+    let resp = get_router
+        .oneshot(
+            Request::get(format!("/api/v1/returns/{return_id}")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let fetched = body_json(resp).await;
+    assert_eq!(fetched["id"], return_id);
+    assert_eq!(fetched["order_id"], order_id.to_string());
+    assert_eq!(fetched["reason"], "wrong_item");
+}
+
+#[tokio::test]
+async fn get_return_nonexistent_returns_404() {
+    let id = ReturnId::new();
+    let resp = app()
+        .oneshot(Request::get(format!("/api/v1/returns/{id}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["code"], "not_found");
+    assert!(json["error"]["message"].as_str().unwrap().contains("not found"));
+}
+
+#[tokio::test]
+async fn create_return_with_invalid_reason_returns_400() {
+    let state = AppState::new(test_commerce());
+    let (order_id, item_id) = seed_order(&state);
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let payload = json!({
+        "order_id": order_id,
+        "reason": "unicorn_dust",
+        "items": [{"order_item_id": item_id, "quantity": 1}]
+    });
+
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/returns")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(resp.status().is_client_error());
+}
+
+#[tokio::test]
+async fn list_returns_with_custom_pagination() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/returns?limit=10&offset=5").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["limit"], 10);
+    assert_eq!(json["offset"], 5);
+}
+
+#[tokio::test]
+async fn e2e_create_return_then_list_returns() {
+    let state = AppState::new(test_commerce());
+    let (order_id, item_id) = seed_order(&state);
+
+    // Create two returns for the same order (different items via separate orders)
+    for reason in ["defective", "changed_mind"] {
+        let router = stateset_http::routes::api_router().with_state(state.clone());
+        let payload = json!({
+            "order_id": order_id,
+            "reason": reason,
+            "items": [{"order_item_id": item_id, "quantity": 1}]
+        });
+
+        let resp = router
+            .oneshot(
+                Request::post("/api/v1/returns")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    // List and verify both appear
+    let router = stateset_http::routes::api_router().with_state(state);
+    let resp =
+        router.oneshot(Request::get("/api/v1/returns").body(Body::empty()).unwrap()).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list = body_json(resp).await;
+    assert_eq!(list["total"], 2);
+    assert_eq!(list["returns"].as_array().unwrap().len(), 2);
+}
+
+// ============================================================================
+// 6. Payments
+// ============================================================================
+
+#[tokio::test]
+async fn list_payments_returns_200_with_empty_list() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/payments").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["total"], 0);
+    assert!(json["payments"].as_array().unwrap().is_empty());
+    assert_eq!(json["limit"], PaginationParams::DEFAULT_LIMIT);
+    assert_eq!(json["offset"], 0);
+    assert_eq!(json["has_more"], false);
+}
+
+#[tokio::test]
+async fn get_payment_nonexistent_returns_404() {
+    let id = PaymentId::new();
+    let resp = app()
+        .oneshot(Request::get(format!("/api/v1/payments/{id}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["code"], "not_found");
+    assert!(json["error"]["message"].as_str().unwrap().contains("not found"));
+}
+
+#[tokio::test]
+async fn get_payment_by_id_returns_correct_payment() {
+    let state = AppState::new(test_commerce());
+
+    // Seed a payment directly via the Commerce engine
+    let payment = state
+        .commerce()
+        .payments()
+        .create(stateset_core::CreatePayment {
+            payment_method: stateset_core::PaymentMethodType::CreditCard,
+            amount: dec!(49.99),
+            ..Default::default()
+        })
+        .unwrap();
+    let payment_id = payment.id.to_string();
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let resp = router
+        .oneshot(
+            Request::get(format!("/api/v1/payments/{payment_id}")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["id"], payment_id);
+    assert!(json["payment_number"].as_str().is_some());
+    assert!(json["status"].as_str().is_some());
+    assert!(json["amount"].as_str().is_some());
+    assert!(json["created_at"].as_str().is_some());
+    assert!(json["updated_at"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn list_payments_with_custom_pagination() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/payments?limit=5&offset=10").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["limit"], 5);
+    assert_eq!(json["offset"], 10);
+}
+
+#[tokio::test]
+async fn e2e_create_payments_then_list_payments() {
+    let state = AppState::new(test_commerce());
+
+    // Seed three payments via the Commerce engine
+    for amount in [dec!(10.00), dec!(20.00), dec!(30.00)] {
+        state
+            .commerce()
+            .payments()
+            .create(stateset_core::CreatePayment {
+                payment_method: stateset_core::PaymentMethodType::CreditCard,
+                amount,
+                ..Default::default()
+            })
+            .unwrap();
+    }
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let resp =
+        router.oneshot(Request::get("/api/v1/payments").body(Body::empty()).unwrap()).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list = body_json(resp).await;
+    assert_eq!(list["total"], 3);
+    assert_eq!(list["payments"].as_array().unwrap().len(), 3);
+    assert_eq!(list["has_more"], false);
+}
+
+#[tokio::test]
+async fn list_payments_invalid_status_returns_400() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/payments?status=bogus").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert!(resp.status().is_client_error());
+}
+
+#[tokio::test]
+async fn list_payments_invalid_order_id_returns_400() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/payments?order_id=not-a-uuid").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert!(resp.status().is_client_error());
+}
+
+// ============================================================================
+// 7. Shipments
+// ============================================================================
+
+#[tokio::test]
+async fn list_shipments_returns_200_with_empty_list() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/shipments").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["total"], 0);
+    assert!(json["shipments"].as_array().unwrap().is_empty());
+    assert_eq!(json["limit"], PaginationParams::DEFAULT_LIMIT);
+    assert_eq!(json["offset"], 0);
+    assert_eq!(json["has_more"], false);
+}
+
+#[tokio::test]
+async fn get_shipment_nonexistent_returns_404() {
+    let id = ShipmentId::new();
+    let resp = app()
+        .oneshot(Request::get(format!("/api/v1/shipments/{id}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["code"], "not_found");
+    assert!(json["error"]["message"].as_str().unwrap().contains("not found"));
+}
+
+#[tokio::test]
+async fn get_shipment_by_id_returns_correct_shipment() {
+    let state = AppState::new(test_commerce());
+    let (order_id, _) = seed_order(&state);
+
+    // Seed a shipment directly via the Commerce engine
+    let shipment = state
+        .commerce()
+        .shipments()
+        .create(stateset_core::CreateShipment {
+            order_id,
+            recipient_name: "Jane Doe".into(),
+            shipping_address: "123 Main St, Springfield, IL 62701".into(),
+            tracking_number: Some("1Z999AA1012345678".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let shipment_id = shipment.id.to_string();
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let resp = router
+        .oneshot(
+            Request::get(format!("/api/v1/shipments/{shipment_id}")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["id"], shipment_id);
+    assert_eq!(json["order_id"], order_id.to_string());
+    assert_eq!(json["recipient_name"], "Jane Doe");
+    assert!(json["shipment_number"].as_str().is_some());
+    assert!(json["status"].as_str().is_some());
+    assert!(json["created_at"].as_str().is_some());
+    assert!(json["updated_at"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn list_shipments_with_custom_pagination() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/shipments?limit=10&offset=5").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["limit"], 10);
+    assert_eq!(json["offset"], 5);
+}
+
+#[tokio::test]
+async fn e2e_create_shipment_then_list_shipments() {
+    let state = AppState::new(test_commerce());
+    let (order_id, _) = seed_order(&state);
+
+    // Seed a shipment via the Commerce engine
+    let shipment = state
+        .commerce()
+        .shipments()
+        .create(stateset_core::CreateShipment {
+            order_id,
+            recipient_name: "Bob Smith".into(),
+            shipping_address: "456 Oak Ave, Portland, OR 97201".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let shipment_id = shipment.id.to_string();
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let resp = router
+        .oneshot(Request::get("/api/v1/shipments").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list = body_json(resp).await;
+    assert_eq!(list["total"], 1);
+    let shipments = list["shipments"].as_array().unwrap();
+    assert_eq!(shipments.len(), 1);
+    assert_eq!(shipments[0]["id"], shipment_id);
+}
+
+#[tokio::test]
+async fn list_shipments_invalid_status_returns_400() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/shipments?status=bogus").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert!(resp.status().is_client_error());
+}
+
+#[tokio::test]
+async fn list_shipments_invalid_order_id_returns_400() {
+    let resp = app()
+        .oneshot(
+            Request::get("/api/v1/shipments?order_id=not-a-uuid").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(resp.status().is_client_error());
+}
+
+// ============================================================================
+// 8. Inventory
+// ============================================================================
+
+#[tokio::test]
+async fn list_inventory_returns_200_with_empty_list() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/inventory").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["total"], 0);
+    assert!(json["items"].as_array().unwrap().is_empty());
+    assert_eq!(json["limit"], PaginationParams::DEFAULT_LIMIT);
+    assert_eq!(json["offset"], 0);
+    assert_eq!(json["has_more"], false);
+}
+
+#[tokio::test]
+async fn get_stock_nonexistent_returns_404() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/inventory/NONEXISTENT-SKU").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn get_stock_by_sku_returns_correct_stock_levels() {
+    let state = AppState::new(test_commerce());
+
+    state
+        .commerce()
+        .inventory()
+        .create_item(stateset_core::CreateInventoryItem {
+            sku: "WIDGET-INT-001".into(),
+            name: "Integration Widget".into(),
+            initial_quantity: Some(dec!(100)),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/inventory/WIDGET-INT-001").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["sku"], "WIDGET-INT-001");
+    assert_eq!(json["name"], "Integration Widget");
+    assert!(json["total_on_hand"].as_str().is_some());
+    assert!(json["total_available"].as_str().is_some());
+    assert!(json["total_allocated"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn adjust_stock_returns_updated_stock_levels() {
+    let state = AppState::new(test_commerce());
+
+    state
+        .commerce()
+        .inventory()
+        .create_item(stateset_core::CreateInventoryItem {
+            sku: "ADJ-INT-001".into(),
+            name: "Adjustable Widget".into(),
+            initial_quantity: Some(dec!(50)),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let payload = json!({
+        "quantity": "-10",
+        "reason": "Damaged stock removal"
+    });
+
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/inventory/ADJ-INT-001/adjust")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["sku"], "ADJ-INT-001");
+    assert!(json["total_on_hand"].as_str().is_some());
+    assert!(json["total_available"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn adjust_stock_nonexistent_sku_returns_404() {
+    let router = stateset_http::routes::api_router().with_state(AppState::new(test_commerce()));
+    let payload = json!({
+        "quantity": "5",
+        "reason": "Restock"
+    });
+
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/inventory/NONEXISTENT-SKU/adjust")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn list_inventory_with_custom_pagination() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/inventory?limit=10&offset=5").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["limit"], 10);
+    assert_eq!(json["offset"], 5);
+}
+
+#[tokio::test]
+async fn e2e_create_inventory_items_then_list_inventory() {
+    let state = AppState::new(test_commerce());
+
+    for (sku, name, qty) in
+        [("LIST-INT-001", "Alpha Item", dec!(100)), ("LIST-INT-002", "Beta Item", dec!(50))]
+    {
+        state
+            .commerce()
+            .inventory()
+            .create_item(stateset_core::CreateInventoryItem {
+                sku: sku.into(),
+                name: name.into(),
+                initial_quantity: Some(qty),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+
+    let router = stateset_http::routes::api_router().with_state(state);
+    let resp =
+        router.oneshot(Request::get("/api/v1/inventory").body(Body::empty()).unwrap()).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list = body_json(resp).await;
+    assert_eq!(list["total"], 2);
+    assert_eq!(list["items"].as_array().unwrap().len(), 2);
+    assert_eq!(list["has_more"], false);
 }

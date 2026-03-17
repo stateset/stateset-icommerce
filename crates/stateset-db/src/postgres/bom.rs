@@ -11,8 +11,8 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// PostgreSQL implementation of BomRepository
-#[derive(Clone)]
+/// PostgreSQL implementation of `BomRepository`
+#[derive(Debug, Clone)]
 pub struct PgBomRepository {
     pool: PgPool,
 }
@@ -48,7 +48,7 @@ struct BomComponentRow {
 }
 
 impl PgBomRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

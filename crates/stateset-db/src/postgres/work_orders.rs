@@ -13,8 +13,8 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// PostgreSQL implementation of WorkOrderRepository
-#[derive(Clone)]
+/// PostgreSQL implementation of `WorkOrderRepository`
+#[derive(Debug, Clone)]
 pub struct PgWorkOrderRepository {
     pool: PgPool,
 }
@@ -73,7 +73,7 @@ struct WorkOrderMaterialRow {
 }
 
 impl PgWorkOrderRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

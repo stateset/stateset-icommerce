@@ -13,8 +13,8 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// PostgreSQL implementation of InventoryRepository
-#[derive(Clone)]
+/// PostgreSQL implementation of `InventoryRepository`
+#[derive(Debug, Clone)]
 pub struct PgInventoryRepository {
     pool: PgPool,
 }
@@ -80,7 +80,7 @@ struct TransactionRow {
 }
 
 impl PgInventoryRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -97,7 +97,7 @@ impl PgInventoryRepository {
         }
     }
 
-    fn row_to_balance(row: InventoryBalanceRow) -> InventoryBalance {
+    const fn row_to_balance(row: InventoryBalanceRow) -> InventoryBalance {
         InventoryBalance {
             id: row.id,
             item_id: row.item_id,

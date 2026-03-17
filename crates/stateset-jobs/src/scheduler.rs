@@ -504,9 +504,7 @@ impl Scheduler {
         retry_instance: &JobInstance,
         fallback_instance: &JobInstance,
     ) -> Result<(), JobError> {
-        if let Err(err) = self.store.save(retry_instance) {
-            return Err(err);
-        }
+        self.store.save(retry_instance)?;
 
         if let Err(err) = self.queue.enqueue(retry_instance.clone()) {
             if let Err(restore_err) = self.store.save(fallback_instance) {

@@ -758,7 +758,7 @@ impl DatabaseExt for SqliteDatabase {
                 let mut conn =
                     PragmaScope::new(conn, timeout_ms, set_read_uncommitted, fallback_timeout_ms)?;
 
-                let result = {
+                {
                     let tx =
                         conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
                     let result = panic::catch_unwind(AssertUnwindSafe(|| f(&tx)));
@@ -773,9 +773,7 @@ impl DatabaseExt for SqliteDatabase {
                             panic::resume_unwind(panic_payload);
                         }
                     }
-                };
-
-                result
+                }
             },
             retries,
         )

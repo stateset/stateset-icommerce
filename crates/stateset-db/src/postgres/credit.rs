@@ -10,13 +10,13 @@ use stateset_core::{
     CreditAgingBucket, CreditApplication, CreditApplicationFilter, CreditApplicationStatus,
     CreditCheckResult, CreditHold, CreditHoldFilter, CreditHoldStatus, CreditHoldType, CreditId,
     CreditRepository, CreditTransaction, CreditTransactionFilter, CreditTransactionType,
-    CustomerCreditSummary, CustomerId, OrderId, PlaceCreditHold, RecordCreditTransaction,
-    ReleaseCreditHold, Result, ReviewCreditApplication, SubmitCreditApplication,
-    UpdateCreditAccount, generate_credit_application_number,
+    CurrencyCode, CustomerCreditSummary, CustomerId, OrderId, PlaceCreditHold,
+    RecordCreditTransaction, ReleaseCreditHold, Result, ReviewCreditApplication,
+    SubmitCreditApplication, UpdateCreditAccount, generate_credit_application_number,
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgCreditRepository {
     pool: PgPool,
 }
@@ -29,7 +29,7 @@ struct CreditAccountRow {
     available_credit: Decimal,
     current_balance: Decimal,
     hold_amount: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     status: String,
     payment_terms: Option<String>,
     risk_rating: Option<String>,
@@ -93,7 +93,7 @@ struct CreditTransactionRow {
 }
 
 impl PgCreditRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -298,7 +298,7 @@ impl PgCreditRepository {
     ) -> Result<CreditAccount> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let currency = input.currency.unwrap_or_else(|| "USD".to_string());
+        let currency = input.currency.unwrap_or(CurrencyCode::USD);
 
         sqlx::query(
             "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
@@ -1301,6 +1301,6 @@ impl CreditRepository for PgCreditRepository {
     }
 }
 
-fn from_date(date: NaiveDate) -> DateTime<Utc> {
+const fn from_date(date: NaiveDate) -> DateTime<Utc> {
     DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
 }

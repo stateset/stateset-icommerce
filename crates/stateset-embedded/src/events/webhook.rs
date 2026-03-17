@@ -35,6 +35,7 @@ pub struct Webhook {
 
 /// Reasons webhook registration failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WebhookRegistrationError {
     /// The webhook URL is considered unsafe (e.g. localhost, private network, invalid scheme).
     UnsafeUrl,
@@ -221,6 +222,7 @@ pub struct WebhookDelivery {
 /// Delivery status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DeliveryStatus {
     Pending,
     Delivered,

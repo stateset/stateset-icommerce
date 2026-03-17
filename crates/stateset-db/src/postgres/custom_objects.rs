@@ -12,8 +12,8 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// PostgreSQL implementation of CustomObjectRepository
-#[derive(Clone)]
+/// PostgreSQL implementation of `CustomObjectRepository`
+#[derive(Debug, Clone)]
 pub struct PgCustomObjectRepository {
     pool: PgPool,
 }
@@ -45,7 +45,7 @@ struct ObjectRow {
 }
 
 impl PgCustomObjectRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

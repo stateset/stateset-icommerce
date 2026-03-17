@@ -5,9 +5,10 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::{FromRow, postgres::PgPool};
 use stateset_core::{
-    BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, CustomerId, Invoice,
-    InvoiceFilter, InvoiceId, InvoiceItem, InvoiceRepository, InvoiceStatus, InvoiceType, OrderId,
-    RecordInvoicePayment, Result, UpdateInvoice, generate_invoice_number, validate_batch_size,
+    BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, CurrencyCode, CustomerId,
+    Invoice, InvoiceFilter, InvoiceId, InvoiceItem, InvoiceRepository, InvoiceStatus, InvoiceType,
+    OrderId, RecordInvoicePayment, Result, UpdateInvoice, generate_invoice_number,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -22,7 +23,7 @@ struct InvoiceRow {
     invoice_date: DateTime<Utc>,
     due_date: DateTime<Utc>,
     payment_terms: Option<String>,
-    currency: String,
+    currency: CurrencyCode,
     billing_name: Option<String>,
     billing_email: Option<String>,
     billing_address: Option<String>,
@@ -126,7 +127,7 @@ struct InvoiceItemRow {
 
 impl From<InvoiceItemRow> for InvoiceItem {
     fn from(row: InvoiceItemRow) -> Self {
-        InvoiceItem {
+        Self {
             id: row.id,
             invoice_id: row.invoice_id.into(),
             order_item_id: row.order_item_id.map(Into::into),
@@ -147,12 +148,13 @@ impl From<InvoiceItemRow> for InvoiceItem {
 }
 
 /// PostgreSQL invoice repository
+#[derive(Debug, Clone)]
 pub struct PgInvoiceRepository {
     pool: PgPool,
 }
 
 impl PgInvoiceRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -255,7 +257,7 @@ impl PgInvoiceRepository {
         .bind(invoice_date)
         .bind(due_date)
         .bind(&input.payment_terms)
-        .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
+        .bind(input.currency.unwrap_or(CurrencyCode::USD))
         .bind(&input.billing_name)
         .bind(&input.billing_email)
         .bind(&input.billing_address)
@@ -943,7 +945,7 @@ impl PgInvoiceRepository {
             .bind(invoice_date)
             .bind(due_date)
             .bind(&input.payment_terms)
-            .bind(input.currency.clone().unwrap_or_else(|| "USD".to_string()))
+            .bind(input.currency.unwrap_or(CurrencyCode::USD))
             .bind(&input.billing_name)
             .bind(&input.billing_email)
             .bind(&input.billing_address)
@@ -1060,7 +1062,7 @@ impl PgInvoiceRepository {
                 invoice_date,
                 due_date,
                 payment_terms: input.payment_terms,
-                currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+                currency: input.currency.unwrap_or(CurrencyCode::USD),
                 billing_name: input.billing_name,
                 billing_email: input.billing_email,
                 billing_address: input.billing_address,

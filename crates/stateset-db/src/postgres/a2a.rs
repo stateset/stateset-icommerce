@@ -9,14 +9,14 @@ use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     A2ACommerceRepository, A2APurchase, A2APurchaseFilter, CartAddress, CommerceError,
-    CreateA2APurchase, CreateA2AQuote, PurchaseStatus, QuoteStatus, QuotedItem, Result, SkillQuote,
-    SkillQuoteFilter, X402Asset, X402Network,
+    CreateA2APurchase, CreateA2AQuote, CurrencyCode, PurchaseStatus, QuoteStatus, QuotedItem,
+    Result, SkillQuote, SkillQuoteFilter, X402Asset, X402Network,
 };
 use std::str::FromStr;
 use uuid::Uuid;
 
 /// PostgreSQL A2A commerce repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgA2ARepository {
     pool: PgPool,
 }
@@ -34,7 +34,7 @@ struct QuoteRow {
     shipping_amount: Decimal,
     discount_amount: Decimal,
     total: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     payment_network: Option<String>,
     payment_asset: Option<String>,
     shipping_address: Option<Value>,
@@ -60,7 +60,7 @@ struct PurchaseRow {
     payment_intent_id: Option<Uuid>,
     items: Value,
     total: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     fulfillment_type: Option<String>,
     tracking_info: Option<Value>,
     delivered_at: Option<chrono::DateTime<Utc>>,
@@ -82,12 +82,12 @@ struct QuoteValidationRow {
     seller_agent_id: Uuid,
     status: String,
     total: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     valid_until: chrono::DateTime<Utc>,
 }
 
 impl PgA2ARepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -295,13 +295,8 @@ impl PgA2ARepository {
         }
     }
 
-    fn normalize_currency(raw: Option<String>) -> String {
-        raw.unwrap_or_else(|| "USD".to_string())
-            .trim()
-            .to_ascii_uppercase()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect()
+    fn normalize_currency(raw: Option<CurrencyCode>) -> CurrencyCode {
+        raw.unwrap_or_default()
     }
 
     fn row_to_quote(row: QuoteRow) -> Result<SkillQuote> {
@@ -703,7 +698,7 @@ impl PgA2ARepository {
             if quote.valid_until <= Utc::now() {
                 return Err(CommerceError::ValidationError("quote has expired".to_string()));
             }
-            if quote.currency != Self::normalize_currency(input.currency.clone()) {
+            if quote.currency != Self::normalize_currency(input.currency) {
                 return Err(CommerceError::ValidationError(
                     "purchase currency does not match quote currency".to_string(),
                 ));

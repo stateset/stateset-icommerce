@@ -542,7 +542,7 @@ impl SqliteOrderRepository {
 
         Ok(Order {
             id,
-            order_number: order_number.clone(),
+            order_number,
             customer_id: input.customer_id,
             status: OrderStatus::Pending,
             order_date: now,

@@ -198,12 +198,11 @@ impl CurrencyCode {
     /// Get the currency code as a string slice.
     #[inline]
     #[must_use]
-    #[allow(unsafe_code)]
     pub const fn as_str(&self) -> &str {
-        // SAFETY: All constructors (`from_bytes`, `from_str`) validate that the
-        // contents are ASCII uppercase letters, so UTF-8 validity is guaranteed.
-        // Using `from_utf8_unchecked` avoids a panic path in production.
-        unsafe { std::str::from_utf8_unchecked(&self.0) }
+        match std::str::from_utf8(&self.0) {
+            Ok(code) => code,
+            Err(_) => panic!("CurrencyCode always stores validated ASCII uppercase bytes"),
+        }
     }
 }
 
@@ -278,6 +277,41 @@ impl rusqlite::types::ToSql for CurrencyCode {
         Ok(rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(
             self.as_str().as_bytes(),
         )))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sqlx-postgres integration
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "sqlx-postgres")]
+impl sqlx::Type<sqlx::Postgres> for CurrencyCode {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <&str as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        <&str as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+#[cfg(feature = "sqlx-postgres")]
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for CurrencyCode {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.as_str(), buf)
+    }
+}
+
+#[cfg(feature = "sqlx-postgres")]
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for CurrencyCode {
+    fn decode(
+        value: sqlx::postgres::PgValueRef<'r>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let s = <&str as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?;
+        s.parse::<Self>().map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 }
 

@@ -14,7 +14,7 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgWarehouseRepository {
     pool: PgPool,
 }
@@ -92,7 +92,7 @@ struct LocationMovementRow {
 }
 
 impl PgWarehouseRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

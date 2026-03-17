@@ -11,7 +11,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// PostgreSQL agent reputation repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgAgentReputationRepository {
     pool: PgPool,
 }
@@ -49,7 +49,7 @@ struct FeedbackResponseRow {
 }
 
 impl PgAgentReputationRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -355,7 +355,7 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             let max_decimals = rows.iter().map(|(_, d)| *d as u8).max().unwrap_or(0);
 
             let mut sum: i128 = 0;
-            for (value, decimals) in rows.iter() {
+            for (value, decimals) in &rows {
                 let scaled = Self::scale_value(*value as i128, *decimals as u8, max_decimals)?;
                 sum = sum.checked_add(scaled).ok_or_else(|| {
                     CommerceError::ValidationError("feedback summary overflow".to_string())

@@ -14,7 +14,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// PostgreSQL shipment repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgShipmentRepository {
     pool: PgPool,
 }
@@ -72,7 +72,7 @@ struct ShipmentEventRow {
 }
 
 impl PgShipmentRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
     fn row_to_shipment(

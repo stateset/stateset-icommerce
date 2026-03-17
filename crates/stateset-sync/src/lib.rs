@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![doc = include_str!("../README.md")]
 //!
 //! ## Modules

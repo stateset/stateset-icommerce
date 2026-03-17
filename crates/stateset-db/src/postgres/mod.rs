@@ -87,7 +87,7 @@ use std::future::Future;
 use std::time::Duration;
 
 /// PostgreSQL database connection pool
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PostgresDatabase {
     pool: PgPool,
 }
@@ -433,12 +433,12 @@ impl PostgresDatabase {
     }
 
     /// Get underlying pool (for advanced use)
-    pub fn pool(&self) -> &PgPool {
+    pub const fn pool(&self) -> &PgPool {
         &self.pool
     }
 }
 
-/// Helper function to convert sqlx errors to CommerceError
+/// Helper function to convert sqlx errors to `CommerceError`
 pub(crate) fn map_db_error(e: sqlx::Error) -> CommerceError {
     match e {
         sqlx::Error::RowNotFound => CommerceError::NotFound,
@@ -561,7 +561,7 @@ const PG_INITIAL_BACKOFF_MS: u64 = 1;
 const PG_MAX_BACKOFF_MS: u64 = 200;
 
 #[cfg(feature = "postgres")]
-fn pg_transaction_isolation_sql(isolation: crate::TransactionIsolation) -> &'static str {
+const fn pg_transaction_isolation_sql(isolation: crate::TransactionIsolation) -> &'static str {
     match isolation {
         crate::TransactionIsolation::ReadUncommitted => "READ UNCOMMITTED",
         crate::TransactionIsolation::ReadCommitted => "READ COMMITTED",

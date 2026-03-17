@@ -6,15 +6,15 @@ use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::{
-    BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId,
-    InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod, PaymentMethodType,
-    PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
-    generate_payment_number, generate_refund_number, validate_batch_size,
+    BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CurrencyCode,
+    CustomerId, InvoiceId, OrderId, Payment, PaymentFilter, PaymentId, PaymentMethod,
+    PaymentMethodType, PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result,
+    UpdatePayment, generate_payment_number, generate_refund_number, validate_batch_size,
 };
 use uuid::Uuid;
 
 /// PostgreSQL payment repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgPaymentRepository {
     pool: PgPool,
 }
@@ -29,7 +29,7 @@ struct PaymentRow {
     status: String,
     payment_method: String,
     amount: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     amount_refunded: Decimal,
     external_id: Option<String>,
     idempotency_key: Option<String>,
@@ -58,7 +58,7 @@ struct RefundRow {
     payment_id: Uuid,
     status: String,
     amount: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     reason: Option<String>,
     external_id: Option<String>,
     idempotency_key: Option<String>,
@@ -89,7 +89,7 @@ struct PaymentMethodRow {
 }
 
 impl PgPaymentRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -309,7 +309,7 @@ impl PgPaymentRepository {
         .bind(PaymentTransactionStatus::Pending.to_string())
         .bind(input.payment_method.to_string())
         .bind(input.amount)
-        .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
+        .bind(input.currency.unwrap_or(CurrencyCode::USD))
         .bind(Decimal::ZERO)
         .bind(&input.external_id)
         .bind(&input.idempotency_key)
@@ -585,7 +585,7 @@ impl PgPaymentRepository {
         .bind(raw_payment_id)
         .bind(RefundStatus::Pending.to_string())
         .bind(refund_amount)
-        .bind(&payment.currency)
+        .bind(payment.currency)
         .bind(&input.reason)
         .bind(&input.external_id)
         .bind(&input.idempotency_key)
@@ -919,7 +919,7 @@ impl PgPaymentRepository {
             .bind(PaymentTransactionStatus::Pending.to_string())
             .bind(input.payment_method.to_string())
             .bind(input.amount)
-            .bind(input.currency.clone().unwrap_or_else(|| "USD".to_string()))
+            .bind(input.currency.unwrap_or(CurrencyCode::USD))
             .bind(Decimal::ZERO)
             .bind(&input.external_id)
             .bind(&input.idempotency_key)
@@ -948,7 +948,7 @@ impl PgPaymentRepository {
                 status: PaymentTransactionStatus::Pending,
                 payment_method: input.payment_method,
                 amount: input.amount,
-                currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+                currency: input.currency.unwrap_or(CurrencyCode::USD),
                 amount_refunded: Decimal::ZERO,
                 external_id: input.external_id,
                 idempotency_key: input.idempotency_key,

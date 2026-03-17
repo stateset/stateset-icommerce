@@ -25,14 +25,19 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AgingBucket {
+    /// Invoice is not yet past due.
     #[default]
     Current,
+    /// Invoice is 1–30 days past due.
     #[strum(to_string = "1_30", serialize = "days_1_to_30")]
     Days1To30,
+    /// Invoice is 31–60 days past due.
     #[strum(to_string = "31_60", serialize = "days_31_to_60")]
     Days31To60,
+    /// Invoice is 61–90 days past due.
     #[strum(to_string = "61_90", serialize = "days_61_to_90")]
     Days61To90,
+    /// Invoice is more than 90 days past due.
     #[strum(to_string = "over_90", serialize = "days_over_90")]
     DaysOver90,
 }
@@ -45,18 +50,27 @@ pub enum AgingBucket {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CollectionStatus {
+    /// No collection activity has been initiated.
     #[default]
     None,
+    /// First payment reminder has been sent to the customer.
     #[strum(serialize = "reminder_1_sent")]
     Reminder1Sent,
+    /// Second payment reminder has been sent to the customer.
     #[strum(serialize = "reminder_2_sent")]
     Reminder2Sent,
+    /// Third and final reminder has been sent before escalation.
     #[strum(serialize = "reminder_3_sent")]
     Reminder3Sent,
+    /// Account has been escalated to an internal collections team.
     InCollections,
+    /// Account has been referred to a third-party collections agency.
     SentToAgency,
+    /// Balance has been written off as uncollectible.
     WrittenOff,
+    /// Customer has committed to pay by a specific date.
     PromiseToPay,
+    /// Customer is on an agreed installment payment plan.
     PaymentPlan,
 }
 
@@ -68,14 +82,19 @@ pub enum CollectionStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DunningLetterType {
+    /// Friendly first reminder sent shortly after the due date.
     #[default]
     #[strum(serialize = "reminder_1")]
     Reminder1,
+    /// Second reminder with a stronger tone.
     #[strum(serialize = "reminder_2")]
     Reminder2,
+    /// Final reminder before formal demand.
     #[strum(serialize = "reminder_3")]
     Reminder3,
+    /// Formal demand for immediate payment.
     DemandLetter,
+    /// Notification that the account has been sent to collections.
     CollectionNotice,
 }
 
@@ -87,13 +106,20 @@ pub enum DunningLetterType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WriteOffReason {
+    /// Debt is deemed uncollectible after exhausting collection efforts.
     #[default]
     Uncollectible,
+    /// Customer has filed for bankruptcy protection.
     Bankruptcy,
+    /// Balance is disputed and resolution favoured the customer.
     CustomerDispute,
+    /// Balance is too small to justify further collection costs.
     SmallBalance,
+    /// Customer account has been closed.
     AccountClosed,
+    /// Customer is deceased and the estate cannot cover the balance.
     Deceased,
+    /// Write-off reason not covered by other variants.
     Other,
 }
 
@@ -105,13 +131,20 @@ pub enum WriteOffReason {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditMemoReason {
+    /// Customer returned goods for a refund.
     #[default]
     ReturnedGoods,
+    /// Invoice contained an incorrect price.
     PricingError,
+    /// Customer paid more than the amount owed.
     Overpayment,
+    /// Goods were delivered in a damaged condition.
     Damaged,
+    /// Credit issued for unsatisfactory service.
     ServiceCredit,
+    /// Discretionary credit offered to maintain customer goodwill.
     GoodwillAdjustment,
+    /// Reason not covered by other variants.
     Other,
 }
 
@@ -123,10 +156,14 @@ pub enum CreditMemoReason {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CreditMemoStatus {
+    /// Credit memo is available and has not been applied.
     #[default]
     Open,
+    /// A portion of the credit has been applied to one or more invoices.
     PartiallyApplied,
+    /// The entire credit amount has been applied and the memo is exhausted.
     FullyApplied,
+    /// Credit memo has been cancelled and cannot be applied.
     Voided,
 }
 
@@ -138,17 +175,28 @@ pub enum CreditMemoStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CollectionActivityType {
+    /// A dunning letter was sent to the customer.
     #[default]
     DunningLetterSent,
+    /// A phone call was made to the customer.
     PhoneCall,
+    /// An email was sent to the customer.
     Email,
+    /// A representative visited the customer in person.
     InPersonVisit,
+    /// Customer provided a verbal or written commitment to pay by a date.
     PromiseToPay,
+    /// An installment payment plan was established with the customer.
     PaymentPlanCreated,
+    /// Account was referred to an internal or external collections team.
     SentToCollections,
+    /// Write-off was reviewed and approved.
     WriteOffApproved,
+    /// A formal dispute was opened by the customer.
     DisputeLogged,
+    /// A customer dispute was resolved.
     DisputeResolved,
+    /// General free-text note recorded on the account.
     Note,
 }
 
@@ -158,10 +206,15 @@ pub enum CollectionActivityType {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum StatementTransactionType {
+    /// A customer invoice that increases the balance owed.
     Invoice,
+    /// A payment that reduces the outstanding balance.
     Payment,
+    /// A credit memo that offsets invoice charges.
     CreditMemo,
+    /// A bad-debt write-off that removes the balance.
     WriteOff,
+    /// A manual balance correction.
     Adjustment,
 }
 

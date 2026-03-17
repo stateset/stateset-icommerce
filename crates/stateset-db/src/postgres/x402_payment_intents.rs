@@ -15,7 +15,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 /// PostgreSQL x402 payment intent repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgX402PaymentIntentRepository {
     pool: PgPool,
 }
@@ -65,7 +65,7 @@ impl PgX402PaymentIntentRepository {
     const NONCE_CONSTRAINT: &'static str = "ux_x402_intents_payer_nonce";
     const NONCE_RETRY_ATTEMPTS: usize = 3;
 
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -186,7 +186,7 @@ impl PgX402PaymentIntentRepository {
         match error {
             sqlx::Error::Database(db_err) => {
                 db_err.code().as_deref() == Some("23505")
-                    && db_err.constraint().as_deref() == Some(constraint)
+                    && db_err.constraint() == Some(constraint)
             }
             _ => false,
         }
@@ -290,9 +290,9 @@ impl PgX402PaymentIntentRepository {
             .bind(input.resource_uri.clone())
             .bind(input.resource_method.clone())
             .bind(input.description.clone())
-            .bind(input.cart_id.clone())
-            .bind(input.order_id.clone())
-            .bind(input.invoice_id.clone())
+            .bind(input.cart_id)
+            .bind(input.order_id)
+            .bind(input.invoice_id)
             .bind(input.merchant_id.clone())
             .bind(input.metadata.clone())
             .bind(now)

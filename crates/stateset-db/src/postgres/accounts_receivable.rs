@@ -11,14 +11,14 @@ use stateset_core::{
     ArAgingSummary, ArPaymentApplication, CollectionActivity, CollectionActivityFilter,
     CollectionActivityType, CollectionStatus, CommerceError, CreateCollectionActivity,
     CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoReason,
-    CreditMemoStatus, CustomerArAging, CustomerArSummary, CustomerStatement, DunningLetterType,
-    GenerateStatementRequest, Invoice, InvoiceId, InvoiceStatus, InvoiceType, Result,
-    StatementLineItem, StatementTransactionType, WriteOff, WriteOffFilter, WriteOffReason,
+    CreditMemoStatus, CurrencyCode, CustomerArAging, CustomerArSummary, CustomerStatement,
+    DunningLetterType, GenerateStatementRequest, Invoice, InvoiceId, InvoiceStatus, InvoiceType,
+    Result, StatementLineItem, StatementTransactionType, WriteOff, WriteOffFilter, WriteOffReason,
     generate_credit_memo_number, generate_write_off_number,
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgAccountsReceivableRepository {
     pool: PgPool,
 }
@@ -111,7 +111,7 @@ struct InvoiceRow {
     invoice_date: DateTime<Utc>,
     due_date: DateTime<Utc>,
     payment_terms: Option<String>,
-    currency: String,
+    currency: CurrencyCode,
     billing_name: Option<String>,
     billing_email: Option<String>,
     billing_address: Option<String>,
@@ -141,7 +141,7 @@ struct InvoiceRow {
 }
 
 impl PgAccountsReceivableRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -276,7 +276,7 @@ impl PgAccountsReceivableRepository {
         })
     }
 
-    fn row_to_payment_application(row: PaymentApplicationRow) -> ArPaymentApplication {
+    const fn row_to_payment_application(row: PaymentApplicationRow) -> ArPaymentApplication {
         ArPaymentApplication {
             id: row.id,
             payment_id: row.payment_id,
@@ -1687,6 +1687,6 @@ fn to_date(dt: DateTime<Utc>) -> NaiveDate {
     dt.date_naive()
 }
 
-fn from_date(date: NaiveDate) -> DateTime<Utc> {
+const fn from_date(date: NaiveDate) -> DateTime<Utc> {
     DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
 }

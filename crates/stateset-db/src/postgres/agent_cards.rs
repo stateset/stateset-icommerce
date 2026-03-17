@@ -12,7 +12,7 @@ use stateset_core::{
 use uuid::Uuid;
 
 /// PostgreSQL agent card repository
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgAgentCardRepository {
     pool: PgPool,
 }
@@ -47,7 +47,7 @@ struct AgentCardRow {
 }
 
 impl PgAgentCardRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 

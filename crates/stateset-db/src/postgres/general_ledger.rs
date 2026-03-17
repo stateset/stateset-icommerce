@@ -8,15 +8,15 @@ use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine,
     BalanceSide, BatchResult, CommerceError, CreateAutoPostingConfig, CreateGlAccount,
-    CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, GeneralLedgerRepository, GlAccount,
-    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, IncomeStatementLine, InvoiceId,
-    JournalEntry, JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus,
-    JournalEntryType, PeriodStatus, Result, TrialBalance, TrialBalanceLine,
-    create_default_chart_of_accounts, generate_journal_entry_number,
+    CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, CurrencyCode,
+    GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement,
+    IncomeStatementLine, InvoiceId, JournalEntry, JournalEntryFilter, JournalEntryLine,
+    JournalEntrySource, JournalEntryStatus, JournalEntryType, PeriodStatus, Result, TrialBalance,
+    TrialBalanceLine, create_default_chart_of_accounts, generate_journal_entry_number,
 };
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PgGeneralLedgerRepository {
     pool: PgPool,
 }
@@ -33,7 +33,7 @@ struct AccountRow {
     is_header: bool,
     is_posting: bool,
     normal_balance: String,
-    currency: String,
+    currency: CurrencyCode,
     status: String,
     current_balance: Decimal,
     created_at: DateTime<Utc>,
@@ -91,7 +91,7 @@ struct JournalEntryLineRow {
     description: Option<String>,
     debit_amount: Decimal,
     credit_amount: Decimal,
-    currency: String,
+    currency: CurrencyCode,
     reference_type: Option<String>,
     reference_id: Option<Uuid>,
     created_at: DateTime<Utc>,
@@ -116,7 +116,7 @@ struct AutoPostingConfigRow {
 }
 
 impl PgGeneralLedgerRepository {
-    pub fn new(pool: PgPool) -> Self {
+    pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -359,7 +359,7 @@ impl PgGeneralLedgerRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let normal_balance = input.account_type.normal_balance();
-        let currency = input.currency.unwrap_or_else(|| "USD".to_string());
+        let currency = input.currency.unwrap_or(CurrencyCode::USD);
         let is_header = input.is_header.unwrap_or(false);
         let is_posting = input.is_posting.unwrap_or(true);
 
