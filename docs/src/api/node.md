@@ -15,7 +15,7 @@ pnpm add @stateset/embedded
 ## Quick Start
 
 ```javascript
-const { Commerce } = require('@stateset/embedded');
+import { Commerce } from '@stateset/embedded';
 
 // Initialize with SQLite database
 const commerce = new Commerce('commerce.db');
@@ -220,7 +220,7 @@ const topCustomers = commerce.analytics.topCustomers(10);
 ## Error Handling
 
 ```javascript
-const { Commerce, StateSetError } = require('@stateset/embedded');
+import { Commerce, StateSetError } from '@stateset/embedded';
 
 try {
     const order = commerce.orders.ship(orderId);
