@@ -11,7 +11,9 @@ use sqlx::Error as SqlxError;
 use thiserror::Error;
 use uuid::Uuid;
 
+/// Errors that can occur during saga orchestration
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum SagaError {
     #[error("Saga not found: {0}")]
     SagaNotFound(Uuid),

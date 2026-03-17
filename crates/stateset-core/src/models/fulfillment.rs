@@ -138,11 +138,16 @@ pub struct ShipTask {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WaveStatus {
+    /// Wave is being configured; orders have not been released to the floor.
     #[default]
     Draft,
+    /// Wave has been released and pick tasks are available to workers.
     Released,
+    /// Picking is underway; at least one pick task has been started.
     InProgress,
+    /// All pick tasks in the wave have been completed.
     Completed,
+    /// Wave was cancelled before all picks were completed.
     Cancelled,
 }
 
@@ -168,12 +173,18 @@ impl FromStr for WaveStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PickStatus {
+    /// Pick task has been created but not yet assigned to a worker.
     #[default]
     Pending,
+    /// Pick task has been assigned to a worker but not yet started.
     Assigned,
+    /// Worker is actively picking the item.
     InProgress,
+    /// All requested quantity has been picked.
     Completed,
+    /// Requested quantity was not available in the source location.
     Short,
+    /// Pick task was cancelled; item will not be picked.
     Cancelled,
 }
 
@@ -200,12 +211,18 @@ impl FromStr for PickStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PackStatus {
+    /// Pack task created; picking for this order is not yet complete.
     #[default]
     Pending,
+    /// Pack task has been assigned to a packing station or worker.
     Assigned,
+    /// All picks for the order are complete; packing can begin.
     ReadyToPack,
+    /// Worker is actively packing items into cartons.
     InProgress,
+    /// All items have been packed and cartons are sealed.
     Completed,
+    /// Pack task was cancelled; cartons were not produced.
     Cancelled,
 }
 
@@ -229,11 +246,16 @@ impl FromStr for PackStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ShipStatus {
+    /// Ship task created; packing is not yet complete.
     #[default]
     Pending,
+    /// Packing is complete; package is ready for carrier handoff.
     ReadyToShip,
+    /// Shipping label has been generated and printed.
     LabelPrinted,
+    /// Package has been handed off to the carrier and is in transit.
     Shipped,
+    /// Ship task was cancelled; package was not tendered to the carrier.
     Cancelled,
 }
 
@@ -271,11 +293,16 @@ impl FromStr for ShipStatus {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PackageType {
+    /// Standard corrugated or rigid box.
     #[default]
     Box,
+    /// Flat mailer envelope for small or thin items.
     Envelope,
+    /// Cylindrical tube for posters, prints, or long items.
     Tube,
+    /// Pallet used for bulk or freight shipments.
     Pallet,
+    /// Non-standard packaging defined by dimensions alone.
     Custom,
 }
 
@@ -441,17 +468,22 @@ pub struct ShipTaskFilter {
 // Helper Functions
 // ============================================================================
 
-/// Generate a wave number.
+/// Generate a unique wave number.
+///
+/// Format: `WV-YYYYMMDDHHmmSS-XXXXXXXX` (8 hex chars = 4 billion possible
+/// values per second, eliminating test-parallelism collisions).
 pub fn generate_wave_number() -> String {
-    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
-    let random = &uuid::Uuid::new_v4().to_string()[..4].to_uppercase();
+    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+    let random = &uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_uppercase();
     format!("WV-{}-{}", timestamp, random)
 }
 
-/// Generate a carton number.
+/// Generate a unique carton number.
+///
+/// Format: `CTN-HHmmSS-XXXXXXXX`
 pub fn generate_carton_number() -> String {
     let timestamp = chrono::Utc::now().format("%H%M%S").to_string();
-    let random = &uuid::Uuid::new_v4().to_string()[..4].to_uppercase();
+    let random = &uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_uppercase();
     format!("CTN-{}-{}", timestamp, random)
 }
 

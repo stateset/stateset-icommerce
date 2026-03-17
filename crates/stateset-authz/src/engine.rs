@@ -325,15 +325,14 @@ impl AuthzEngineBuilder {
 
     /// Builds the [`AuthzEngine`].
     ///
+    /// # Panics
+    ///
     /// Panics when any assignment references a role that has not been added.
-    /// Use [`build_checked`](Self::build_checked) to surface configuration
-    /// errors without panicking.
+    /// Prefer [`build_checked`](Self::build_checked) to surface configuration
+    /// errors as `Result` without panicking.
     #[must_use]
     pub fn build(self) -> AuthzEngine {
-        match self.build_checked() {
-            Ok(engine) => engine,
-            Err(err) => panic!("invalid AuthzEngineBuilder configuration: {err}"),
-        }
+        self.build_checked().expect("invalid AuthzEngineBuilder configuration")
     }
 
     fn validate_assignments(&self) -> AuthzResult<()> {

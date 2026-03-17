@@ -434,4 +434,213 @@ mod tests {
             "should produce compile error for tuple structs"
         );
     }
+
+    #[test]
+    fn vec_field_type_preserved_in_create() {
+        let input = quote! {
+            #[dto(create)]
+            pub struct Cart {
+                pub items: Vec<String>,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(
+            output_str.contains("Vec < String >"),
+            "Vec<String> field should be preserved in Create DTO"
+        );
+    }
+
+    #[test]
+    fn option_field_type_preserved_in_create() {
+        let input = quote! {
+            #[dto(create)]
+            pub struct Order {
+                pub note: Option<String>,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(
+            output_str.contains("Option < String >"),
+            "Option<String> field should be preserved as-is in Create DTO"
+        );
+    }
+
+    #[test]
+    fn update_wraps_option_field_in_outer_option() {
+        let input = quote! {
+            #[dto(update)]
+            pub struct Payment {
+                pub note: Option<String>,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        // Update DTO wraps every field in Option, including those already Option<T>
+        assert!(
+            output_str.contains("Option < Option < String > >"),
+            "Update DTO should wrap Option<String> in another Option"
+        );
+    }
+
+    #[test]
+    fn multiple_skip_attributes_on_same_field() {
+        let input = quote! {
+            #[dto(create, update, filter)]
+            pub struct Mixed {
+                #[dto(skip_create, skip_update)]
+                pub id: MixedId,
+                pub name: String,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(output_str.contains("struct CreateMixed"), "should generate CreateMixed");
+        assert!(output_str.contains("struct UpdateMixed"), "should generate UpdateMixed");
+        assert!(output_str.contains("struct MixedFilter"), "should generate MixedFilter");
+
+        // id should be skipped from Create and Update but present in Filter
+        // Split at each struct to check field presence per DTO
+        let create_section = output_str
+            .split("struct CreateMixed")
+            .nth(1)
+            .expect("CreateMixed should exist");
+        let create_section = create_section.split("struct UpdateMixed").next().unwrap_or(create_section);
+        assert!(!create_section.contains("id"), "id should be skipped in CreateMixed");
+
+        let update_section = output_str
+            .split("struct UpdateMixed")
+            .nth(1)
+            .expect("UpdateMixed should exist");
+        let update_section = update_section.split("struct MixedFilter").next().unwrap_or(update_section);
+        assert!(!update_section.contains("id"), "id should be skipped in UpdateMixed");
+    }
+
+    #[test]
+    fn all_fields_skipped_in_create_produces_empty_struct() {
+        let input = quote! {
+            #[dto(create)]
+            pub struct Minimal {
+                #[dto(skip_create)]
+                pub id: MinimalId,
+                #[dto(skip_create)]
+                pub created_at: String,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(
+            output_str.contains("struct CreateMinimal"),
+            "should still generate the struct"
+        );
+        assert!(
+            !output_str.contains("pub id"),
+            "id should be skipped"
+        );
+        assert!(
+            !output_str.contains("pub created_at"),
+            "created_at should be skipped"
+        );
+    }
+
+    #[test]
+    fn generated_dtos_have_standard_derives() {
+        let input = quote! {
+            #[dto(create)]
+            pub struct Widget {
+                pub name: String,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(output_str.contains("Debug"), "should derive Debug");
+        assert!(output_str.contains("Clone"), "should derive Clone");
+        assert!(output_str.contains("Serialize"), "should derive Serialize");
+        assert!(output_str.contains("Deserialize"), "should derive Deserialize");
+        assert!(output_str.contains("Default"), "should derive Default");
+    }
+
+    #[test]
+    fn filter_dto_includes_all_non_skipped_fields_as_option() {
+        let input = quote! {
+            #[dto(filter)]
+            pub struct Inventory {
+                pub sku: String,
+                pub quantity: i32,
+                pub warehouse: String,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(output_str.contains("struct InventoryFilter"), "should generate InventoryFilter");
+        // All fields should be Option<T> in filter
+        assert!(output_str.contains("Option < String >"), "string fields should be Option<String>");
+        assert!(output_str.contains("Option < i32 >"), "i32 field should be Option<i32>");
+    }
+
+    #[test]
+    fn only_create_dto_when_only_create_requested() {
+        let input = quote! {
+            #[dto(create)]
+            pub struct OnlyCreate {
+                pub name: String,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(output_str.contains("struct CreateOnlyCreate"), "should generate Create DTO");
+        assert!(!output_str.contains("struct UpdateOnlyCreate"), "should NOT generate Update DTO");
+        assert!(!output_str.contains("struct OnlyCreateFilter"), "should NOT generate Filter DTO");
+    }
+
+    #[test]
+    fn only_update_dto_when_only_update_requested() {
+        let input = quote! {
+            #[dto(update)]
+            pub struct OnlyUpdate {
+                pub name: String,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(!output_str.contains("struct CreateOnlyUpdate"), "should NOT generate Create DTO");
+        assert!(output_str.contains("struct UpdateOnlyUpdate"), "should generate Update DTO");
+        assert!(!output_str.contains("struct OnlyUpdateFilter"), "should NOT generate Filter DTO");
+    }
+
+    #[test]
+    fn only_filter_dto_when_only_filter_requested() {
+        let input = quote! {
+            #[dto(filter)]
+            pub struct OnlyFilter {
+                pub name: String,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        assert!(!output_str.contains("struct CreateOnlyFilter"), "should NOT generate Create DTO");
+        assert!(!output_str.contains("struct UpdateOnlyFilter"), "should NOT generate Update DTO");
+        assert!(output_str.contains("struct OnlyFilterFilter"), "should generate Filter DTO");
+    }
 }

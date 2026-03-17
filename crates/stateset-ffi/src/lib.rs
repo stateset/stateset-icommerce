@@ -2,6 +2,7 @@
 // pointers. We warn (rather than deny) and document every unsafe block.
 #![warn(unsafe_code)]
 #![cfg_attr(test, allow(unsafe_code))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![doc(

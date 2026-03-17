@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![doc(
@@ -16,7 +17,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "0.7.23"
+//! stateset-sdk = "0.8.0"
 //! ```
 //!
 //! ```rust,ignore

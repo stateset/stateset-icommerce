@@ -405,4 +405,251 @@ mod tests {
 
         assert!(output_str.contains("\"number\""), "Decimal should map to \"number\" type");
     }
+
+    #[test]
+    fn all_integer_types_map_to_integer() {
+        for int_type in &["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize"] {
+            let ident = syn::Ident::new(int_type, proc_macro2::Span::call_site());
+            let input = quote! {
+                pub struct IntTest {
+                    pub value: #ident,
+                }
+            };
+
+            let output = derive(input);
+            let output_str = output.to_string();
+            assert!(
+                output_str.contains("\"integer\""),
+                "{} should map to \"integer\" type",
+                int_type
+            );
+        }
+    }
+
+    #[test]
+    fn f32_maps_to_number() {
+        let input = quote! {
+            pub struct FloatTest {
+                pub value: f32,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(output_str.contains("\"number\""), "f32 should map to \"number\" type");
+    }
+
+    #[test]
+    fn unknown_type_falls_back_to_string() {
+        let input = quote! {
+            pub struct WithUnknown {
+                pub custom: MyCustomType,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("\"string\""),
+            "unknown types should fall back to \"string\""
+        );
+    }
+
+    #[test]
+    fn nested_option_vec_produces_array() {
+        let input = quote! {
+            pub struct Nested {
+                pub tags: Option<Vec<String>>,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("\"array\""),
+            "Option<Vec<String>> should produce array type (Option unwrapped)"
+        );
+    }
+
+    #[test]
+    fn vec_of_uuid_produces_array_with_uuid_items() {
+        let input = quote! {
+            pub struct WithIds {
+                pub ids: Vec<Uuid>,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(output_str.contains("\"array\""), "Vec<Uuid> should produce array type");
+        assert!(output_str.contains("\"uuid\""), "Vec<Uuid> items should have uuid format");
+    }
+
+    #[test]
+    fn multiple_required_fields_all_listed() {
+        let input = quote! {
+            pub struct MultiReq {
+                pub name: String,
+                pub age: i32,
+                pub active: bool,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        let parts: Vec<&str> = output_str.splitn(2, "\"required\"").collect();
+        assert!(parts.len() == 2, "should have a 'required' key");
+        let after_required = parts[1];
+        assert!(after_required.contains("\"name\""), "name should be in required");
+        assert!(after_required.contains("\"age\""), "age should be in required");
+        assert!(after_required.contains("\"active\""), "active should be in required");
+    }
+
+    #[test]
+    fn all_optional_fields_produces_empty_required_array() {
+        let input = quote! {
+            pub struct AllOptional {
+                pub name: Option<String>,
+                pub count: Option<i32>,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        // Both fields in properties
+        assert!(output_str.contains("\"name\""), "name should appear in properties");
+        assert!(output_str.contains("\"count\""), "count should appear in properties");
+
+        // Required array should be empty — the token stream should contain "required" : []
+        let parts: Vec<&str> = output_str.splitn(2, "\"required\"").collect();
+        assert!(parts.len() == 2, "should have 'required' key");
+        let after_required = parts[1];
+        assert!(
+            !after_required.contains("\"name\""),
+            "name should NOT be in required array"
+        );
+        assert!(
+            !after_required.contains("\"count\""),
+            "count should NOT be in required array"
+        );
+    }
+
+    #[test]
+    fn empty_struct_produces_empty_properties() {
+        let input = quote! {
+            pub struct Empty {}
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("fn empty_json_schema"),
+            "should generate the schema function"
+        );
+        assert!(
+            output_str.contains("\"object\""),
+            "should produce object type"
+        );
+    }
+
+    #[test]
+    fn snake_case_edge_cases() {
+        assert_eq!(to_snake_case(""), "");
+        assert_eq!(to_snake_case("a"), "a");
+        assert_eq!(to_snake_case("AB"), "a_b");
+        assert_eq!(to_snake_case("XMLParser"), "x_m_l_parser");
+        assert_eq!(to_snake_case("myField"), "my_field");
+        assert_eq!(to_snake_case("already_snake"), "already_snake");
+    }
+
+    #[test]
+    fn tuple_struct_rejected() {
+        let input = quote! {
+            pub struct TupleSchema(String, i32);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("compile_error"),
+            "tuple structs should produce compile error"
+        );
+    }
+
+    #[test]
+    fn mixed_required_optional_fields() {
+        let input = quote! {
+            pub struct MixedReqOpt {
+                pub required_a: String,
+                pub optional_b: Option<i32>,
+                pub required_c: bool,
+                pub optional_d: Option<Uuid>,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+
+        // All four in properties
+        assert!(output_str.contains("\"required_a\""), "required_a in properties");
+        assert!(output_str.contains("\"optional_b\""), "optional_b in properties");
+        assert!(output_str.contains("\"required_c\""), "required_c in properties");
+        assert!(output_str.contains("\"optional_d\""), "optional_d in properties");
+
+        let parts: Vec<&str> = output_str.splitn(2, "\"required\"").collect();
+        let after_required = parts[1];
+        assert!(after_required.contains("\"required_a\""), "required_a in required");
+        assert!(after_required.contains("\"required_c\""), "required_c in required");
+        assert!(!after_required.contains("\"optional_b\""), "optional_b NOT in required");
+        assert!(!after_required.contains("\"optional_d\""), "optional_d NOT in required");
+    }
+
+    #[test]
+    fn vec_of_integers_produces_array_with_integer_items() {
+        let input = quote! {
+            pub struct WithCounts {
+                pub counts: Vec<i64>,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(output_str.contains("\"array\""), "Vec<i64> should produce array type");
+        assert!(output_str.contains("\"integer\""), "Vec<i64> items should be integer");
+    }
+
+    #[test]
+    fn schema_function_visibility_matches_struct() {
+        // pub struct -> pub fn
+        let input_pub = quote! {
+            pub struct PubSchema {
+                pub name: String,
+            }
+        };
+        let output = derive(input_pub);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("pub fn pub_schema_json_schema"),
+            "pub struct should produce pub fn"
+        );
+
+        // private struct -> private fn
+        let input_priv = quote! {
+            struct PrivSchema {
+                pub name: String,
+            }
+        };
+        let output = derive(input_priv);
+        let output_str = output.to_string();
+        assert!(
+            !output_str.contains("pub fn priv_schema_json_schema"),
+            "private struct should NOT produce pub fn"
+        );
+        assert!(
+            output_str.contains("fn priv_schema_json_schema"),
+            "private struct should produce private fn"
+        );
+    }
 }

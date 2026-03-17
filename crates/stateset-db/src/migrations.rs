@@ -6,7 +6,9 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+/// Errors that can occur during database migrations
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum MigrationError {
     #[error("Migration failed: {0}")]
     Failed(String),

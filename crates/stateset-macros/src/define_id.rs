@@ -300,4 +300,231 @@ mod tests {
         let output_str = output.to_string();
         assert!(output_str.contains("compile_error"), "generic IDs must be rejected");
     }
+
+    #[test]
+    fn display_impl_generated() {
+        let input = quote! {
+            pub struct OrderId(::uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("Display for OrderId"),
+            "should implement Display for OrderId"
+        );
+    }
+
+    #[test]
+    fn debug_impl_includes_struct_name() {
+        let input = quote! {
+            pub struct InvoiceId(::uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("Debug for InvoiceId"),
+            "should implement Debug for InvoiceId"
+        );
+        // Debug format includes the struct name string
+        assert!(
+            output_str.contains("\"InvoiceId\""),
+            "Debug impl should reference the struct name as a string"
+        );
+    }
+
+    #[test]
+    fn from_str_impl_generated() {
+        let input = quote! {
+            pub struct CustomerId(uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("FromStr for CustomerId"),
+            "should implement FromStr for CustomerId"
+        );
+        assert!(
+            output_str.contains("type Err = :: uuid :: Error"),
+            "FromStr error type should be uuid::Error"
+        );
+    }
+
+    #[test]
+    fn from_uuid_conversion_generated() {
+        let input = quote! {
+            pub struct PaymentId(uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("From < :: uuid :: Uuid > for PaymentId"),
+            "should implement From<Uuid> for PaymentId"
+        );
+        assert!(
+            output_str.contains("From < PaymentId > for :: uuid :: Uuid"),
+            "should implement From<PaymentId> for Uuid"
+        );
+    }
+
+    #[test]
+    fn as_ref_uuid_generated() {
+        let input = quote! {
+            pub struct ShipmentId(uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("AsRef < :: uuid :: Uuid > for ShipmentId"),
+            "should implement AsRef<Uuid>"
+        );
+    }
+
+    #[test]
+    fn copy_clone_eq_ord_hash_all_present() {
+        let input = quote! {
+            pub struct WidgetId(uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(output_str.contains("Copy for WidgetId"), "should implement Copy");
+        assert!(output_str.contains("Clone for WidgetId"), "should implement Clone");
+        assert!(output_str.contains("PartialEq for WidgetId"), "should implement PartialEq");
+        assert!(output_str.contains("Eq for WidgetId"), "should implement Eq");
+        assert!(output_str.contains("PartialOrd for WidgetId"), "should implement PartialOrd");
+        assert!(output_str.contains("Ord for WidgetId"), "should implement Ord");
+        assert!(output_str.contains("Hash for WidgetId"), "should implement Hash");
+    }
+
+    #[test]
+    fn nil_method_generated() {
+        let input = quote! {
+            pub struct ReturnId(uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(output_str.contains("fn nil"), "should contain nil() method");
+        assert!(
+            output_str.contains("Uuid :: nil ()"),
+            "nil() should create a nil UUID"
+        );
+    }
+
+    #[test]
+    fn is_nil_method_generated() {
+        let input = quote! {
+            pub struct CreditId(uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(output_str.contains("fn is_nil"), "should contain is_nil() method");
+    }
+
+    #[test]
+    fn default_impl_calls_new() {
+        let input = quote! {
+            pub struct TagId(uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("Default for TagId"),
+            "should implement Default"
+        );
+        assert!(
+            output_str.contains("Self :: new ()"),
+            "Default should call Self::new()"
+        );
+    }
+
+    #[test]
+    fn rejects_named_field_struct() {
+        let input = quote! {
+            pub struct BadId {
+                pub id: uuid::Uuid,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("compile_error"),
+            "named-field structs must be rejected"
+        );
+    }
+
+    #[test]
+    fn rejects_multi_field_tuple_struct() {
+        let input = quote! {
+            pub struct TwoFieldId(uuid::Uuid, uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("compile_error"),
+            "multi-field tuple structs must be rejected"
+        );
+    }
+
+    #[test]
+    fn rejects_enum() {
+        let input = quote! {
+            pub enum NotAnId {
+                A,
+                B,
+            }
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("compile_error"),
+            "enums must be rejected"
+        );
+    }
+
+    #[test]
+    fn private_struct_generates_impls() {
+        let input = quote! {
+            struct InternalId(uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("impl InternalId"),
+            "should generate impls for private struct"
+        );
+        assert!(
+            output_str.contains("fn new"),
+            "should still generate new() for private struct"
+        );
+    }
+
+    #[test]
+    fn qualified_uuid_path_accepted() {
+        let input = quote! {
+            pub struct QualifiedId(::uuid::Uuid);
+        };
+
+        let output = derive(input);
+        let output_str = output.to_string();
+        assert!(
+            !output_str.contains("compile_error"),
+            "fully-qualified uuid::Uuid path should be accepted"
+        );
+        assert!(
+            output_str.contains("impl QualifiedId"),
+            "should generate impls"
+        );
+    }
 }

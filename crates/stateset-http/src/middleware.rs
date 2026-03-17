@@ -262,9 +262,8 @@ fn compute_etag(body: &[u8]) -> String {
 /// - Single resource (`/api/v1/<resource>/<id>`): moderate TTL (60s) + revalidation
 /// - `OpenAPI` spec: long TTL (1 hour, public)
 fn cache_control_for_path(path: &str) -> &'static str {
-    if path.starts_with("/health") {
-        "no-cache"
-    } else if path.ends_with("/events/stream") {
+    if path.starts_with("/health") || path.ends_with("/events/stream") {
+        // Health endpoints always revalidate; SSE streams must not be cached.
         "no-cache"
     } else if path.contains("/openapi.json") {
         "public, max-age=3600"
@@ -357,6 +356,15 @@ async fn http_cache(request: Request<Body>, next: Next) -> Response {
 }
 
 /// Apply all standard middleware to a router.
+///
+/// Layers are applied inside-out in this order:
+///
+/// 1. **Tracing** (outermost after our layers — logs every request)
+/// 2. **HTTP caching** — `ETag` generation + `Cache-Control` headers for GET responses
+/// 3. **Rate limiting** — global token-bucket limiter (HTTP 429 on exhaustion)
+/// 4. **Bearer auth** — constant-time token comparison + optional tenant binding
+/// 5. **CORS** — explicit origin allowlist from `STATESET_HTTP_ALLOWED_ORIGINS`
+/// 6. **Request ID** — `X-Request-ID` propagation for distributed tracing
 pub(crate) fn apply_middleware(
     router: Router,
     with_cors: bool,

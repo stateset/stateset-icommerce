@@ -185,4 +185,152 @@ mod tests {
     fn canonical_span_name_is_normalized() {
         assert_eq!(canonical_span_name("Order Created"), "stateset.order_created");
     }
+
+    // ── TracingConfig ──────────────────────────────────────────────────
+
+    #[test]
+    fn tracing_config_new_str() {
+        let cfg = TracingConfig::new("svc", "prod", "us-east-1");
+        assert_eq!(cfg.service_name, "svc");
+        assert_eq!(cfg.environment, "prod");
+        assert_eq!(cfg.region, "us-east-1");
+    }
+
+    #[test]
+    fn tracing_config_new_string() {
+        let cfg = TracingConfig::new(
+            String::from("my-svc"),
+            String::from("staging"),
+            String::from("eu-west-1"),
+        );
+        assert_eq!(cfg.service_name, "my-svc");
+        assert_eq!(cfg.environment, "staging");
+        assert_eq!(cfg.region, "eu-west-1");
+    }
+
+    #[test]
+    fn tracing_config_debug() {
+        let cfg = TracingConfig::new("svc", "prod", "us-east-1");
+        let debug = format!("{cfg:?}");
+        assert!(debug.contains("TracingConfig"));
+        assert!(debug.contains("svc"));
+    }
+
+    #[test]
+    fn tracing_config_clone() {
+        let cfg = TracingConfig::new("svc", "prod", "us-east-1");
+        #[allow(clippy::redundant_clone)]
+        let cloned = cfg.clone();
+        assert_eq!(cloned.service_name, "svc");
+        assert_eq!(cloned.environment, "prod");
+        assert_eq!(cloned.region, "us-east-1");
+    }
+
+    // ── init_tracing validation ────────────────────────────────────────
+
+    #[test]
+    fn rejects_all_empty_fields() {
+        assert!(init_tracing("", "", "").is_err());
+    }
+
+    #[test]
+    fn rejects_empty_service_only() {
+        let r = init_tracing("", "env", "region");
+        assert!(r.is_err());
+        let msg = r.unwrap_err().to_string();
+        assert!(msg.contains("service_name"), "Error should mention service_name: {msg}");
+    }
+
+    #[test]
+    fn rejects_empty_environment_only() {
+        let r = init_tracing("svc", "", "region");
+        assert!(r.is_err());
+        let msg = r.unwrap_err().to_string();
+        assert!(msg.contains("environment"), "Error should mention environment: {msg}");
+    }
+
+    #[test]
+    fn rejects_empty_region_only() {
+        let r = init_tracing("svc", "env", "");
+        assert!(r.is_err());
+        let msg = r.unwrap_err().to_string();
+        assert!(msg.contains("region"), "Error should mention region: {msg}");
+    }
+
+    #[test]
+    fn init_tracing_with_rejects_empty_service() {
+        let cfg = TracingConfig::new("", "test", "local");
+        assert!(init_tracing_with(cfg).is_err());
+    }
+
+    #[test]
+    fn init_tracing_with_rejects_empty_env() {
+        let cfg = TracingConfig::new("svc", "", "local");
+        assert!(init_tracing_with(cfg).is_err());
+    }
+
+    #[test]
+    fn init_tracing_with_rejects_empty_region() {
+        let cfg = TracingConfig::new("svc", "test", "");
+        assert!(init_tracing_with(cfg).is_err());
+    }
+
+    // ── init_tracing idempotence ───────────────────────────────────────
+
+    #[test]
+    fn init_tracing_succeeds_or_is_noop_when_already_set() {
+        // In the test harness, a global subscriber may already be set.
+        // init_tracing should return Ok in that case.
+        let result = init_tracing("stateset-test", "test", "local");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn init_tracing_with_succeeds_or_is_noop() {
+        let cfg = TracingConfig::new("stateset-test", "test", "local");
+        assert!(init_tracing_with(cfg).is_ok());
+    }
+
+    // ── canonical_span_name ────────────────────────────────────────────
+
+    #[test]
+    fn canonical_span_name_empty() {
+        assert_eq!(canonical_span_name(""), "stateset.unknown");
+    }
+
+    #[test]
+    fn canonical_span_name_with_dots() {
+        assert_eq!(canonical_span_name("order.create"), "stateset.order_create");
+    }
+
+    #[test]
+    fn canonical_span_name_with_slashes() {
+        assert_eq!(canonical_span_name("api/v1/orders"), "stateset.api_v1_orders");
+    }
+
+    #[test]
+    fn canonical_span_name_uppercase() {
+        assert_eq!(canonical_span_name("ORDER"), "stateset.order");
+    }
+
+    #[test]
+    fn canonical_span_name_mixed_separators() {
+        assert_eq!(canonical_span_name("Order---Created"), "stateset.order_created");
+    }
+
+    // ── Error variant matching ─────────────────────────────────────────
+
+    #[test]
+    fn init_tracing_error_is_invalid_config_variant() {
+        let err = init_tracing("", "env", "region").unwrap_err();
+        assert!(matches!(err, ObservabilityError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn error_display_includes_field_name() {
+        let err = init_tracing("", "env", "region").unwrap_err();
+        let display = err.to_string();
+        assert!(display.contains("Invalid configuration"));
+        assert!(display.contains("service_name"));
+    }
 }
