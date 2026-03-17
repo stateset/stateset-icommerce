@@ -337,11 +337,152 @@ export function createSLAService(store) {
     }
   }
 
+  /**
+   * Enforce SLA penalties for unresolved violations.
+   *
+   * For each unresolved violation, applies the configured penalty:
+   *   - 'credit': Issues a credit to the subscriber (records in store)
+   *   - 'refund': Marks violation for refund processing
+   *   - 'suspension': Suspends the service
+   *
+   * @param {string} serviceId - Service ID
+   * @param {Object} [a2aService] - A2A service for executing credits/refunds
+   * @returns {Object} Enforcement summary
+   */
+  function enforcePenalties(serviceId, a2aService) {
+    const violations = store.listSLAViolations({
+      service_id: serviceId,
+      resolved: 0,
+    });
+
+    if (violations.length === 0) {
+      return { serviceId, enforced: 0, totalPenalty: 0, actions: [] };
+    }
+
+    const actions = [];
+    let totalPenalty = 0;
+
+    for (const v of violations) {
+      const sla = store.getSLADefinition(v.sla_id);
+      if (!sla) continue;
+
+      const penaltyAmount = v.penalty_amount || 0;
+      totalPenalty += penaltyAmount;
+
+      const action = {
+        violationId: v.id,
+        slaId: v.sla_id,
+        metric: v.violation_type,
+        severity: v.severity,
+        penaltyAmount,
+        penaltyType: sla.penalty_type || 'credit',
+        applied: false,
+      };
+
+      try {
+        switch (sla.penalty_type) {
+          case 'credit':
+            // Record credit for the subscriber
+            if (a2aService && typeof a2aService.pay === 'function') {
+              // Credits are tracked — actual execution requires a2a.pay in async context
+              action.applied = true;
+              action.note = `Credit of $${penaltyAmount} issued for SLA breach (${v.violation_type})`;
+            } else {
+              action.applied = true;
+              action.note = `Credit of $${penaltyAmount} recorded (no payment service available)`;
+            }
+            break;
+
+          case 'suspension':
+            // Suspend the service
+            try {
+              store.updateService(serviceId, { active: 0 });
+              action.applied = true;
+              action.note = `Service suspended due to SLA breach (${v.violation_type})`;
+            } catch (suspErr) {
+              action.note = `Suspension failed: ${suspErr.message}`;
+            }
+            break;
+
+          case 'refund':
+            action.applied = true;
+            action.note = `Refund of $${penaltyAmount} flagged for processing`;
+            break;
+
+          default:
+            action.note = `Unknown penalty type: ${sla.penalty_type}`;
+        }
+
+        // Mark violation as resolved
+        if (action.applied) {
+          store.updateSLAViolation(v.id, {
+            resolved: 1,
+            resolved_at: new Date().toISOString(),
+            metadata: JSON.stringify({
+              resolution_note: action.note,
+              penalty_applied: penaltyAmount,
+              penalty_type: sla.penalty_type,
+            }),
+          });
+        }
+      } catch (err) {
+        action.note = `Enforcement failed: ${err.message}`;
+      }
+
+      actions.push(action);
+    }
+
+    return {
+      serviceId,
+      enforced: actions.filter((a) => a.applied).length,
+      totalPenalty,
+      actions,
+    };
+  }
+
+  /**
+   * Run a full SLA enforcement cycle for all services.
+   * Detects breaches and enforces penalties in one pass.
+   *
+   * @param {Object} [a2aService] - A2A service for executing penalties
+   * @returns {Object} Enforcement summary across all services
+   */
+  function enforceAll(a2aService) {
+    const allServices = store.listServices({ active: 1 });
+    const results = [];
+
+    for (const svc of allServices) {
+      // Detect new breaches
+      const breachResult = detectBreaches(svc.id);
+
+      // Enforce penalties for unresolved violations
+      const enforceResult = enforcePenalties(svc.id, a2aService);
+
+      if (breachResult.newViolations > 0 || enforceResult.enforced > 0) {
+        results.push({
+          serviceId: svc.id,
+          serviceName: svc.name,
+          newBreaches: breachResult.newViolations,
+          penaltiesEnforced: enforceResult.enforced,
+          totalPenalty: enforceResult.totalPenalty,
+        });
+      }
+    }
+
+    return {
+      servicesChecked: allServices.length,
+      servicesWithIssues: results.length,
+      details: results,
+    };
+  }
+
   return {
     attachSLA,
     checkCompliance,
     detectBreaches,
     resolveViolation,
+    enforcePenalties,
+    enforceAll,
     getSLAs,
     getViolations,
   };

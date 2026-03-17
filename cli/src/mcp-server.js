@@ -62,6 +62,10 @@ import { circuitBreakerTools } from './tools/circuit-breaker.js';
 import { checkoutTools } from './tools/checkout.js';
 import { complianceTools } from './tools/compliance.js';
 import { catalogTools } from './tools/catalog.js';
+import { a2aAutomationTools } from './tools/a2a-automation.js';
+import { a2aObservabilityTools } from './tools/a2a-observability.js';
+import { a2aPlatformTools } from './tools/a2a-platform.js';
+import { a2aIntelligenceTools } from './tools/a2a-intelligence.js';
 import {
   formatValidationIssues,
   inputSchemaDefToJsonSchema,
@@ -509,6 +513,10 @@ const ALL_TOOL_DEFS = [
   ...checkoutTools,
   ...complianceTools,
   ...catalogTools,
+  ...a2aAutomationTools,
+  ...a2aObservabilityTools,
+  ...a2aPlatformTools,
+  ...a2aIntelligenceTools,
   ...AGENTIC_RUNTIME_TOOLS,
 ];
 
@@ -1376,6 +1384,85 @@ export function createStatesetMcpServer({
       listWorkflowSteps: (f) => a2aStore.listWorkflowSteps(f),
     }),
   };
+
+  // ---------------------------------------------------------------------------
+  // Intelligence services initialization (automatic wiring)
+  // ---------------------------------------------------------------------------
+  // These are lazy-loaded to avoid blocking startup if any module fails.
+  Promise.all([
+    import('./a2a/agent-memory.js'),
+    import('./a2a/rules-engine.js'),
+    import('./a2a/idempotency.js'),
+    import('./a2a/tracing.js'),
+    import('./a2a/cost-analytics.js'),
+    import('./a2a/introspection.js'),
+    import('./a2a/scheduler.js'),
+    import('./a2a/messaging.js'),
+    import('./a2a/rate-limiter.js'),
+    import('./a2a/integration.js'),
+  ])
+    .then(
+      ([
+        { createAgentMemory },
+        { createRulesEngine },
+        { createIdempotencyGuard },
+        { createTracingService },
+        { createCostAnalytics },
+        { createIntrospectionService },
+        { createSchedulerService },
+        { createMessagingService },
+        { createMcpRateLimiter },
+        { createIntegratedA2AService },
+      ]) => {
+        const memory = createAgentMemory();
+        const rules = createRulesEngine();
+        const idempotency = createIdempotencyGuard({ ttlMs: 86_400_000 });
+        const tracing = createTracingService({ maxSpans: 10_000 });
+        const costAnalytics = createCostAnalytics();
+        const introspection = createIntrospectionService();
+        const scheduler = createSchedulerService();
+        const messaging = createMessagingService();
+        const rateLimiter = createMcpRateLimiter({
+          defaultLimits: { requestsPerMinute: 120 },
+          toolOverrides: {
+            a2a_pay: { requestsPerMinute: 30 },
+            a2a_batch_pay: { requestsPerMinute: 10 },
+            a2a_scatter: { requestsPerMinute: 20 },
+          },
+        });
+
+        commerceWithA2A._agentMemory = memory;
+        commerceWithA2A._rulesEngine = rules;
+        commerceWithA2A._idempotencyGuard = idempotency;
+        commerceWithA2A._tracingService = tracing;
+        commerceWithA2A._costAnalytics = costAnalytics;
+        commerceWithA2A._introspectionService = introspection;
+        commerceWithA2A._schedulerService = scheduler;
+        commerceWithA2A._messagingService = messaging;
+        commerceWithA2A._rateLimiter = rateLimiter;
+        commerceWithA2A._store = a2aStore;
+
+        const originalA2A = commerceWithA2A.a2a;
+        if (typeof originalA2A === 'function' && typeof createIntegratedA2AService === 'function') {
+          const coreA2AInstance = originalA2A();
+          const integratedA2A = createIntegratedA2AService(coreA2AInstance, {
+            memory,
+            rules,
+            idempotency,
+            tracing,
+            costAnalytics,
+            introspection,
+          });
+          commerceWithA2A.a2a = () => integratedA2A;
+        }
+      },
+    )
+    .catch((err) => {
+      // Graceful degradation — intelligence services are optional
+      console.debug('[mcp-server] Intelligence services init skipped:', err.message);
+      commerceWithA2A._store = a2aStore;
+    });
+
   // ---------------------------------------------------------------------------
   // Permission helpers
   // ---------------------------------------------------------------------------
@@ -1739,6 +1826,10 @@ export function createStatesetMcpServer({
 
   const loadAgenticPricingState = async () => {
     if (agenticPricingCache !== null) return agenticPricingCache;
+    if (!treasuryEnabled) {
+      agenticPricingCache = { loaded: false, disabled: true };
+      return agenticPricingCache;
+    }
     try {
       const { loadTreasuryContext } = await import('./treasury/index.js');
       const ctx = await loadTreasuryContext(treasuryContextOptions);
@@ -3733,6 +3824,16 @@ export function createStatesetMcpServer({
   const treasuryContextOptions = treasuryDbPath ? { dbPath: treasuryDbPath } : {};
   const treasuryRegistry =
     treasury?.erc8004Registry || process.env.TREASURY_ERC8004_REGISTRY || null;
+  const treasuryEnabled = Boolean(
+    treasury?.enabled ||
+    treasuryDbPath ||
+    treasury?.chainId ||
+    treasury?.tokenSymbol ||
+    treasuryRegistry ||
+    String(process.env.TREASURY_BILLING || '').toLowerCase() === 'true' ||
+    process.env.TREASURY_CHAIN ||
+    process.env.TREASURY_TOKEN,
+  );
   const treasuryIdentityDbPath = treasury?.erc8004DbPath || dbPath;
   let treasuryIdentityLoaded = false;
   let treasuryIdentityCache = null;
@@ -3807,6 +3908,9 @@ export function createStatesetMcpServer({
   });
 
   const maybeChargeForTool = async (toolName, extra, { dryRun = false } = {}) => {
+    if (!treasuryEnabled) {
+      return { charged: false };
+    }
     try {
       const { loadTreasuryContext, getToolPricing, resolveToken, recordFee } =
         await import('./treasury/index.js');

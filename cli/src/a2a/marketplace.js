@@ -96,6 +96,11 @@ export function createMarketplaceService(store, a2aService) {
     // Exclude buyer's own services
     const eligibleServices = services
       .filter((s) => s.agent_address !== buyerAddress)
+      .sort(
+        (left, right) =>
+          String(left.created_at || '').localeCompare(String(right.created_at || '')) ||
+          String(left.agent_address || '').localeCompare(String(right.agent_address || '')),
+      )
       .slice(0, maxResponses);
 
     // Create RFQ record
@@ -380,11 +385,79 @@ export function createMarketplaceService(store, a2aService) {
     };
   }
 
+  /**
+   * Auto-award open RFQs that have passed their deadline.
+   *
+   * For each expired RFQ with scored responses, awards to the highest-scored
+   * response. RFQs with no scored responses are expired.
+   *
+   * @returns {Promise<Object>} Auto-award summary
+   */
+  async function autoAwardExpiredRFQs() {
+    const now = new Date().toISOString();
+    const openRFQs = store.listRFQs({ status: 'open' });
+    let awarded = 0;
+    let expired = 0;
+    let skipped = 0;
+    const awards = [];
+
+    for (const rfq of openRFQs) {
+      if (!rfq.deadline || rfq.deadline > now) {
+        skipped++;
+        continue; // Not past deadline yet
+      }
+
+      // Collect and score responses
+      const scored = collectRFQResponses(rfq.id);
+
+      if (scored.scoredCount > 0) {
+        // Award to highest-scored response
+        try {
+          const result = await awardRFQ(rfq.id);
+          awarded++;
+          awards.push({
+            rfqId: rfq.id,
+            winnerId: result.winnerId,
+            winnerAddress: result.winnerAddress,
+            winnerScore: result.winnerScore,
+          });
+        } catch (err) {
+          console.warn(`[marketplace] Auto-award failed for RFQ ${rfq.id}:`, err.message);
+          // Expire if award fails
+          store.updateRFQ(rfq.id, { status: 'expired', closed_at: now });
+          expired++;
+        }
+      } else {
+        // No responses — expire
+        store.updateRFQ(rfq.id, { status: 'expired', closed_at: now });
+        expired++;
+      }
+    }
+
+    return { awarded, expired, skipped, awards };
+  }
+
+  /**
+   * Run a full marketplace maintenance tick.
+   * Combines auto-award, expiry, and cleanup.
+   *
+   * @returns {Promise<Object>} Maintenance summary
+   */
+  async function maintenanceTick() {
+    const autoAwardResult = await autoAwardExpiredRFQs();
+    return {
+      timestamp: new Date().toISOString(),
+      ...autoAwardResult,
+    };
+  }
+
   return {
     broadcastRFQ,
     collectRFQResponses,
     awardRFQ,
     expireRFQs,
+    autoAwardExpiredRFQs,
+    maintenanceTick,
     getServiceMetrics,
     getAgentStatus,
   };

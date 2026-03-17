@@ -258,7 +258,7 @@ export function createEventStreamService(store) {
     const clients = _sseClients.get(agentAddress);
     if (clients && clients.size > 0) {
       const ssePayload = JSON.stringify(payload !== undefined ? payload : {});
-      const sseMessage = `event: ${eventType}\ndata: ${ssePayload}\n\n`;
+      const sseMessage = `id: ${eventId}\nevent: ${eventType}\ndata: ${ssePayload}\n\n`;
 
       for (const res of clients) {
         try {
@@ -319,6 +319,10 @@ export function createEventStreamService(store) {
    * Sets appropriate headers, registers the client for push delivery,
    * establishes a heartbeat interval, and cleans up on disconnect.
    *
+   * Supports `Last-Event-ID` header for reconnection replay: if the client
+   * reconnects with a `Last-Event-ID`, all events logged after that ID are
+   * replayed before live streaming begins.
+   *
    * @param {import('node:http').IncomingMessage} req - HTTP request
    * @param {import('node:http').ServerResponse} res - HTTP response (kept open)
    * @param {string} agentAddress - Agent address to stream events for
@@ -342,6 +346,14 @@ export function createEventStreamService(store) {
     // Send initial connected event
     const connectedPayload = JSON.stringify({ agentAddress });
     res.write(`event: connected\ndata: ${connectedPayload}\n\n`);
+
+    // Replay missed events if Last-Event-ID header is present
+    const lastEventId = req?.headers?.['last-event-id'];
+    if (lastEventId) {
+      _replayEvents(res, agentAddress, lastEventId).catch((err) => {
+        console.warn('[a2a/event-stream] Failed to replay events:', err.message);
+      });
+    }
 
     // Heartbeat to keep the connection alive
     const heartbeatInterval = setInterval(() => {
@@ -374,6 +386,49 @@ export function createEventStreamService(store) {
     req.on('close', cleanup);
 
     return cleanup;
+  }
+
+  /**
+   * Replay events logged after a given event ID.
+   * Called on SSE reconnection when client sends Last-Event-ID header.
+   *
+   * @param {import('node:http').ServerResponse} res
+   * @param {string} agentAddress
+   * @param {string} lastEventId
+   */
+  async function _replayEvents(res, agentAddress, lastEventId) {
+    // Get the timestamp of the last known event
+    const lastEvent = await store.getEventLog(lastEventId);
+    if (!lastEvent) return;
+
+    // Fetch all events after the last known one
+    const missedEvents = await store.listEventLog({
+      agent_address: agentAddress,
+      since: lastEvent.created_at,
+      limit: 1000,
+    });
+
+    for (const evt of missedEvents) {
+      // Skip the event the client already has
+      if (evt.id === lastEventId) continue;
+
+      let payload = evt.payload;
+      if (typeof payload === 'string') {
+        try {
+          payload = JSON.parse(payload);
+        } catch (_) {
+          // leave as string
+        }
+      }
+
+      const ssePayload = JSON.stringify(payload || {});
+      try {
+        res.write(`id: ${evt.id}\nevent: ${evt.event_type}\ndata: ${ssePayload}\n\n`);
+      } catch (err) {
+        console.warn('[a2a/event-stream] Failed to replay event:', err.message);
+        break;
+      }
+    }
   }
 
   return {

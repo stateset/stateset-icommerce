@@ -21,6 +21,28 @@ import {
 import { createStripeWebhookHandlers, getSupportedStripeEvents } from './webhooks.js';
 import { verifyStripeSignature } from './signature.js';
 
+/**
+ * Flatten a nested object for Stripe's URL-encoded body format.
+ * { metadata: { foo: 'bar' } } → { 'metadata[foo]': 'bar' }
+ */
+function _flattenObject(obj, prefix = '') {
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}[${key}]` : key;
+    if (
+      value !== null &&
+      value !== undefined &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      Object.assign(result, _flattenObject(value, fullKey));
+    } else if (value !== null && value !== undefined) {
+      result[fullKey] = String(value);
+    }
+  }
+  return result;
+}
+
 export class StripeAdapter extends BasePlatformAdapter {
   /**
    * @param {Object} [config]
@@ -32,11 +54,100 @@ export class StripeAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * Test connection by verifying config is present.
-   * Stripe doesn't have a simple "ping" endpoint without API keys.
+   * Test connection. If an API key is configured, pings the Stripe API.
    */
   async testConnection() {
+    if (this.config.apiKey) {
+      try {
+        const resp = await fetch('https://api.stripe.com/v1/balance', {
+          headers: { Authorization: `Bearer ${this.config.apiKey}` },
+        });
+        return resp.ok;
+      } catch {
+        return false;
+      }
+    }
     return !!this.config.webhookSecret;
+  }
+
+  /**
+   * Make an authenticated request to the Stripe API.
+   * @param {string} method
+   * @param {string} path - e.g., '/v1/payment_intents'
+   * @param {Object} [body] - URL-encoded body params
+   * @returns {Promise<Object>}
+   */
+  async _stripeRequest(method, path, body) {
+    if (!this.config.apiKey) {
+      throw new Error('Stripe API key is required for write operations. Set config.apiKey.');
+    }
+
+    const url = `https://api.stripe.com${path}`;
+    const options = {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.config.apiKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      signal: AbortSignal.timeout(15_000),
+    };
+
+    if (body) {
+      options.body = new URLSearchParams(_flattenObject(body)).toString();
+    }
+
+    const response = await fetch(url, options);
+    const data = await response.json();
+
+    if (!response.ok) {
+      const errMsg = data?.error?.message || `Stripe API error: ${response.status}`;
+      throw new Error(errMsg);
+    }
+
+    return data;
+  }
+
+  /**
+   * Create a Stripe PaymentIntent.
+   * @param {Object} params - { amount (cents), currency, description, metadata }
+   * @returns {Promise<Object>}
+   */
+  async createPaymentIntent(params) {
+    return this._stripeRequest('POST', '/v1/payment_intents', params);
+  }
+
+  /**
+   * Create a Stripe Refund.
+   * @param {Object} params - { payment_intent, amount (cents), reason, metadata }
+   * @returns {Promise<Object>}
+   */
+  async createRefund(params) {
+    return this._stripeRequest('POST', '/v1/refunds', params);
+  }
+
+  /**
+   * Update order fulfillment metadata in Stripe (via PaymentIntent metadata update).
+   * @param {string} paymentIntentId
+   * @param {Object} metadata
+   * @returns {Promise<Object>}
+   */
+  async updateFulfillment(paymentIntentId, metadata) {
+    return this._stripeRequest('POST', `/v1/payment_intents/${paymentIntentId}`, {
+      metadata: {
+        ...metadata,
+        fulfillment_status: metadata.fulfillment_status || 'fulfilled',
+        fulfilled_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  /**
+   * Create a Stripe Customer.
+   * @param {Object} params - { email, name, metadata }
+   * @returns {Promise<Object>}
+   */
+  async createCustomer(params) {
+    return this._stripeRequest('POST', '/v1/customers', params);
   }
 
   /**
@@ -47,10 +158,38 @@ export class StripeAdapter extends BasePlatformAdapter {
   }
 
   /**
-   * Reverse mapping is not supported for Stripe (write-back not applicable).
+   * Reverse mapping: convert StateSet records to Stripe API params.
+   * @param {string} entityType
+   * @param {Object} record
+   * @returns {Object}
    */
-  mapFromStateSet(_entityType, _record) {
-    throw new Error('Stripe adapter does not support reverse mapping');
+  mapFromStateSet(entityType, record) {
+    switch (entityType) {
+      case 'payment_intent':
+        return {
+          amount: Math.round((record.amount || record.total || 0) * 100),
+          currency: (record.currency || 'usd').toLowerCase(),
+          description: record.description || record.memo || undefined,
+          metadata: { stateset_order_id: record.orderId || record.id },
+        };
+      case 'refund':
+        return {
+          payment_intent: record.stripePaymentIntentId || record.externalId,
+          amount: record.amount ? Math.round(record.amount * 100) : undefined,
+          reason: record.reason || 'requested_by_customer',
+          metadata: { stateset_return_id: record.returnId || record.id },
+        };
+      case 'customer':
+        return {
+          email: record.email,
+          name: record.name || `${record.firstName || ''} ${record.lastName || ''}`.trim(),
+          metadata: { stateset_customer_id: record.id },
+        };
+      default:
+        throw new Error(
+          `Unsupported reverse mapping entity: ${entityType}; reverse mapping is not supported`,
+        );
+    }
   }
 
   /**

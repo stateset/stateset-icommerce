@@ -248,6 +248,8 @@ export function createNotificationService(store) {
           'X-StateSet-Signature': `sha256=${signature}`,
           'X-StateSet-Timestamp': timestamp,
           'X-StateSet-Event': eventType,
+          'X-StateSet-Idempotency-Key': logId,
+          'X-StateSet-Delivery-Id': logId,
         },
         body: signatureBody,
         signal: AbortSignal.timeout(10_000),

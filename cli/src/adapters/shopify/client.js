@@ -222,6 +222,122 @@ export class ShopifyClient {
   }
 
   /**
+   * Make an authenticated POST request.
+   * @param {string} url - Path relative to baseUrl
+   * @param {Object} body - JSON body
+   * @returns {Promise<{data: Object, headers: Headers}>}
+   */
+  async post(url, body) {
+    await this.rateLimiter.wait();
+
+    const fullUrl = `${this.baseUrl}${url}`;
+    const response = await fetch(fullUrl, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new ShopifyApiError(response.status, response.statusText, text);
+    }
+
+    const data = await response.json();
+    return { data, headers: response.headers };
+  }
+
+  /**
+   * Make an authenticated PUT request.
+   * @param {string} url - Path relative to baseUrl
+   * @param {Object} body - JSON body
+   * @returns {Promise<{data: Object, headers: Headers}>}
+   */
+  async put(url, body) {
+    await this.rateLimiter.wait();
+
+    const fullUrl = `${this.baseUrl}${url}`;
+    const response = await fetch(fullUrl, {
+      method: 'PUT',
+      headers: this.headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new ShopifyApiError(response.status, response.statusText, text);
+    }
+
+    const data = await response.json();
+    return { data, headers: response.headers };
+  }
+
+  /**
+   * Create an order in Shopify.
+   * @param {Object} orderData
+   * @returns {Promise<Object>}
+   */
+  async createOrder(orderData) {
+    const { data } = await this.post('/orders.json', { order: orderData });
+    return data?.order;
+  }
+
+  /**
+   * Update an order.
+   * @param {string|number} orderId
+   * @param {Object} updates
+   * @returns {Promise<Object>}
+   */
+  async updateOrder(orderId, updates) {
+    const { data } = await this.put(`/orders/${orderId}.json`, { order: updates });
+    return data?.order;
+  }
+
+  /**
+   * Create a fulfillment for an order.
+   * @param {string|number} orderId
+   * @param {Object} fulfillmentData - { tracking_number, tracking_company, tracking_urls, line_items }
+   * @returns {Promise<Object>}
+   */
+  async createFulfillment(orderId, fulfillmentData) {
+    const { data } = await this.post(`/orders/${orderId}/fulfillments.json`, {
+      fulfillment: {
+        notify_customer: true,
+        ...fulfillmentData,
+      },
+    });
+    return data?.fulfillment;
+  }
+
+  /**
+   * Adjust inventory level at a location.
+   * @param {string} inventoryItemId
+   * @param {string} locationId
+   * @param {number} adjustment - Positive or negative
+   * @returns {Promise<Object>}
+   */
+  async adjustInventory(inventoryItemId, locationId, adjustment) {
+    const { data } = await this.post('/inventory_levels/adjust.json', {
+      inventory_item_id: inventoryItemId,
+      location_id: locationId,
+      available_adjustment: adjustment,
+    });
+    return data?.inventory_level;
+  }
+
+  /**
+   * Create a refund for an order.
+   * @param {string|number} orderId
+   * @param {Object} refundData
+   * @returns {Promise<Object>}
+   */
+  async createRefund(orderId, refundData) {
+    const { data } = await this.post(`/orders/${orderId}/refunds.json`, {
+      refund: refundData,
+    });
+    return data?.refund;
+  }
+
+  /**
    * Test connection by fetching shop info.
    * @returns {Promise<boolean>}
    */

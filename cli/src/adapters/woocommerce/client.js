@@ -216,6 +216,146 @@ export class WooCommerceClient {
   }
 
   /**
+   * Make an authenticated POST request.
+   * @param {string} endpoint - e.g., '/orders'
+   * @param {Object} body - JSON body
+   * @returns {Promise<{data: Object, headers: Headers}>}
+   */
+  async post(endpoint, body) {
+    await this.rateLimiter.wait();
+
+    const url = `${this.baseUrl}${endpoint}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new WooCommerceApiError(response.status, response.statusText, text);
+    }
+
+    const data = await response.json();
+    return { data, headers: response.headers };
+  }
+
+  /**
+   * Make an authenticated PUT request.
+   * @param {string} endpoint - e.g., '/orders/123'
+   * @param {Object} body - JSON body
+   * @returns {Promise<{data: Object, headers: Headers}>}
+   */
+  async put(endpoint, body) {
+    await this.rateLimiter.wait();
+
+    const url = `${this.baseUrl}${endpoint}`;
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: this.headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new WooCommerceApiError(response.status, response.statusText, text);
+    }
+
+    const data = await response.json();
+    return { data, headers: response.headers };
+  }
+
+  /**
+   * Make an authenticated DELETE request.
+   * @param {string} endpoint - e.g., '/orders/123'
+   * @param {Object} [params] - Query parameters (e.g., { force: true })
+   * @returns {Promise<{data: Object, headers: Headers}>}
+   */
+  async delete(endpoint, params = {}) {
+    await this.rateLimiter.wait();
+
+    const urlObj = new URL(`${this.baseUrl}${endpoint}`);
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== null && value !== undefined) urlObj.searchParams.set(key, String(value));
+    }
+
+    const response = await fetch(urlObj.toString(), {
+      method: 'DELETE',
+      headers: this.headers,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new WooCommerceApiError(response.status, response.statusText, text);
+    }
+
+    const data = await response.json();
+    return { data, headers: response.headers };
+  }
+
+  /**
+   * Create an order in WooCommerce.
+   * @param {Object} orderData
+   * @returns {Promise<Object>}
+   */
+  async createOrder(orderData) {
+    const { data } = await this.post('/orders', orderData);
+    return data;
+  }
+
+  /**
+   * Update an order's status or fields.
+   * @param {number|string} orderId
+   * @param {Object} updates - e.g., { status: 'completed' }
+   * @returns {Promise<Object>}
+   */
+  async updateOrder(orderId, updates) {
+    const { data } = await this.put(`/orders/${orderId}`, updates);
+    return data;
+  }
+
+  /**
+   * Add an order note (used for fulfillment tracking).
+   * @param {number|string} orderId
+   * @param {string} note
+   * @param {boolean} [customerNote=false]
+   * @returns {Promise<Object>}
+   */
+  async addOrderNote(orderId, note, customerNote = false) {
+    const { data } = await this.post(`/orders/${orderId}/notes`, {
+      note,
+      customer_note: customerNote,
+    });
+    return data;
+  }
+
+  /**
+   * Update product stock quantity.
+   * @param {number|string} productId
+   * @param {number} stockQuantity
+   * @param {boolean} [manageStock=true]
+   * @returns {Promise<Object>}
+   */
+  async updateProductStock(productId, stockQuantity, manageStock = true) {
+    const { data } = await this.put(`/products/${productId}`, {
+      manage_stock: manageStock,
+      stock_quantity: stockQuantity,
+    });
+    return data;
+  }
+
+  /**
+   * Create a refund for an order.
+   * @param {number|string} orderId
+   * @param {Object} refundData - { amount, reason }
+   * @returns {Promise<Object>}
+   */
+  async createRefund(orderId, refundData) {
+    const { data } = await this.post(`/orders/${orderId}/refunds`, refundData);
+    return data;
+  }
+
+  /**
    * Test connection by fetching system status.
    * @returns {Promise<boolean>}
    */

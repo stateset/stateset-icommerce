@@ -44,6 +44,12 @@ describe('stateset lifecycle and guardrails', () => {
     assert.match(result.stdout, /Update Manager/i);
   });
 
+  it('routes `stateset pay --help` to stateset-pay', () => {
+    const result = runMain(['pay', '--help']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /StateSet Pay/i);
+  });
+
   it('supports `--update` shorthand routing', () => {
     const result = runMain(['--update', '--help']);
     assert.equal(result.status, 0, result.stderr);
@@ -55,6 +61,22 @@ describe('stateset lifecycle and guardrails', () => {
     const result = runMain(['--batch', batchFile, '--parallel', '999']);
     assert.equal(result.status, 1);
     assert.match(`${result.stdout}${result.stderr}`, /cannot exceed/i);
+  });
+
+  it('rejects streaming in batch mode instead of ignoring it', () => {
+    const batchFile = createBatchFile();
+    const result = runMain(['--batch', batchFile, '--stream', '--json']);
+    assert.equal(result.status, 1);
+    const payload = JSON.parse(result.stdout);
+    assert.match(payload.error, /--stream is not supported/i);
+  });
+
+  it('validates think level before batch execution', () => {
+    const batchFile = createBatchFile();
+    const result = runMain(['--batch', batchFile, '--think', 'max', '--json']);
+    assert.equal(result.status, 1);
+    const payload = JSON.parse(result.stdout);
+    assert.match(payload.error, /invalid think level/i);
   });
 
   it('requires queue admin guard for queue operations', () => {
@@ -86,5 +108,12 @@ describe('stateset lifecycle and guardrails', () => {
     assert.doesNotThrow(() => JSON.parse(result.stdout));
     const payload = JSON.parse(result.stdout);
     assert.match(payload.error, /timeout.*positive integer/i);
+  });
+
+  it('fails fast when an explicit profile does not exist', () => {
+    const result = runMain(['--json', '--profile', 'missing-profile', 'ping']);
+    assert.equal(result.status, 1);
+    const payload = JSON.parse(result.stdout);
+    assert.match(payload.error, /profile 'missing-profile' not found/i);
   });
 });

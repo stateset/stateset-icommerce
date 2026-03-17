@@ -167,6 +167,47 @@ export function createEscrowService(store) {
   }
 
   /**
+   * Release an escrow using the store's atomic helper when available.
+   * Falls back to a regular update for in-memory/mock stores used in tests.
+   *
+   * @param {string} escrowId
+   * @returns {Promise<Object|null>}
+   */
+  async function releaseEscrowRecord(escrowId) {
+    if (typeof store.releaseEscrowAtomic === 'function') {
+      return await Promise.resolve(store.releaseEscrowAtomic(escrowId));
+    }
+
+    const now = new Date().toISOString();
+    await store.updateEscrow(escrowId, {
+      status: 'released',
+      released_at: now,
+      updated_at: now,
+    });
+    return await store.getEscrow(escrowId);
+  }
+
+  /**
+   * Refund an escrow using the store's atomic helper when available.
+   * Falls back to a regular update for in-memory/mock stores used in tests.
+   *
+   * @param {string} escrowId
+   * @returns {Promise<Object|null>}
+   */
+  async function refundEscrowRecord(escrowId) {
+    if (typeof store.refundEscrowAtomic === 'function') {
+      return await Promise.resolve(store.refundEscrowAtomic(escrowId));
+    }
+
+    const now = new Date().toISOString();
+    await store.updateEscrow(escrowId, {
+      status: 'refunded',
+      updated_at: now,
+    });
+    return await store.getEscrow(escrowId);
+  }
+
+  /**
    * Create a new escrow between buyer and seller agents
    *
    * @param {Object} params - Escrow parameters
@@ -344,7 +385,7 @@ export function createEscrowService(store) {
     validateTransition(escrow.status, 'released');
 
     // Atomic conditional update prevents double-release race conditions
-    const released = store.releaseEscrowAtomic(escrowId);
+    const released = await releaseEscrowRecord(escrowId);
 
     return {
       success: true,
@@ -371,7 +412,7 @@ export function createEscrowService(store) {
     validateTransition(escrow.status, 'refunded');
 
     // Atomic conditional update prevents double-refund race conditions
-    const refunded = store.refundEscrowAtomic(escrowId);
+    const refunded = await refundEscrowRecord(escrowId);
 
     return {
       success: true,
@@ -638,6 +679,66 @@ export function createEscrowService(store) {
     return escrows.map(formatEscrow);
   }
 
+  /**
+   * Process all active/funded escrows: auto-release time-locked, auto-expire past deadline.
+   *
+   * This is the escrow "tick" — should be called periodically (e.g., every 60s).
+   *
+   * For each active/funded escrow:
+   *   1. If expired → mark expired (auto-refund)
+   *   2. If all conditions met (including time_lock) → auto-release
+   *
+   * @returns {Promise<Object>} Processing summary
+   */
+  async function processEscrows() {
+    const activeEscrows = await store.listEscrows({ status: 'active' });
+    const fundedEscrows = await store.listEscrows({ status: 'funded' });
+    const allEscrows = [...activeEscrows, ...fundedEscrows];
+
+    let released = 0;
+    let expired = 0;
+    let checked = 0;
+    const actions = [];
+
+    for (const escrow of allEscrows) {
+      checked++;
+
+      // 1. Check expiry first
+      const expiresAt = escrow.expires_at ? new Date(escrow.expires_at) : null;
+      if (expiresAt && new Date() >= expiresAt) {
+        try {
+          await store.updateEscrow(escrow.id, { status: 'expired' });
+          expired++;
+          actions.push({ escrowId: escrow.id, action: 'expired' });
+        } catch (err) {
+          console.warn(`[escrow] Failed to expire ${escrow.id}:`, err.message);
+        }
+        continue;
+      }
+
+      // 2. Check if all conditions are met (including time_lock)
+      try {
+        const result = await checkConditions(escrow.id);
+        if (result.allMet) {
+          const releaseResult = await releaseEscrow(escrow.id);
+          if (releaseResult.success !== false) {
+            released++;
+            actions.push({
+              escrowId: escrow.id,
+              action: 'auto_released',
+              reason: 'all_conditions_met',
+            });
+          }
+        }
+      } catch (err) {
+        // Don't fail the whole batch on one escrow error
+        console.warn(`[escrow] Failed to process ${escrow.id}:`, err.message);
+      }
+    }
+
+    return { checked, released, expired, actions };
+  }
+
   return {
     // Core escrow operations
     createEscrow,
@@ -652,6 +753,9 @@ export function createEscrowService(store) {
 
     // Expiry management
     checkExpired,
+
+    // Autonomous processing
+    processEscrows,
 
     // Query operations
     getEscrow,

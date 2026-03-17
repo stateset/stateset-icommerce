@@ -34,6 +34,7 @@ describe('AGENTS object', () => {
     'sync',
     'manufacturing',
     'payments',
+    'stablecoin',
     'shipments',
     'suppliers',
     'invoices',
@@ -47,8 +48,8 @@ describe('AGENTS object', () => {
     assert.ok(AGENTS != null && typeof AGENTS === 'object');
   });
 
-  it('contains exactly 19 agent definitions', () => {
-    assert.strictEqual(Object.keys(AGENTS).length, 19);
+  it('contains exactly 20 agent definitions', () => {
+    assert.strictEqual(Object.keys(AGENTS).length, 20);
   });
 
   it('contains all expected agent keys', () => {

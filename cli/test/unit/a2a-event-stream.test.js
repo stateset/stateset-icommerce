@@ -104,9 +104,10 @@ function createMockRes() {
   };
 }
 
-function createMockReq() {
+function createMockReq(headers = {}) {
   const listeners = {};
   return {
+    headers,
     on: mock.fn((event, cb) => {
       listeners[event] = cb;
     }),
@@ -968,7 +969,7 @@ describe('SSE message format', () => {
     globalThis.setInterval.mock.restore();
   });
 
-  it('pushEvent sends SSE in correct format: event + data + double newline', async () => {
+  it('pushEvent sends SSE in correct format: id + event + data + double newline', async () => {
     const mockReq = createMockReq();
     const mockRes = createMockRes();
 
@@ -983,10 +984,11 @@ describe('SSE message format', () => {
 
     const msg = mockRes.write.mock.calls[0].arguments[0];
     const lines = msg.split('\n');
-    assert.equal(lines[0], 'event: a2a_payment.created');
-    assert.equal(lines[1], 'data: {"id":"p1"}');
-    assert.equal(lines[2], '');
+    assert.match(lines[0], /^id: /);
+    assert.equal(lines[1], 'event: a2a_payment.created');
+    assert.equal(lines[2], 'data: {"id":"p1"}');
     assert.equal(lines[3], '');
+    assert.equal(lines[4], '');
   });
 
   it('pushEvent with undefined payload sends {} as SSE data', async () => {

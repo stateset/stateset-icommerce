@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import module from 'node:module';
 import { getMainCliParseOptions, normalizeMainCliValues } from '../src/cli-schema.js';
+import { buildRunAgentLoopOptions } from '../src/main-cli-options.js';
 
 if (module.enableCompileCache && !process.env.NODE_DISABLE_COMPILE_CACHE) {
   try {
@@ -41,6 +42,12 @@ const MAX_PARALLELISM = (() => {
 })();
 const BACKPRESSURE_DELAY_MS = 1000;
 const QUEUE_ADMIN_ENV = 'STATESET_QUEUE_ADMIN';
+const SUBCOMMAND_SCRIPTS = new Map([
+  ['doctor', 'stateset-doctor.js'],
+  ['update', 'stateset-update.js'],
+  ['simulate', 'stateset-simulate.js'],
+  ['pay', 'stateset-pay.js'],
+]);
 
 function runLifecycleScript(scriptName, args) {
   const scriptPath = join(__dirname, scriptName);
@@ -73,18 +80,9 @@ function routeLifecycleCommands(argv) {
   }
 
   const first = argv[0];
-  if (first === 'doctor') {
-    runLifecycleScript('stateset-doctor.js', argv.slice(1));
-    return true;
-  }
-
-  if (first === 'update') {
-    runLifecycleScript('stateset-update.js', argv.slice(1));
-    return true;
-  }
-
-  if (first === 'simulate') {
-    runLifecycleScript('stateset-simulate.js', argv.slice(1));
+  const subcommandScript = SUBCOMMAND_SCRIPTS.get(first);
+  if (subcommandScript) {
+    runLifecycleScript(subcommandScript, argv.slice(1));
     return true;
   }
 
@@ -146,12 +144,15 @@ const AVAILABLE_AGENTS = Object.keys(AGENTS);
  * Load configuration from profile and merge with CLI args
  */
 function loadConfigWithProfile(profileName) {
-  try {
-    return getProfileConfig(profileName);
-  } catch {
-    // Return empty config if profile system not initialized
-    return {};
+  if (!profileName) {
+    try {
+      return getProfileConfig();
+    } catch {
+      // Return empty config if no default profile exists yet.
+      return {};
+    }
   }
+  return getProfileConfig(profileName);
 }
 
 const HELP = `
@@ -463,25 +464,26 @@ async function processBatchRequest(
   total,
   config,
   values,
-  output,
   treasuryConfig,
   onConfirmRequired,
+  thinkLevel,
+  providerName,
+  memoryOverride,
 ) {
   const startTime = Date.now();
 
   try {
     const result = await runAgentLoopWithTimeout(
-      {
+      buildRunAgentLoopOptions({
         request,
-        dbPath: config.db,
-        model: config.model,
-        allowApply: config.apply,
-        agent: values.agent,
-        verbose: false,
-        treasury: treasuryConfig,
+        config,
+        values,
+        treasuryConfig,
         onConfirmRequired,
-        enableX402: values.x402,
-      },
+        thinkLevel,
+        providerName,
+        memoryOverride,
+      }),
       config.timeoutMs,
     );
 
@@ -518,6 +520,9 @@ async function processSequential(
   output,
   treasuryConfig,
   onConfirmRequired,
+  thinkLevel,
+  providerName,
+  memoryOverride,
 ) {
   const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
@@ -535,18 +540,17 @@ async function processSequential(
 
     try {
       const result = await runAgentLoopWithTimeout(
-        {
+        buildRunAgentLoopOptions({
           request,
-          dbPath: config.db,
-          model: config.model,
-          allowApply: config.apply,
-          resumeSessionId: sessionId,
-          agent: values.agent,
-          verbose: false,
-          treasury: treasuryConfig,
+          config,
+          values,
+          treasuryConfig,
           onConfirmRequired,
-          enableX402: values.x402,
-        },
+          resumeSessionId: sessionId,
+          thinkLevel,
+          providerName,
+          memoryOverride,
+        }),
         config.timeoutMs,
       );
 
@@ -602,6 +606,9 @@ async function processParallel(
   output,
   treasuryConfig,
   onConfirmRequired,
+  thinkLevel,
+  providerName,
+  memoryOverride,
 ) {
   const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
@@ -636,9 +643,11 @@ async function processParallel(
         total,
         config,
         values,
-        output,
         treasuryConfig,
         onConfirmRequired,
+        thinkLevel,
+        providerName,
+        memoryOverride,
       );
 
       results.push(result);
@@ -684,7 +693,15 @@ async function processParallel(
  * Handle batch mode - process multiple requests from stdin or file
  * Supports both sequential (default) and parallel processing
  */
-async function handleBatchMode(values, config, output, treasuryConfig) {
+async function handleBatchMode(
+  values,
+  config,
+  output,
+  treasuryConfig,
+  thinkLevel,
+  providerName,
+  memoryOverride,
+) {
   const fs = await import('node:fs/promises');
   const isJsonOutput = values.json || values.format === 'json';
   const isQuiet = values.quiet || isJsonOutput;
@@ -703,6 +720,12 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
     failCli('--resume is not compatible with --parallel.', {
       json: isJsonOutput,
       details: ['Use --resume with sequential batch mode for session continuity.'],
+    });
+  }
+  if (values.stream) {
+    failCli('--stream is not supported with --batch or --stdin.', {
+      json: isJsonOutput,
+      details: ['Use sequential non-batch mode for token streaming.'],
     });
   }
   const onConfirmRequired = createConfirmHandler({
@@ -753,6 +776,9 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
       output,
       treasuryConfig,
       onConfirmRequired,
+      thinkLevel,
+      providerName,
+      memoryOverride,
     );
   } else {
     // Sequential processing mode (maintains session context)
@@ -763,6 +789,9 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
       output,
       treasuryConfig,
       onConfirmRequired,
+      thinkLevel,
+      providerName,
+      memoryOverride,
     );
   }
 
@@ -844,7 +873,12 @@ async function main() {
   const jsonRequested = values.json || values.format === 'json';
 
   // Load profile config and merge with CLI args (CLI args take precedence)
-  const profileConfig = loadConfigWithProfile(values.profile);
+  let profileConfig = {};
+  try {
+    profileConfig = loadConfigWithProfile(values.profile);
+  } catch (error) {
+    failCli(error.message, { json: jsonRequested });
+  }
   const timeoutMs = values.timeout ? Number(values.timeout) : null;
   if (timeoutMs !== null && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
     failCli('--timeout must be a positive integer', { json: jsonRequested });
@@ -973,17 +1007,17 @@ async function main() {
       failCli(provResult.error, { json: isJsonOutput });
     }
   }
+  const thinkLevel = values.think || 'off';
+  const thinkResult = validateThinkLevel(thinkLevel);
+  if (!thinkResult.valid) {
+    failCli(thinkResult.error, { json: isJsonOutput });
+  }
+  const providerName = values.provider || 'claude';
   if (values.model) {
     const modelResult = validateModel(values.model);
     if (modelResult.warning && !isQuiet) {
       console.warn(`Warning: ${modelResult.warning}`);
     }
-  }
-
-  if (values.stream && isJsonOutput) {
-    failCli('--stream cannot be used with JSON output. Remove --stream or use a non-JSON format.', {
-      json: isJsonOutput,
-    });
   }
 
   // Validate agent name if provided
@@ -996,8 +1030,22 @@ async function main() {
 
   // Handle batch/stdin modes
   if (values.stdin || values.batch) {
-    await handleBatchMode(values, config, output, treasuryConfig);
+    await handleBatchMode(
+      values,
+      config,
+      output,
+      treasuryConfig,
+      thinkLevel,
+      providerName,
+      memoryOverride,
+    );
     return;
+  }
+
+  if (values.stream && isJsonOutput) {
+    failCli('--stream cannot be used with JSON output. Remove --stream or use a non-JSON format.', {
+      json: isJsonOutput,
+    });
   }
 
   // Get request from positionals
@@ -1024,16 +1072,6 @@ async function main() {
     }
     process.exit(1);
   }
-
-  // Validate think level
-  const thinkLevel = values.think || 'off';
-  const thinkResult = validateThinkLevel(thinkLevel);
-  if (!thinkResult.valid) {
-    failCli(thinkResult.error, { json: isJsonOutput });
-  }
-
-  // Resolve provider
-  const providerName = values.provider || 'claude';
 
   // Show mode indicator
   if (!isQuiet) {
@@ -1086,26 +1124,18 @@ async function main() {
 
   try {
     const result = await runAgentLoopWithTimeout(
-      {
+      buildRunAgentLoopOptions({
         request,
-        dbPath: config.db,
-        model: config.model,
-        allowApply: config.apply,
-        resumeSessionId: values.resume,
-        agent: values.agent,
-        verbose: config.verbose,
-        treasury: treasuryConfig,
+        config,
+        values,
+        treasuryConfig,
         onConfirmRequired,
-        // v0.2.8: Extended thinking, streaming, budget, provider
+        resumeSessionId: values.resume,
         thinkLevel,
-        streaming: values.stream,
-        maxBudgetUsd: values.budget || null,
-        provider: providerName,
-        enableMemory: memoryOverride === null ? null : memoryOverride,
-        enableX402: values.x402,
+        providerName,
+        memoryOverride,
         onPartialMessage: values.stream
           ? (event) => {
-              // Write partial text to stdout for streaming display
               if (event?.content) {
                 process.stdout.write(event.content);
               } else if (event?.delta?.text) {
@@ -1141,7 +1171,7 @@ async function main() {
             }
           }
         },
-      },
+      }),
       config.timeoutMs,
     );
 

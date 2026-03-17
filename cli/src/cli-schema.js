@@ -245,7 +245,8 @@ export const MAIN_CLI_OPTIONS = [
     key: 'color',
     flag: '--no-color',
     type: 'boolean',
-    default: true,
+    default: false,
+    negated: true,
     description: 'Disable color',
   },
   {
@@ -329,15 +330,15 @@ export function normalizeMainCliValues(rawValues = {}) {
   for (const def of MAIN_CLI_OPTIONS) {
     const longName = longOptionName(def.flag);
     if (Object.prototype.hasOwnProperty.call(rawValues, longName)) {
-      normalized[def.key] = rawValues[longName];
+      normalized[def.key] = def.negated ? !rawValues[longName] : rawValues[longName];
       continue;
     }
     if (Object.prototype.hasOwnProperty.call(rawValues, def.key)) {
-      normalized[def.key] = rawValues[def.key];
+      normalized[def.key] = def.negated ? !rawValues[def.key] : rawValues[def.key];
       continue;
     }
     if (Object.prototype.hasOwnProperty.call(def, 'default')) {
-      normalized[def.key] = def.default;
+      normalized[def.key] = def.negated ? !def.default : def.default;
     }
   }
   return normalized;

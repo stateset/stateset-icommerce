@@ -12,8 +12,8 @@
  */
 
 import { parseArgs } from 'node:util';
-import { RichOutput, ICONS } from '../src/claude-harness.js';
-import { CLI_VERSION } from '../src/config.js';
+import { RichOutput, ICONS } from '../src/output.js';
+import { CLI_VERSION, DEFAULT_MODEL } from '../src/config.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -23,6 +23,7 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const PROFILES_DIR = path.join(CONFIG_DIR, 'profiles');
 const ENV_FILE = path.join(CONFIG_DIR, '.env');
 const CONFIG_RECOVERY_WARNINGS = [];
+const PROFILE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 const KNOWN_CONFIG_KEYS = {
   db: 'string',
@@ -201,26 +202,56 @@ function saveConfig(config) {
   secureWriteFile(CONFIG_FILE, JSON.stringify(config, null, 2), 0o600);
 }
 
-// Load a profile
-function loadProfile(name) {
-  const profilePath = path.join(PROFILES_DIR, `${name}.json`);
-  return parseJsonFileSafely(profilePath, () => ({
-    // Return defaults for new profiles
+function validateProfileName(name) {
+  if (!name || !PROFILE_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Invalid profile name '${name}'. Use only letters, numbers, dots, underscores, and dashes.`,
+    );
+  }
+  return name;
+}
+
+function getProfilePath(name) {
+  return path.join(PROFILES_DIR, `${validateProfileName(name)}.json`);
+}
+
+function createDefaultProfile(name) {
+  return {
     name,
     db: './store.db',
-    model: 'claude-sonnet-4-20250514',
+    model: DEFAULT_MODEL,
     apply: false,
     verbose: false,
     created: new Date().toISOString(),
-  }));
+  };
+}
+
+// Load a profile
+function loadProfile(name, { allowMissing = false } = {}) {
+  const profilePath = getProfilePath(name);
+  if (!fs.existsSync(profilePath)) {
+    if (!allowMissing) {
+      throw new Error(`Profile '${name}' not found`);
+    }
+    return createDefaultProfile(name);
+  }
+  return parseJsonFileSafely(profilePath, () => createDefaultProfile(name));
 }
 
 // Save a profile
 function saveProfile(name, profile) {
   ensureConfigDir();
-  const profilePath = path.join(PROFILES_DIR, `${name}.json`);
+  const profilePath = getProfilePath(name);
   profile.updated = new Date().toISOString();
   secureWriteFile(profilePath, JSON.stringify(profile, null, 2), 0o600);
+}
+
+function profileExists(name) {
+  try {
+    return fs.existsSync(getProfilePath(name));
+  } catch {
+    return false;
+  }
 }
 
 // List all profiles
@@ -571,7 +602,13 @@ async function main() {
 
     case 'show': {
       const profileName = args[0] || values.profile || config.defaultProfile || 'default';
-      const profile = loadProfile(profileName);
+      let profile;
+      try {
+        profile = loadProfile(profileName);
+      } catch (error) {
+        await emitError(`Error: ${error.message}`);
+        process.exit(1);
+      }
       if (values.json) {
         await writeJson(profile);
       } else {
@@ -593,12 +630,18 @@ async function main() {
         }
         process.exit(1);
       }
+      try {
+        validateProfileName(name);
+      } catch (error) {
+        await emitError(`Error: ${error.message}`);
+        process.exit(1);
+      }
       const profiles = listProfiles();
       if (profiles.includes(name)) {
         await emitError(`Error: Profile '${name}' already exists`);
         process.exit(1);
       }
-      const profile = loadProfile(name);
+      const profile = createDefaultProfile(name);
       saveProfile(name, profile);
       if (values.json) {
         await writeJson({ profile: name, created: true });
@@ -618,6 +661,12 @@ async function main() {
         if (!values.json) {
           console.error('Usage: stateset-config use <profile-name>');
         }
+        process.exit(1);
+      }
+      try {
+        validateProfileName(name);
+      } catch (error) {
+        await emitError(`Error: ${error.message}`);
         process.exit(1);
       }
       const profiles = listProfiles();
@@ -660,7 +709,15 @@ async function main() {
       }
 
       const profileName = values.profile || config.defaultProfile || 'default';
-      const profile = loadProfile(profileName);
+      let profile;
+      if (profileExists(profileName)) {
+        profile = loadProfile(profileName);
+      } else if (!values.profile && profileName === (config.defaultProfile || 'default')) {
+        profile = createDefaultProfile(profileName);
+      } else {
+        await emitError(`Error: Profile '${profileName}' not found`);
+        process.exit(1);
+      }
 
       // Parse and validate by type
       let parsedValue = value;
@@ -738,7 +795,13 @@ async function main() {
         process.exit(1);
       }
       const profileName = values.profile || config.defaultProfile || 'default';
-      const profile = loadProfile(profileName);
+      let profile;
+      try {
+        profile = loadProfile(profileName);
+      } catch (error) {
+        await emitError(`Error: ${error.message}`);
+        process.exit(1);
+      }
       const value = profile[key];
       if (value === undefined) {
         await emitError(`Key '${key}' not found in profile '${profileName}'`);
@@ -793,5 +856,11 @@ export function getProfileConfig(profileName) {
   ensureConfigDir();
   const config = loadConfig();
   const name = profileName || config.defaultProfile || 'default';
+  if (profileName) {
+    return loadProfile(name);
+  }
+  if (!profileExists(name)) {
+    return {};
+  }
   return loadProfile(name);
 }

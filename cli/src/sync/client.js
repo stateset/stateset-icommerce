@@ -467,10 +467,30 @@ export class SequencerClient {
    * @returns {boolean}
    */
   verifyInclusion(envelope, proof, expectedRoot) {
-    // Compute VES v1.0 leaf hash
-    let hash = computeLeafHash({
+    // Reconstruct the event signing hash (same computation as verifyEventSignature)
+    const eventSigningHash = computeEventSigningHash({
+      vesVersion: envelope.vesVersion || 1,
+      tenantId: envelope.tenantId,
+      storeId: envelope.storeId,
       eventId: envelope.eventId,
+      commandId: envelope.commandId || null,
+      sourceAgentId: envelope.sourceAgent,
+      agentKeyId: envelope.agentKeyId,
+      entityType: envelope.entityType,
+      entityId: envelope.entityId,
+      eventType: envelope.eventType,
+      baseVersion: envelope.baseVersion || null,
+      createdAt: envelope.createdAt,
       payloadPlainHash: hexToBuffer(envelope.payloadPlainHash),
+      payloadCipherHash: hexToBuffer(envelope.payloadCipherHash),
+    });
+
+    // Compute VES v1.0 leaf hash with the correct parameter shape
+    let hash = computeLeafHash({
+      tenantId: envelope.tenantId,
+      storeId: envelope.storeId,
+      sequenceNumber: envelope.sequenceNumber ?? proof.leafIndex,
+      eventSigningHash,
       agentSignature: hexToBuffer(envelope.agentSignature),
     });
 

@@ -68,6 +68,14 @@ describe('stateset-config CLI', () => {
     assert.equal(list.default, 'default');
   });
 
+  it('rejects invalid profile names', () => {
+    const result = runCli(['create', '../prod', '--json'], env);
+    assert.equal(result.status, 1);
+
+    const payload = parseJson(result.stdout.trim());
+    assert.match(payload.error, /invalid profile name/i);
+  });
+
   it('set and get config values', () => {
     const setResult = runCli(['set', 'db', './test.db', '--profile', 'dev', '--json'], env);
     assert.equal(setResult.status, 0, setResult.stderr);
@@ -143,6 +151,14 @@ describe('stateset-config CLI', () => {
 
     const payload = parseJson(result.stdout.trim());
     assert.ok(payload.error);
+  });
+
+  it('show returns an error for an unknown explicit profile', () => {
+    const result = runCli(['show', 'missing-profile', '--json'], env);
+    assert.equal(result.status, 1);
+
+    const payload = parseJson(result.stdout.trim());
+    assert.match(payload.error, /profile 'missing-profile' not found/i);
   });
 
 });

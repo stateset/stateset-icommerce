@@ -111,14 +111,16 @@ describe('createSLAService — construction', () => {
     assert.equal(typeof sla.checkCompliance, 'function');
     assert.equal(typeof sla.detectBreaches, 'function');
     assert.equal(typeof sla.resolveViolation, 'function');
+    assert.equal(typeof sla.enforcePenalties, 'function');
+    assert.equal(typeof sla.enforceAll, 'function');
     assert.equal(typeof sla.getSLAs, 'function');
     assert.equal(typeof sla.getViolations, 'function');
   });
 
-  it('should return exactly 6 methods', () => {
+  it('should return exactly 8 methods', () => {
     const { sla } = setup();
     const keys = Object.keys(sla);
-    assert.equal(keys.length, 6);
+    assert.equal(keys.length, 8);
   });
 });
 

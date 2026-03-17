@@ -15,7 +15,6 @@
 import crypto from 'crypto';
 import {
   computePayloadPlainHash,
-  computePayloadCipherHash,
   computeEventSigningHash,
   signEventHash,
   encryptPayload,
@@ -306,19 +305,24 @@ export class Outbox {
       const encrypted = encryptPayload(
         event.payload,
         {
+          vesVersion,
           eventId,
           tenantId: event.tenantId,
           storeId: event.storeId,
           entityType: event.entityType,
           entityId: event.entityId,
           eventType: event.eventType,
+          sourceAgentId: event.sourceAgent,
+          agentKeyId: signingKey.keyId,
+          createdAt,
+          payloadPlainHash,
         },
-        [{ kid: 0, publicKey: options.recipientPublicKey }],
+        [{ kid: signingKey.keyId, publicKey: options.recipientPublicKey }],
       );
 
       payloadKind = 1;
-      payloadEncrypted = encrypted;
-      payloadCipherHash = computePayloadCipherHash(Buffer.from(encrypted.ciphertext, 'base64'));
+      payloadEncrypted = encrypted.payloadEncrypted;
+      payloadCipherHash = encrypted.payloadCipherHash;
     }
 
     // Compute event signing hash per VES v1.0
@@ -459,24 +463,27 @@ export class Outbox {
         let payloadCipherHash = ZERO_HASH;
 
         if (options.encrypt && options.recipientPublicKey) {
-          const encryptionKey = encryptionKeys.get(event.sourceAgent);
           const encrypted = encryptPayload(
             event.payload,
-            encryptionKey.privateKey,
-            options.recipientPublicKey,
             {
+              vesVersion,
               eventId,
               tenantId: event.tenantId,
               storeId: event.storeId,
               entityType: event.entityType,
               entityId: event.entityId,
               eventType: event.eventType,
+              sourceAgentId: event.sourceAgent,
+              agentKeyId: signingKey.keyId,
+              createdAt,
+              payloadPlainHash,
             },
+            [{ kid: signingKey.keyId, publicKey: options.recipientPublicKey }],
           );
 
           payloadKind = 1;
-          payloadEncrypted = encrypted;
-          payloadCipherHash = computePayloadCipherHash(Buffer.from(encrypted.ciphertext, 'base64'));
+          payloadEncrypted = encrypted.payloadEncrypted;
+          payloadCipherHash = encrypted.payloadCipherHash;
         }
 
         // Compute event signing hash

@@ -28,4 +28,15 @@ describe('main CLI schema parse mapping', () => {
     assert.equal(values.noMemory, true);
     assert.equal(values.treasuryChain, 'base');
   });
+
+  it('inverts --no-color into color=false', () => {
+    const parsed = parseArgs({
+      args: ['--no-color'],
+      options: getMainCliParseOptions(),
+      allowPositionals: true,
+    });
+
+    const values = normalizeMainCliValues(parsed.values);
+    assert.equal(values.color, false);
+  });
 });
