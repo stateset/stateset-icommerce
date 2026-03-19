@@ -108,6 +108,47 @@ describe('createCostAnalytics', () => {
       assert.equal(summary.avgTransactionSize, 150);
     });
 
+    it('adds per-rail breakdowns and supports asset/network filters', () => {
+      analytics.record(
+        spendEntry({
+          amount: 0.01,
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        earnEntry({
+          amount: 1.25,
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const summary = analytics.getAgentSpendSummary('0xAlice');
+      assert.equal(summary.aggregateTotalsMeaningful, false);
+      assert.equal(summary.aggregateAsset, null);
+      assert.equal(summary.netMarginMeaningful, false);
+      assert.equal(summary.avgTransactionSizeMeaningful, false);
+      assert.deepEqual(summary.assets, ['BTC', 'ZEC']);
+      assert.ok(Math.abs(summary.breakdownByAsset.BTC.totalSpent - 0.01) < 1e-12);
+      assert.ok(Math.abs(summary.breakdownByAsset.BTC.networks.bitcoin.totalSpent - 0.01) < 1e-12);
+      assert.ok(Math.abs(summary.breakdownByAsset.ZEC.totalEarned - 1.25) < 1e-12);
+      assert.ok(Math.abs(summary.breakdownByAsset.ZEC.networks.zcash.totalEarned - 1.25) < 1e-12);
+
+      const filtered = analytics.getAgentSpendSummary('0xAlice', {
+        asset: 'BTC',
+        network: 'bitcoin',
+      });
+      assert.equal(filtered.aggregateTotalsMeaningful, true);
+      assert.equal(filtered.aggregateAsset, 'BTC');
+      assert.deepEqual(filtered.assets, ['BTC']);
+      assert.ok(Math.abs(filtered.totalSpent - 0.01) < 1e-12);
+      assert.equal(filtered.totalEarned, 0);
+      assert.ok(Math.abs(filtered.netMargin + 0.01) < 1e-12);
+    });
+
     it('assigns default timestamp when none provided', () => {
       const entry = { ...spendEntry() };
       delete entry.timestamp;
@@ -235,6 +276,42 @@ describe('createCostAnalytics', () => {
       const breakdown = analytics.getCounterpartyBreakdown('0xUnknown');
       assert.deepEqual(breakdown, []);
     });
+
+    it('includes per-rail counterparty breakdowns and supports filters', () => {
+      analytics.record(
+        spendEntry({
+          counterparty: '0xBob',
+          amount: 0.01,
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        earnEntry({
+          counterparty: '0xBob',
+          amount: 1.25,
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const breakdown = analytics.getCounterpartyBreakdown('0xAlice');
+      assert.equal(breakdown.length, 1);
+      assert.equal(breakdown[0].aggregateVolumeMeaningful, false);
+      assert.equal(breakdown[0].aggregateAsset, null);
+      assert.deepEqual(breakdown[0].assets, ['BTC', 'ZEC']);
+      assert.ok(Math.abs(breakdown[0].breakdownByAsset.BTC.networks.bitcoin.totalSpent - 0.01) < 1e-12);
+      assert.ok(Math.abs(breakdown[0].breakdownByAsset.ZEC.networks.zcash.totalEarned - 1.25) < 1e-12);
+
+      const filtered = analytics.getCounterpartyBreakdown('0xAlice', { asset: 'BTC' });
+      assert.equal(filtered.length, 1);
+      assert.equal(filtered[0].aggregateVolumeMeaningful, true);
+      assert.equal(filtered[0].aggregateAsset, 'BTC');
+      assert.deepEqual(filtered[0].assets, ['BTC']);
+      assert.ok(Math.abs(filtered[0].spent - 0.01) < 1e-12);
+    });
   });
 
   // =========================================================================
@@ -270,6 +347,45 @@ describe('createCostAnalytics', () => {
 
     it('returns empty array for unknown agent', () => {
       assert.deepEqual(analytics.getOperationBreakdown('0xGhost'), []);
+    });
+
+    it('adds per-rail operation breakdowns and supports filters', () => {
+      analytics.record(
+        spendEntry({
+          operation: 'quote_payment',
+          amount: 0.01,
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        earnEntry({
+          operation: 'settlement',
+          amount: 1.25,
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const breakdown = analytics.getOperationBreakdown('0xAlice');
+      assert.equal(breakdown.length, 2);
+      const quote = breakdown.find((entry) => entry.operation === 'quote_payment');
+      const settlement = breakdown.find((entry) => entry.operation === 'settlement');
+      assert.equal(quote.aggregateAsset, 'BTC');
+      assert.equal(quote.totalAmountMeaningful, true);
+      assert.equal(quote.percentOfTotalMeaningful, false);
+      assert.ok(Math.abs(quote.breakdownByAsset.BTC.networks.bitcoin.totalSpent - 0.01) < 1e-12);
+      assert.equal(settlement.aggregateAsset, 'ZEC');
+      assert.ok(Math.abs(settlement.breakdownByAsset.ZEC.networks.zcash.totalEarned - 1.25) < 1e-12);
+
+      const filtered = analytics.getOperationBreakdown('0xAlice', { asset: 'BTC', network: 'bitcoin' });
+      assert.equal(filtered.length, 1);
+      assert.equal(filtered[0].operation, 'quote_payment');
+      assert.equal(filtered[0].aggregateTotalsMeaningful, true);
+      assert.equal(filtered[0].percentOfTotalMeaningful, true);
+      assert.ok(Math.abs(filtered[0].totalAmount - 0.01) < 1e-12);
     });
   });
 
@@ -321,6 +437,49 @@ describe('createCostAnalytics', () => {
       for (let i = 1; i < trend.length; i++) {
         assert.ok(trend[i].date >= trend[i - 1].date, 'should be ascending');
       }
+    });
+
+    it('adds per-rail daily breakdowns and supports filters', () => {
+      const today = new Date();
+      today.setHours(12, 0, 0, 0);
+      const todayISO = today.toISOString();
+
+      analytics.record(
+        spendEntry({
+          amount: 0.01,
+          timestamp: todayISO,
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        earnEntry({
+          amount: 1.25,
+          timestamp: todayISO,
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const trend = analytics.getDailySpendTrend('0xAlice', 7);
+      const todayRec = trend.find((entry) => entry.date === todayKey());
+      assert.ok(todayRec, 'should have an entry for today');
+      assert.equal(todayRec.aggregateTotalsMeaningful, false);
+      assert.deepEqual(todayRec.assets, ['BTC', 'ZEC']);
+      assert.ok(Math.abs(todayRec.breakdownByAsset.BTC.networks.bitcoin.totalSpent - 0.01) < 1e-12);
+      assert.ok(Math.abs(todayRec.breakdownByAsset.ZEC.networks.zcash.totalEarned - 1.25) < 1e-12);
+
+      const filtered = analytics.getDailySpendTrend('0xAlice', 7, { asset: 'BTC', network: 'bitcoin' });
+      const filteredToday = filtered.find((entry) => entry.date === todayKey());
+      assert.ok(filteredToday, 'should have a filtered entry for today');
+      assert.equal(filteredToday.aggregateTotalsMeaningful, true);
+      assert.equal(filteredToday.aggregateAsset, 'BTC');
+      assert.deepEqual(filteredToday.assets, ['BTC']);
+      assert.ok(Math.abs(filteredToday.spent - 0.01) < 1e-12);
+      assert.equal(filteredToday.earned, 0);
+      assert.ok(Math.abs(filteredToday.net + 0.01) < 1e-12);
     });
   });
 
@@ -401,6 +560,55 @@ describe('createCostAnalytics', () => {
 
       const { dailyAnomalies } = analytics.detectAnomalies('0xAlice');
       assert.equal(dailyAnomalies.length, 0);
+    });
+
+    it('supports asset/network filters and per-rail anomaly breakdowns', () => {
+      for (let i = 0; i < 5; i++) {
+        analytics.record(
+          spendEntry({
+            amount: 0.01,
+            timestamp: daysAgo(i + 1),
+            asset: 'BTC',
+            network: 'bitcoin',
+            metadata: { asset: 'BTC', network: 'bitcoin' },
+          }),
+        );
+      }
+      analytics.record(
+        spendEntry({
+          amount: 0.2,
+          timestamp: daysAgo(0),
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        spendEntry({
+          amount: 10,
+          timestamp: daysAgo(0),
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const mixed = analytics.detectAnomalies('0xAlice');
+      assert.equal(mixed.aggregateAnomaliesMeaningful, false);
+      assert.deepEqual(mixed.assets, ['BTC', 'ZEC']);
+      assert.ok(mixed.breakdownByAsset.BTC.networks.bitcoin.transactionAnomalies.length >= 1);
+      assert.equal(mixed.breakdownByAsset.ZEC.networks.zcash.transactionCount, 1);
+
+      const filtered = analytics.detectAnomalies('0xAlice', {
+        asset: 'BTC',
+        network: 'bitcoin',
+      });
+      assert.equal(filtered.aggregateAnomaliesMeaningful, true);
+      assert.equal(filtered.aggregateAsset, 'BTC');
+      assert.deepEqual(filtered.assets, ['BTC']);
+      assert.ok(filtered.transactionAnomalies.length >= 1);
+      assert.equal(filtered.transactionAnomalies[0].asset, 'BTC');
+      assert.equal(filtered.transactionAnomalies[0].network, 'bitcoin');
     });
   });
 
@@ -576,6 +784,42 @@ describe('createCostAnalytics', () => {
         );
       }
     });
+
+    it('adds per-rail margin breakdowns and supports filters', () => {
+      analytics.record(
+        spendEntry({
+          counterparty: '0xBob',
+          amount: 0.01,
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        earnEntry({
+          counterparty: '0xBob',
+          amount: 1.25,
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const margin = analytics.getMarginAnalysis('0xAlice');
+      assert.equal(margin.grossMarginMeaningful, false);
+      assert.equal(margin.aggregateAsset, null);
+      assert.deepEqual(margin.assets, ['BTC', 'ZEC']);
+      assert.ok(Math.abs(margin.breakdownByAsset.BTC.networks.bitcoin.totalSpent - 0.01) < 1e-12);
+      assert.ok(Math.abs(margin.breakdownByAsset.ZEC.networks.zcash.totalEarned - 1.25) < 1e-12);
+      assert.equal(margin.perCounterparty[0].aggregateMarginMeaningful, false);
+
+      const filtered = analytics.getMarginAnalysis('0xAlice', { asset: 'BTC' });
+      assert.equal(filtered.grossMarginMeaningful, true);
+      assert.equal(filtered.aggregateAsset, 'BTC');
+      assert.deepEqual(filtered.assets, ['BTC']);
+      assert.ok(Math.abs(filtered.grossMargin + 0.01) < 1e-12);
+      assert.equal(filtered.perCounterparty[0].aggregateMarginMeaningful, true);
+    });
   });
 
   // =========================================================================
@@ -645,6 +889,78 @@ describe('createCostAnalytics', () => {
       const forecast = analytics.getBudgetForecast('0xAlice', 1000, 7);
       // Only the recent $50 should be in daily average (old one excluded)
       assert.equal(forecast.dailyAvgSpend, 50);
+    });
+
+    it('marks mixed-rail forecasts as not meaningful without an asset filter', () => {
+      analytics.record(
+        spendEntry({
+          amount: 0.01,
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        spendEntry({
+          amount: 1.25,
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const forecast = analytics.getBudgetForecast('0xAlice', 10);
+      assert.equal(forecast.budgetForecastMeaningful, false);
+      assert.equal(forecast.aggregateAsset, null);
+      assert.deepEqual(forecast.assets, ['BTC', 'ZEC']);
+      assert.equal(forecast.dailyAvgSpend, null);
+      assert.equal(forecast.spentThisMonth, null);
+      assert.ok(Math.abs(forecast.breakdownByAsset.BTC.spentThisMonth - 0.01) < 1e-12);
+      assert.ok(Math.abs(forecast.breakdownByAsset.ZEC.networks.zcash.spentThisMonth - 1.25) < 1e-12);
+    });
+
+    it('supports asset/network filters for rail-specific budget forecasts', () => {
+      analytics.record(
+        spendEntry({
+          amount: 0.01,
+          timestamp: daysAgo(2),
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        spendEntry({
+          amount: 0.02,
+          timestamp: daysAgo(1),
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        spendEntry({
+          amount: 1.5,
+          timestamp: daysAgo(1),
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const forecast = analytics.getBudgetForecast(
+        '0xAlice',
+        0.1,
+        30,
+        { asset: 'BTC', network: 'bitcoin' },
+      );
+      assert.equal(forecast.budgetForecastMeaningful, true);
+      assert.equal(forecast.aggregateAsset, 'BTC');
+      assert.deepEqual(forecast.assets, ['BTC']);
+      assert.ok(Math.abs(forecast.spentThisMonth - 0.03) < 1e-12);
+      assert.ok(Math.abs(forecast.dailyAvgSpend - 0.015) < 1e-12);
+      assert.ok(Math.abs(forecast.remainingBudget - 0.07) < 1e-12);
+      assert.ok(Math.abs(forecast.breakdownByAsset.BTC.networks.bitcoin.dailyAvgSpend - 0.015) < 1e-12);
     });
   });
 
@@ -837,6 +1153,46 @@ describe('createCostAnalytics', () => {
       assert.equal(alice.transactionCount, 3);
       assert.equal(alice.totalSpent, 30);
       assert.equal(alice.totalEarned, 5);
+    });
+
+    it('supports asset/network filters and exposes per-rail top spender breakdowns', () => {
+      analytics.record(
+        spendEntry({
+          agentAddress: '0xAlice',
+          amount: 0.01,
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        spendEntry({
+          agentAddress: '0xBob',
+          counterparty: '0xAlice',
+          amount: 0.02,
+          asset: 'BTC',
+          network: 'bitcoin',
+          metadata: { asset: 'BTC', network: 'bitcoin' },
+        }),
+      );
+      analytics.record(
+        spendEntry({
+          agentAddress: '0xCharlie',
+          counterparty: '0xAlice',
+          amount: 1.5,
+          asset: 'ZEC',
+          network: 'zcash',
+          metadata: { asset: 'ZEC', network: 'zcash' },
+        }),
+      );
+
+      const top = analytics.getTopSpenders(10, { asset: 'BTC', network: 'bitcoin' });
+      assert.equal(top.length, 2);
+      assert.equal(top[0].agentAddress, '0xBob');
+      assert.equal(top[0].aggregateTotalsMeaningful, true);
+      assert.equal(top[0].aggregateAsset, 'BTC');
+      assert.ok(Math.abs(top[0].breakdownByAsset.BTC.networks.bitcoin.totalSpent - 0.02) < 1e-12);
+      assert.equal(top[1].agentAddress, '0xAlice');
     });
   });
 

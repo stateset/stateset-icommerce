@@ -24,6 +24,7 @@ const { A2AStore } = await import(path.join(cliSrc, 'a2a', 'store.js'));
 const { createAgentRuntime, makeCommerceProxy } = await import(
   path.join(cliSrc, 'a2a', 'agent-runtime.js')
 );
+const { createA2AService } = await import(path.join(cliSrc, 'a2a', 'index.js'));
 const { createBudgetGatedStrategy, createAlwaysAcceptStrategy } = await import(
   path.join(cliSrc, 'a2a', 'strategies.js')
 );
@@ -72,6 +73,61 @@ function makeRuntime(opts = {}) {
     strategy: opts.strategy || createAlwaysAcceptStrategy(),
     logger: () => {},
   });
+}
+
+function createMockSettlement(overrides = {}) {
+  const calls = { settle: [], hasSufficientFunds: [], getBalance: [], getAddress: [] };
+
+  return {
+    calls,
+    service: {
+      get chainId() {
+        return overrides.chainId || 'bitcoin';
+      },
+      get isSimulation() {
+        return overrides.isSimulation ?? true;
+      },
+      get agentId() {
+        return overrides.agentId || 'agent-settlement';
+      },
+      async settle(params) {
+        calls.settle.push(params);
+        return (
+          overrides.settleResult || {
+            success: true,
+            txHash: '0x' + 'c'.repeat(64),
+            blockNumber: 123,
+            explorerUrl: 'https://example.test/tx/mock',
+            confirmations: 1,
+            simulated: overrides.isSimulation ?? true,
+          }
+        );
+      },
+      async hasSufficientFunds(amount) {
+        calls.hasSufficientFunds.push(amount);
+        return (
+          overrides.fundsResult || {
+            sufficient: true,
+            balance: '100.0',
+            required: String(amount),
+            symbol: overrides.symbol || 'BTC',
+          }
+        );
+      },
+      async getBalance() {
+        calls.getBalance.push(true);
+        return overrides.balanceResult || {
+          balance: '100.0',
+          balanceSmallest: 100000000n,
+          symbol: overrides.symbol || 'BTC',
+        };
+      },
+      async getAddress() {
+        calls.getAddress.push(true);
+        return overrides.address || 'bc1qruntimewallet';
+      },
+    },
+  };
 }
 
 // ===========================================================================
@@ -131,15 +187,26 @@ describe('AgentRuntime Advanced — Escrow', () => {
 
   it('throws when budget is exceeded', async () => {
     const rt = makeRuntime({ budget: { daily: 50, perTransaction: 50 } });
+    let emitted = null;
+    rt.on('budget:exceeded', (data) => {
+      emitted = data;
+    });
     await assert.rejects(
       () =>
         rt.createEscrowDeal({
           sellerAddress: wallet(),
           amount: 100,
+          asset: 'BTC',
+          network: 'bitcoin',
           conditions: [],
         }),
       /budget exceeded/i,
     );
+    assert.ok(emitted, 'budget:exceeded should have been emitted');
+    assert.equal(emitted.type, 'perTransaction');
+    assert.equal(emitted.asset, 'BTC');
+    assert.equal(emitted.network, 'bitcoin');
+    assert.equal(emitted.operation, 'escrow:create');
   });
 
   it('uses default expiresInHours of 72', async () => {
@@ -332,16 +399,29 @@ describe('AgentRuntime Advanced — Subscriptions', () => {
   });
 
   it('subscribeTo throws when budget exceeded', async () => {
-    const rt = makeRuntime({ budget: { daily: 10, perTransaction: 10 } });
+    const rt = makeRuntime({
+      budget: { daily: 10, perTransaction: 10, startingBalance: 1 },
+    });
+    let emitted = null;
+    rt.on('budget:exceeded', (data) => {
+      emitted = data;
+    });
     await assert.rejects(
       () =>
         rt.subscribeTo({
           providerAddress: wallet(),
           planName: 'Expensive Plan',
-          amount: 100,
+          amount: 2,
+          asset: 'ZEC',
+          network: 'zcash',
         }),
       /cannot afford/i,
     );
+    assert.ok(emitted, 'budget:exceeded should have been emitted');
+    assert.equal(emitted.type, 'balance');
+    assert.equal(emitted.asset, 'ZEC');
+    assert.equal(emitted.network, 'zcash');
+    assert.equal(emitted.operation, 'subscription:create');
   });
 
   it('pauseSubscription emits subscription:paused', async () => {
@@ -406,6 +486,99 @@ describe('AgentRuntime Advanced — Subscriptions', () => {
     assert.ok(result);
     assert.equal(result.processed, 0);
     assert.equal(result.succeeded, 0);
+  });
+
+  it('processSubscriptionBilling bills only this runtime subscriber and settles native BTC', async () => {
+    const subscriberWallet = wallet();
+    const providerIdentity = wallet();
+    const rt = makeRuntime({ wallet: subscriberWallet });
+    const settlement = createMockSettlement({
+      chainId: 'bitcoin',
+      symbol: 'BTC',
+      address: 'bc1qsubscriberwallet',
+    });
+    rt.settlement = settlement.service;
+
+    commerce.x402().registerAgent({
+      id: crypto.randomUUID(),
+      name: 'BTC Provider',
+      wallet_address: providerIdentity,
+      public_key: keys().publicKey,
+      supported_networks: ['bitcoin'],
+      supported_assets: ['BTC'],
+      payment_addresses: { bitcoin: 'bc1qproviderpayout' },
+      trust_level: 'sandbox',
+    });
+
+    const overdueAt = new Date(Date.now() - 60_000).toISOString();
+
+    store.createSubscription({
+      id: 'sub-owned',
+      subscriber_address: subscriberWallet,
+      provider_address: providerIdentity,
+      plan_name: 'BTC Data Feed',
+      status: 'active',
+      amount: 250000,
+      amount_decimal: 0.0025,
+      asset: 'BTC',
+      network: 'bitcoin',
+      billing_interval: 'monthly',
+      current_period_start: overdueAt,
+      current_period_end: overdueAt,
+      next_billing_date: overdueAt,
+      cancel_at_period_end: false,
+      past_due_since: null,
+      max_past_due_cycles: 3,
+      total_billed: 0,
+      total_billed_decimal: 0,
+      billing_count: 0,
+    });
+
+    store.createSubscription({
+      id: 'sub-other',
+      subscriber_address: wallet(),
+      provider_address: providerIdentity,
+      plan_name: 'Other Agent Feed',
+      status: 'active',
+      amount: 100000,
+      amount_decimal: 0.001,
+      asset: 'BTC',
+      network: 'bitcoin',
+      billing_interval: 'monthly',
+      current_period_start: overdueAt,
+      current_period_end: overdueAt,
+      next_billing_date: overdueAt,
+      cancel_at_period_end: false,
+      past_due_since: null,
+      max_past_due_cycles: 3,
+      total_billed: 0,
+      total_billed_decimal: 0,
+      billing_count: 0,
+    });
+
+    const result = await rt.processSubscriptionBilling();
+
+    assert.equal(result.processed, 1);
+    assert.equal(result.billingCount, 1);
+    assert.equal(result.totalBilled, 0.0025);
+    assert.equal(settlement.calls.hasSufficientFunds.length, 1);
+    assert.equal(settlement.calls.hasSufficientFunds[0], 0.0025);
+    assert.equal(settlement.calls.settle.length, 1);
+    assert.equal(settlement.calls.settle[0].toAddress, 'bc1qproviderpayout');
+
+    const owned = store.getSubscription('sub-owned');
+    const other = store.getSubscription('sub-other');
+    assert.equal(owned.billing_count, 1);
+    assert.equal(owned.past_due_since, null);
+    assert.ok(owned.last_payment_id);
+    assert.equal(other.billing_count, 0);
+    assert.equal(other.last_payment_id, null);
+
+    const payments = store.listPayments({ sender_address: subscriberWallet });
+    assert.equal(payments.length, 1);
+    assert.equal(payments[0].recipient_address, 'bc1qproviderpayout');
+    assert.equal(payments[0].network, 'bitcoin');
+    assert.equal(payments[0].status, 'completed');
   });
 
   it('full subscription lifecycle: create -> pause -> resume -> cancel', async () => {
@@ -478,10 +651,16 @@ describe('AgentRuntime Advanced — Splits', () => {
 
   it('createSplitDeal throws when budget exceeded', async () => {
     const rt = makeRuntime({ budget: { daily: 20, perTransaction: 20 } });
+    let emitted = null;
+    rt.on('budget:exceeded', (data) => {
+      emitted = data;
+    });
     await assert.rejects(
       () =>
         rt.createSplitDeal({
           totalAmount: 100,
+          asset: 'BTC',
+          network: 'bitcoin',
           recipients: [
             { address: wallet(), percent: 50 },
             { address: wallet(), percent: 50 },
@@ -489,6 +668,11 @@ describe('AgentRuntime Advanced — Splits', () => {
         }),
       /cannot afford/i,
     );
+    assert.ok(emitted, 'budget:exceeded should have been emitted');
+    assert.equal(emitted.type, 'perTransaction');
+    assert.equal(emitted.asset, 'BTC');
+    assert.equal(emitted.network, 'bitcoin');
+    assert.equal(emitted.operation, 'split:create');
   });
 
   it('createSplitDeal with 3 recipients', async () => {
@@ -554,6 +738,47 @@ describe('AgentRuntime Advanced — Splits', () => {
     assert.equal(emitted.splitId, splitId);
   });
 
+  it('executeSplitDeal settles shielded ZEC recipients and completes payment records', async () => {
+    const rt = makeRuntime({ budget: { daily: 1000, perTransaction: 1000 } });
+    const settlement = createMockSettlement({
+      chainId: 'zcash',
+      symbol: 'ZEC',
+      address: 'u1splitwallet',
+    });
+    rt.settlement = settlement.service;
+
+    const created = await rt.createSplitDeal({
+      totalAmount: 1.2,
+      asset: 'ZEC',
+      network: 'zcash',
+      recipients: [
+        { address: 'u1alice', percent: 50 },
+        { address: 'u1bob', percent: 50 },
+      ],
+      memo: 'Shielded partner split',
+    });
+
+    const result = await rt.executeSplitDeal(created.splitPayment.id);
+
+    assert.equal(result.success, true);
+    assert.equal(settlement.calls.hasSufficientFunds.length, 2);
+    assert.equal(settlement.calls.settle.length, 2);
+    assert.equal(settlement.calls.settle[0].toAddress, 'u1alice');
+    assert.equal(settlement.calls.settle[1].toAddress, 'u1bob');
+
+    const payments = store.listPayments({ sender_address: rt.walletAddress });
+    assert.equal(payments.length, 2);
+    assert.ok(payments.every((payment) => payment.network === 'zcash'));
+    assert.ok(payments.every((payment) => payment.status === 'completed'));
+
+    const split = store.getSplitPayment(created.splitPayment.id);
+    assert.equal(split.status, 'completed');
+    assert.ok(split.recipients.every((recipient) => recipient.status === 'completed'));
+
+    const budget = rt.getBudget();
+    assert.ok(Math.abs(budget.spentToday - 1.2) < 1e-9);
+  });
+
   it('createSplitDeal with platform fee', async () => {
     const rt = makeRuntime();
     const platformAddr = wallet();
@@ -568,6 +793,185 @@ describe('AgentRuntime Advanced — Splits', () => {
     });
     assert.ok(result.splitPayment);
     assert.equal(result.success, true);
+  });
+});
+
+// ===========================================================================
+// Marketplace + Workflows
+// ===========================================================================
+
+describe('AgentRuntime Advanced — Marketplace + Workflows', () => {
+  it('runtime.a2a uses settlement-aware defaults for direct quote acceptance', async () => {
+    const buyer = makeRuntime({ budget: { daily: 1000, perTransaction: 1000 } });
+    const settlement = createMockSettlement({
+      chainId: 'bitcoin',
+      symbol: 'BTC',
+      address: 'bc1qdirectruntimebuyer',
+    });
+    buyer.settlement = settlement.service;
+
+    const sellerWallet = wallet();
+    const sellerPayout = 'bc1qdirectruntimepayout';
+    commerce.x402().registerAgent({
+      id: crypto.randomUUID(),
+      name: 'Direct Runtime Seller',
+      wallet_address: sellerWallet,
+      public_key: keys().publicKey,
+      supported_networks: ['bitcoin'],
+      supported_assets: ['BTC'],
+      payment_addresses: { bitcoin: sellerPayout },
+      trust_level: 'sandbox',
+    });
+
+    const sellerSvc = createA2AService(commerce, {
+      agentId: crypto.randomUUID(),
+      walletAddress: sellerWallet,
+      signingKey: keys(),
+      defaultAsset: 'BTC',
+      defaultNetwork: 'bitcoin',
+    });
+
+    const requested = await buyer.a2a.requestQuote({
+      seller: sellerWallet,
+      items: [{ description: 'Direct runtime quote' }],
+    });
+    await sellerSvc.provideQuote(requested.quote.id, { total: 0.01 });
+
+    const accepted = await buyer.a2a.acceptQuote(requested.quote.id);
+
+    assert.equal(accepted.payment.status, 'completed');
+    assert.equal(accepted.payment.to, sellerPayout);
+    assert.equal(accepted.quote.network, 'bitcoin');
+    assert.equal(settlement.calls.hasSufficientFunds[0], 0.01);
+    assert.equal(settlement.calls.settle[0].toAddress, sellerPayout);
+
+    const storedQuote = store.getQuote(requested.quote.id);
+    assert.equal(storedQuote.asset, 'BTC');
+    assert.deepEqual(storedQuote.accepted_networks, ['bitcoin']);
+  });
+
+  it('awardRFQ settles the winning BTC quote through runtime settlement', async () => {
+    const rt = makeRuntime({ budget: { daily: 1000, perTransaction: 1000 } });
+    const settlement = createMockSettlement({
+      chainId: 'bitcoin',
+      symbol: 'BTC',
+      address: 'bc1qruntimebuyer',
+    });
+    rt.settlement = settlement.service;
+
+    const sellerWallet = wallet();
+    const sellerPayout = 'bc1qmarketwinner';
+    commerce.x402().registerAgent({
+      id: crypto.randomUUID(),
+      name: 'Marketplace Seller',
+      wallet_address: sellerWallet,
+      public_key: keys().publicKey,
+      supported_networks: ['bitcoin'],
+      supported_assets: ['BTC'],
+      payment_addresses: { bitcoin: sellerPayout },
+      trust_level: 'sandbox',
+    });
+    store.createService({
+      agent_address: sellerWallet,
+      name: 'Marketplace Seller Service',
+      description: 'Competitive seller',
+      category: 'analytics',
+      pricing_model: 'quote',
+      active: 1,
+    });
+
+    const sellerSvc = createA2AService(commerce, {
+      agentId: crypto.randomUUID(),
+      walletAddress: sellerWallet,
+      signingKey: keys(),
+      defaultAsset: 'BTC',
+      defaultNetwork: 'bitcoin',
+    });
+
+    const rfq = await rt.broadcastRFQ({
+      items: [{ description: 'Runtime RFQ', quantity: 1 }],
+      scoringCriteria: 'cheapest',
+      deadlineMinutes: 10,
+    });
+
+    assert.equal(rfq.responses.length, 1);
+    await sellerSvc.provideQuote(rfq.responses[0].quote_id, { total: 0.012 });
+
+    const quote = store.getQuote(rfq.responses[0].quote_id);
+    assert.equal(quote.asset, 'BTC');
+    assert.deepEqual(quote.accepted_networks, ['bitcoin']);
+
+    const ranked = rt.collectRFQResponses(rfq.rfq.id);
+    assert.equal(ranked.ranked.length, 1);
+
+    const award = await rt.awardRFQ(rfq.rfq.id);
+
+    assert.equal(award.winningQuoteId, rfq.responses[0].quote_id);
+    assert.equal(settlement.calls.hasSufficientFunds[0], 0.012);
+    assert.equal(settlement.calls.settle[0].toAddress, sellerPayout);
+
+    const payments = store.listPayments({ sender_address: rt.walletAddress });
+    assert.equal(payments.length, 1);
+    assert.equal(payments[0].status, 'completed');
+    assert.equal(payments[0].recipient_address, sellerPayout);
+    assert.equal(payments[0].network, 'bitcoin');
+  });
+
+  it('executeWorkflow settles BTC payment steps through runtime settlement', async () => {
+    const rt = makeRuntime({ budget: { daily: 1000, perTransaction: 1000 } });
+    const settlement = createMockSettlement({
+      chainId: 'bitcoin',
+      symbol: 'BTC',
+      address: 'bc1qworkflowbuyer',
+    });
+    rt.settlement = settlement.service;
+
+    const sellerWallet = wallet();
+    const sellerPayout = 'bc1qworkflowpayout';
+    commerce.x402().registerAgent({
+      id: crypto.randomUUID(),
+      name: 'Workflow Seller',
+      wallet_address: sellerWallet,
+      public_key: keys().publicKey,
+      supported_networks: ['bitcoin'],
+      supported_assets: ['BTC'],
+      payment_addresses: { bitcoin: sellerPayout },
+      trust_level: 'sandbox',
+    });
+
+    const workflow = rt.createWorkflow({
+      name: 'btc-payment-workflow',
+      steps: [
+        {
+          name: 'pay_seller',
+          type: 'payment',
+          agentAddress: sellerWallet,
+          params: {
+            amount: 0.02,
+            asset: 'BTC',
+            network: 'bitcoin',
+            memo: 'Workflow native payment',
+          },
+        },
+      ],
+    });
+
+    const result = await rt.executeWorkflow(workflow.workflow.id);
+
+    assert.equal(result.status, 'completed');
+    assert.equal(result.totalCost, 0.02);
+    assert.equal(settlement.calls.hasSufficientFunds[0], 0.02);
+    assert.equal(settlement.calls.settle[0].toAddress, sellerPayout);
+
+    const payments = store.listPayments({ sender_address: rt.walletAddress });
+    assert.equal(payments.length, 1);
+    assert.equal(payments[0].status, 'completed');
+    assert.equal(payments[0].recipient_address, sellerPayout);
+    assert.equal(payments[0].network, 'bitcoin');
+
+    const storedWorkflow = store.getWorkflow(workflow.workflow.id);
+    assert.equal(storedWorkflow.status, 'completed');
+    assert.equal(storedWorkflow.total_cost, 0.02);
   });
 });
 

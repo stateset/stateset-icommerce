@@ -51,7 +51,8 @@ function createMockChains(overrides = {}) {
       symbol: token || 'USDC',
       ...overrides.hasSufficientBalance,
     }),
-    getDefaultStablecoin: (chainId) => overrides.defaultStablecoin || { symbol: 'USDC', decimals: 6 },
+    getDefaultPaymentToken: (chainId) =>
+      overrides.defaultPaymentToken || overrides.defaultStablecoin || { symbol: 'USDC', decimals: 6 },
     fromSmallestUnit: (smallest, decimals) => '1000.00',
   };
 }
@@ -94,10 +95,10 @@ describe('Settlement Service', () => {
 
     async function getBalance() {
       const address = await getAddress();
-      const token = tokenSymbol || mockChains.getDefaultStablecoin(chainId)?.symbol;
-      const result = await mockChains.getBalance(address, chainId, token);
+      const token = tokenSymbol || mockChains.getDefaultPaymentToken(chainId)?.symbol;
+      const result = await mockChains.getBalance(address, chainId, token, { configDir });
       return {
-        balance: result.balanceDecimal || mockChains.fromSmallestUnit(result.balanceSmallest, result.decimals || 6),
+        balance: result.balance || result.balanceDecimal || mockChains.fromSmallestUnit(result.balanceSmallest, result.decimals || 6),
         balanceSmallest: result.balanceSmallest,
         symbol: result.symbol || token,
       };
@@ -105,13 +106,13 @@ describe('Settlement Service', () => {
 
     async function hasSufficientFunds(amount) {
       const address = await getAddress();
-      const token = tokenSymbol || mockChains.getDefaultStablecoin(chainId)?.symbol;
-      return mockChains.hasSufficientBalance(address, chainId, amount, token);
+      const token = tokenSymbol || mockChains.getDefaultPaymentToken(chainId)?.symbol;
+      return mockChains.hasSufficientBalance(address, chainId, amount, token, { configDir });
     }
 
     async function settle({ toAddress, amount, asset, memo, paymentId }) {
       try {
-        const token = asset || tokenSymbol || mockChains.getDefaultStablecoin(chainId)?.symbol;
+        const token = asset || tokenSymbol || mockChains.getDefaultPaymentToken(chainId)?.symbol;
         logger(`[settlement] Settling ${amount} ${token} → ${toAddress} on ${chainId}${simulate ? ' (simulate)' : ''}`);
 
         const result = await mockChains.executePayment(
@@ -322,12 +323,12 @@ describe('Settlement Service', () => {
       assert.equal(bal.symbol, 'ssUSD');
     });
 
-    it('falls back to chain default stablecoin', async () => {
+    it('falls back to chain default payment token', async () => {
       let capturedToken;
-      const chains = createMockChains({ defaultStablecoin: { symbol: 'DAI', decimals: 18 } });
+      const chains = createMockChains({ defaultPaymentToken: { symbol: 'DAI', decimals: 18 } });
       chains.getBalance = async (addr, chain, token) => {
         capturedToken = token;
-        return { balanceSmallest: 100n, balanceDecimal: '100.00', symbol: token, decimals: 18 };
+        return { balanceSmallest: 100n, balance: '100.00', symbol: token, decimals: 18 };
       };
 
       const svc = createTestSettlement(

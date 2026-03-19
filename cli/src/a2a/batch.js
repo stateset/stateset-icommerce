@@ -20,13 +20,14 @@
  *
  * const result = await batch.batchPay([
  *   { to: '0xAlice', amount: 10, asset: 'USDC', memo: 'Service A' },
- *   { to: '0xBob',   amount: 20, asset: 'USDC', memo: 'Service B' },
+ *   { to: 'bc1qBob', amount: 0.001, asset: 'BTC', network: 'bitcoin', memo: 'Service B' },
  * ]);
  * // { succeeded: 2, failed: 0, results: [...] }
  * ```
  */
 
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_NETWORK, getDefaultAssetForNetwork } from './assets.js';
 
 /**
  * Run an array of async tasks with a concurrency limit.
@@ -94,7 +95,7 @@ export function createBatchService(a2aService, store) {
    * @param {Array<Object>} payments - Payments to execute
    * @param {string} payments[].to - Recipient address
    * @param {number} payments[].amount - Amount to pay
-   * @param {string} [payments[].asset] - Asset (default: USDC)
+   * @param {string} [payments[].asset] - Asset (default: selected network payment asset)
    * @param {string} [payments[].network] - Network
    * @param {string} [payments[].memo] - Memo
    * @param {Object} [options]
@@ -155,6 +156,9 @@ export function createBatchService(a2aService, store) {
    * @param {Array<Object>} requests - Quote requests
    * @param {string} requests[].seller - Seller agent address or ID
    * @param {Array} requests[].items - Items to quote
+   * @param {string} [requests[].asset] - Preferred quote asset
+   * @param {string} [requests[].network] - Preferred settlement network
+   * @param {string} [requests[].message] - Quote request message
    * @param {number} [requests[].maxRounds] - Max negotiation rounds
    * @param {Object} [options]
    * @param {number} [options.concurrency=5] - Max parallel requests
@@ -180,6 +184,9 @@ export function createBatchService(a2aService, store) {
         return a2aService.requestQuote({
           seller: req.seller,
           items: req.items,
+          asset: req.asset,
+          network: req.network,
+          message: req.message,
           maxRounds: req.maxRounds,
         });
       },
@@ -284,6 +291,8 @@ export function createBatchService(a2aService, store) {
    * @param {string} escrows[].buyerAddress - Buyer wallet address
    * @param {string} escrows[].sellerAddress - Seller wallet address
    * @param {number} escrows[].amount - Escrow amount
+   * @param {string} [escrows[].asset] - Escrow asset
+   * @param {string} [escrows[].network] - Settlement network
    * @param {Array} [escrows[].conditions] - Release conditions
    * @param {Object} [options]
    * @param {number} [options.concurrency=5] - Max parallel creations
@@ -308,14 +317,17 @@ export function createBatchService(a2aService, store) {
       async (e) => {
         const now = new Date().toISOString();
         const escrowId = randomUUID();
+        const network = e.network || DEFAULT_NETWORK;
+        const asset = e.asset || getDefaultAssetForNetwork(network);
         const escrowRecord = {
           id: escrowId,
           status: 'created',
           buyer_address: e.buyerAddress,
           seller_address: e.sellerAddress,
           amount: e.amount,
-          asset: e.asset || 'USDC',
-          network: e.network || 'set_chain',
+          amount_decimal: e.amountDecimal ?? e.amount,
+          asset,
+          network,
           release_conditions: e.conditions || [],
           created_at: now,
           updated_at: now,

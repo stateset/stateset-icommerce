@@ -26,6 +26,31 @@
  *   evaluatePaymentRequest(request, ctx) → { action: 'pay'|'decline', reason? }
  */
 
+function getBudgetContext(source = {}) {
+  if (!source || typeof source !== 'object') {
+    return {};
+  }
+  const acceptedNetworks = Array.isArray(source.accepted_networks)
+    ? source.accepted_networks
+    : Array.isArray(source.acceptedNetworks)
+      ? source.acceptedNetworks
+      : [];
+
+  return {
+    asset: source.asset || source.payment_asset || source.paymentAsset || null,
+    network:
+      source.network ||
+      source.payment_network ||
+      source.paymentNetwork ||
+      acceptedNetworks[0] ||
+      null,
+  };
+}
+
+function runtimeCanAfford(ctx, amount, source) {
+  return ctx.runtime.canAfford(amount, getBudgetContext(source));
+}
+
 // ---------------------------------------------------------------------------
 // 1. AlwaysAccept — accepts every quote/request unconditionally (testing)
 // ---------------------------------------------------------------------------
@@ -100,7 +125,7 @@ export function createBudgetGatedStrategy(options = {}) {
 
     evaluateReceivedQuote(quote, ctx) {
       const total = quote.total ?? quote.total_decimal ?? 0;
-      if (ctx.budget && !ctx.runtime.canAfford(total)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, total, quote)) {
         return {
           action: 'decline',
           reason: `Exceeds budget (${total} > available)`,
@@ -163,7 +188,7 @@ export function createBudgetGatedStrategy(options = {}) {
 
     evaluatePaymentRequest(request, ctx) {
       const amount = request.amount_decimal ?? request.amount ?? 0;
-      if (ctx.budget && !ctx.runtime.canAfford(amount)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, amount, request)) {
         return {
           action: 'decline',
           reason: `Exceeds budget (${amount} > available)`,
@@ -220,7 +245,7 @@ export function createNegotiatorStrategy(options = {}) {
       }
 
       // Budget check
-      if (ctx.budget && !ctx.runtime.canAfford(total)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, total, quote)) {
         return {
           action: 'decline',
           reason: `Cannot afford $${total}`,
@@ -296,7 +321,7 @@ export function createNegotiatorStrategy(options = {}) {
       if (amount > walkAwayAbove) {
         return { action: 'decline', reason: `Amount $${amount} exceeds threshold` };
       }
-      if (ctx.budget && !ctx.runtime.canAfford(amount)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, amount, request)) {
         return { action: 'decline', reason: `Cannot afford $${amount}` };
       }
       return { action: 'pay' };
@@ -417,7 +442,7 @@ export function createBestOfNStrategy(options = {}) {
       // rather than evaluating one-at-a-time. But if called directly,
       // defer unless we can't afford it.
       const total = quote.total ?? quote.total_decimal ?? 0;
-      if (ctx.budget && !ctx.runtime.canAfford(total)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, total, quote)) {
         return { action: 'decline', reason: 'Cannot afford' };
       }
       return { action: 'defer' };
@@ -439,7 +464,7 @@ export function createBestOfNStrategy(options = {}) {
 
     evaluatePaymentRequest(request, ctx) {
       const amount = request.amount_decimal ?? request.amount ?? 0;
-      if (ctx.budget && !ctx.runtime.canAfford(amount)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, amount, request)) {
         return { action: 'decline', reason: 'Cannot afford' };
       }
       return { action: 'pay' };
@@ -495,7 +520,7 @@ export function createReputationAwareStrategy(options = {}) {
       const total = quote.total ?? quote.total_decimal ?? 0;
 
       // Budget check
-      if (ctx.budget && !ctx.runtime.canAfford(total)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, total, quote)) {
         return { action: 'decline', reason: `Cannot afford $${total}` };
       }
 
@@ -610,7 +635,7 @@ export function createReputationAwareStrategy(options = {}) {
 
     evaluatePaymentRequest(request, ctx) {
       const amount = request.amount_decimal ?? request.amount ?? 0;
-      if (ctx.budget && !ctx.runtime.canAfford(amount)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, amount, request)) {
         return { action: 'decline', reason: `Cannot afford $${amount}` };
       }
       return { action: 'pay' };
@@ -773,7 +798,7 @@ export function createDynamicPricingStrategy(config = {}) {
 
     evaluateReceivedQuote(quote, ctx) {
       const total = quote.total ?? quote.total_decimal ?? 0;
-      if (ctx.budget && !ctx.runtime.canAfford(total)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, total, quote)) {
         return { action: 'decline', reason: `Cannot afford $${total}` };
       }
       return { action: 'accept' };
@@ -846,7 +871,7 @@ export function createDynamicPricingStrategy(config = {}) {
 
     evaluatePaymentRequest(request, ctx) {
       const amount = request.amount_decimal ?? request.amount ?? 0;
-      if (ctx.budget && !ctx.runtime.canAfford(amount)) {
+      if (ctx.budget && !runtimeCanAfford(ctx, amount, request)) {
         return { action: 'decline', reason: `Cannot afford $${amount}` };
       }
       return { action: 'pay' };

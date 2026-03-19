@@ -314,6 +314,14 @@ describe('createDataExportService', () => {
       assert.equal(report.summary.sentCount, 2);
       assert.equal(report.summary.receivedCount, 1);
       assert.equal(report.summary.totalVolume, 35);
+      assert.equal(report.summary.aggregateTotalsMeaningful, true);
+      assert.equal(report.summary.aggregateAsset, 'USDC');
+      assert.deepEqual(report.summary.assets, ['USDC']);
+      assert.equal(report.summary.marginMeaningful, true);
+      assert.equal(report.summary.breakdownByAsset.USDC.totalSent, 30);
+      assert.equal(report.summary.breakdownByAsset.USDC.totalReceived, 5);
+      assert.equal(report.summary.breakdownByAsset.USDC.networks.unknown.totalSent, 30);
+      assert.equal(report.summary.breakdownByAsset.USDC.networks.unknown.totalReceived, 5);
     });
 
     it('computes dispute rate', async () => {
@@ -342,6 +350,10 @@ describe('createDataExportService', () => {
       assert.equal(charlie.volume, 20);
       assert.ok(bob);
       assert.equal(bob.volume, 15);
+      assert.equal(charlie.aggregateVolumeMeaningful, true);
+      assert.equal(charlie.aggregateAsset, 'USDC');
+      assert.deepEqual(charlie.assets, ['USDC']);
+      assert.equal(bob.breakdownByAsset.USDC.networks.unknown.totalVolume, 15);
 
       // Charlie should be first (higher volume)
       assert.equal(report.topCounterparties[0].address, '0xCharlie');
@@ -353,6 +365,77 @@ describe('createDataExportService', () => {
       // netFlow = 5 - 30 = -25, received = 5
       // margin = (-25 / 5) * 100 = -500%
       assert.equal(report.summary.margin, -500);
+    });
+
+    it('marks aggregate report totals as non-meaningful for mixed native assets', async () => {
+      const mixedStore = createMockStore({
+        listPayments: mock.fn((filter) => {
+          const payments = [
+            {
+              id: 'btc-1',
+              sender_address: '0xAlice',
+              recipient_address: 'bc1qbob',
+              amount_decimal: 0.01,
+              asset: 'BTC',
+              network: 'bitcoin',
+              status: 'completed',
+              created_at: '2025-07-01T10:00:00Z',
+            },
+            {
+              id: 'zec-1',
+              sender_address: '0xCarol',
+              recipient_address: '0xAlice',
+              amount_decimal: 1.25,
+              asset: 'ZEC',
+              network: 'zcash',
+              status: 'completed',
+              created_at: '2025-07-02T10:00:00Z',
+            },
+            {
+              id: 'btc-2',
+              sender_address: '0xAlice',
+              recipient_address: 'bc1qbob',
+              amount_decimal: 0.005,
+              asset: 'BTC',
+              network: 'bitcoin',
+              status: 'completed',
+              created_at: '2025-07-03T10:00:00Z',
+            },
+          ];
+          return payments.filter((payment) => {
+            for (const [key, value] of Object.entries(filter || {})) {
+              if (value !== undefined && payment[key] !== value) return false;
+            }
+            return true;
+          });
+        }),
+        listQuotes: mock.fn(() => []),
+        listDisputes: mock.fn(() => []),
+      });
+      const mixedExporter = createDataExportService(mixedStore);
+
+      const report = await mixedExporter.generateReport('0xAlice');
+
+      assert.equal(report.summary.aggregateTotalsMeaningful, false);
+      assert.equal(report.summary.aggregateAsset, null);
+      assert.deepEqual(report.summary.assets, ['BTC', 'ZEC']);
+      assert.equal(report.summary.marginMeaningful, false);
+      assert.equal(report.summary.breakdownByAsset.BTC.totalSent, 0.015);
+      assert.equal(report.summary.breakdownByAsset.BTC.totalReceived, 0);
+      assert.equal(report.summary.breakdownByAsset.BTC.networks.bitcoin.totalSent, 0.015);
+      assert.equal(report.summary.breakdownByAsset.ZEC.totalReceived, 1.25);
+      assert.equal(report.summary.breakdownByAsset.ZEC.networks.zcash.totalReceived, 1.25);
+
+      const bob = report.topCounterparties.find((counterparty) => counterparty.address === 'bc1qbob');
+      const carol = report.topCounterparties.find((counterparty) => counterparty.address === '0xCarol');
+      assert.ok(bob);
+      assert.ok(carol);
+      assert.equal(bob.aggregateVolumeMeaningful, true);
+      assert.equal(bob.aggregateAsset, 'BTC');
+      assert.equal(bob.breakdownByAsset.BTC.networks.bitcoin.totalSent, 0.015);
+      assert.equal(carol.aggregateVolumeMeaningful, true);
+      assert.equal(carol.aggregateAsset, 'ZEC');
+      assert.equal(carol.breakdownByAsset.ZEC.networks.zcash.totalReceived, 1.25);
     });
 
     it('handles zero transactions gracefully', async () => {

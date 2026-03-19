@@ -176,6 +176,26 @@ describe('BudgetGated Strategy', () => {
     assert.equal(decision.action, 'accept');
   });
 
+  it('passes quote asset and network to budget checks', () => {
+    let received = null;
+    const ctx = makeCtx({
+      canAfford: (amount, options) => {
+        received = { amount, options };
+        return true;
+      },
+    });
+
+    strategy.evaluateReceivedQuote(
+      makeQuote({ total: 0.01, asset: 'BTC', network: 'bitcoin' }),
+      ctx,
+    );
+
+    assert.deepEqual(received, {
+      amount: 0.01,
+      options: { asset: 'BTC', network: 'bitcoin' },
+    });
+  });
+
   // --- evaluateIncomingQuote ---
 
   it('prices items with markup', () => {
@@ -267,6 +287,26 @@ describe('BudgetGated Strategy', () => {
       ctx
     );
     assert.equal(decision.action, 'decline');
+  });
+
+  it('passes payment request asset and network to budget checks', () => {
+    let received = null;
+    const ctx = makeCtx({
+      canAfford: (amount, options) => {
+        received = { amount, options };
+        return true;
+      },
+    });
+
+    strategy.evaluatePaymentRequest(
+      { amount_decimal: 1.25, asset: 'ZEC', network: 'zcash' },
+      ctx,
+    );
+
+    assert.deepEqual(received, {
+      amount: 1.25,
+      options: { asset: 'ZEC', network: 'zcash' },
+    });
   });
 
   // --- Edge cases ---

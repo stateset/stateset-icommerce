@@ -36,12 +36,20 @@ const DEFAULT_PROTOCOL_VERSION = '1.0';
  * Network priority order — lower index = higher priority.
  * Used to pick the "best" network when multiple overlap.
  */
-const NETWORK_PRIORITY = ['set_chain', 'base', 'arbitrum', 'solana', 'ethereum'];
+const NETWORK_PRIORITY = [
+  'set_chain',
+  'base',
+  'arbitrum',
+  'solana',
+  'ethereum',
+  'bitcoin',
+  'zcash',
+];
 
 /**
  * Asset priority order — lower index = higher priority.
  */
-const ASSET_PRIORITY = ['USDC', 'USDT', 'ssUSD', 'DAI'];
+const ASSET_PRIORITY = ['USDC', 'USDT', 'ssUSD', 'DAI', 'BTC', 'ZEC'];
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -7,6 +7,41 @@
 
 import { z } from 'zod';
 
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getA2AContext(commerce, agentConfig) {
+  const walletAddress = agentConfig?.walletAddress;
+  let runtime = null;
+
+  if (walletAddress) {
+    const { findRuntimeByWalletAddress } = await import('./agent-runtime.js');
+    runtime = findRuntimeByWalletAddress(walletAddress);
+  }
+
+  if (runtime) {
+    return {
+      runtime,
+      a2a: runtime.a2a,
+    };
+  }
+
+  const { createA2AService } = await import('../a2a/index.js');
+  return {
+    runtime: null,
+    a2a: createA2AService(commerce, agentConfig),
+  };
+}
+
 /**
  * A2A payment tool definitions
  */
@@ -17,15 +52,21 @@ export const a2aTools = [
   {
     name: 'a2a_pay',
     description:
-      'Pay another AI agent directly. Send USDC or other stablecoins to another agent by their wallet address or agent ID.',
+      'Pay another AI agent directly. Send supported payment assets including USDC, ssUSD, BTC, or shielded ZEC to another agent by identity wallet, native chain address, or agent ID.',
     inputSchema: {
-      to: z.string().min(1).describe('Recipient: wallet address (0x...) or agent ID (UUID)'),
-      amount: z.number().positive().describe('Amount to pay (e.g., 10.00 for $10 USDC)'),
-      asset: z.string().optional().describe('Asset to pay with: USDC (default), USDT, ssUSD, DAI'),
+      to: z
+        .string()
+        .min(1)
+        .describe('Recipient: identity wallet, native chain address, or agent ID (UUID)'),
+      amount: z
+        .number()
+        .positive()
+        .describe('Amount to pay in the selected asset (e.g., 10.00 USDC or 0.001 BTC)'),
+      asset: z.string().optional().describe('Asset to pay with: USDC, USDT, ssUSD, DAI, BTC, ZEC'),
       network: z
         .string()
         .optional()
-        .describe('Network: set_chain (default), base, ethereum, arbitrum'),
+        .describe('Network: set_chain, base, ethereum, arbitrum, bitcoin, zcash'),
       memo: z
         .string()
         .optional()
@@ -41,7 +82,7 @@ export const a2aTools = [
           wouldPay: {
             to: params.to,
             amount: params.amount,
-            asset: params.asset || 'USDC',
+            asset: params.asset || 'default_for_network',
           },
         };
       }
@@ -53,22 +94,32 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
-
-      const result = await a2a.pay({
-        to: params.to,
-        amount: params.amount,
-        asset: params.asset,
-        network: params.network,
-        memo: params.memo,
-        idempotencyKey: params.idempotencyKey,
-      });
+      const { runtime, a2a } = await getA2AContext(commerce, agentConfig);
+      const result =
+        runtime && typeof runtime.pay === 'function'
+          ? await runtime.pay({
+              to: params.to,
+              amount: params.amount,
+              asset: params.asset,
+              network: params.network,
+              memo: params.memo,
+              idempotencyKey: params.idempotencyKey,
+            })
+          : await a2a.pay({
+              to: params.to,
+              amount: params.amount,
+              asset: params.asset,
+              network: params.network,
+              memo: params.memo,
+              idempotencyKey: params.idempotencyKey,
+            });
 
       return {
         success: true,
-        message: `Paid ${params.amount} ${params.asset || 'USDC'} to ${params.to}`,
+        message: `Paid ${result.payment.amount} ${result.payment.asset} to ${result.payment.to}`,
         payment: result.payment,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
       };
     },
   },
@@ -78,7 +129,10 @@ export const a2aTools = [
     description:
       'Request payment from another agent. Creates a payment request that the other agent can pay.',
     inputSchema: {
-      amount: z.number().positive().describe('Amount to request (e.g., 25.00 for $25)'),
+      amount: z
+        .number()
+        .positive()
+        .describe('Amount to request in the selected asset (e.g., 25.00 or 0.001)'),
       description: z
         .string()
         .min(1)
@@ -87,7 +141,18 @@ export const a2aTools = [
         .string()
         .optional()
         .describe('Specific payer wallet/agent (optional - leave empty for open request)'),
-      asset: z.string().optional().describe('Asset to request: USDC (default), USDT'),
+      asset: z
+        .string()
+        .optional()
+        .describe(
+          'Asset to request: defaults to the selected network payment asset (e.g., USDC, ssUSD, BTC, ZEC)',
+        ),
+      network: z
+        .string()
+        .optional()
+        .describe(
+          'Preferred settlement network: set_chain, base, ethereum, arbitrum, bitcoin, zcash',
+        ),
       expiresInHours: z
         .number()
         .int()
@@ -117,24 +182,37 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
-
-      const result = await a2a.requestPayment({
-        from: params.from,
-        amount: params.amount,
-        description: params.description,
-        asset: params.asset,
-        expiresInHours: params.expiresInHours,
-        allowPartial: params.allowPartial,
-        callbackUrl: params.callbackUrl,
-      });
+      const { runtime, a2a } = await getA2AContext(commerce, agentConfig);
+      const result =
+        runtime && typeof runtime.requestPayment === 'function'
+          ? await runtime.requestPayment({
+              from: params.from,
+              amount: params.amount,
+              description: params.description,
+              asset: params.asset,
+              network: params.network,
+              expiresInHours: params.expiresInHours,
+              allowPartial: params.allowPartial,
+              callbackUrl: params.callbackUrl,
+            })
+          : await a2a.requestPayment({
+              from: params.from,
+              amount: params.amount,
+              description: params.description,
+              asset: params.asset,
+              network: params.network,
+              expiresInHours: params.expiresInHours,
+              allowPartial: params.allowPartial,
+              callbackUrl: params.callbackUrl,
+            });
 
       return {
         success: true,
-        message: `Payment request created for ${params.amount} ${params.asset || 'USDC'}`,
+        message: `Payment request created for ${result.request.amount} ${result.request.asset}`,
         request: result.request,
         paymentUrl: result.paymentUrl,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
       };
     },
   },
@@ -166,12 +244,15 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
-
-      const result = await a2a.payRequest(params.requestId, {
-        amount: params.amount,
-      });
+      const { runtime, a2a } = await getA2AContext(commerce, agentConfig);
+      const result =
+        runtime && typeof runtime.payRequest === 'function'
+          ? await runtime.payRequest(params.requestId, {
+              amount: params.amount,
+            })
+          : await a2a.payRequest(params.requestId, {
+              amount: params.amount,
+            });
 
       return {
         success: true,
@@ -180,6 +261,8 @@ export const a2aTools = [
           : `Partial payment made. Remaining: ${result.request.amountRemaining}`,
         payment: result.payment,
         request: result.request,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
       };
     },
   },
@@ -203,7 +286,18 @@ export const a2aTools = [
         .min(1)
         .max(100)
         .describe('Items to get a quote for'),
-      asset: z.string().optional().describe('Preferred payment asset: USDC (default)'),
+      asset: z
+        .string()
+        .optional()
+        .describe(
+          'Preferred payment asset: defaults to the selected network payment asset (e.g., USDC, ssUSD, BTC, ZEC)',
+        ),
+      network: z
+        .string()
+        .optional()
+        .describe(
+          'Preferred settlement network: set_chain, base, ethereum, arbitrum, bitcoin, zcash',
+        ),
       message: z.string().optional().describe('Message to seller'),
     },
     permission: 'write',
@@ -226,13 +320,12 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
-
+      const { runtime, a2a } = await getA2AContext(commerce, agentConfig);
       const result = await a2a.requestQuote({
         seller: params.seller,
         items: params.items,
         asset: params.asset,
+        network: params.network,
         message: params.message,
       });
 
@@ -240,6 +333,8 @@ export const a2aTools = [
         success: true,
         message: 'Quote requested. Waiting for seller response.',
         quote: result.quote,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
       };
     },
   },
@@ -285,8 +380,7 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
+      const { a2a } = await getA2AContext(commerce, agentConfig);
 
       const result = await a2a.provideQuote(params.quoteId, {
         total: params.total,
@@ -329,16 +423,19 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
-
-      const result = await a2a.acceptQuote(params.quoteId);
+      const { runtime, a2a } = await getA2AContext(commerce, agentConfig);
+      const result =
+        runtime && typeof runtime.acceptQuote === 'function'
+          ? await runtime.acceptQuote(params.quoteId)
+          : await a2a.acceptQuote(params.quoteId);
 
       return {
         success: true,
         message: `Quote accepted and paid: ${result.quote.total} ${result.quote.asset}`,
         payment: result.payment,
         quote: result.quote,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
       };
     },
   },
@@ -366,8 +463,7 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
+      const { a2a } = await getA2AContext(commerce, agentConfig);
 
       const result = await a2a.declineQuote(params.quoteId, params.reason);
 
@@ -401,8 +497,7 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
+      const { a2a } = await getA2AContext(commerce, agentConfig);
 
       const result = await a2a.fulfillQuote(params.quoteId);
 
@@ -418,17 +513,84 @@ export const a2aTools = [
   // Query Operations
   // ==========================================================================
   {
+    name: 'a2a_get_payment',
+    description:
+      'Get a single A2A payment by ID. Optionally refresh native on-chain confirmation state for supported settlement networks including Bitcoin and shielded Zcash.',
+    inputSchema: {
+      paymentId: z.string().min(1).describe('Payment ID'),
+      refreshOnChain: z
+        .boolean()
+        .optional()
+        .describe(
+          'Refresh the stored payment from live on-chain transaction status when a tx hash exists',
+        ),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params, agentConfig }) => {
+      if (!agentConfig?.walletAddress) {
+        return {
+          success: false,
+          error: 'Agent wallet not configured.',
+        };
+      }
+
+      const { runtime, a2a } = await getA2AContext(commerce, agentConfig);
+      const result = params.refreshOnChain
+        ? await a2a.refreshPayment(params.paymentId)
+        : {
+            success: true,
+            refreshed: false,
+            payment: await a2a.getPayment(params.paymentId),
+            onChain: null,
+            finality: (() => {
+              try {
+                return commerce?._finalityTracker?.getSettlementStatus(params.paymentId) || null;
+              } catch {
+                return null;
+              }
+            })(),
+          };
+
+      return {
+        success: true,
+        payment: result.payment,
+        refreshed: Boolean(result.refreshed),
+        reason: result.reason || null,
+        onChain: result.onChain || null,
+        finality: result.finality || null,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
+      };
+    },
+  },
+
+  {
     name: 'a2a_list_payments',
-    description: 'List A2A payments sent or received by this agent.',
+    description:
+      'List A2A payments sent or received by this agent. Can optionally refresh pending native-chain settlement state for payments with on-chain transaction hashes.',
     inputSchema: {
       direction: z
         .enum(['sent', 'received', 'all'])
         .optional()
         .describe('Filter by direction: sent, received, or all (default)'),
+      asset: z
+        .string()
+        .optional()
+        .describe('Filter by asset symbol, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Filter by settlement network, for example set_chain, bitcoin, or zcash'),
       status: z
         .string()
         .optional()
         .describe('Filter by status: pending, submitted, completed, failed'),
+      refreshOnChain: z
+        .boolean()
+        .optional()
+        .describe(
+          'Refresh pending on-chain BTC/ZEC/EVM/Solana payment statuses before returning results',
+        ),
       limit: z.number().int().min(1).max(500).optional().describe('Max results (default: 20)'),
     },
     permission: 'read',
@@ -440,13 +602,15 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
+      const { runtime, a2a } = await getA2AContext(commerce, agentConfig);
 
       const filter = {
         sent: params.direction === 'sent',
         received: params.direction === 'received',
+        asset: params.asset,
+        network: params.network,
         status: params.status,
+        refreshOnChain: params.refreshOnChain || false,
         limit: params.limit || 20,
       };
 
@@ -455,7 +619,10 @@ export const a2aTools = [
       return {
         success: true,
         count: payments.length,
+        refreshed: Boolean(params.refreshOnChain),
         payments,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
       };
     },
   },
@@ -544,10 +711,21 @@ export const a2aTools = [
 
   {
     name: 'a2a_get_balance',
-    description: 'Get A2A payment summary for this agent (total sent, received, net flow).',
-    inputSchema: {},
+    description:
+      'Get an A2A payment summary for this agent, with optional asset/network filters and per-rail breakdowns.',
+    inputSchema: {
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional settlement network filter, for example set_chain, bitcoin, or zcash'),
+      includeBreakdown: z
+        .boolean()
+        .optional()
+        .describe('Include per-asset and per-network payment breakdowns (default: true)'),
+    },
     permission: 'read',
-    handler: async ({ commerce, agentConfig }) => {
+    handler: async ({ commerce, params, agentConfig }) => {
       if (!agentConfig?.walletAddress) {
         return {
           success: false,
@@ -555,14 +733,19 @@ export const a2aTools = [
         };
       }
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
+      const { runtime, a2a } = await getA2AContext(commerce, agentConfig);
 
-      const balance = await a2a.getBalance();
+      const balance = await a2a.getBalance({
+        asset: params.asset,
+        network: params.network,
+        includeBreakdown: params.includeBreakdown,
+      });
 
       return {
         success: true,
         balance,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
       };
     },
   },
@@ -582,8 +765,11 @@ export const a2aTools = [
       network: z
         .string()
         .optional()
-        .describe('Required network support: set_chain, base, ethereum'),
-      asset: z.string().optional().describe('Required asset support: USDC, USDT, ssUSD'),
+        .describe('Required network support: set_chain, base, ethereum, arbitrum, bitcoin, zcash'),
+      asset: z
+        .string()
+        .optional()
+        .describe('Required asset support: USDC, USDT, ssUSD, DAI, BTC, ZEC'),
       trustLevel: z
         .string()
         .optional()
@@ -591,9 +777,12 @@ export const a2aTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const agents = await commerce
-        .x402()
-        .discoverAgents(params.network, params.asset, params.skill, params.trustLevel);
+      const agents = await commerce.x402().discoverAgents({
+        network: params.network,
+        asset: params.asset,
+        skill: params.skill,
+        trust_level: params.trustLevel,
+      });
 
       return {
         success: true,
@@ -606,6 +795,7 @@ export const a2aTools = [
           skills: a.a2a_skills,
           supportedAssets: a.supported_assets,
           supportedNetworks: a.supported_networks,
+          paymentAddresses: parseJsonObject(a.payment_addresses),
           endpointUrl: a.endpoint_url,
           description: a.description,
         })),
@@ -723,8 +913,20 @@ export const a2aTools = [
       quoteId: z.string().optional().describe('Associated quote ID (optional)'),
       buyerAddress: z.string().min(1).describe('Buyer wallet address'),
       sellerAddress: z.string().min(1).describe('Seller wallet address'),
-      amount: z.number().positive().describe('Amount to escrow (e.g., 100.00 for $100 USDC)'),
-      asset: z.string().optional().describe('Asset to escrow: USDC (default), USDT, ssUSD'),
+      amount: z
+        .number()
+        .positive()
+        .describe('Amount to escrow in the selected asset (e.g., 100.00 or 0.001)'),
+      asset: z
+        .string()
+        .optional()
+        .describe(
+          'Asset to escrow: defaults to the selected network payment asset (e.g., USDC, ssUSD, BTC, ZEC)',
+        ),
+      network: z
+        .string()
+        .optional()
+        .describe('Settlement network: set_chain, base, ethereum, arbitrum, bitcoin, zcash'),
       conditions: z
         .array(
           z.object({
@@ -777,13 +979,14 @@ export const a2aTools = [
         amount: params.amount,
         amountDecimal: params.amount,
         asset: params.asset,
+        network: params.network,
         conditions: params.conditions,
         expiresInHours: params.expiresInHours,
       });
 
       return {
         success: true,
-        message: `Escrow created for ${params.amount} ${params.asset || 'USDC'}`,
+        message: `Escrow created for ${params.amount} ${params.asset || 'default asset'}`,
         escrow: result.escrow,
       };
     },
@@ -1826,8 +2029,16 @@ export const a2aTools = [
       serviceId: z.string().optional().describe('Associated service ID'),
       planName: z.string().min(1).describe('Human-readable plan name (e.g., "Pro Plan")'),
       amount: z.number().positive().describe('Amount per billing cycle (e.g., 49.99)'),
-      asset: z.string().optional().describe('Asset: USDC (default), USDT, ssUSD'),
-      network: z.string().optional().describe('Network: set_chain (default), base, ethereum'),
+      asset: z
+        .string()
+        .optional()
+        .describe(
+          'Asset: defaults to the selected network payment asset (e.g., USDC, ssUSD, BTC, ZEC)',
+        ),
+      network: z
+        .string()
+        .optional()
+        .describe('Network: set_chain, base, ethereum, arbitrum, bitcoin, zcash'),
       billingInterval: z
         .enum(['weekly', 'biweekly', 'monthly', 'quarterly', 'annual'])
         .optional()
@@ -1863,7 +2074,7 @@ export const a2aTools = [
 
       return {
         success: true,
-        message: `Subscription created: ${params.planName} at ${params.amount} ${params.asset || 'USDC'}/${params.billingInterval || 'monthly'}`,
+        message: `Subscription created: ${params.planName} at ${params.amount} ${params.asset || 'default asset'}/${params.billingInterval || 'monthly'}`,
         subscription: result.subscription,
       };
     },
@@ -2024,11 +2235,24 @@ export const a2aTools = [
       'Process all due subscription billing cycles. Bills active subscriptions, handles past-due retries, transitions expired trials, and cancels end-of-period subscriptions.',
     inputSchema: {},
     permission: 'write',
-    handler: async ({ commerce, allowApply }) => {
+    handler: async ({ commerce, allowApply, agentConfig }) => {
       if (!allowApply) {
         return {
           success: false,
           error: 'Processing billing requires --apply flag.',
+        };
+      }
+
+      const { findRuntimeByWalletAddress } = await import('./agent-runtime.js');
+      const runtime = findRuntimeByWalletAddress(agentConfig?.walletAddress);
+      if (runtime && typeof runtime.processSubscriptionBilling === 'function') {
+        const result = await runtime.processSubscriptionBilling();
+        return {
+          success: true,
+          message: `Processed ${result.processed} subscriptions: ${result.succeeded} succeeded, ${result.failed} failed, ${result.cancelled} cancelled`,
+          billing: result,
+          viaRuntime: true,
+          settlementChains: runtime.listSettlementChains?.() || [],
         };
       }
 
@@ -2041,6 +2265,7 @@ export const a2aTools = [
         success: true,
         message: `Processed ${result.processed} subscriptions: ${result.succeeded} succeeded, ${result.failed} failed, ${result.cancelled} cancelled`,
         billing: result,
+        viaRuntime: false,
       };
     },
   },
@@ -2055,8 +2280,16 @@ export const a2aTools = [
     inputSchema: {
       senderAddress: z.string().min(1).describe('Sender wallet address'),
       totalAmount: z.number().positive().describe('Total amount to split (e.g., 100.00)'),
-      asset: z.string().optional().describe('Asset: USDC (default), USDT, ssUSD'),
-      network: z.string().optional().describe('Network: set_chain (default), base, ethereum'),
+      asset: z
+        .string()
+        .optional()
+        .describe(
+          'Asset: defaults to the selected network payment asset (e.g., USDC, ssUSD, BTC, ZEC)',
+        ),
+      network: z
+        .string()
+        .optional()
+        .describe('Network: set_chain, base, ethereum, arbitrum, bitcoin, zcash'),
       splitType: z
         .enum(['percentage', 'fixed'])
         .optional()
@@ -2110,7 +2343,7 @@ export const a2aTools = [
 
       return {
         success: true,
-        message: `Split payment created: ${params.totalAmount} ${params.asset || 'USDC'} across ${params.recipients.length} recipients`,
+        message: `Split payment created: ${params.totalAmount} ${params.asset || 'default asset'} across ${params.recipients.length} recipients`,
         splitPayment: result.splitPayment,
       };
     },
@@ -2137,19 +2370,27 @@ export const a2aTools = [
         return { success: false, error: 'Agent wallet not configured.' };
       }
 
-      const { createSplitPaymentService } = await import('../a2a/splits.js');
-      const splitSvc = createSplitPaymentService(commerce.a2a());
+      const { findRuntimeByWalletAddress } = await import('./agent-runtime.js');
+      const runtime = findRuntimeByWalletAddress(agentConfig.walletAddress);
 
-      const { createA2AService } = await import('../a2a/index.js');
-      const a2a = createA2AService(commerce, agentConfig);
+      let result;
+      if (runtime && typeof runtime.executeSplitDeal === 'function') {
+        result = await runtime.executeSplitDeal(params.splitPaymentId);
+      } else {
+        const { createSplitPaymentService } = await import('../a2a/splits.js');
+        const splitSvc = createSplitPaymentService(commerce.a2a());
 
-      const result = await splitSvc.executeSplitPayment(
-        params.splitPaymentId,
-        async (to, amount, asset, memo) => {
-          const payResult = await a2a.pay({ to, amount, asset, memo });
-          return payResult.payment;
-        },
-      );
+        const { createA2AService } = await import('../a2a/index.js');
+        const a2a = createA2AService(commerce, agentConfig);
+
+        result = await splitSvc.executeSplitPayment(
+          params.splitPaymentId,
+          async (to, amount, asset, network, memo) => {
+            const payResult = await a2a.pay({ to, amount, asset, network, memo });
+            return payResult.payment;
+          },
+        );
+      }
 
       return {
         success: result.success,
@@ -2157,6 +2398,8 @@ export const a2aTools = [
           ? 'Split payment completed successfully'
           : 'Split payment partially completed',
         splitPayment: result.splitPayment,
+        viaRuntime: Boolean(runtime),
+        settlementChains: runtime?.listSettlementChains?.() || [],
       };
     },
   },
@@ -2223,7 +2466,16 @@ export const a2aTools = [
       buyerAddress: z.string().min(1).describe('Buyer wallet address'),
       sellerAddress: z.string().min(1).describe('Seller wallet address'),
       amount: z.number().positive().describe('Payment amount (e.g., 100.00)'),
-      asset: z.string().optional().describe('Asset: USDC (default)'),
+      asset: z
+        .string()
+        .optional()
+        .describe(
+          'Asset: defaults to the selected network payment asset (e.g., USDC, ssUSD, BTC, ZEC)',
+        ),
+      network: z
+        .string()
+        .optional()
+        .describe('Settlement network: set_chain, base, ethereum, arbitrum, bitcoin, zcash'),
       quoteId: z
         .string()
         .optional()
@@ -2274,7 +2526,7 @@ export const a2aTools = [
 
       return {
         success: true,
-        message: `Conditional payment created: ${params.amount} ${params.asset || 'USDC'} in escrow`,
+        message: `Conditional payment created: ${params.amount} ${params.asset || 'default asset'} in escrow`,
         escrow: result.escrow,
       };
     },

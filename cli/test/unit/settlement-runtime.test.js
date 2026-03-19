@@ -212,13 +212,16 @@ function setupBuyerWithQuotedQuote(options = {}) {
   const quote = {
     id: quoteId,
     buyer_address: WALLET_BUYER,
+    seller_agent_id: options.sellerAgentId || null,
     seller_address: WALLET_SELLER,
     status: 'quoted',
     total: options.total || 50,
     total_decimal: options.total || 50,
     asset: options.asset || 'USDC',
-    network: 'set_chain',
+    network: options.network || 'set_chain',
+    accepted_networks: options.acceptedNetworks || undefined,
     items: JSON.stringify([{ name: 'test-service', quantity: 1, unit_price: options.total || 50 }]),
+    metadata: options.quoteMetadata ? JSON.stringify(options.quoteMetadata) : null,
     created_at: new Date().toISOString(),
   };
   quotes.set(quoteId, quote);
@@ -388,6 +391,94 @@ describe('Settlement Runtime Integration', () => {
       assert.equal(settleCall.asset, 'USDC');
       assert.ok(settleCall.memo.includes(quoteId));
       assert.ok(settleCall.paymentId); // Payment ID assigned
+
+      runtime.destroy();
+    });
+
+    it('uses seller payout metadata for native-chain settlement', async () => {
+      const mockSettlement = createMockSettlement({
+        chainId: 'bitcoin',
+        fundsResult: {
+          sufficient: true,
+          balance: '1.00000000',
+          required: '0.5',
+          symbol: 'BTC',
+        },
+        balanceResult: {
+          balance: '1.00000000',
+          balanceSmallest: 100000000n,
+          symbol: 'BTC',
+        },
+      });
+      const { runtime } = setupBuyerWithQuotedQuote({
+        total: 0.5,
+        asset: 'BTC',
+        settlement: mockSettlement,
+        sellerAgentId: '11111111-1111-1111-1111-111111111111',
+        quoteMetadata: {
+          seller_payment_address: 'bc1qsellernative',
+        },
+      });
+
+      await runtime.tick();
+
+      assert.equal(mockSettlement.calls.settle.length, 1);
+      assert.equal(mockSettlement.calls.settle[0].toAddress, 'bc1qsellernative');
+      assert.equal(mockSettlement.calls.settle[0].asset, 'BTC');
+
+      runtime.destroy();
+    });
+
+    it('selects the settlement service matching the negotiated network', async () => {
+      const zcashSettlement = createMockSettlement({
+        chainId: 'zcash',
+        fundsResult: {
+          sufficient: true,
+          balance: '5.00000000',
+          required: '0.5',
+          symbol: 'ZEC',
+        },
+        balanceResult: {
+          balance: '5.00000000',
+          balanceSmallest: 500000000n,
+          symbol: 'ZEC',
+        },
+      });
+      const bitcoinSettlement = createMockSettlement({
+        chainId: 'bitcoin',
+        fundsResult: {
+          sufficient: true,
+          balance: '1.00000000',
+          required: '0.5',
+          symbol: 'BTC',
+        },
+        balanceResult: {
+          balance: '1.00000000',
+          balanceSmallest: 100000000n,
+          symbol: 'BTC',
+        },
+      });
+
+      const { runtime } = setupBuyerWithQuotedQuote({
+        total: 0.5,
+        asset: 'BTC',
+        network: 'bitcoin',
+        acceptedNetworks: ['bitcoin'],
+        settlement: zcashSettlement,
+        sellerAgentId: '11111111-1111-1111-1111-111111111111',
+        quoteMetadata: {
+          seller_payment_address: 'bc1qbitcoinseller',
+        },
+      });
+      runtime.setSettlement(bitcoinSettlement.service);
+      runtime.settlement = zcashSettlement.service;
+
+      await runtime.tick();
+
+      assert.equal(zcashSettlement.calls.settle.length, 0);
+      assert.equal(bitcoinSettlement.calls.settle.length, 1);
+      assert.equal(bitcoinSettlement.calls.settle[0].toAddress, 'bc1qbitcoinseller');
+      assert.equal(bitcoinSettlement.calls.settle[0].asset, 'BTC');
 
       runtime.destroy();
     });
@@ -782,9 +873,43 @@ describe('Settlement Runtime Integration', () => {
 
       // Budget check should trigger, not settlement check
       assert.ok(events.some(e => e.type === 'perTransaction'));
+      assert.ok(events.some(e => e.limit === 100));
+      assert.ok(events.some(e => e.attempted === 999));
       assert.ok(!events.includes('funds'));
 
       // hasSufficientFunds should NOT be called
+      assert.equal(mock.calls.hasSufficientFunds.length, 0);
+
+      runtime.destroy();
+    });
+
+    it('classifies daily budget failures before settlement pre-flight', async () => {
+      const mock = createMockSettlement({
+        chainId: 'bitcoin',
+        symbol: 'BTC',
+      });
+      const { runtime } = setupBuyerWithQuotedQuote({
+        total: 100,
+        asset: 'BTC',
+        network: 'bitcoin',
+        acceptedNetworks: ['bitcoin'],
+        settlement: mock,
+      });
+
+      runtime.recordSpend(1950, { asset: 'BTC', network: 'bitcoin' });
+
+      const events = [];
+      runtime.on('budget:exceeded', (e) => events.push(e));
+      runtime.on('settlement:insufficient_funds', () => events.push('funds'));
+
+      await runtime.tick();
+
+      assert.ok(events.some(e => e.type === 'daily'));
+      assert.ok(events.some(e => e.asset === 'BTC'));
+      assert.ok(events.some(e => e.network === 'bitcoin'));
+      assert.ok(events.some(e => e.limit === 2000));
+      assert.ok(events.some(e => e.remaining === 50));
+      assert.ok(!events.includes('funds'));
       assert.equal(mock.calls.hasSufficientFunds.length, 0);
 
       runtime.destroy();

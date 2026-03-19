@@ -26,6 +26,49 @@ export {
 // MCP Server
 export { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
 export { createMcpEventStreamer } from './mcp-event-streamer.js';
+export {
+  MPP_HTTP_PAYMENT_REQUIRED_STATUS,
+  MPP_JSONRPC_PAYMENT_REQUIRED_CODE,
+  MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
+  MPP_PROTOCOL,
+  MPP_SUPPORTED_INTENTS,
+  MPP_VERSION,
+  attachPaymentMetadata,
+  buildHttpPaymentRequiredResponse,
+  buildPaymentRetryExtra,
+  buildMppServiceInfo,
+  buildPaymentInfoFromPricing,
+  buildPaymentRequiredPayload,
+  createPaymentChallenge,
+  createPaymentCredential,
+  createPaymentDiscoveryDocument,
+  createPaymentReceipt,
+  executeMppToolWithPayment,
+  extractPaymentChallenge,
+  extractPaymentCredential,
+  listPaymentMethodAdapters,
+  MppPaymentPolicyError,
+  resolvePaymentMethodAdapter,
+  validatePaymentChallenge,
+  verifyPaymentCredential,
+} from './mpp/index.js';
+export {
+  attachPaymentReceiptToHttpResponse,
+  buildHttpRouteDiscoveryDocument,
+  buildHttpPaymentHeaders,
+  createMppHttpRouteHandler,
+  extractHttpPaymentCredential,
+} from './mpp/http.js';
+export {
+  createMppHttpAgent,
+  discoverMppHttpService,
+  extractPayableHttpRoutes,
+  fetchMppDiscoveryDocument,
+  fetchMppServiceInfo,
+  extractHttpPaymentChallenge,
+  extractHttpPaymentReceipt,
+  mppFetch,
+} from './mpp/agent.js';
 
 // Telemetry & Observability
 export { AgentTelemetry, noOpTelemetry, createTelemetry, Span } from './telemetry.js';

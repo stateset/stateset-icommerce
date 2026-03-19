@@ -270,7 +270,7 @@ SPECIALIZED COMMANDS:
   stateset-update          Check/install CLI updates
   stateset-chat            Interactive multi-turn REPL
   stateset-direct          Direct CLI (no AI, structured commands)
-  stateset-pay             Native stablecoin payments
+  stateset-pay             Native crypto payments
   stateset-autonomous      Autonomous business engine
   stateset-sync            VES sync management
   stateset-daemon          Daemon & service management

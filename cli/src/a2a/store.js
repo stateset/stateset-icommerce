@@ -203,6 +203,7 @@ const UPDATABLE_COLUMNS = {
     'supported_networks',
     'supported_assets',
     'a2a_skills',
+    'payment_addresses',
     'endpoint_url',
     'description',
     'trust_level',
@@ -617,6 +618,7 @@ CREATE TABLE IF NOT EXISTS agent_cards (
   supported_networks TEXT DEFAULT '["set_chain"]',
   supported_assets TEXT DEFAULT '["USDC"]',
   a2a_skills TEXT DEFAULT '["buy","sell","quote"]',
+  payment_addresses TEXT,
   endpoint_url TEXT,
   description TEXT,
   trust_level TEXT DEFAULT 'sandbox',
@@ -767,6 +769,7 @@ export class A2AStore {
     this.db.exec(A2A_SCHEMA);
     this._migrateQuotes();
     this._migrateEscrows();
+    this._migrateAgentCards();
   }
 
   close() {
@@ -923,6 +926,10 @@ export class A2AStore {
       conditions.push('asset = ?');
       params.push(filter.asset);
     }
+    if (filter.network) {
+      conditions.push('network = ?');
+      params.push(filter.network);
+    }
     if (filter.reference_type) {
       conditions.push('reference_type = ?');
       params.push(filter.reference_type);
@@ -962,6 +969,10 @@ export class A2AStore {
       conditions.push('asset = ?');
       params.push(filter.asset);
     }
+    if (filter.network) {
+      conditions.push('network = ?');
+      params.push(filter.network);
+    }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const result = this.db
@@ -969,6 +980,58 @@ export class A2AStore {
       .get(...params);
 
     return result?.total || 0;
+  }
+
+  summarizePayments(filter = {}) {
+    this.init();
+    const conditions = [];
+    const params = [];
+
+    if (filter.sender_address) {
+      conditions.push('sender_address = ?');
+      params.push(filter.sender_address);
+    }
+    if (filter.recipient_address) {
+      conditions.push('recipient_address = ?');
+      params.push(filter.recipient_address);
+    }
+    if (filter.sender_agent_id) {
+      conditions.push('sender_agent_id = ?');
+      params.push(filter.sender_agent_id);
+    }
+    if (filter.recipient_agent_id) {
+      conditions.push('recipient_agent_id = ?');
+      params.push(filter.recipient_agent_id);
+    }
+    if (filter.status) {
+      conditions.push('status = ?');
+      params.push(filter.status);
+    }
+    if (filter.asset) {
+      conditions.push('asset = ?');
+      params.push(filter.asset);
+    }
+    if (filter.network) {
+      conditions.push('network = ?');
+      params.push(filter.network);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    return this.db
+      .prepare(
+        `
+        SELECT
+          asset,
+          network,
+          COUNT(*) AS payment_count,
+          COALESCE(SUM(amount_decimal), 0) AS total_amount
+        FROM a2a_payments
+        ${where}
+        GROUP BY asset, network
+        ORDER BY asset ASC, network ASC
+      `,
+      )
+      .all(...params);
   }
 
   // ===========================================================================
@@ -2032,6 +2095,22 @@ export class A2AStore {
     }
   }
 
+  _migrateAgentCards() {
+    const columns = [['payment_addresses', 'TEXT']];
+    for (const [name, type] of columns) {
+      try {
+        this.db.exec(`ALTER TABLE agent_cards ADD COLUMN ${name} ${type}`);
+      } catch (err) {
+        console.debug(
+          '[a2a/store] Column',
+          name,
+          'already exists on agent_cards:',
+          err.message || err,
+        );
+      }
+    }
+  }
+
   // ===========================================================================
   // Notification Log
   // ===========================================================================
@@ -2908,9 +2987,9 @@ export class A2AStore {
       .prepare(
         `INSERT INTO agent_cards (
           id, name, wallet_address, public_key, supported_networks,
-          supported_assets, a2a_skills, endpoint_url, description,
+          supported_assets, a2a_skills, payment_addresses, endpoint_url, description,
           trust_level, active, suspended_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -2926,6 +3005,9 @@ export class A2AStore {
         typeof card.a2a_skills === 'object'
           ? JSON.stringify(card.a2a_skills)
           : card.a2a_skills || '["buy","sell","quote"]',
+        typeof card.payment_addresses === 'object'
+          ? JSON.stringify(card.payment_addresses)
+          : card.payment_addresses || null,
         card.endpoint_url || null,
         card.description || null,
         card.trust_level || 'sandbox',
@@ -2977,8 +3059,16 @@ export class A2AStore {
       .all(...params, limit, offset);
   }
 
-  discoverAgents(filter = {}) {
+  discoverAgents(filter = {}, asset, skill, trustLevel) {
     this.init();
+    if (!filter || typeof filter !== 'object' || Array.isArray(filter)) {
+      filter = {
+        network: filter || undefined,
+        asset,
+        skill,
+        trust_level: trustLevel,
+      };
+    }
     const conditions = ['active = 1'];
     const params = [];
 

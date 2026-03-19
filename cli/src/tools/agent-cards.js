@@ -7,6 +7,18 @@
 
 import { z } from 'zod';
 
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Agent card tool definitions
  */
@@ -22,8 +34,17 @@ export const agentCardTools = [
       supportedNetworks: z
         .array(z.string())
         .optional()
-        .describe('Networks: set_chain, base, ethereum, arbitrum'),
-      supportedAssets: z.array(z.string()).optional().describe('Assets: usdc, ssusd, usdt'),
+        .describe('Networks: set_chain, base, ethereum, arbitrum, bitcoin, zcash'),
+      supportedAssets: z
+        .array(z.string())
+        .optional()
+        .describe('Assets: usdc, ssusd, usdt, btc, zec'),
+      paymentAddresses: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe(
+          'Network-specific receive addresses (e.g., { bitcoin: "bc1...", zcash: "u1..." })',
+        ),
       skills: z
         .array(z.string())
         .optional()
@@ -59,6 +80,7 @@ export const agentCardTools = [
         public_key: params.publicKey,
         supported_networks: params.supportedNetworks,
         supported_assets: params.supportedAssets,
+        payment_addresses: params.paymentAddresses,
         a2a_skills: params.skills,
         endpoint_url: params.endpointUrl,
         description: params.description,
@@ -74,6 +96,7 @@ export const agentCardTools = [
           active: card.active,
           supportedNetworks: card.supported_networks,
           supportedAssets: card.supported_assets,
+          paymentAddresses: parseJsonObject(card.payment_addresses),
           skills: card.a2a_skills,
         },
       };
@@ -85,8 +108,11 @@ export const agentCardTools = [
     description:
       'Discover AI agents with specific commerce capabilities. Find sellers, buyers, or agents supporting specific networks/assets.',
     inputSchema: {
-      network: z.string().optional().describe('Filter by network: set_chain, base, ethereum'),
-      asset: z.string().optional().describe('Filter by asset: usdc, ssusd, usdt'),
+      network: z
+        .string()
+        .optional()
+        .describe('Filter by network: set_chain, base, ethereum, bitcoin, zcash'),
+      asset: z.string().optional().describe('Filter by asset: usdc, ssusd, usdt, btc, zec'),
       skill: z.string().optional().describe('Filter by skill: sell, buy, quote, fulfill'),
       trustLevel: z
         .string()
@@ -95,9 +121,12 @@ export const agentCardTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const agents = await commerce
-        .x402()
-        .discoverAgents(params.network, params.asset, params.skill, params.trustLevel);
+      const agents = await commerce.x402().discoverAgents({
+        network: params.network,
+        asset: params.asset,
+        skill: params.skill,
+        trust_level: params.trustLevel,
+      });
       return {
         success: true,
         count: agents.length,
@@ -108,6 +137,7 @@ export const agentCardTools = [
           trustLevel: a.trust_level,
           supportedNetworks: a.supported_networks,
           supportedAssets: a.supported_assets,
+          paymentAddresses: parseJsonObject(a.payment_addresses),
           skills: a.a2a_skills,
           endpointUrl: a.endpoint_url,
         })),
@@ -148,6 +178,7 @@ export const agentCardTools = [
           active: agent.active,
           supportedNetworks: agent.supported_networks,
           supportedAssets: agent.supported_assets,
+          paymentAddresses: parseJsonObject(agent.payment_addresses),
           skills: agent.a2a_skills,
           endpointUrl: agent.endpoint_url,
           createdAt: agent.created_at,
@@ -210,6 +241,7 @@ export const agentCardTools = [
           walletAddress: a.wallet_address,
           trustLevel: a.trust_level,
           active: a.active,
+          paymentAddresses: parseJsonObject(a.payment_addresses),
         })),
       };
     },

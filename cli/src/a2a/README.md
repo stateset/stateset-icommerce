@@ -5,7 +5,7 @@ Easy payments between AI agents for the iCommerce ecosystem.
 ## Overview
 
 The A2A module enables AI agents to:
-- **Pay each other directly** - Send stablecoins (USDC, USDT, ssUSD) to other agents
+- **Pay each other directly** - Send supported payment assets including USDC, ssUSD, BTC, and shielded ZEC to other agents
 - **Request payments** - Create payment requests that other agents can pay
 - **Quote/Purchase flows** - Request quotes, negotiate, accept, and fulfill
 
@@ -22,7 +22,7 @@ const a2a = createA2AService(commerce, {
   signingKey: { privateKey, publicKey },
 });
 
-// Pay another agent $10 USDC
+// Pay another agent using the default asset for the configured network
 const result = await a2a.pay({
   to: '0xRecipientWallet',
   amount: 10.00,

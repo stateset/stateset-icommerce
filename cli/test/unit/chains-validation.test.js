@@ -87,16 +87,13 @@ describe('validateToken', () => {
     assert.ok(validateToken('solana'));
   });
 
+  it('accepts omitted token when native payment token exists on bitcoin', () => {
+    assert.ok(validateToken('bitcoin'));
+  });
+
   it('throws for unknown token', () => {
     assert.throws(
       () => validateToken('solana', 'FAKECOIN'),
-      (err) => err.code === ValidationErrorCodes.INVALID_TOKEN,
-    );
-  });
-
-  it('throws for no default stablecoin on bitcoin', () => {
-    assert.throws(
-      () => validateToken('bitcoin'),
       (err) => err.code === ValidationErrorCodes.INVALID_TOKEN,
     );
   });

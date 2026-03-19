@@ -52,7 +52,7 @@ async function loadChains() {
  * @property {string} agentId        - Agent UUID for wallet derivation
  * @property {boolean} [simulate]    - If true, build tx but don't broadcast (default: false)
  * @property {string} [configDir]    - Key/wallet config directory (default: '.stateset')
- * @property {string} [tokenSymbol]  - Override token (default: chain's default stablecoin)
+ * @property {string} [tokenSymbol]  - Override token (default: chain's default payment token)
  * @property {Function} [onProgress] - Progress callback for chain operations
  * @property {Function} [logger]     - Logging function
  */
@@ -111,12 +111,10 @@ export function createSettlementService(config) {
   async function getBalance() {
     const chains = await loadChains();
     const address = await getAddress();
-    const token = tokenSymbol || chains.getDefaultStablecoin(chainId)?.symbol;
-    const result = await chains.getBalance(address, chainId, token);
+    const token = tokenSymbol || chains.getDefaultPaymentToken(chainId)?.symbol;
+    const result = await chains.getBalance(address, chainId, token, { configDir });
     return {
-      balance:
-        result.balanceDecimal ||
-        chains.fromSmallestUnit(result.balanceSmallest, result.decimals || 6),
+      balance: result.balance,
       balanceSmallest: result.balanceSmallest,
       symbol: result.symbol || token,
     };
@@ -130,8 +128,8 @@ export function createSettlementService(config) {
   async function hasSufficientFunds(amount) {
     const chains = await loadChains();
     const address = await getAddress();
-    const token = tokenSymbol || chains.getDefaultStablecoin(chainId)?.symbol;
-    return chains.hasSufficientBalance(address, chainId, amount, token);
+    const token = tokenSymbol || chains.getDefaultPaymentToken(chainId)?.symbol;
+    return chains.hasSufficientBalance(address, chainId, amount, token, { configDir });
   }
 
   /**
@@ -151,7 +149,7 @@ export function createSettlementService(config) {
   async function settle({ toAddress, amount, asset, memo, paymentId }) {
     try {
       const chains = await loadChains();
-      const token = asset || tokenSymbol || chains.getDefaultStablecoin(chainId)?.symbol;
+      const token = asset || tokenSymbol || chains.getDefaultPaymentToken(chainId)?.symbol;
 
       logger(
         `[settlement] Settling ${amount} ${token} → ${toAddress} on ${chainId}${simulate ? ' (simulate)' : ''}`,

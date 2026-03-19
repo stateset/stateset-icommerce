@@ -78,6 +78,15 @@ describe('event-wiring', () => {
         seen.add(mapping.runtimeEvent);
       }
     });
+
+    it('includes budget:exceeded wiring', () => {
+      const mapping = EVENT_MAP.find((entry) => entry.runtimeEvent === 'budget:exceeded');
+      assert.deepStrictEqual(mapping, {
+        runtimeEvent: 'budget:exceeded',
+        streamType: 'a2a_runtime.budget_exceeded',
+        bridgeType: 'agent.budget.exceeded',
+      });
+    });
   });
 
   describe('wireRuntimeEvents', () => {
@@ -157,7 +166,7 @@ describe('event-wiring', () => {
       unwire(); // Should not throw
     });
 
-    it('maps all 20 event types correctly', () => {
+    it('maps all advertised event types correctly', () => {
       wireRuntimeEvents(runtime, stream, bridge);
 
       for (const mapping of EVENT_MAP) {
@@ -195,6 +204,31 @@ describe('event-wiring', () => {
       assert.strictEqual(payload.walletAddress, '0xTestWallet');
       assert.strictEqual(payload.type, 'daily');
       assert.strictEqual(payload.spent, 400);
+    });
+
+    it('preserves budget:exceeded rail metadata in stream and bridge payloads', () => {
+      wireRuntimeEvents(runtime, stream, bridge);
+      runtime.emit('budget:exceeded', {
+        type: 'balance',
+        asset: 'ZEC',
+        network: 'zcash',
+        limit: 1.25,
+        attempted: 2,
+        remaining: 1.25,
+        operation: 'subscription:create',
+      });
+
+      const streamPayload = stream.pushEvent.mock.calls[0].arguments[0].payload;
+      assert.strictEqual(streamPayload.type, 'balance');
+      assert.strictEqual(streamPayload.asset, 'ZEC');
+      assert.strictEqual(streamPayload.network, 'zcash');
+      assert.strictEqual(streamPayload.limit, 1.25);
+      assert.strictEqual(streamPayload.operation, 'subscription:create');
+
+      const bridgePayload = bridge.sendCommerceEvent.mock.calls[0].arguments[1];
+      assert.strictEqual(bridgePayload.asset, 'ZEC');
+      assert.strictEqual(bridgePayload.network, 'zcash');
+      assert.strictEqual(bridgePayload.attempted, 2);
     });
 
     it('survives stream.pushEvent throwing', () => {

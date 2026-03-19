@@ -221,7 +221,16 @@ export class HookRunner {
  * @property {string} method - HTTP method (GET, POST, etc.)
  * @property {string} path - Route path
  * @property {string} [level] - Permission level required to access the route (none, read, preview, write, delete, admin)
+ * @property {string} [summary] - Short OpenAPI summary for discovery output
+ * @property {string} [description] - Longer OpenAPI description for discovery output
+ * @property {string|string[]} [tags] - OpenAPI tags for discovery output
+ * @property {Object} [inputSchema] - JSON schema for request body discovery
+ * @property {Object} [outputSchema] - JSON schema for response discovery
+ * @property {Object} [paymentInfo] - Precomputed x-payment-info metadata for discovery
+ * @property {Object} [pricing] - Static pricing config used to derive payment discovery metadata
  * @property {Function} handler - ({ method, pathname, params, body, query, headers, identity }) => Promise<any>
+ *   Handlers may return a JSON body directly, or an HTTP response shape:
+ *   { status?, headers?, body?, rawBody?, contentType?, _html? }.
  */
 
 /**

@@ -51,6 +51,22 @@ describe('agent-card-auto', () => {
       assert.strictEqual(card.active, 1);
     });
 
+    it('registerAgent stores network-specific payment addresses', () => {
+      const card = store.registerAgent({
+        name: 'ShieldedBot',
+        wallet_address: '0xWalletShielded',
+        payment_addresses: {
+          bitcoin: 'bc1qshielded',
+          zcash: 'u1shielded',
+        },
+      });
+
+      assert.deepStrictEqual(JSON.parse(card.payment_addresses), {
+        bitcoin: 'bc1qshielded',
+        zcash: 'u1shielded',
+      });
+    });
+
     it('getAgent retrieves by id', () => {
       const card = store.registerAgent({ name: 'Bot2', wallet_address: '0xW2' });
       const fetched = store.getAgent(card.id);
@@ -321,6 +337,48 @@ describe('agent-card-auto', () => {
       const networks = JSON.parse(card.supported_networks);
       assert.deepStrictEqual(networks, ['ethereum', 'set_chain']);
       assert.strictEqual(card.description, 'Test bot for analytics');
+      runtime.destroy();
+      store.close();
+    });
+
+    it('syncs settlement payment addresses into the agent card', async () => {
+      const { runtime, store } = makeTestRuntime({ autoRegisterCard: true });
+      runtime.settlement = {
+        chainId: 'bitcoin',
+        getAddress: async () => 'bc1qruntimecard',
+      };
+
+      const card = await runtime.syncAgentCard();
+
+      assert.deepStrictEqual(JSON.parse(card.payment_addresses), {
+        bitcoin: 'bc1qruntimecard',
+      });
+      assert.deepStrictEqual(JSON.parse(card.supported_networks), ['bitcoin']);
+      assert.deepStrictEqual(JSON.parse(card.supported_assets), ['BTC']);
+      runtime.destroy();
+      store.close();
+    });
+
+    it('preserves existing payout addresses when syncing a new settlement network', async () => {
+      const { runtime, store } = makeTestRuntime({ autoRegisterCard: true });
+      const initialCard = runtime.getAgentCard();
+      store.updateAgent(initialCard.id, {
+        payment_addresses: JSON.stringify({
+          zcash: 'u1existingzcash',
+        }),
+      });
+
+      runtime.settlement = {
+        chainId: 'bitcoin',
+        getAddress: async () => 'bc1qmergedruntime',
+      };
+
+      const card = await runtime.syncAgentCard();
+
+      assert.deepStrictEqual(JSON.parse(card.payment_addresses), {
+        zcash: 'u1existingzcash',
+        bitcoin: 'bc1qmergedruntime',
+      });
       runtime.destroy();
       store.close();
     });

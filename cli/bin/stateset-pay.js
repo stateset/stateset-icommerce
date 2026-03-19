@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * StateSet Pay - Native Stablecoin Payments for AI Agents
+ * StateSet Pay - Native Crypto Payments for AI Agents
  *
- * Send stablecoin payments using agent-controlled wallets derived from VES keys.
+ * Send blockchain payments using agent-controlled wallets derived from VES keys.
  *
  * Usage:
  *   stateset pay --to <address> --amount <amount> [--chain <chain>] [--token <token>]
@@ -31,7 +31,7 @@ import {
   listChains,
   getChain,
   getToken,
-  getDefaultStablecoin,
+  getDefaultPaymentToken,
   getExplorerAddressUrl,
   formatAmount,
 } from '../src/chains/index.js';
@@ -47,7 +47,7 @@ const options = {
   to: { type: 'string', short: 't', description: 'Recipient wallet address' },
   amount: { type: 'string', short: 'a', description: 'Amount to send (e.g., 100.00)' },
   chain: { type: 'string', short: 'c', default: 'set_chain', description: 'Blockchain network' },
-  token: { type: 'string', description: 'Token symbol (default: chain stablecoin)' },
+  token: { type: 'string', description: 'Token symbol (default: chain payment token)' },
 
   // Agent options
   agent: { type: 'string', default: 'default', description: 'Agent ID' },
@@ -74,7 +74,7 @@ const options = {
 };
 
 const HELP = `
-${chalk.bold.cyan('StateSet Pay')} - Native Stablecoin Payments for AI Agents
+${chalk.bold.cyan('StateSet Pay')} - Native Crypto Payments for AI Agents
 
 ${chalk.bold('USAGE:')}
   stateset pay --to <address> --amount <amount> [options]
@@ -86,7 +86,7 @@ ${chalk.bold('PAYMENT OPTIONS:')}
   -t, --to <address>      Recipient wallet address
   -a, --amount <amount>   Amount to send (e.g., 50.00)
   -c, --chain <chain>     Blockchain network (default: set_chain)
-      --token <symbol>    Token symbol (default: chain's stablecoin)
+      --token <symbol>    Token symbol (default: chain's payment token)
       --order <id>        Order ID for audit trail
       --customer <id>     Customer ID for audit trail
       --memo <text>       Payment memo
@@ -110,6 +110,10 @@ ${chalk.bold('SUPPORTED CHAINS:')}
   ${chalk.green('base')}           Base L2 (USDC) - Coinbase, low fees
   ${chalk.green('ethereum')}       Ethereum mainnet (USDC) - Maximum security
   ${chalk.green('arbitrum')}       Arbitrum L2 (USDC) - Fast, cheap
+  ${chalk.green('bitcoin')}        Bitcoin mainnet (BTC) - Native UTXO payments
+  ${chalk.green('bitcoin_testnet')} Bitcoin testnet (BTC) - Testing
+  ${chalk.green('zcash')}          Zcash mainnet (shielded ZEC via wallet RPC)
+  ${chalk.green('zcash_testnet')}  Zcash testnet (shielded ZEC via wallet RPC)
 
 ${chalk.bold('EXAMPLES:')}
   ${chalk.dim('# Send 50 ssUSD on SET Chain (simulated)')}
@@ -120,6 +124,12 @@ ${chalk.bold('EXAMPLES:')}
 
   ${chalk.dim('# Send ssUSD on SET Chain')}
   stateset pay --apply --to 0x1234...5678 --amount 100 --chain set_chain
+
+  ${chalk.dim('# Send BTC on Bitcoin mainnet')}
+  stateset pay --apply --to bc1qrecipient... --amount 0.001 --chain bitcoin
+
+  ${chalk.dim('# Send shielded ZEC on Zcash')}
+  stateset pay --apply --to u1recipient... --amount 0.25 --chain zcash
 
   ${chalk.dim('# Check balance')}
   stateset pay --balance --chain set_chain
@@ -218,12 +228,14 @@ async function showChains(values, writeJson) {
   if (values.json) {
     const chainData = chains.map((id) => {
       const chain = getChain(id);
-      const stablecoin = getDefaultStablecoin(id);
+      const defaultToken = getDefaultPaymentToken(id);
       return {
         id,
         name: chain.name,
         network: chain.network,
-        stablecoin: stablecoin?.symbol || null,
+        stablecoin: defaultToken?.symbol || null,
+        paymentToken: defaultToken?.symbol || null,
+        defaultToken: defaultToken?.symbol || null,
         explorerUrl: chain.explorerUrl,
       };
     });
@@ -235,10 +247,10 @@ async function showChains(values, writeJson) {
 
   for (const chainId of chains) {
     const chain = getChain(chainId);
-    const stablecoin = getDefaultStablecoin(chainId);
+    const defaultToken = getDefaultPaymentToken(chainId);
 
     console.log(
-      `  ${chalk.green(chainId.padEnd(18))} ${chain.name.padEnd(20)} ${chalk.cyan(stablecoin?.symbol || '-')}`,
+      `  ${chalk.green(chainId.padEnd(18))} ${chain.name.padEnd(20)} ${chalk.cyan(defaultToken?.symbol || '-')}`,
     );
   }
 
@@ -343,7 +355,7 @@ async function showBalance(values, writeJson) {
 }
 
 /**
- * Execute a stablecoin payment
+ * Execute a blockchain payment
  */
 async function executePaymentCommand(values, onConfirmRequired, writeJson) {
   const { to, amount, chain, token, agent, order, customer, memo, apply, json } = values;
@@ -359,7 +371,7 @@ async function executePaymentCommand(values, onConfirmRequired, writeJson) {
 
   // Get chain and token info for display
   const chainConfig = getChain(chain);
-  const tokenConfig = token ? getToken(chain, token) : getDefaultStablecoin(chain);
+  const tokenConfig = token ? getToken(chain, token) : getDefaultPaymentToken(chain);
 
   if (!chainConfig) {
     if (json) {
@@ -373,9 +385,9 @@ async function executePaymentCommand(values, onConfirmRequired, writeJson) {
 
   if (!tokenConfig) {
     if (json) {
-      await writeJson({ error: `No stablecoin found for chain ${chain}` });
+      await writeJson({ error: `No default payment token found for chain ${chain}` });
     } else {
-      console.error(chalk.red(`No stablecoin found for chain ${chain}`));
+      console.error(chalk.red(`No default payment token found for chain ${chain}`));
     }
     process.exit(1);
   }

@@ -37,6 +37,8 @@ export const ROUTE_PERMISSIONS = {
   // Public
   '/health': { level: 'none' },
   '/ready': { level: 'none' },
+  '/openapi.json': { level: 'none' },
+  '/.well-known/service-info': { level: 'none' },
 
   // Read-only
   '/metrics': { level: 'read' },

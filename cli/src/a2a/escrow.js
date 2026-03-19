@@ -37,6 +37,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_NETWORK, getDefaultAssetForNetwork } from './assets.js';
 
 // Valid escrow statuses
 const _ESCROW_STATUSES = [
@@ -51,9 +52,6 @@ const _ESCROW_STATUSES = [
 
 // Default configuration
 const DEFAULT_EXPIRES_HOURS = 72;
-const DEFAULT_ASSET = 'USDC';
-const DEFAULT_NETWORK = 'set_chain';
-
 /**
  * Valid transitions in the escrow state machine
  * @type {Record<string, string[]>}
@@ -231,13 +229,15 @@ export function createEscrowService(store) {
       sellerAddress,
       amount,
       amountDecimal,
-      asset = DEFAULT_ASSET,
       network = DEFAULT_NETWORK,
+      asset: requestedAsset = null,
       conditions = [],
       expiresInHours = DEFAULT_EXPIRES_HOURS,
       autoReleaseAfterHours,
       metadata,
     } = params;
+
+    const asset = requestedAsset || getDefaultAssetForNetwork(network);
 
     // Validate required fields
     if (!buyerAddress) {

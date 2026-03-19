@@ -1,8 +1,8 @@
 /**
- * Agent Wallet Management for Stablecoin Payments
+ * Agent wallet management for blockchain payments.
  *
- * Derives blockchain wallets from VES Ed25519 keys using BIP-44 standard.
- * Supports Solana (Ed25519 native) and EVM chains (secp256k1 derived).
+ * Derives blockchain wallets from VES Ed25519 keys using deterministic
+ * chain-specific paths and address encodings.
  *
  * Based on VES-CHAIN-1 specification from stateset-sequencer.
  */
@@ -10,6 +10,7 @@
 import crypto from 'crypto';
 import { getKeyManager } from '../sync/keys.js';
 import { CHAINS, isEd25519Chain, isEvmChain, isZcashChain, isBitcoinChain } from './config.js';
+import { encodeSegwitAddress } from './bitcoin-address.js';
 import {
   privateKeyToEthAddress,
   secp256k1GetPublicKey,
@@ -41,9 +42,9 @@ const DERIVATION_PATHS = {
   zcash: "m/44'/133'",
   zcash_testnet: "m/44'/1'",
 
-  // Bitcoin (coin type 0 mainnet, 1 testnet)
-  bitcoin: "m/44'/0'",
-  bitcoin_testnet: "m/44'/1'",
+  // Bitcoin native SegWit receive paths (BIP-84)
+  bitcoin: "m/84'/0'",
+  bitcoin_testnet: "m/84'/1'",
 };
 
 // =============================================================================
@@ -57,6 +58,8 @@ const DERIVATION_PATHS = {
  * @property {Buffer} privateKey - Private key bytes (keep secure!)
  * @property {string} chainId - Chain identifier
  * @property {string} derivationPath - Full derivation path used
+ * @property {string} [legacyAddress] - Legacy P2PKH address for compatibility
+ * @property {string} [segwitAddress] - Native SegWit P2WPKH address
  */
 
 /**
@@ -311,14 +314,13 @@ const BITCOIN_ADDRESS_VERSIONS = {
 };
 
 /**
- * Derive Bitcoin P2PKH address wallet (secp256k1-based)
+ * Derive Bitcoin native SegWit wallet (P2WPKH) with a matching legacy address.
  *
  * Derivation flow:
  * 1. HKDF-SHA256 from VES Ed25519 seed → secp256k1 private key
  * 2. secp256k1 public key (compressed 33 bytes)
  * 3. SHA256 → RIPEMD160 = 20-byte pubkey hash
- * 4. Version byte (1) + pubkey hash (20) + checksum (4) = 25 bytes
- * 5. Base58 encode = Bitcoin address
+ * 4. Encode the pubkey hash as both P2WPKH (preferred) and legacy P2PKH
  *
  * @param {Buffer} seed - 32-byte seed from VES signing key
  * @param {string} chainId - Chain identifier (bitcoin or bitcoin_testnet)
@@ -338,19 +340,21 @@ function deriveBitcoinWallet(seed, chainId, _chain) {
   const sha256Hash = crypto.createHash('sha256').update(publicKeyCompressed).digest();
   const pubkeyHash = ripemd160(sha256Hash);
 
-  // Step 4: Determine version byte based on network
+  // Step 4: Determine network-specific encodings
   const isTestnet = chainId === 'bitcoin_testnet';
   const versionByte = isTestnet
     ? BITCOIN_ADDRESS_VERSIONS.testnet.p2pkh
     : BITCOIN_ADDRESS_VERSIONS.mainnet.p2pkh;
+  const segwitHrp = isTestnet ? 'tb' : 'bc';
 
-  // Step 5: Build address with checksum
+  // Step 5: Build legacy compatible address with checksum
   const payload = Buffer.concat([versionByte, pubkeyHash]);
   const checksum = sha256Double(payload).subarray(0, 4);
   const addressBytes = Buffer.concat([payload, checksum]);
+  const legacyAddress = base58Encode(addressBytes);
 
-  // Step 6: Base58 encode
-  const address = base58Encode(addressBytes);
+  // Step 6: Build preferred native SegWit receive/change address
+  const segwitAddress = encodeSegwitAddress(segwitHrp, 0, pubkeyHash);
 
   // Determine derivation path
   const derivationPath = isTestnet
@@ -358,7 +362,9 @@ function deriveBitcoinWallet(seed, chainId, _chain) {
     : `${DERIVATION_PATHS.bitcoin}/0'/0/0`;
 
   return {
-    address,
+    address: segwitAddress,
+    legacyAddress,
+    segwitAddress,
     publicKey: publicKeyCompressed,
     privateKey: privKeyBytes,
     chainId,
@@ -396,6 +402,26 @@ export async function getOrCreateWallet(agentId, chainId, options = {}) {
  * @returns {Promise<string>}
  */
 export async function getWalletAddress(agentId, chainId, options = {}) {
+  if (isZcashChain(chainId)) {
+    try {
+      const { getPreferredZcashAddress } = await import('./zcash.js');
+      const shieldedAddress = await getPreferredZcashAddress(agentId, chainId, {
+        configDir: options.configDir || '.stateset',
+        createIfMissing: options.createIfMissing !== false,
+      });
+      if (shieldedAddress) {
+        return shieldedAddress;
+      }
+      if (options.requireShielded) {
+        throw new Error(`Shielded Zcash address unavailable for ${agentId} on ${chainId}`);
+      }
+    } catch (error) {
+      if (options.requireShielded) {
+        throw error;
+      }
+    }
+  }
+
   const wallet = await deriveWallet(agentId, chainId, options);
   return wallet.address;
 }
@@ -412,8 +438,7 @@ export async function listWalletAddresses(agentId, options = {}) {
 
   for (const chainId of Object.keys(CHAINS)) {
     try {
-      const wallet = await deriveWallet(agentId, chainId, options);
-      addresses[chainId] = wallet.address;
+      addresses[chainId] = await getWalletAddress(agentId, chainId, options);
     } catch (e) {
       // Skip chains that fail
       console.warn(`Could not derive wallet for ${chainId}: ${e.message}`);

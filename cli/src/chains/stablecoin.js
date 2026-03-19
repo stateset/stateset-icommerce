@@ -1,21 +1,23 @@
 /**
  * Stablecoin Payment Execution for StateSet iCommerce
  *
- * Live settlement is supported on EVM chains and Solana.
- * Other chains can be simulated for planning but are not executed.
+ * Live settlement is supported on EVM chains, Solana, Bitcoin, and shielded
+ * Zcash (via wallet-enabled JSON-RPC backend).
  */
 
 import { randomUUID } from 'node:crypto';
 import { Contract, JsonRpcProvider, Wallet } from 'ethers';
-import { deriveWallet } from './wallet.js';
+import { deriveWallet, getWalletAddress } from './wallet.js';
 import {
   getChain,
   getToken,
-  getDefaultStablecoin,
+  getDefaultPaymentToken,
   toSmallestUnit,
   fromSmallestUnit,
   getExplorerTxUrl,
   isEvmChain,
+  isZcashChain,
+  isBitcoinChain,
 } from './config.js';
 import {
   ValidationError,
@@ -25,6 +27,19 @@ import {
   validateAmount,
   validateAddress,
 } from './validation.js';
+import {
+  buildBitcoinTransaction,
+  signBitcoinTransaction,
+  submitBitcoinTransaction,
+  getBitcoinTransactionStatus,
+  getBitcoinBalance,
+} from './bitcoin.js';
+import {
+  executeZcashShieldedPayment,
+  getZcashBalance,
+  getZcashTransactionStatus,
+  isZcashWalletRpcConfigured,
+} from './zcash.js';
 
 const ERC20_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)',
@@ -45,7 +60,7 @@ function sleep(ms) {
 function requireEvmExecution(chainId) {
   if (!isEvmChain(chainId)) {
     throw new Error(
-      `EVM execution expected for chain ${chainId}. Supported live settlement targets are EVM chains and Solana.`,
+      `EVM execution expected for chain ${chainId}. Supported live settlement targets are EVM chains, Solana, Bitcoin, and shielded Zcash.`,
     );
   }
 }
@@ -152,7 +167,8 @@ function buildUnsupportedPreviewTransaction(intent, chainId) {
     fromAddress: intent.fromAddress,
     toAddress: intent.toAddress,
     amountSmallest: intent.amountSmallest.toString(),
-    reason: 'Simulation only: live execution is currently implemented for EVM and Solana chains.',
+    reason:
+      'Simulation only: live execution is currently implemented for EVM, Solana, Bitcoin, and shielded Zcash chains.',
   };
 }
 
@@ -216,23 +232,21 @@ export async function createPaymentIntent(params, options = {}) {
   getChain(chainId);
 
   validateToken(chainId, tokenSymbol);
-  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
+  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultPaymentToken(chainId);
 
   validateAmount(amount);
   validateAddress(toAddress, chainId);
 
-  const wallet = await deriveWallet(agentId, chainId, { configDir });
+  const fromAddress = await getWalletAddress(agentId, chainId, { configDir });
 
   const caseInsensitiveAddressCompare = isEvmChain(chainId);
-  const fromNormalized = caseInsensitiveAddressCompare
-    ? wallet.address.toLowerCase()
-    : wallet.address;
+  const fromNormalized = caseInsensitiveAddressCompare ? fromAddress.toLowerCase() : fromAddress;
   const toNormalized = caseInsensitiveAddressCompare ? toAddress.toLowerCase() : toAddress;
   if (fromNormalized === toNormalized) {
     throw new ValidationError(
       ValidationErrorCodes.SELF_TRANSFER,
       'Cannot transfer to the same address',
-      { fromAddress: wallet.address, toAddress },
+      { fromAddress, toAddress },
     );
   }
 
@@ -245,7 +259,7 @@ export async function createPaymentIntent(params, options = {}) {
     tokenSymbol: token.symbol,
     tokenAddress: token.address,
     tokenDecimals: token.decimals,
-    fromAddress: wallet.address,
+    fromAddress,
     toAddress,
     amount: normalizedAmount,
     amountSmallest,
@@ -260,7 +274,7 @@ export async function createPaymentIntent(params, options = {}) {
 }
 
 /**
- * Execute a stablecoin payment
+ * Execute a blockchain payment
  * @param {Object} params
  * @param {string} params.agentId
  * @param {string} params.chainId
@@ -277,6 +291,33 @@ export async function createPaymentIntent(params, options = {}) {
 export async function executePayment(params, options = {}) {
   const { agentId, chainId, toAddress, amount, tokenSymbol, metadata = {} } = params;
   const { configDir = '.stateset', simulate = false, onProgress = () => {} } = options;
+
+  validateChainId(chainId);
+  validateToken(chainId, tokenSymbol);
+  validateAmount(amount);
+  validateAddress(toAddress, chainId);
+
+  if (isZcashChain(chainId)) {
+    onProgress({
+      step: 'creating_intent',
+      message: 'Creating shielded Zcash payment...',
+    });
+    return executeZcashShieldedPayment(
+      {
+        agentId,
+        chainId,
+        toAddress,
+        amount,
+        tokenSymbol,
+        metadata,
+      },
+      {
+        configDir,
+        simulate,
+        onProgress,
+      },
+    );
+  }
 
   const vesEventIds = [];
   let intent;
@@ -400,12 +441,16 @@ async function buildTransaction(intent, wallet, chainId, options = {}) {
     return buildSolanaTransaction(intent, wallet, chainId);
   }
 
+  if (isBitcoinChain(chainId)) {
+    return buildBitcoinTransaction(intent, wallet, chainId, { simulate });
+  }
+
   if (simulate) {
     return buildUnsupportedPreviewTransaction(intent, chainId);
   }
 
   throw new Error(
-    `Live payment execution is not implemented for chain ${chainId}. Supported live chains: EVM + Solana.`,
+    `Live payment execution is not implemented for chain ${chainId}. Supported live chains: EVM, Solana, Bitcoin, and shielded Zcash.`,
   );
 }
 
@@ -573,6 +618,10 @@ async function signTransaction(txData, wallet, chainId) {
     };
   }
 
+  if (isBitcoinChain(chainId)) {
+    return signBitcoinTransaction(txData, wallet, chainId);
+  }
+
   requireEvmExecution(chainId);
 
   const signer = createEvmSigner(wallet);
@@ -602,6 +651,10 @@ async function submitTransaction(signedTx, chainId) {
     };
   }
 
+  if (isBitcoinChain(chainId)) {
+    return submitBitcoinTransaction(signedTx, chainId);
+  }
+
   requireEvmExecution(chainId);
 
   const provider = createEvmProvider(chainId);
@@ -614,18 +667,18 @@ async function submitTransaction(signedTx, chainId) {
 }
 
 async function waitForConfirmation(txHash, chainId, options = {}) {
-  const {
-    onProgress = () => {},
-    maxAttempts = DEFAULT_CONFIRMATION_ATTEMPTS,
-    pollInterval = DEFAULT_POLL_INTERVAL_MS,
-  } = options;
+  const chain = getChain(chainId);
+  const onProgress = options.onProgress || (() => {});
+  const pollInterval =
+    chain?.confirmationPollIntervalMs || options.pollInterval || DEFAULT_POLL_INTERVAL_MS;
+  const maxAttempts =
+    chain?.maxConfirmationAttempts || options.maxAttempts || DEFAULT_CONFIRMATION_ATTEMPTS;
 
-  if (!isSolanaChain(chainId)) {
+  if (!isSolanaChain(chainId) && !isBitcoinChain(chainId)) {
     requireEvmExecution(chainId);
   }
 
-  const chain = getChain(chainId);
-  const requiredConfirmations = chain?.confirmations || 1;
+  const requiredConfirmations = chain?.executionConfirmations || chain?.confirmations || 1;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const status = await getTransactionStatus(txHash, chainId, options);
@@ -646,7 +699,7 @@ async function waitForConfirmation(txHash, chainId, options = {}) {
   throw new Error(`Transaction not confirmed after ${maxAttempts} attempts`);
 }
 
-async function getTransactionStatus(txHash, chainId, options = {}) {
+export async function getTransactionStatus(txHash, chainId, options = {}) {
   if (isSolanaChain(chainId)) {
     const connection = options.connection || (await createSolanaConnection(chainId));
     const response = await connection.getSignatureStatuses([txHash], {
@@ -686,6 +739,19 @@ async function getTransactionStatus(txHash, chainId, options = {}) {
     };
   }
 
+  if (isBitcoinChain(chainId)) {
+    return getBitcoinTransactionStatus(txHash, chainId, options);
+  }
+
+  if (isZcashChain(chainId)) {
+    if (!isZcashWalletRpcConfigured(chainId)) {
+      throw new Error(
+        `Zcash transaction status lookup requires a wallet-enabled JSON-RPC endpoint for ${chainId}.`,
+      );
+    }
+    return getZcashTransactionStatus(txHash, chainId, options);
+  }
+
   requireEvmExecution(chainId);
 
   const provider = createEvmProvider(chainId);
@@ -718,14 +784,16 @@ async function getTransactionStatus(txHash, chainId, options = {}) {
  * @param {string} address
  * @param {string} chainId
  * @param {string} [tokenSymbol]
+ * @param {Object} [options]
+ * @param {string} [options.configDir]
  * @returns {Promise<{balance: string, balanceSmallest: bigint, symbol: string}>}
  */
-export async function getBalance(address, chainId, tokenSymbol) {
+export async function getBalance(address, chainId, tokenSymbol, options = {}) {
   validateChainId(chainId);
   validateToken(chainId, tokenSymbol);
   validateAddress(address, chainId);
 
-  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
+  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultPaymentToken(chainId);
 
   let balanceSmallest;
   if (isSolanaChain(chainId)) {
@@ -753,6 +821,10 @@ export async function getBalance(address, chainId, tokenSymbol) {
         balanceSmallest = BigInt(raw.value.amount);
       }
     }
+  } else if (isBitcoinChain(chainId)) {
+    balanceSmallest = await getBitcoinBalance(address, chainId);
+  } else if (isZcashChain(chainId)) {
+    balanceSmallest = await getZcashBalance(address, chainId, options);
   } else {
     requireEvmExecution(chainId);
     const provider = createEvmProvider(chainId);
@@ -777,9 +849,9 @@ export async function getBalance(address, chainId, tokenSymbol) {
 /**
  * Check if wallet has sufficient balance for payment
  */
-export async function hasSufficientBalance(address, chainId, amount, tokenSymbol) {
-  const { balanceSmallest, symbol } = await getBalance(address, chainId, tokenSymbol);
-  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
+export async function hasSufficientBalance(address, chainId, amount, tokenSymbol, options = {}) {
+  const { balanceSmallest, symbol } = await getBalance(address, chainId, tokenSymbol, options);
+  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultPaymentToken(chainId);
   const requiredAmount = toSmallestUnit(amount, token.decimals);
 
   return {
@@ -793,6 +865,7 @@ export async function hasSufficientBalance(address, chainId, amount, tokenSymbol
 export default {
   createPaymentIntent,
   executePayment,
+  getTransactionStatus,
   getBalance,
   hasSufficientBalance,
 };

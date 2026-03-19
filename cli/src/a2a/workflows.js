@@ -317,6 +317,8 @@ export function createWorkflowService(store, a2aService) {
         const quoteResult = await a2aService.requestQuote({
           seller: step.agent_address,
           items,
+          asset: params.asset,
+          network: params.network,
           message: params.message || `Workflow step: ${step.step_name}`,
           maxRounds: params.maxRounds || 1,
         });
@@ -338,7 +340,8 @@ export function createWorkflowService(store, a2aService) {
         const payResult = await a2aService.pay({
           to,
           amount,
-          asset: params.asset || 'USDC',
+          asset: params.asset,
+          network: params.network,
           memo: params.memo || `Workflow payment: ${step.step_name}`,
         });
         return { success: true, paymentId: payResult.payment?.id, cost: amount };

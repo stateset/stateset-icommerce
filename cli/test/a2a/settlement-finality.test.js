@@ -64,6 +64,12 @@ describe('createFinalityTracker', () => {
 
       const rec5 = tracker.trackSettlement('i5', '0x5', 'solana', 500);
       assert.equal(rec5.requiredConfirmations, 32);
+
+      const rec6 = tracker.trackSettlement('i6', '0x6', 'bitcoin', 600);
+      assert.equal(rec6.requiredConfirmations, 6);
+
+      const rec7 = tracker.trackSettlement('i7', '0x7', 'zcash', 700);
+      assert.equal(rec7.requiredConfirmations, 10);
     });
 
     it('unknown chain defaults to conservative finality (12 blocks)', () => {
@@ -231,6 +237,22 @@ describe('createFinalityTracker', () => {
       assert.equal(tracker.checkFinality('sol1').isFinal, false);
       tracker.updateConfirmations('sol1', 32, 5032);
       assert.equal(tracker.checkFinality('sol1').isFinal, true);
+    });
+
+    it('bitcoin needs 6 confirmations', () => {
+      tracker.trackSettlement('btc1', 'tx', 'bitcoin', 1000);
+      tracker.updateConfirmations('btc1', 5, 1005);
+      assert.equal(tracker.checkFinality('btc1').isFinal, false);
+      tracker.updateConfirmations('btc1', 6, 1006);
+      assert.equal(tracker.checkFinality('btc1').isFinal, true);
+    });
+
+    it('zcash needs 10 confirmations', () => {
+      tracker.trackSettlement('zec1', 'tx', 'zcash', 2000);
+      tracker.updateConfirmations('zec1', 9, 2009);
+      assert.equal(tracker.checkFinality('zec1').isFinal, false);
+      tracker.updateConfirmations('zec1', 10, 2010);
+      assert.equal(tracker.checkFinality('zec1').isFinal, true);
     });
 
     it('unknown chain requires 12 blocks (conservative default)', () => {

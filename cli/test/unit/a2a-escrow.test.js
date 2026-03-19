@@ -146,6 +146,17 @@ describe('createEscrow', () => {
     assert.equal(result.escrow.network, 'set_chain');
   });
 
+  it('derives BTC as the default asset for bitcoin escrows', async () => {
+    const result = await service.createEscrow({
+      buyerAddress: '0xBuyer',
+      sellerAddress: '0xSeller',
+      amount: 100,
+      network: 'bitcoin',
+    });
+    assert.equal(result.escrow.asset, 'BTC');
+    assert.equal(result.escrow.network, 'bitcoin');
+  });
+
   it('creates escrow with default 72h expiry', async () => {
     const before = new Date();
     const result = await service.createEscrow({

@@ -394,6 +394,15 @@ describe('ORCHESTRATION_TEMPLATES', () => {
     assert.ok(tools.includes('x402_execute_agent_payment'));
     assert.ok(tools.includes('x402_get_intent'));
   });
+
+  it('has mpp_paid_tool_call template', () => {
+    assert.ok('mpp_paid_tool_call' in ORCHESTRATION_TEMPLATES);
+    assert.ok(ORCHESTRATION_TEMPLATES.mpp_paid_tool_call.name);
+    assert.ok(Array.isArray(ORCHESTRATION_TEMPLATES.mpp_paid_tool_call.steps));
+    const tools = ORCHESTRATION_TEMPLATES.mpp_paid_tool_call.steps.map((s) => s.tool);
+    assert.ok(tools.includes('agentic_payment_discovery'));
+    assert.ok(tools.includes('agentic_prepare_payment'));
+  });
 });
 
 // ===========================================================================

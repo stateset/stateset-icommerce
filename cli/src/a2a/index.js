@@ -28,47 +28,14 @@
  */
 
 import { randomUUID } from 'node:crypto';
-
-// Default asset and network
-const DEFAULT_ASSET = 'USDC';
-const DEFAULT_NETWORK = 'set_chain';
-const DEFAULT_DECIMALS = 6;
-
-/**
- * Convert human-readable amount to smallest unit
- */
-function toSmallestUnit(amount, decimals = DEFAULT_DECIMALS) {
-  if (typeof amount === 'string') {
-    amount = parseFloat(amount);
-  }
-  return Math.round(amount * Math.pow(10, decimals));
-}
-
-/**
- * Convert smallest unit to human-readable amount
- */
-function fromSmallestUnit(amount, decimals = DEFAULT_DECIMALS) {
-  return amount / Math.pow(10, decimals);
-}
-
-/**
- * Get decimals for an asset
- */
-function getAssetDecimals(asset) {
-  const upper = String(asset).toUpperCase();
-  switch (upper) {
-    case 'USDC':
-    case 'USDT':
-    case 'SSUSD':
-    case 'WSSUSD':
-      return 6;
-    case 'DAI':
-    case 'ETH':
-      return 18;
-    default:
-      return 6;
-  }
-}
+import {
+  DEFAULT_ASSET,
+  DEFAULT_NETWORK,
+  getDefaultAssetForNetwork,
+  getAssetDecimals,
+  toSmallestUnit,
+  fromSmallestUnit,
+} from './assets.js';
 
 /**
  * Create an A2A commerce service instance
@@ -90,52 +57,254 @@ export function createA2AService(commerce, config) {
     sequencerClient,
     tenantId,
     storeId,
-    defaultAsset = DEFAULT_ASSET,
     defaultNetwork = DEFAULT_NETWORK,
+    defaultAsset: requestedDefaultAsset,
+    receiveAddressForNetwork,
   } = config;
+  const defaultAsset = requestedDefaultAsset || getDefaultAssetForNetwork(defaultNetwork);
 
   if (!walletAddress) {
     throw new Error('walletAddress is required for A2A service');
+  }
+
+  function normalizeAcceptedNetworks(value) {
+    if (Array.isArray(value) && value.length > 0) {
+      return value;
+    }
+    if (typeof value === 'string' && value.length > 0) {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch (_err) {
+        void _err;
+      }
+      return [value];
+    }
+    return [defaultNetwork];
+  }
+
+  function parseMetadata(value) {
+    if (!value) return null;
+    if (typeof value === 'object') return value;
+    if (typeof value !== 'string') return null;
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function mergeMetadata(value, additions) {
+    const metadata = { ...(parseMetadata(value) || {}) };
+    for (const [key, nextValue] of Object.entries(additions || {})) {
+      if (nextValue !== undefined && nextValue !== null && nextValue !== '') {
+        metadata[key] = nextValue;
+      }
+    }
+    return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
+  }
+
+  function parsePaymentAddresses(value) {
+    const parsed = parseMetadata(value);
+    if (!parsed || Array.isArray(parsed)) return null;
+    return parsed;
+  }
+
+  function selectPaymentAddress(agentRef, network = defaultNetwork) {
+    const paymentAddresses = parsePaymentAddresses(
+      agentRef?.payment_addresses || agentRef?.paymentAddresses,
+    );
+    if (paymentAddresses?.[network]) {
+      return paymentAddresses[network];
+    }
+    return agentRef?.wallet_address || agentRef?.walletAddress || agentRef?.address || null;
+  }
+
+  async function getOwnPaymentAddress(network = defaultNetwork) {
+    if (typeof receiveAddressForNetwork === 'function') {
+      try {
+        const resolved = await receiveAddressForNetwork(network);
+        if (resolved) return resolved;
+      } catch {
+        // Ignore and fall back to the identity wallet.
+      }
+    }
+    return walletAddress;
+  }
+
+  function canAccessPayment(payment) {
+    if (!payment) return false;
+    if (payment.sender_address === walletAddress || payment.recipient_address === walletAddress) {
+      return true;
+    }
+    if (
+      agentId &&
+      (payment.sender_agent_id === agentId || payment.recipient_agent_id === agentId)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  async function getStoredPaymentForAgent(paymentId) {
+    const payment = await commerce.a2a().getPayment(paymentId);
+    if (!payment || !canAccessPayment(payment)) {
+      throw new Error('Payment not found');
+    }
+    return payment;
+  }
+
+  function getFinalityTracker() {
+    return commerce?._finalityTracker || null;
+  }
+
+  function getTrackedFinality(intentId) {
+    const tracker = getFinalityTracker();
+    if (!tracker || !intentId) return null;
+    try {
+      return tracker.getSettlementStatus(intentId);
+    } catch {
+      return null;
+    }
+  }
+
+  function syncTrackedSettlement({
+    intentId,
+    txHash,
+    chainId,
+    blockNumber = 0,
+    confirmations = 0,
+  }) {
+    const tracker = getFinalityTracker();
+    if (!tracker || !intentId || !txHash || !chainId) {
+      return null;
+    }
+
+    if (!getTrackedFinality(intentId)) {
+      try {
+        tracker.trackSettlement(intentId, txHash, chainId, blockNumber || 0);
+      } catch {
+        // Ignore duplicate/invalid tracking attempts and fall through.
+      }
+    }
+
+    const safeConfirmations = Math.max(0, Number(confirmations || 0));
+    const latestBlock =
+      blockNumber && safeConfirmations > 0 ? blockNumber + safeConfirmations - 1 : blockNumber || 0;
+
+    try {
+      tracker.updateConfirmations(intentId, safeConfirmations, latestBlock);
+    } catch {
+      // Ignore tracker update failures and return best-effort status below.
+    }
+
+    return getTrackedFinality(intentId);
+  }
+
+  function markTrackedSettlementFailed(intentId, reason) {
+    const tracker = getFinalityTracker();
+    if (!tracker || !intentId) {
+      return null;
+    }
+
+    if (!getTrackedFinality(intentId)) {
+      return null;
+    }
+
+    try {
+      return tracker.markFailed(intentId, reason);
+    } catch {
+      return getTrackedFinality(intentId);
+    }
+  }
+
+  function hydrateTrackedSettlementFromPayment(payment) {
+    if (!payment) return null;
+    const metadata = parseMetadata(payment.metadata);
+
+    if (!payment.tx_hash || !payment.network || metadata?.simulated === true) {
+      return getTrackedFinality(payment.id);
+    }
+
+    if (payment.status === 'failed') {
+      syncTrackedSettlement({
+        intentId: payment.id,
+        txHash: payment.tx_hash,
+        chainId: payment.network,
+        blockNumber: payment.block_number ?? 0,
+        confirmations:
+          metadata?.confirmations !== undefined && metadata?.confirmations !== null
+            ? Number(metadata.confirmations)
+            : 0,
+      });
+      return markTrackedSettlementFailed(
+        payment.id,
+        metadata?.settlement_error || 'payment_failed',
+      );
+    }
+
+    return syncTrackedSettlement({
+      intentId: payment.id,
+      txHash: payment.tx_hash,
+      chainId: payment.network,
+      blockNumber: payment.block_number ?? 0,
+      confirmations:
+        metadata?.confirmations !== undefined && metadata?.confirmations !== null
+          ? Number(metadata.confirmations)
+          : 0,
+    });
   }
 
   /**
    * Resolve an agent reference to a wallet address
    * Accepts: agent ID, wallet address, or agent card object
    */
-  async function resolveAgentAddress(agentRef) {
+  async function resolveAgentAddress(agentRef, network = defaultNetwork) {
     if (!agentRef) {
       throw new Error('Agent reference is required');
     }
 
-    // If it's already a wallet address (starts with 0x or is a valid address format)
     if (typeof agentRef === 'string') {
-      if (agentRef.startsWith('0x') || agentRef.length === 42) {
-        return { address: agentRef, agentId: null };
-      }
-
       // Try to look up as agent ID (UUID format)
       if (agentRef.includes('-') && agentRef.length === 36) {
         const agent = await commerce.x402().getAgent(agentRef);
         if (agent) {
-          return { address: agent.wallet_address, agentId: agent.id };
+          return {
+            address: agent.wallet_address,
+            paymentAddress: selectPaymentAddress(agent, network),
+            agentId: agent.id,
+          };
         }
       }
 
-      // Try to look up by wallet address
+      // Prefer a registered agent card over treating the value as a raw address.
       const agentByWallet = await commerce.x402().getAgentByWallet(agentRef);
       if (agentByWallet) {
-        return { address: agentByWallet.wallet_address, agentId: agentByWallet.id };
+        return {
+          address: agentByWallet.wallet_address,
+          paymentAddress: selectPaymentAddress(agentByWallet, network),
+          agentId: agentByWallet.id,
+        };
       }
 
-      // Assume it's a wallet address
-      return { address: agentRef, agentId: null };
+      // Fall back to a raw chain address.
+      return { address: agentRef, paymentAddress: agentRef, agentId: null };
     }
 
     // If it's an agent card object
-    if (agentRef.wallet_address || agentRef.walletAddress) {
+    if (
+      agentRef.wallet_address ||
+      agentRef.walletAddress ||
+      agentRef.address ||
+      agentRef.paymentAddress
+    ) {
       return {
-        address: agentRef.wallet_address || agentRef.walletAddress,
-        agentId: agentRef.id,
+        address: agentRef.wallet_address || agentRef.walletAddress || agentRef.address,
+        paymentAddress: agentRef.paymentAddress || selectPaymentAddress(agentRef, network),
+        agentId: agentRef.id || agentRef.agentId || null,
       };
     }
 
@@ -148,7 +317,7 @@ export function createA2AService(commerce, config) {
    * @param {Object} params - Payment parameters
    * @param {string} params.to - Recipient agent ID, wallet address, or agent card
    * @param {number} params.amount - Amount to pay (human-readable, e.g., 10.00)
-   * @param {string} [params.asset] - Asset to pay with (default: USDC)
+   * @param {string} [params.asset] - Asset to pay with (default: runtime payment asset)
    * @param {string} [params.network] - Network for settlement
    * @param {string} [params.memo] - Payment memo/description
    * @param {string} [params.referenceType] - Type of reference (quote, order, etc.)
@@ -178,7 +347,7 @@ export function createA2AService(commerce, config) {
       throw new Error('Amount must be positive');
     }
 
-    const recipient = await resolveAgentAddress(to);
+    const recipient = await resolveAgentAddress(to, network);
     const decimals = getAssetDecimals(asset);
     const amountSmallest = toSmallestUnit(amount, decimals);
     const now = new Date().toISOString();
@@ -191,7 +360,7 @@ export function createA2AService(commerce, config) {
       sender_agent_id: agentId,
       sender_address: walletAddress,
       recipient_agent_id: recipient.agentId,
-      recipient_address: recipient.address,
+      recipient_address: recipient.paymentAddress || recipient.address,
       amount: amountSmallest,
       amount_decimal: amount,
       asset: asset.toUpperCase(),
@@ -218,7 +387,7 @@ export function createA2AService(commerce, config) {
         // Create x402 payment intent
         const intent = await commerce.x402().createIntent({
           payer_address: walletAddress,
-          payee_address: recipient.address,
+          payee_address: recipient.paymentAddress || recipient.address,
           amount: amountSmallest,
           asset,
           network,
@@ -285,6 +454,7 @@ export function createA2AService(commerce, config) {
    * @param {number} params.amount - Amount to request
    * @param {string} params.description - What the payment is for
    * @param {string} [params.asset] - Asset to request
+   * @param {string} [params.network] - Preferred settlement network
    * @param {Array} [params.lineItems] - Itemized breakdown
    * @param {number} [params.expiresInHours] - Hours until expiry (default: 24)
    * @param {boolean} [params.allowPartial] - Allow partial payments
@@ -297,6 +467,7 @@ export function createA2AService(commerce, config) {
       amount,
       description,
       asset = defaultAsset,
+      network = defaultNetwork,
       lineItems,
       expiresInHours = 24,
       allowPartial = false,
@@ -314,8 +485,10 @@ export function createA2AService(commerce, config) {
 
     let payer = null;
     if (from) {
-      payer = await resolveAgentAddress(from);
+      payer = await resolveAgentAddress(from, network);
     }
+
+    const requesterPaymentAddress = await getOwnPaymentAddress(network);
 
     const decimals = getAssetDecimals(asset);
     const amountSmallest = toSmallestUnit(amount, decimals);
@@ -332,7 +505,7 @@ export function createA2AService(commerce, config) {
       amount: amountSmallest,
       amount_decimal: amount,
       asset: asset.toUpperCase(),
-      accepted_networks: [defaultNetwork],
+      accepted_networks: [network],
       description,
       line_items: lineItems ? JSON.stringify(lineItems) : null,
       reference_type: null,
@@ -343,7 +516,9 @@ export function createA2AService(commerce, config) {
       amount_paid: 0,
       payment_ids: [],
       callback_url: callbackUrl || null,
-      metadata: metadata ? JSON.stringify(metadata) : null,
+      metadata: mergeMetadata(metadata, {
+        requester_payment_address: requesterPaymentAddress,
+      }),
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
       paid_at: null,
@@ -395,11 +570,21 @@ export function createA2AService(commerce, config) {
       throw new Error('Partial payments not allowed for this request');
     }
 
+    const requestMetadata = parseMetadata(request.metadata);
+    const paymentTarget = request.requester_agent_id
+      ? {
+          id: request.requester_agent_id,
+          wallet_address: request.requester_address,
+          paymentAddress: requestMetadata?.requester_payment_address,
+        }
+      : requestMetadata?.requester_payment_address || request.requester_address;
+
     // Make the payment
     const paymentResult = await pay({
-      to: request.requester_address,
+      to: paymentTarget,
       amount: fromSmallestUnit(amountToPay, decimals),
       asset: request.asset,
+      network: normalizeAcceptedNetworks(request.accepted_networks)[0],
       memo: `Payment for: ${request.description}`,
       referenceType: 'payment_request',
       referenceId: requestId,
@@ -449,11 +634,19 @@ export function createA2AService(commerce, config) {
    * @param {string} params.seller - Seller agent ID or wallet
    * @param {Array} params.items - Items to quote
    * @param {string} [params.asset] - Preferred asset
+   * @param {string} [params.network] - Preferred settlement network
    * @param {string} [params.message] - Message to seller
    * @returns {Promise<Object>} Quote request
    */
   async function requestQuote(params) {
-    const { seller, items, asset = defaultAsset, message, metadata } = params;
+    const {
+      seller,
+      items,
+      asset = defaultAsset,
+      network = defaultNetwork,
+      message,
+      metadata,
+    } = params;
 
     if (!seller) {
       throw new Error('Seller is required');
@@ -462,7 +655,7 @@ export function createA2AService(commerce, config) {
       throw new Error('At least one item is required');
     }
 
-    const sellerAgent = await resolveAgentAddress(seller);
+    const sellerAgent = await resolveAgentAddress(seller, network);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours
 
@@ -491,7 +684,7 @@ export function createA2AService(commerce, config) {
       total: subtotal,
       total_decimal: fromSmallestUnit(subtotal, getAssetDecimals(asset)),
       asset: asset.toUpperCase(),
-      accepted_networks: [defaultNetwork],
+      accepted_networks: [network],
       expires_at: expiresAt.toISOString(),
       terms: null,
       estimated_delivery: null,
@@ -501,7 +694,9 @@ export function createA2AService(commerce, config) {
       payment_request_id: null,
       request_message: message || null,
       response_message: null,
-      metadata: metadata ? JSON.stringify(metadata) : null,
+      metadata: mergeMetadata(metadata, {
+        seller_payment_address: sellerAgent.paymentAddress || sellerAgent.address,
+      }),
       created_at: now.toISOString(),
       quoted_at: null,
       accepted_at: null,
@@ -614,12 +809,21 @@ export function createA2AService(commerce, config) {
     }
 
     const decimals = getAssetDecimals(quote.asset);
+    const quoteMetadata = parseMetadata(quote.metadata);
+    const paymentTarget = quote.seller_agent_id
+      ? {
+          id: quote.seller_agent_id,
+          wallet_address: quote.seller_address,
+          paymentAddress: quoteMetadata?.seller_payment_address,
+        }
+      : quoteMetadata?.seller_payment_address || quote.seller_address;
 
     // Make the payment
     const paymentResult = await pay({
-      to: quote.seller_address,
+      to: paymentTarget,
       amount: fromSmallestUnit(quote.total, decimals),
       asset: quote.asset,
+      network: normalizeAcceptedNetworks(quote.accepted_networks)[0],
       memo: `Payment for quote ${quoteId}`,
       referenceType: 'quote',
       referenceId: quoteId,
@@ -874,7 +1078,204 @@ export function createA2AService(commerce, config) {
       recipient_address: filter.received ? walletAddress : filter.recipient_address,
     });
 
-    return payments.map(formatPayment);
+    if (!filter.refreshOnChain) {
+      return payments.map(formatPayment);
+    }
+
+    return Promise.all(
+      payments.map(async (payment) => {
+        const metadata = parseMetadata(payment.metadata);
+        const shouldRefresh =
+          payment.tx_hash &&
+          payment.network &&
+          payment.status === 'submitted' &&
+          metadata?.simulated !== true;
+
+        if (!shouldRefresh) {
+          return formatPayment(payment);
+        }
+
+        const result = await refreshPayment(payment.id);
+        if (result.success) {
+          return result.payment;
+        }
+
+        return {
+          ...result.payment,
+          refreshError: result.error || null,
+          finality: result.finality || result.payment?.finality || null,
+        };
+      }),
+    );
+  }
+
+  /**
+   * Get a single payment by ID.
+   *
+   * @param {string} paymentId - Payment ID
+   * @returns {Promise<Object>} Payment
+   */
+  async function getPayment(paymentId) {
+    if (!paymentId) {
+      throw new Error('paymentId is required');
+    }
+    const payment = await getStoredPaymentForAgent(paymentId);
+    return formatPayment(payment);
+  }
+
+  /**
+   * Refresh a payment's on-chain status from the underlying network.
+   *
+   * @param {string} paymentId - Payment ID
+   * @returns {Promise<Object>} Refreshed payment result
+   */
+  async function refreshPayment(paymentId) {
+    if (!paymentId) {
+      throw new Error('paymentId is required');
+    }
+
+    const payment = await getStoredPaymentForAgent(paymentId);
+    const metadata = parseMetadata(payment.metadata);
+
+    if (!payment.tx_hash || !payment.network) {
+      return {
+        success: true,
+        refreshed: false,
+        reason: 'payment_not_submitted',
+        payment: formatPayment(payment),
+        onChain: null,
+        finality: getTrackedFinality(payment.id),
+      };
+    }
+
+    if (metadata?.simulated === true) {
+      return {
+        success: true,
+        refreshed: false,
+        reason: 'simulated_payment',
+        payment: formatPayment(payment),
+        onChain: {
+          txHash: payment.tx_hash,
+          chainId: payment.network,
+          confirmed: payment.status === 'completed',
+          final: payment.status === 'completed',
+          confirmations:
+            metadata?.confirmations !== undefined && metadata?.confirmations !== null
+              ? Number(metadata.confirmations)
+              : null,
+          requiredConfirmations: null,
+          blockNumber: payment.block_number ?? null,
+        },
+        finality: getTrackedFinality(payment.id),
+      };
+    }
+
+    const { getChain, getExplorerTxUrl, getTransactionStatus } = await import('../chains/index.js');
+    const chain = getChain(payment.network);
+    const requiredConfirmations = chain?.executionConfirmations || chain?.confirmations || 1;
+    let status = null;
+    try {
+      status = await getTransactionStatus(payment.tx_hash, payment.network);
+    } catch (error) {
+      if (/status lookup requires a wallet-enabled JSON-RPC endpoint/i.test(error.message || '')) {
+        return {
+          success: true,
+          refreshed: false,
+          reason: 'status_unavailable',
+          error: error.message,
+          payment: formatPayment(payment),
+          onChain: null,
+          finality: hydrateTrackedSettlementFromPayment(payment),
+        };
+      }
+
+      const updatedAt = new Date().toISOString();
+      await commerce.a2a().updatePayment(paymentId, {
+        status: 'failed',
+        metadata: mergeMetadata(payment.metadata, {
+          settlement_error: error.message,
+          chain_id: payment.network,
+          simulated: metadata?.simulated ?? false,
+        }),
+        updated_at: updatedAt,
+      });
+      const finality = markTrackedSettlementFailed(payment.id, error.message);
+      const failedPayment = await getStoredPaymentForAgent(paymentId);
+      return {
+        success: false,
+        refreshed: true,
+        error: error.message,
+        payment: formatPayment(failedPayment),
+        onChain: {
+          txHash: payment.tx_hash,
+          chainId: payment.network,
+          confirmed: false,
+          final: false,
+          confirmations: 0,
+          requiredConfirmations,
+          blockNumber: payment.block_number ?? null,
+        },
+        finality,
+      };
+    }
+    const confirmations = Number(status?.confirmations || 0);
+    const final = Boolean(status?.confirmed && confirmations >= requiredConfirmations);
+    const nextStatus =
+      final || payment.status === 'completed'
+        ? 'completed'
+        : payment.tx_hash
+          ? 'submitted'
+          : payment.status;
+    const updatedAt = new Date().toISOString();
+
+    await commerce.a2a().updatePayment(paymentId, {
+      status: nextStatus,
+      block_number:
+        status?.blockNumber !== undefined && status?.blockNumber !== null
+          ? status.blockNumber
+          : payment.block_number,
+      completed_at: final
+        ? payment.completed_at || status?.confirmedAt || updatedAt
+        : payment.completed_at,
+      metadata: mergeMetadata(payment.metadata, {
+        explorer_url: metadata?.explorer_url || getExplorerTxUrl(payment.network, payment.tx_hash),
+        confirmations,
+        chain_id: payment.network,
+        simulated: metadata?.simulated ?? false,
+      }),
+      updated_at: updatedAt,
+    });
+
+    const refreshedPayment = await getStoredPaymentForAgent(paymentId);
+    const finality = syncTrackedSettlement({
+      intentId: payment.id,
+      txHash: payment.tx_hash,
+      chainId: payment.network,
+      blockNumber:
+        status?.blockNumber !== undefined && status?.blockNumber !== null
+          ? status.blockNumber
+          : (payment.block_number ?? 0),
+      confirmations,
+    });
+
+    return {
+      success: true,
+      refreshed: true,
+      payment: formatPayment(refreshedPayment),
+      onChain: {
+        txHash: payment.tx_hash,
+        chainId: payment.network,
+        confirmed: Boolean(status?.confirmed),
+        final,
+        confirmations,
+        requiredConfirmations,
+        blockNumber:
+          status?.blockNumber !== undefined && status?.blockNumber !== null
+            ? status.blockNumber
+            : (payment.block_number ?? null),
+      },
+      finality,
+    };
   }
 
   /**
@@ -909,27 +1310,218 @@ export function createA2AService(commerce, config) {
     return quotes.map(formatQuote);
   }
 
+  function createBalanceBucket() {
+    return {
+      totalSent: 0,
+      totalReceived: 0,
+      netFlow: 0,
+      paymentCountSent: 0,
+      paymentCountReceived: 0,
+      paymentCount: 0,
+      networks: {},
+    };
+  }
+
+  function normalizeSummaryRows(rows = []) {
+    return rows
+      .map((row) => ({
+        asset: row?.asset || null,
+        network: row?.network || null,
+        paymentCount: Number(row?.payment_count ?? row?.paymentCount ?? 0),
+        totalAmount: Number(row?.total_amount ?? row?.totalAmount ?? row?.total ?? 0),
+      }))
+      .filter((row) => row.asset && row.network);
+  }
+
+  function matchesPaymentSummaryFilter(payment, filter = {}) {
+    if (filter.sender_address && payment.sender_address !== filter.sender_address) return false;
+    if (filter.recipient_address && payment.recipient_address !== filter.recipient_address)
+      return false;
+    if (filter.sender_agent_id && payment.sender_agent_id !== filter.sender_agent_id) return false;
+    if (filter.recipient_agent_id && payment.recipient_agent_id !== filter.recipient_agent_id)
+      return false;
+    if (filter.status && payment.status !== filter.status) return false;
+    if (filter.asset && payment.asset !== filter.asset) return false;
+    if (filter.network && payment.network !== filter.network) return false;
+    return true;
+  }
+
+  async function summarizePaymentsForFlow(filter = {}) {
+    const store = commerce.a2a();
+    if (typeof store.summarizePayments === 'function') {
+      return normalizeSummaryRows(await store.summarizePayments(filter));
+    }
+
+    const listedPayments = await store.listPayments({
+      ...filter,
+      limit: filter.limit || 5000,
+      offset: filter.offset || 0,
+    });
+    const grouped = new Map();
+
+    for (const payment of listedPayments || []) {
+      if (!matchesPaymentSummaryFilter(payment, filter)) continue;
+      const asset = payment.asset || null;
+      const network = payment.network || null;
+      if (!asset || !network) continue;
+
+      const key = `${asset}:${network}`;
+      const current = grouped.get(key) || {
+        asset,
+        network,
+        paymentCount: 0,
+        totalAmount: 0,
+      };
+      current.paymentCount += 1;
+      current.totalAmount += Number(payment.amount_decimal || 0);
+      grouped.set(key, current);
+    }
+
+    return [...grouped.values()].sort((a, b) =>
+      a.asset === b.asset ? a.network.localeCompare(b.network) : a.asset.localeCompare(b.asset),
+    );
+  }
+
+  function buildBalanceBreakdown(sentRows, receivedRows) {
+    const breakdownByAsset = {};
+
+    function applyRows(rows, direction) {
+      const totalKey = direction === 'sent' ? 'totalSent' : 'totalReceived';
+      const countKey = direction === 'sent' ? 'paymentCountSent' : 'paymentCountReceived';
+
+      for (const row of rows) {
+        const assetBucket = breakdownByAsset[row.asset] || createBalanceBucket();
+        const networkBucket = assetBucket.networks[row.network] || {
+          totalSent: 0,
+          totalReceived: 0,
+          netFlow: 0,
+          paymentCountSent: 0,
+          paymentCountReceived: 0,
+          paymentCount: 0,
+        };
+
+        assetBucket[totalKey] += row.totalAmount;
+        assetBucket[countKey] += row.paymentCount;
+        breakdownByAsset[row.asset] = assetBucket;
+        assetBucket.networks[row.network] = networkBucket;
+
+        networkBucket[totalKey] += row.totalAmount;
+        networkBucket[countKey] += row.paymentCount;
+      }
+    }
+
+    applyRows(sentRows, 'sent');
+    applyRows(receivedRows, 'received');
+
+    const assets = Object.keys(breakdownByAsset).sort();
+    let totalSent = 0;
+    let totalReceived = 0;
+    let paymentCountSent = 0;
+    let paymentCountReceived = 0;
+
+    for (const asset of assets) {
+      const bucket = breakdownByAsset[asset];
+      bucket.netFlow = bucket.totalReceived - bucket.totalSent;
+      bucket.paymentCount = bucket.paymentCountSent + bucket.paymentCountReceived;
+      totalSent += bucket.totalSent;
+      totalReceived += bucket.totalReceived;
+      paymentCountSent += bucket.paymentCountSent;
+      paymentCountReceived += bucket.paymentCountReceived;
+
+      const orderedNetworks = Object.keys(bucket.networks).sort();
+      const nextNetworks = {};
+      for (const network of orderedNetworks) {
+        const networkBucket = bucket.networks[network];
+        networkBucket.netFlow = networkBucket.totalReceived - networkBucket.totalSent;
+        networkBucket.paymentCount =
+          networkBucket.paymentCountSent + networkBucket.paymentCountReceived;
+        nextNetworks[network] = networkBucket;
+      }
+      bucket.networks = nextNetworks;
+    }
+
+    return {
+      breakdownByAsset,
+      assets,
+      totalSent,
+      totalReceived,
+      paymentCountSent,
+      paymentCountReceived,
+      paymentCount: paymentCountSent + paymentCountReceived,
+    };
+  }
+
   /**
    * Get balance/summary for this agent
    */
-  async function getBalance() {
-    const [sent, received] = await Promise.all([
-      commerce.a2a().sumPayments({ sender_address: walletAddress, status: 'completed' }),
-      commerce.a2a().sumPayments({ recipient_address: walletAddress, status: 'completed' }),
-    ]);
+  async function getBalance(filter = {}) {
+    const includeBreakdown = filter.includeBreakdown !== false;
+    const baseFilter = {
+      status: 'completed',
+      asset: filter.asset,
+      network: filter.network,
+    };
+
+    let totalSent = 0;
+    let totalReceived = 0;
+    let paymentCountSent = null;
+    let paymentCountReceived = null;
+    let paymentCount = null;
+    let breakdownByAsset = null;
+    let assets = [];
+    let summarySource = 'totals_only';
+
+    if (includeBreakdown) {
+      const [sentRows, receivedRows] = await Promise.all([
+        summarizePaymentsForFlow({ ...baseFilter, sender_address: walletAddress }),
+        summarizePaymentsForFlow({ ...baseFilter, recipient_address: walletAddress }),
+      ]);
+      const summary = buildBalanceBreakdown(sentRows, receivedRows);
+      totalSent = summary.totalSent;
+      totalReceived = summary.totalReceived;
+      paymentCountSent = summary.paymentCountSent;
+      paymentCountReceived = summary.paymentCountReceived;
+      paymentCount = summary.paymentCount;
+      breakdownByAsset = summary.breakdownByAsset;
+      assets = summary.assets;
+      summarySource =
+        typeof commerce.a2a().summarizePayments === 'function'
+          ? 'store_aggregate'
+          : 'list_payments_fallback';
+    } else {
+      [totalSent, totalReceived] = await Promise.all([
+        commerce.a2a().sumPayments({ ...baseFilter, sender_address: walletAddress }),
+        commerce.a2a().sumPayments({ ...baseFilter, recipient_address: walletAddress }),
+      ]);
+    }
+
+    const aggregateAsset = filter.asset || (assets.length === 1 ? assets[0] : null);
+    const aggregateTotalsMeaningful = Boolean(aggregateAsset) || assets.length <= 1;
 
     return {
       walletAddress,
       agentId,
-      totalSent: sent,
-      totalReceived: received,
-      netFlow: received - sent,
+      totalSent,
+      totalReceived,
+      netFlow: totalReceived - totalSent,
+      aggregateTotalsMeaningful,
+      aggregateAsset,
+      asset: filter.asset || null,
+      network: filter.network || null,
+      assets,
+      paymentCountSent,
+      paymentCountReceived,
+      paymentCount,
+      summarySource,
+      breakdownByAsset,
     };
   }
 
   // Format functions for consistent output
   function formatPayment(p) {
     const decimals = getAssetDecimals(p.asset);
+    const metadata = parseMetadata(p.metadata);
+    const finality = hydrateTrackedSettlementFromPayment(p);
     return {
       id: p.id,
       status: p.status,
@@ -943,6 +1535,16 @@ export function createA2AService(commerce, config) {
       network: p.network,
       memo: p.memo,
       txHash: p.tx_hash,
+      blockNumber: p.block_number ?? null,
+      explorerUrl: metadata?.explorer_url || null,
+      confirmations:
+        metadata?.confirmations !== undefined && metadata?.confirmations !== null
+          ? Number(metadata.confirmations)
+          : null,
+      chainId: metadata?.chain_id || p.network || null,
+      simulated: metadata?.simulated ?? null,
+      settlementError: metadata?.settlement_error || null,
+      finality,
       createdAt: p.created_at,
       completedAt: p.completed_at,
     };
@@ -950,17 +1552,22 @@ export function createA2AService(commerce, config) {
 
   function formatPaymentRequest(r) {
     const decimals = getAssetDecimals(r.asset);
+    const acceptedNetworks = normalizeAcceptedNetworks(r.accepted_networks);
+    const metadata = parseMetadata(r.metadata);
     return {
       id: r.id,
       status: r.status,
       from: r.requester_address,
       payer: r.payer_address,
+      requesterPaymentAddress: metadata?.requester_payment_address || r.requester_address,
       amount:
         typeof r.amount_decimal === 'number'
           ? r.amount_decimal
           : fromSmallestUnit(r.amount, decimals),
       amountPaid: fromSmallestUnit(r.amount_paid, decimals),
       asset: r.asset,
+      network: acceptedNetworks[0],
+      acceptedNetworks,
       description: r.description,
       expiresAt: r.expires_at,
       allowPartial: r.allow_partial,
@@ -971,11 +1578,14 @@ export function createA2AService(commerce, config) {
 
   function formatQuote(q) {
     const decimals = getAssetDecimals(q.asset);
+    const acceptedNetworks = normalizeAcceptedNetworks(q.accepted_networks);
+    const metadata = parseMetadata(q.metadata);
     return {
       id: q.id,
       status: q.status,
       buyer: q.buyer_address,
       seller: q.seller_address,
+      sellerPaymentAddress: metadata?.seller_payment_address || q.seller_address,
       items: q.items,
       subtotal: fromSmallestUnit(q.subtotal, decimals),
       fees: fromSmallestUnit(q.fees, decimals),
@@ -983,6 +1593,8 @@ export function createA2AService(commerce, config) {
       total:
         typeof q.total_decimal === 'number' ? q.total_decimal : fromSmallestUnit(q.total, decimals),
       asset: q.asset,
+      network: acceptedNetworks[0],
+      acceptedNetworks,
       expiresAt: q.expires_at,
       terms: q.terms,
       estimatedDelivery: q.estimated_delivery,
@@ -1244,6 +1856,8 @@ export function createA2AService(commerce, config) {
     settleConditionalPayment,
 
     // Query operations
+    getPayment,
+    refreshPayment,
     getPayments,
     getPaymentRequests,
     getQuotes,

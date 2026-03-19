@@ -14,13 +14,22 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { a2aTools } from '../../src/tools/a2a.js';
+import { a2aObservabilityTools } from '../../src/tools/a2a-observability.js';
 
 const findTool = (name) => a2aTools.find((t) => t.name === name);
+const findObservabilityTool = (name) => a2aObservabilityTools.find((t) => t.name === name);
 
 /** Build a z.object() from a tool's inputSchema and safeParse the data. */
 const parse = (toolName, data) => {
   const tool = findTool(toolName);
   assert.ok(tool, `Tool ${toolName} not found`);
+  const schema = z.object(tool.inputSchema);
+  return schema.safeParse(data);
+};
+
+const parseObservability = (toolName, data) => {
+  const tool = findObservabilityTool(toolName);
+  assert.ok(tool, `Observability tool ${toolName} not found`);
   const schema = z.object(tool.inputSchema);
   return schema.safeParse(data);
 };
@@ -133,6 +142,95 @@ describe('A2A tools Zod validation', () => {
         agentAddress: '0xabc',
       });
       assert.equal(result.success, false);
+    });
+  });
+
+  describe('payment lookup validation', () => {
+    it('a2a_get_payment accepts a payment ID with optional refresh flag', () => {
+      const result = parse('a2a_get_payment', {
+        paymentId: 'pay_123',
+        refreshOnChain: true,
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_get_payment rejects a non-boolean refresh flag', () => {
+      const result = parse('a2a_get_payment', {
+        paymentId: 'pay_123',
+        refreshOnChain: 'yes',
+      });
+      assert.equal(result.success, false);
+    });
+
+    it('a2a_get_balance accepts optional asset/network filters and breakdown toggle', () => {
+      const result = parse('a2a_get_balance', {
+        asset: 'BTC',
+        network: 'bitcoin',
+        includeBreakdown: true,
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_list_payments accepts optional refresh, asset, and network filters', () => {
+      const result = parse('a2a_list_payments', {
+        direction: 'sent',
+        asset: 'BTC',
+        network: 'bitcoin',
+        refreshOnChain: true,
+      });
+      assert.equal(result.success, true);
+    });
+  });
+
+  describe('observability validation', () => {
+    it('a2a_agent_dashboard accepts optional economics filters and trendDays', () => {
+      const result = parseObservability('a2a_agent_dashboard', {
+        agentAddress: '0xabc',
+        asset: 'BTC',
+        network: 'bitcoin',
+        trendDays: 14,
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_agent_performance accepts optional economics filters and trendDays', () => {
+      const result = parseObservability('a2a_agent_performance', {
+        agentAddress: '0xabc',
+        asset: 'ZEC',
+        network: 'zcash',
+        trendDays: 30,
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_agent_alerts accepts optional category, rail, and since filters', () => {
+      const result = parseObservability('a2a_agent_alerts', {
+        agentAddress: '0xabc',
+        categories: ['budget', 'settlement'],
+        asset: 'BTC',
+        network: 'bitcoin',
+        since: '2026-03-18T00:00:00.000Z',
+        limit: 25,
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_settlement_finality_metrics accepts optional network filters and refresh flag', () => {
+      const result = parseObservability('a2a_settlement_finality_metrics', {
+        agentAddress: '0xabc',
+        network: 'bitcoin',
+        refreshOnChain: true,
+        limit: 50,
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_settlement_pending accepts an optional network filter', () => {
+      const result = parseObservability('a2a_settlement_pending', {
+        network: 'zcash',
+        limit: 25,
+      });
+      assert.equal(result.success, true);
     });
   });
 
@@ -338,6 +436,50 @@ describe('A2A tools Zod validation', () => {
         senderAddress: '0xsender',
         totalAmount: 100,
         recipients,
+      });
+      assert.equal(result.success, true);
+    });
+  });
+
+  describe('Network-aware payment rails', () => {
+    it('a2a_request_payment accepts bitcoin as the requested network', () => {
+      const result = parse('a2a_request_payment', {
+        amount: 0.001,
+        description: 'BTC settlement',
+        asset: 'BTC',
+        network: 'bitcoin',
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_request_quote accepts zcash as the requested network', () => {
+      const result = parse('a2a_request_quote', {
+        seller: 'u1seller',
+        items: [{ description: 'Shielded service' }],
+        asset: 'ZEC',
+        network: 'zcash',
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_create_escrow accepts a bitcoin network override', () => {
+      const result = parse('a2a_create_escrow', {
+        buyerAddress: 'bc1qbuyer',
+        sellerAddress: 'bc1qseller',
+        amount: 0.005,
+        asset: 'BTC',
+        network: 'bitcoin',
+      });
+      assert.equal(result.success, true);
+    });
+
+    it('a2a_create_conditional_payment accepts a zcash network override', () => {
+      const result = parse('a2a_create_conditional_payment', {
+        buyerAddress: 'u1buyer',
+        sellerAddress: 'u1seller',
+        amount: 0.25,
+        asset: 'ZEC',
+        network: 'zcash',
       });
       assert.equal(result.success, true);
     });

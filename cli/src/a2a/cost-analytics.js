@@ -47,6 +47,18 @@ const VALID_OPERATIONS = new Set([
 /** Valid directions */
 const VALID_DIRECTIONS = new Set(['spend', 'earn']);
 
+function parseMetadataObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Create a cost analytics engine with an in-memory ledger.
  *
@@ -66,6 +78,337 @@ export function createCostAnalytics() {
    * @type {Map<string, Object>}
    */
   const _escrowTracker = new Map();
+
+  function _getEntryMetadata(entry) {
+    return parseMetadataObject(entry?.metadata);
+  }
+
+  function _getEntryAsset(entry) {
+    return entry?.asset || _getEntryMetadata(entry)?.asset || 'UNKNOWN';
+  }
+
+  function _getEntryNetwork(entry) {
+    const metadata = _getEntryMetadata(entry);
+    return (
+      entry?.network || metadata?.network || metadata?.chain_id || metadata?.chainId || 'unknown'
+    );
+  }
+
+  function _matchesEntryFilter(entry, filter = {}) {
+    if (filter.asset && _getEntryAsset(entry) !== filter.asset) {
+      return false;
+    }
+    if (filter.network && _getEntryNetwork(entry) !== filter.network) {
+      return false;
+    }
+    return true;
+  }
+
+  function _createLeafSummaryBucket() {
+    return {
+      totalSpent: 0,
+      totalEarned: 0,
+      netMargin: 0,
+      totalVolume: 0,
+      transactionCount: 0,
+      avgTransactionSize: 0,
+    };
+  }
+
+  function _createBreakdownBucket() {
+    return {
+      ..._createLeafSummaryBucket(),
+      networks: {},
+    };
+  }
+
+  function _applyEntryToSummaryBucket(bucket, entry) {
+    if (entry.direction === 'spend') {
+      bucket.totalSpent += entry.amount;
+    } else {
+      bucket.totalEarned += entry.amount;
+    }
+    bucket.totalVolume += entry.amount;
+    bucket.transactionCount += 1;
+  }
+
+  function _finalizeLeafSummaryBucket(bucket) {
+    bucket.netMargin = bucket.totalEarned - bucket.totalSpent;
+    bucket.avgTransactionSize =
+      bucket.transactionCount > 0 ? bucket.totalVolume / bucket.transactionCount : 0;
+    return bucket;
+  }
+
+  function _finalizeBreakdownByAsset(breakdownByAsset) {
+    const assets = Object.keys(breakdownByAsset).sort();
+    for (const asset of assets) {
+      const assetBucket = breakdownByAsset[asset];
+      _finalizeLeafSummaryBucket(assetBucket);
+
+      const orderedNetworks = Object.keys(assetBucket.networks).sort();
+      const nextNetworks = {};
+      for (const network of orderedNetworks) {
+        nextNetworks[network] = _finalizeLeafSummaryBucket(assetBucket.networks[network]);
+      }
+      assetBucket.networks = nextNetworks;
+    }
+
+    return assets;
+  }
+
+  function _buildEntryBreakdown(entries) {
+    const breakdownByAsset = {};
+    const overall = _createLeafSummaryBucket();
+
+    for (const entry of entries) {
+      const asset = _getEntryAsset(entry);
+      const network = _getEntryNetwork(entry);
+      const assetBucket = breakdownByAsset[asset] || _createBreakdownBucket();
+      const networkBucket = assetBucket.networks[network] || _createLeafSummaryBucket();
+
+      _applyEntryToSummaryBucket(overall, entry);
+      _applyEntryToSummaryBucket(assetBucket, entry);
+      _applyEntryToSummaryBucket(networkBucket, entry);
+
+      assetBucket.networks[network] = networkBucket;
+      breakdownByAsset[asset] = assetBucket;
+    }
+
+    const assets = _finalizeBreakdownByAsset(breakdownByAsset);
+    _finalizeLeafSummaryBucket(overall);
+
+    return {
+      breakdownByAsset,
+      assets,
+      ...overall,
+    };
+  }
+
+  function _getAggregateDescriptor(assets, filter = {}) {
+    const aggregateAsset = filter.asset || (assets.length === 1 ? assets[0] : null);
+    const aggregateTotalsMeaningful = Boolean(aggregateAsset) || assets.length <= 1;
+    return {
+      aggregateAsset,
+      aggregateTotalsMeaningful,
+    };
+  }
+
+  function _createAnomalyBucket() {
+    return {
+      transactionCount: 0,
+      spendTransactionCount: 0,
+      avgTransactionAmount: 0,
+      transactionThreshold: 0,
+      transactionAnomalies: [],
+      dailyAverageSpend: 0,
+      dailySpendThreshold: 0,
+      dailyAnomalies: [],
+    };
+  }
+
+  function _computeAnomalySummary(entries) {
+    if (entries.length === 0) {
+      return _createAnomalyBucket();
+    }
+
+    const amounts = entries.map((entry) => entry.amount);
+    const avgTransactionAmount = amounts.reduce((sum, amount) => sum + amount, 0) / amounts.length;
+    const transactionThreshold = avgTransactionAmount * 3;
+
+    const transactionAnomalies = entries
+      .filter((entry) => entry.amount > transactionThreshold)
+      .map((entry) => ({
+        id: entry.id,
+        amount: entry.amount,
+        operation: entry.operation,
+        counterparty: entry.counterparty,
+        timestamp: entry.timestamp,
+        ratio: avgTransactionAmount > 0 ? entry.amount / avgTransactionAmount : 0,
+        threshold: transactionThreshold,
+      }));
+
+    const dailySpend = new Map();
+    for (const entry of entries) {
+      if (entry.direction !== 'spend') continue;
+      const key = _dateKey(new Date(entry.timestamp));
+      dailySpend.set(key, (dailySpend.get(key) || 0) + entry.amount);
+    }
+
+    const dailyValues = [...dailySpend.values()];
+    const dailyAverageSpend =
+      dailyValues.length > 0
+        ? dailyValues.reduce((sum, value) => sum + value, 0) / dailyValues.length
+        : 0;
+    const dailySpendThreshold = dailyAverageSpend * 2;
+
+    const dailyAnomalies = [];
+    for (const [date, totalSpend] of dailySpend) {
+      if (totalSpend > dailySpendThreshold) {
+        dailyAnomalies.push({
+          date,
+          totalSpend,
+          dailyAverage: dailyAverageSpend,
+          ratio: dailyAverageSpend > 0 ? totalSpend / dailyAverageSpend : 0,
+          threshold: dailySpendThreshold,
+        });
+      }
+    }
+
+    return {
+      transactionCount: entries.length,
+      spendTransactionCount: entries.filter((entry) => entry.direction === 'spend').length,
+      avgTransactionAmount,
+      transactionThreshold,
+      transactionAnomalies,
+      dailyAverageSpend,
+      dailySpendThreshold,
+      dailyAnomalies,
+    };
+  }
+
+  function _buildAnomalyBreakdown(entries) {
+    const grouped = new Map();
+
+    for (const entry of entries) {
+      const asset = _getEntryAsset(entry);
+      const network = _getEntryNetwork(entry);
+      const assetGroup = grouped.get(asset) || { entries: [], networks: new Map() };
+      const networkEntries = assetGroup.networks.get(network) || [];
+      assetGroup.entries.push(entry);
+      networkEntries.push(entry);
+      assetGroup.networks.set(network, networkEntries);
+      grouped.set(asset, assetGroup);
+    }
+
+    const breakdownByAsset = {};
+    const transactionAnomalies = [];
+    const dailyAnomalies = [];
+
+    for (const asset of [...grouped.keys()].sort()) {
+      const assetGroup = grouped.get(asset);
+      const assetSummary = _computeAnomalySummary(assetGroup.entries);
+      const assetBucket = {
+        ...assetSummary,
+        transactionAnomalies: assetSummary.transactionAnomalies.map((entry) => ({
+          ...entry,
+          asset,
+        })),
+        dailyAnomalies: assetSummary.dailyAnomalies.map((entry) => ({ ...entry, asset })),
+        networks: {},
+      };
+
+      for (const network of [...assetGroup.networks.keys()].sort()) {
+        const networkSummary = _computeAnomalySummary(assetGroup.networks.get(network));
+        assetBucket.networks[network] = {
+          ...networkSummary,
+          transactionAnomalies: networkSummary.transactionAnomalies.map((entry) => ({
+            ...entry,
+            asset,
+            network,
+          })),
+          dailyAnomalies: networkSummary.dailyAnomalies.map((entry) => ({
+            ...entry,
+            asset,
+            network,
+          })),
+        };
+        transactionAnomalies.push(...assetBucket.networks[network].transactionAnomalies);
+        dailyAnomalies.push(...assetBucket.networks[network].dailyAnomalies);
+      }
+
+      breakdownByAsset[asset] = assetBucket;
+    }
+
+    return {
+      breakdownByAsset,
+      assets: Object.keys(breakdownByAsset),
+      transactionAnomalies,
+      dailyAnomalies,
+    };
+  }
+
+  function _createBudgetLeafBucket() {
+    return {
+      spentThisMonth: 0,
+      dailyAvgSpend: 0,
+      _dailySpend: new Map(),
+    };
+  }
+
+  function _appendBudgetSpend(bucket, dateKey, amount) {
+    bucket._dailySpend.set(dateKey, (bucket._dailySpend.get(dateKey) || 0) + amount);
+  }
+
+  function _finalizeBudgetLeafBucket(bucket) {
+    const dailyValues = [...bucket._dailySpend.values()];
+    bucket.dailyAvgSpend =
+      dailyValues.length > 0
+        ? dailyValues.reduce((sum, value) => sum + value, 0) / dailyValues.length
+        : 0;
+    delete bucket._dailySpend;
+    return bucket;
+  }
+
+  function _buildBudgetBreakdown(entries, lookbackDays = 30, now = new Date()) {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - lookbackDays);
+
+    const overall = _createBudgetLeafBucket();
+    const breakdownByAsset = {};
+
+    for (const entry of entries) {
+      if (entry.direction !== 'spend') continue;
+
+      const asset = _getEntryAsset(entry);
+      const network = _getEntryNetwork(entry);
+      const entryDate = new Date(entry.timestamp);
+      const assetBucket = breakdownByAsset[asset] || {
+        ..._createBudgetLeafBucket(),
+        networks: {},
+      };
+      const networkBucket = assetBucket.networks[network] || _createBudgetLeafBucket();
+
+      if (entryDate >= monthStart) {
+        overall.spentThisMonth += entry.amount;
+        assetBucket.spentThisMonth += entry.amount;
+        networkBucket.spentThisMonth += entry.amount;
+      }
+
+      if (entryDate >= cutoff) {
+        const key = _dateKey(entryDate);
+        _appendBudgetSpend(overall, key, entry.amount);
+        _appendBudgetSpend(assetBucket, key, entry.amount);
+        _appendBudgetSpend(networkBucket, key, entry.amount);
+      }
+
+      assetBucket.networks[network] = networkBucket;
+      breakdownByAsset[asset] = assetBucket;
+    }
+
+    const assets = Object.keys(breakdownByAsset).sort();
+    for (const asset of assets) {
+      const assetBucket = breakdownByAsset[asset];
+      const orderedNetworks = Object.keys(assetBucket.networks).sort();
+      const nextNetworks = {};
+
+      for (const network of orderedNetworks) {
+        nextNetworks[network] = _finalizeBudgetLeafBucket(assetBucket.networks[network]);
+      }
+
+      assetBucket.networks = nextNetworks;
+      _finalizeBudgetLeafBucket(assetBucket);
+    }
+
+    _finalizeBudgetLeafBucket(overall);
+
+    return {
+      breakdownByAsset,
+      assets,
+      spentThisMonth: overall.spentThisMonth,
+      dailyAvgSpend: overall.dailyAvgSpend,
+    };
+  }
 
   // -------------------------------------------------------------------------
   // record()
@@ -106,12 +449,21 @@ export function createCostAnalytics() {
       throw new Error(`record() operation must be one of: ${[...VALID_OPERATIONS].join(', ')}`);
     }
 
+    const metadataObject = parseMetadataObject(entry.metadata);
+
     const stored = {
       id: randomUUID(),
       agentAddress: entry.agentAddress,
       counterparty: entry.counterparty,
       direction: entry.direction,
       amount: entry.amount,
+      asset: entry.asset || metadataObject?.asset || null,
+      network:
+        entry.network ||
+        metadataObject?.network ||
+        metadataObject?.chain_id ||
+        metadataObject?.chainId ||
+        null,
       operation,
       sagaId: entry.sagaId || null,
       timestamp: entry.timestamp || new Date().toISOString(),
@@ -152,8 +504,8 @@ export function createCostAnalytics() {
    * @param {string} agentAddress
    * @returns {Array<Object>}
    */
-  function _getAgentEntries(agentAddress) {
-    return _ledger.filter((e) => e.agentAddress === agentAddress);
+  function _getAgentEntries(agentAddress, filter = {}) {
+    return _ledger.filter((e) => e.agentAddress === agentAddress && _matchesEntryFilter(e, filter));
   }
 
   // -------------------------------------------------------------------------
@@ -166,40 +518,25 @@ export function createCostAnalytics() {
    * @param {string} agentAddress
    * @returns {{ totalSpent: number, totalEarned: number, netMargin: number, avgTransactionSize: number, transactionCount: number }}
    */
-  function getAgentSpendSummary(agentAddress) {
-    const entries = _getAgentEntries(agentAddress);
-
-    if (entries.length === 0) {
-      return {
-        totalSpent: 0,
-        totalEarned: 0,
-        netMargin: 0,
-        avgTransactionSize: 0,
-        transactionCount: 0,
-      };
-    }
-
-    let totalSpent = 0;
-    let totalEarned = 0;
-
-    for (const e of entries) {
-      if (e.direction === 'spend') {
-        totalSpent += e.amount;
-      } else {
-        totalEarned += e.amount;
-      }
-    }
-
-    const netMargin = totalEarned - totalSpent;
-    const totalVolume = totalSpent + totalEarned;
-    const avgTransactionSize = totalVolume / entries.length;
+  function getAgentSpendSummary(agentAddress, filter = {}) {
+    const entries = _getAgentEntries(agentAddress, filter);
+    const summary = _buildEntryBreakdown(entries);
+    const aggregate = _getAggregateDescriptor(summary.assets, filter);
 
     return {
-      totalSpent,
-      totalEarned,
-      netMargin,
-      avgTransactionSize,
-      transactionCount: entries.length,
+      totalSpent: summary.totalSpent,
+      totalEarned: summary.totalEarned,
+      netMargin: summary.netMargin,
+      avgTransactionSize: summary.avgTransactionSize,
+      transactionCount: summary.transactionCount,
+      asset: filter.asset || null,
+      network: filter.network || null,
+      assets: summary.assets,
+      aggregateAsset: aggregate.aggregateAsset,
+      aggregateTotalsMeaningful: aggregate.aggregateTotalsMeaningful,
+      netMarginMeaningful: aggregate.aggregateTotalsMeaningful,
+      avgTransactionSizeMeaningful: aggregate.aggregateTotalsMeaningful,
+      breakdownByAsset: summary.breakdownByAsset,
     };
   }
 
@@ -213,33 +550,35 @@ export function createCostAnalytics() {
    * @param {string} agentAddress
    * @returns {Array<{ counterparty: string, spent: number, earned: number, transactionCount: number, volume: number }>}
    */
-  function getCounterpartyBreakdown(agentAddress) {
-    const entries = _getAgentEntries(agentAddress);
-    /** @type {Map<string, { spent: number, earned: number, transactionCount: number }>} */
+  function getCounterpartyBreakdown(agentAddress, filter = {}) {
+    const entries = _getAgentEntries(agentAddress, filter);
+    /** @type {Map<string, Array<Object>>} */
     const byCounterparty = new Map();
 
-    for (const e of entries) {
-      let rec = byCounterparty.get(e.counterparty);
-      if (!rec) {
-        rec = { spent: 0, earned: 0, transactionCount: 0 };
-        byCounterparty.set(e.counterparty, rec);
-      }
-      rec.transactionCount += 1;
-      if (e.direction === 'spend') {
-        rec.spent += e.amount;
-      } else {
-        rec.earned += e.amount;
-      }
+    for (const entry of entries) {
+      const current = byCounterparty.get(entry.counterparty) || [];
+      current.push(entry);
+      byCounterparty.set(entry.counterparty, current);
     }
 
     const result = [];
-    for (const [counterparty, rec] of byCounterparty) {
+    for (const [counterparty, counterpartyEntries] of byCounterparty) {
+      const summary = _buildEntryBreakdown(counterpartyEntries);
+      const aggregate = _getAggregateDescriptor(summary.assets, filter);
       result.push({
         counterparty,
-        spent: rec.spent,
-        earned: rec.earned,
-        transactionCount: rec.transactionCount,
-        volume: rec.spent + rec.earned,
+        spent: summary.totalSpent,
+        earned: summary.totalEarned,
+        netMargin: summary.netMargin,
+        transactionCount: summary.transactionCount,
+        volume: summary.totalVolume,
+        asset: filter.asset || null,
+        network: filter.network || null,
+        assets: summary.assets,
+        aggregateAsset: aggregate.aggregateAsset,
+        aggregateVolumeMeaningful: aggregate.aggregateTotalsMeaningful,
+        marginMeaningful: aggregate.aggregateTotalsMeaningful,
+        breakdownByAsset: summary.breakdownByAsset,
       });
     }
 
@@ -259,30 +598,39 @@ export function createCostAnalytics() {
    * @param {string} agentAddress
    * @returns {Array<{ operation: string, totalAmount: number, transactionCount: number, percentOfTotal: number }>}
    */
-  function getOperationBreakdown(agentAddress) {
-    const entries = _getAgentEntries(agentAddress);
-    /** @type {Map<string, { totalAmount: number, transactionCount: number }>} */
+  function getOperationBreakdown(agentAddress, filter = {}) {
+    const entries = _getAgentEntries(agentAddress, filter);
+    const overallSummary = _buildEntryBreakdown(entries);
+    const overallAggregate = _getAggregateDescriptor(overallSummary.assets, filter);
+    /** @type {Map<string, Array<Object>>} */
     const byOp = new Map();
-    let grandTotal = 0;
 
     for (const e of entries) {
-      let rec = byOp.get(e.operation);
-      if (!rec) {
-        rec = { totalAmount: 0, transactionCount: 0 };
-        byOp.set(e.operation, rec);
-      }
-      rec.totalAmount += e.amount;
-      rec.transactionCount += 1;
-      grandTotal += e.amount;
+      const current = byOp.get(e.operation) || [];
+      current.push(e);
+      byOp.set(e.operation, current);
     }
 
     const result = [];
-    for (const [operation, rec] of byOp) {
+    for (const [operation, operationEntries] of byOp) {
+      const summary = _buildEntryBreakdown(operationEntries);
+      const aggregate = _getAggregateDescriptor(summary.assets, filter);
       result.push({
         operation,
-        totalAmount: rec.totalAmount,
-        transactionCount: rec.transactionCount,
-        percentOfTotal: grandTotal > 0 ? (rec.totalAmount / grandTotal) * 100 : 0,
+        totalAmount: summary.totalVolume,
+        transactionCount: summary.transactionCount,
+        percentOfTotal:
+          overallSummary.totalVolume > 0
+            ? (summary.totalVolume / overallSummary.totalVolume) * 100
+            : 0,
+        asset: filter.asset || null,
+        network: filter.network || null,
+        assets: summary.assets,
+        aggregateAsset: aggregate.aggregateAsset,
+        aggregateTotalsMeaningful: aggregate.aggregateTotalsMeaningful,
+        totalAmountMeaningful: aggregate.aggregateTotalsMeaningful,
+        percentOfTotalMeaningful: overallAggregate.aggregateTotalsMeaningful,
+        breakdownByAsset: summary.breakdownByAsset,
       });
     }
 
@@ -303,15 +651,19 @@ export function createCostAnalytics() {
    * @param {number} [days=30] - Number of days to look back
    * @returns {Array<{ date: string, spent: number, earned: number, net: number }>}
    */
-  function getDailySpendTrend(agentAddress, days = 30) {
-    const entries = _getAgentEntries(agentAddress);
+  function getDailySpendTrend(agentAddress, days = 30, filter = {}) {
+    if (days && typeof days === 'object' && !Array.isArray(days)) {
+      filter = days;
+      days = 30;
+    }
+    const entries = _getAgentEntries(agentAddress, filter);
     const now = new Date();
     const cutoff = new Date(now);
     cutoff.setDate(cutoff.getDate() - days);
     cutoff.setHours(0, 0, 0, 0);
 
-    // Build a map of date -> { spent, earned }
-    /** @type {Map<string, { spent: number, earned: number }>} */
+    // Build a map of date -> entries for that day
+    /** @type {Map<string, Array<Object>>} */
     const dailyMap = new Map();
 
     // Pre-fill all days so the output is dense (no gaps)
@@ -319,34 +671,38 @@ export function createCostAnalytics() {
       const date = new Date(now);
       date.setDate(date.getDate() - d);
       const key = _dateKey(date);
-      dailyMap.set(key, { spent: 0, earned: 0 });
+      dailyMap.set(key, []);
     }
 
     for (const e of entries) {
       const entryDate = new Date(e.timestamp);
       if (entryDate < cutoff) continue;
       const key = _dateKey(entryDate);
-      let rec = dailyMap.get(key);
-      if (!rec) {
-        rec = { spent: 0, earned: 0 };
-        dailyMap.set(key, rec);
-      }
-      if (e.direction === 'spend') {
-        rec.spent += e.amount;
-      } else {
-        rec.earned += e.amount;
-      }
+      const rec = dailyMap.get(key) || [];
+      rec.push(e);
+      dailyMap.set(key, rec);
     }
 
     // Sort by date ascending
     const sorted = [...dailyMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 
-    return sorted.map(([date, rec]) => ({
-      date,
-      spent: rec.spent,
-      earned: rec.earned,
-      net: rec.earned - rec.spent,
-    }));
+    return sorted.map(([date, dayEntries]) => {
+      const summary = _buildEntryBreakdown(dayEntries);
+      const aggregate = _getAggregateDescriptor(summary.assets, filter);
+      return {
+        date,
+        spent: summary.totalSpent,
+        earned: summary.totalEarned,
+        net: summary.netMargin,
+        asset: filter.asset || null,
+        network: filter.network || null,
+        assets: summary.assets,
+        aggregateAsset: aggregate.aggregateAsset,
+        aggregateTotalsMeaningful: aggregate.aggregateTotalsMeaningful,
+        netMeaningful: aggregate.aggregateTotalsMeaningful,
+        breakdownByAsset: summary.breakdownByAsset,
+      };
+    });
   }
 
   /**
@@ -375,58 +731,21 @@ export function createCostAnalytics() {
    * @param {string} agentAddress
    * @returns {{ transactionAnomalies: Array<Object>, dailyAnomalies: Array<Object> }}
    */
-  function detectAnomalies(agentAddress) {
-    const entries = _getAgentEntries(agentAddress);
+  function detectAnomalies(agentAddress, filter = {}) {
+    const entries = _getAgentEntries(agentAddress, filter);
+    const breakdown = _buildAnomalyBreakdown(entries);
+    const aggregate = _getAggregateDescriptor(breakdown.assets, filter);
 
-    if (entries.length === 0) {
-      return { transactionAnomalies: [], dailyAnomalies: [] };
-    }
-
-    // --- Transaction-level anomalies ---
-    const amounts = entries.map((e) => e.amount);
-    const avgAmount = amounts.reduce((sum, a) => sum + a, 0) / amounts.length;
-    const txThreshold = avgAmount * 3;
-
-    const transactionAnomalies = entries
-      .filter((e) => e.amount > txThreshold)
-      .map((e) => ({
-        id: e.id,
-        amount: e.amount,
-        operation: e.operation,
-        counterparty: e.counterparty,
-        timestamp: e.timestamp,
-        ratio: avgAmount > 0 ? e.amount / avgAmount : 0,
-        threshold: txThreshold,
-      }));
-
-    // --- Daily spend anomalies ---
-    /** @type {Map<string, number>} */
-    const dailySpend = new Map();
-    for (const e of entries) {
-      if (e.direction !== 'spend') continue;
-      const key = _dateKey(new Date(e.timestamp));
-      dailySpend.set(key, (dailySpend.get(key) || 0) + e.amount);
-    }
-
-    const dailyValues = [...dailySpend.values()];
-    const dailyAvg =
-      dailyValues.length > 0 ? dailyValues.reduce((s, v) => s + v, 0) / dailyValues.length : 0;
-    const dailyThreshold = dailyAvg * 2;
-
-    const dailyAnomalies = [];
-    for (const [date, total] of dailySpend) {
-      if (total > dailyThreshold) {
-        dailyAnomalies.push({
-          date,
-          totalSpend: total,
-          dailyAverage: dailyAvg,
-          ratio: dailyAvg > 0 ? total / dailyAvg : 0,
-          threshold: dailyThreshold,
-        });
-      }
-    }
-
-    return { transactionAnomalies, dailyAnomalies };
+    return {
+      transactionAnomalies: breakdown.transactionAnomalies,
+      dailyAnomalies: breakdown.dailyAnomalies,
+      asset: filter.asset || null,
+      network: filter.network || null,
+      assets: breakdown.assets,
+      aggregateAsset: aggregate.aggregateAsset,
+      aggregateAnomaliesMeaningful: aggregate.aggregateTotalsMeaningful,
+      breakdownByAsset: breakdown.breakdownByAsset,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -506,54 +825,23 @@ export function createCostAnalytics() {
    * @param {string} agentAddress
    * @returns {{ grossMargin: number, perCounterparty: Array<{ counterparty: string, margin: number, spent: number, earned: number }>, bestCounterparty: Object|null, worstCounterparty: Object|null }}
    */
-  function getMarginAnalysis(agentAddress) {
-    const entries = _getAgentEntries(agentAddress);
+  function getMarginAnalysis(agentAddress, filter = {}) {
+    const entries = _getAgentEntries(agentAddress, filter);
+    const summary = _buildEntryBreakdown(entries);
+    const aggregate = _getAggregateDescriptor(summary.assets, filter);
 
-    if (entries.length === 0) {
-      return {
-        grossMargin: 0,
-        perCounterparty: [],
-        bestCounterparty: null,
-        worstCounterparty: null,
-      };
-    }
-
-    let totalSpent = 0;
-    let totalEarned = 0;
-
-    /** @type {Map<string, { spent: number, earned: number }>} */
-    const cpMap = new Map();
-
-    for (const e of entries) {
-      if (e.direction === 'spend') {
-        totalSpent += e.amount;
-      } else {
-        totalEarned += e.amount;
-      }
-
-      let rec = cpMap.get(e.counterparty);
-      if (!rec) {
-        rec = { spent: 0, earned: 0 };
-        cpMap.set(e.counterparty, rec);
-      }
-      if (e.direction === 'spend') {
-        rec.spent += e.amount;
-      } else {
-        rec.earned += e.amount;
-      }
-    }
-
-    const grossMargin = totalEarned - totalSpent;
-
-    const perCounterparty = [];
-    for (const [counterparty, rec] of cpMap) {
-      perCounterparty.push({
-        counterparty,
-        margin: rec.earned - rec.spent,
-        spent: rec.spent,
-        earned: rec.earned,
-      });
-    }
+    const perCounterparty = getCounterpartyBreakdown(agentAddress, filter).map((entry) => ({
+      counterparty: entry.counterparty,
+      margin: entry.earned - entry.spent,
+      spent: entry.spent,
+      earned: entry.earned,
+      asset: entry.asset,
+      network: entry.network,
+      assets: entry.assets,
+      aggregateAsset: entry.aggregateAsset,
+      aggregateMarginMeaningful: entry.marginMeaningful,
+      breakdownByAsset: entry.breakdownByAsset,
+    }));
 
     // Sort by margin descending
     perCounterparty.sort((a, b) => b.margin - a.margin);
@@ -563,7 +851,13 @@ export function createCostAnalytics() {
       perCounterparty.length > 0 ? perCounterparty[perCounterparty.length - 1] : null;
 
     return {
-      grossMargin,
+      grossMargin: summary.netMargin,
+      asset: filter.asset || null,
+      network: filter.network || null,
+      assets: summary.assets,
+      aggregateAsset: aggregate.aggregateAsset,
+      grossMarginMeaningful: aggregate.aggregateTotalsMeaningful,
+      breakdownByAsset: summary.breakdownByAsset,
       perCounterparty,
       bestCounterparty,
       worstCounterparty,
@@ -582,54 +876,41 @@ export function createCostAnalytics() {
    * @param {number} [lookbackDays=30] - Days to use for trend calculation
    * @returns {{ dailyAvgSpend: number, daysRemaining: number|null, exhaustionDate: string|null, spentThisMonth: number, remainingBudget: number }}
    */
-  function getBudgetForecast(agentAddress, monthlyBudget, lookbackDays = 30) {
+  function getBudgetForecast(agentAddress, monthlyBudget, lookbackDays = 30, filter = {}) {
+    if (lookbackDays && typeof lookbackDays === 'object' && !Array.isArray(lookbackDays)) {
+      filter = lookbackDays;
+      lookbackDays = 30;
+    }
     if (typeof monthlyBudget !== 'number' || monthlyBudget <= 0) {
       throw new Error('getBudgetForecast() requires a positive monthlyBudget');
     }
 
-    const entries = _getAgentEntries(agentAddress);
+    const entries = _getAgentEntries(agentAddress, filter);
     const now = new Date();
+    const budgetSummary = _buildBudgetBreakdown(entries, lookbackDays, now);
+    const aggregate = _getAggregateDescriptor(budgetSummary.assets, filter);
+    const budgetForecastMeaningful = aggregate.aggregateTotalsMeaningful;
 
-    // Compute spend this calendar month
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    let spentThisMonth = 0;
-    for (const e of entries) {
-      if (e.direction === 'spend' && new Date(e.timestamp) >= monthStart) {
-        spentThisMonth += e.amount;
-      }
-    }
-
-    // Compute daily average from lookback window
-    const cutoff = new Date(now);
-    cutoff.setDate(cutoff.getDate() - lookbackDays);
-
-    /** @type {Map<string, number>} */
-    const dailySpend = new Map();
-    for (const e of entries) {
-      if (e.direction !== 'spend') continue;
-      const eDate = new Date(e.timestamp);
-      if (eDate < cutoff) continue;
-      const key = _dateKey(eDate);
-      dailySpend.set(key, (dailySpend.get(key) || 0) + e.amount);
-    }
-
-    const dailyValues = [...dailySpend.values()];
-    const dailyAvgSpend =
-      dailyValues.length > 0 ? dailyValues.reduce((s, v) => s + v, 0) / dailyValues.length : 0;
-
-    const remainingBudget = monthlyBudget - spentThisMonth;
-
+    let dailyAvgSpend = null;
     let daysRemaining = null;
     let exhaustionDate = null;
+    let spentThisMonth = null;
+    let remainingBudget = null;
 
-    if (dailyAvgSpend > 0 && remainingBudget > 0) {
-      daysRemaining = Math.ceil(remainingBudget / dailyAvgSpend);
-      const exhaust = new Date(now);
-      exhaust.setDate(exhaust.getDate() + daysRemaining);
-      exhaustionDate = exhaust.toISOString().split('T')[0];
-    } else if (remainingBudget <= 0) {
-      daysRemaining = 0;
-      exhaustionDate = _dateKey(now);
+    if (budgetForecastMeaningful) {
+      dailyAvgSpend = budgetSummary.dailyAvgSpend;
+      spentThisMonth = budgetSummary.spentThisMonth;
+      remainingBudget = monthlyBudget - spentThisMonth;
+
+      if (dailyAvgSpend > 0 && remainingBudget > 0) {
+        daysRemaining = Math.ceil(remainingBudget / dailyAvgSpend);
+        const exhaust = new Date(now);
+        exhaust.setDate(exhaust.getDate() + daysRemaining);
+        exhaustionDate = exhaust.toISOString().split('T')[0];
+      } else if (remainingBudget <= 0) {
+        daysRemaining = 0;
+        exhaustionDate = _dateKey(now);
+      }
     }
 
     return {
@@ -638,6 +919,14 @@ export function createCostAnalytics() {
       exhaustionDate,
       spentThisMonth,
       remainingBudget,
+      monthlyBudget,
+      lookbackDays,
+      asset: filter.asset || null,
+      network: filter.network || null,
+      assets: budgetSummary.assets,
+      aggregateAsset: aggregate.aggregateAsset,
+      budgetForecastMeaningful,
+      breakdownByAsset: budgetSummary.breakdownByAsset,
     };
   }
 
@@ -651,31 +940,34 @@ export function createCostAnalytics() {
    * @param {number} [limit=10] - Max results
    * @returns {Array<{ agentAddress: string, totalSpent: number, totalEarned: number, transactionCount: number }>}
    */
-  function getTopSpenders(limit = 10) {
-    /** @type {Map<string, { totalSpent: number, totalEarned: number, transactionCount: number }>} */
+  function getTopSpenders(limit = 10, filter = {}) {
+    /** @type {Map<string, Array<Object>>} */
     const agentMap = new Map();
 
-    for (const e of _ledger) {
-      let rec = agentMap.get(e.agentAddress);
-      if (!rec) {
-        rec = { totalSpent: 0, totalEarned: 0, transactionCount: 0 };
-        agentMap.set(e.agentAddress, rec);
+    for (const entry of _ledger) {
+      if (!_matchesEntryFilter(entry, filter)) {
+        continue;
       }
-      rec.transactionCount += 1;
-      if (e.direction === 'spend') {
-        rec.totalSpent += e.amount;
-      } else {
-        rec.totalEarned += e.amount;
-      }
+      const current = agentMap.get(entry.agentAddress) || [];
+      current.push(entry);
+      agentMap.set(entry.agentAddress, current);
     }
 
     const result = [];
-    for (const [agentAddress, rec] of agentMap) {
+    for (const [agentAddress, entries] of agentMap) {
+      const summary = _buildEntryBreakdown(entries);
+      const aggregate = _getAggregateDescriptor(summary.assets, filter);
       result.push({
         agentAddress,
-        totalSpent: rec.totalSpent,
-        totalEarned: rec.totalEarned,
-        transactionCount: rec.transactionCount,
+        totalSpent: summary.totalSpent,
+        totalEarned: summary.totalEarned,
+        transactionCount: summary.transactionCount,
+        asset: filter.asset || null,
+        network: filter.network || null,
+        assets: summary.assets,
+        aggregateAsset: aggregate.aggregateAsset,
+        aggregateTotalsMeaningful: aggregate.aggregateTotalsMeaningful,
+        breakdownByAsset: summary.breakdownByAsset,
       });
     }
 

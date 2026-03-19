@@ -244,6 +244,23 @@ describe('createSplitPayment', () => {
     assert.equal(result.splitPayment.asset, 'USDC');
   });
 
+  it('should derive ZEC as the default asset for zcash splits', async () => {
+    const result = await service.createSplitPayment({
+      senderAddress: '0xSender',
+      totalAmount: 2,
+      network: 'zcash',
+      recipients: [
+        { address: 'u1alice', percent: 50 },
+        { address: 'u1bob', percent: 50 },
+      ],
+    });
+
+    assert.equal(result.splitPayment.asset, 'ZEC');
+    assert.equal(result.splitPayment.network, 'zcash');
+    assert.equal(result.splitPayment.totalAmount, 200_000_000);
+    assert.equal(result.splitPayment.recipients[0].shareAmountDecimal, 1);
+  });
+
   it('should call store.createSplitPayment and store.createSplitRecipient correctly', async () => {
     await service.createSplitPayment({
       senderAddress: '0xSender',
@@ -583,7 +600,27 @@ describe('executeSplitPayment', () => {
     assert.equal(typeof firstCall[0], 'string'); // recipient address
     assert.equal(typeof firstCall[1], 'number'); // decimal amount
     assert.equal(firstCall[2], 'USDC'); // asset
-    assert.equal(firstCall[3], 'test memo'); // memo
+    assert.equal(firstCall[3], 'set_chain'); // network
+    assert.equal(firstCall[4], 'test memo'); // memo
+  });
+
+  it('passes the split network through to payFn', async () => {
+    const splitId = await createTestSplit({
+      asset: 'BTC',
+      network: 'bitcoin',
+      recipients: [
+        { address: 'bc1qalice', percent: 60 },
+        { address: 'bc1qbob', percent: 40 },
+      ],
+    });
+
+    const payFn = mock.fn(async () => ({ id: 'pay-btc' }));
+    await service.executeSplitPayment(splitId, payFn);
+
+    const firstCall = payFn.mock.calls[0].arguments;
+    assert.equal(firstCall[2], 'BTC');
+    assert.equal(firstCall[3], 'bitcoin');
+    assert.equal(firstCall[4], 'test memo');
   });
 
   it('should set status to failed when all payments fail', async () => {

@@ -184,6 +184,60 @@ describe('AgentRuntime — Construction', () => {
     assert.equal(rt.agentId, 'custom-id');
   });
 
+  it('updates on-chain accessors and default payment config when settlement is attached later', async () => {
+    const rt = createRuntime();
+    const settlement = {
+      chainId: 'bitcoin',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '0.5', balanceSmallest: 50_000_000n, symbol: 'BTC' }),
+      getAddress: async () => 'bc1qruntime',
+    };
+
+    rt.settlement = settlement;
+
+    assert.deepEqual(rt.getDefaultPaymentConfig(), {
+      asset: 'BTC',
+      network: 'bitcoin',
+    });
+    assert.deepEqual(await rt.getOnChainBalance(), {
+      balance: '0.5',
+      balanceSmallest: 50_000_000n,
+      symbol: 'BTC',
+    });
+    assert.equal(await rt.getChainWalletAddress(), 'bc1qruntime');
+  });
+
+  it('supports multiple settlement services and chain-specific accessors', async () => {
+    const rt = createRuntime();
+    const bitcoinSettlement = {
+      chainId: 'bitcoin',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '0.5', balanceSmallest: 50_000_000n, symbol: 'BTC' }),
+      getAddress: async () => 'bc1qmulti',
+    };
+    const zcashSettlement = {
+      chainId: 'zcash',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '1.25', balanceSmallest: 125_000_000n, symbol: 'ZEC' }),
+      getAddress: async () => 'u1multi',
+    };
+
+    rt.setSettlement(bitcoinSettlement);
+    rt.setSettlement(zcashSettlement);
+
+    assert.deepEqual(rt.listSettlementChains().sort(), ['bitcoin', 'zcash']);
+    assert.deepEqual(rt.getDefaultPaymentConfig(), {
+      asset: 'ZEC',
+      network: 'zcash',
+    });
+    assert.deepEqual(await rt.getOnChainBalance('bitcoin'), {
+      balance: '0.5',
+      balanceSmallest: 50_000_000n,
+      symbol: 'BTC',
+    });
+    assert.equal(await rt.getChainWalletAddress('zcash'), 'u1multi');
+  });
+
   it('throws when walletAddress is missing', () => {
     const { commerce } = createMockCommerce();
     assert.throws(
@@ -306,6 +360,32 @@ describe('AgentRuntime — Budget', () => {
     assert.ok(rt.canAfford(50));
     rt.recordSpend(50);
     assert.ok(!rt.canAfford(1));
+  });
+
+  it('tracks spend independently per payment rail', () => {
+    const rt = createRuntime({
+      budget: { perTransaction: 1, daily: 1, monthly: 5, startingBalance: 2 },
+    });
+
+    rt.recordSpend(0.8, { asset: 'BTC', network: 'bitcoin' });
+    assert.ok(!rt.canAfford(0.3, { asset: 'BTC', network: 'bitcoin' }));
+    assert.ok(rt.canAfford(0.3, { asset: 'ZEC', network: 'zcash' }));
+
+    rt.recordSpend(0.5, { asset: 'ZEC', network: 'zcash' });
+
+    const mixedBudget = rt.getBudget();
+    assert.equal(mixedBudget.aggregateTotalsMeaningful, false);
+    assert.equal(mixedBudget.spentToday, null);
+    assert.deepEqual(mixedBudget.assets, ['BTC', 'ZEC']);
+    assert.ok(Math.abs(mixedBudget.breakdownByAsset.BTC.networks.bitcoin.spentToday - 0.8) < 1e-12);
+    assert.ok(Math.abs(mixedBudget.breakdownByAsset.ZEC.networks.zcash.spentToday - 0.5) < 1e-12);
+
+    const btcBudget = rt.getBudget({ asset: 'BTC', network: 'bitcoin' });
+    assert.equal(btcBudget.aggregateTotalsMeaningful, true);
+    assert.equal(btcBudget.asset, 'BTC');
+    assert.equal(btcBudget.network, 'bitcoin');
+    assert.ok(Math.abs(btcBudget.spentToday - 0.8) < 1e-12);
+    assert.ok(Math.abs(btcBudget.balance - 1.2) < 1e-12);
   });
 });
 

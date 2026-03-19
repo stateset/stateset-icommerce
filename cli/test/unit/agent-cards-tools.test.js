@@ -164,6 +164,18 @@ describe('Agent Cards Tools — register_agent_card schema', () => {
     });
   });
 
+  it('paymentAddresses is an optional network-to-address map', () => {
+    expectPass(getSchema('register_agent_card'), {
+      name: 'Bot',
+      walletAddress: '0xABC',
+      publicKey: 'pk1',
+      paymentAddresses: {
+        bitcoin: 'bc1qbot',
+        zcash: 'u1bot',
+      },
+    });
+  });
+
   it('skills is optional array of strings', () => {
     expectPass(getSchema('register_agent_card'), {
       name: 'Bot',

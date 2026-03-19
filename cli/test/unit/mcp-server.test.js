@@ -8,7 +8,56 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createStatesetMcpServer, TOOL_NAMES } from '../../src/mcp-server.js';
+import { createPaymentCredential } from '../../src/mpp/index.js';
+import { loadTreasuryContext, recordDeposit } from '../../src/treasury/index.js';
+
+async function withTempTreasuryFixture(callback) {
+  const tempDir = await mkdtemp(join(os.tmpdir(), 'stateset-mpp-'));
+  const pricingPath = join(tempDir, 'pricing.json');
+  const dbPath = join(tempDir, 'treasury.db');
+
+  await writeFile(
+    pricingPath,
+    JSON.stringify(
+      {
+        rules: [
+          {
+            tool: 'list_customers',
+            chainId: 'bitcoin',
+            tokenSymbol: 'BTC',
+            amount: 0.0001,
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  try {
+    return await callback({ tempDir, pricingPath, dbPath });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function seedTreasuryBalance({ dbPath, pricingPath, agentId = 'buyer-agent', amount = 1 }) {
+  const ctx = await loadTreasuryContext({ dbPath, pricingPath });
+  await recordDeposit(
+    {
+      agentId,
+      chainId: 'bitcoin',
+      tokenSymbol: 'BTC',
+      amount,
+      source: 'test_seed',
+    },
+    ctx,
+  );
+}
 
 describe('mcp-server', () => {
   let mockCommerce;
@@ -317,6 +366,232 @@ describe('mcp-server', () => {
       assert.equal(Array.isArray(payload.agenticToolResultSchema.metadata), true);
       assert.equal(payload.agenticToolResultSchema.metadata.includes('schemaVersion'), true);
       assert.equal(payload.agenticToolResultSchema.metadata.includes('mutation'), true);
+      assert.equal(payload.mpp.transport.jsonrpc.paymentRequiredCode, -32042);
+      assert.equal(Array.isArray(payload.mpp.methodAdapters), true);
+    });
+
+    it('should expose OpenAPI payment discovery for priced tools', async () => {
+      await withTempTreasuryFixture(async ({ pricingPath, dbPath }) => {
+        const server = createStatesetMcpServer({
+          commerce: mockCommerce,
+          treasury: {
+            enabled: true,
+            agentId: 'buyer-agent',
+            dbPath,
+            pricingPath,
+          },
+        });
+
+        const discovery = await server.getPaymentDiscovery({
+          format: 'openapi',
+          tool: 'list_customers',
+        });
+
+        assert.equal(discovery.openapi, '3.1.0');
+        assert.equal(discovery['x-service-info'].protocol, 'mpp');
+        assert.equal(
+          discovery.paths['/mcp/tools/list_customers'].post['x-payment-info'].amount.asset,
+          'BTC',
+        );
+      });
+    });
+
+    it('should expose agentic_tool_catalog with payable tool metadata', async () => {
+      await withTempTreasuryFixture(async ({ pricingPath, dbPath }) => {
+        const server = createStatesetMcpServer({
+          commerce: mockCommerce,
+          treasury: {
+            enabled: true,
+            agentId: 'buyer-agent',
+            dbPath,
+            pricingPath,
+          },
+        });
+
+        const tool = server.instance._registeredTools.agentic_tool_catalog;
+        const res = await tool.handler({ tool: 'list_customers', payableOnly: true });
+        const payload = JSON.parse(res.content[0].text);
+
+        assert.equal(payload.format, 'generic');
+        assert.equal(payload.count, 1);
+        assert.equal(payload.tools[0].toolName, 'list_customers');
+        assert.equal(payload.tools[0].payable, true);
+        assert.equal(payload.tools[0].paymentInfo.amount.asset, 'BTC');
+      });
+    });
+
+    it('should return an MPP payment challenge for priced tools without credentials', async () => {
+      await withTempTreasuryFixture(async ({ pricingPath, dbPath }) => {
+        const server = createStatesetMcpServer({
+          commerce: mockCommerce,
+          treasury: {
+            enabled: true,
+            agentId: 'buyer-agent',
+            dbPath,
+            pricingPath,
+          },
+        });
+
+        const tool = server.instance._registeredTools.list_customers;
+        const res = await tool.handler({}, { requestId: 'req-mpp-1', sessionId: 'sess-mpp-1' });
+        const payload = JSON.parse(res.content[0].text);
+
+        assert.equal(res.isError, true);
+        assert.equal(payload.code, -32042);
+        assert.equal(payload.paymentRequired, true);
+        assert.equal(payload.paymentChallenge.tool, 'list_customers');
+        assert.equal(payload._meta.payment.challenge.challengeId, payload.paymentChallenge.challengeId);
+      });
+    });
+
+    it('should accept an MPP credential and attach a receipt for priced tools', async () => {
+      await withTempTreasuryFixture(async ({ pricingPath, dbPath }) => {
+        await seedTreasuryBalance({ dbPath, pricingPath });
+
+        const server = createStatesetMcpServer({
+          commerce: mockCommerce,
+          treasury: {
+            enabled: true,
+            agentId: 'buyer-agent',
+            dbPath,
+            pricingPath,
+          },
+        });
+
+        const tool = server.instance._registeredTools.list_customers;
+        const challengeRes = await tool.handler(
+          {},
+          { requestId: 'req-mpp-2', sessionId: 'sess-mpp-2' },
+        );
+        const challengePayload = JSON.parse(challengeRes.content[0].text);
+        const credential = createPaymentCredential({
+          challenge: challengePayload.paymentChallenge,
+          payer: 'buyer-agent',
+          authorization: { type: 'test' },
+        });
+
+        const successRes = await tool.handler(
+          {},
+          {
+            requestId: 'req-mpp-2',
+            sessionId: 'sess-mpp-2',
+            _meta: { payment: credential },
+          },
+        );
+        const successPayload = JSON.parse(successRes.content[0].text);
+
+        assert.equal(successRes.isError, undefined);
+        assert.equal(Array.isArray(successPayload.customers), true);
+        assert.equal(
+          successPayload._meta.payment.receipt.challengeId,
+          challengePayload.paymentChallenge.challengeId,
+        );
+        assert.equal(successPayload._meta.payment.credentialId, credential.credentialId);
+      });
+    });
+
+    it('should execute priced tools with automatic MPP payment retry', async () => {
+      await withTempTreasuryFixture(async ({ pricingPath, dbPath }) => {
+        await seedTreasuryBalance({ dbPath, pricingPath });
+
+        const server = createStatesetMcpServer({
+          commerce: mockCommerce,
+          treasury: {
+            enabled: true,
+            agentId: 'buyer-agent',
+            dbPath,
+            pricingPath,
+          },
+        });
+
+        const result = await server.executeToolWithPayment('list_customers', {}, {
+          payment: {
+            payer: 'buyer-agent',
+            acceptedMethods: ['bitcoin'],
+            maxAmountSmallest: '10000',
+          },
+        });
+
+        assert.equal(result.success, true);
+        assert.equal(result.status, 'success');
+        assert.equal(Array.isArray(result.result.customers), true);
+        assert.equal(result.result._meta.payment.receipt.tool, 'list_customers');
+        assert.equal(result.result._meta.payment.receipt.payer, 'buyer-agent');
+      });
+    });
+
+    it('should expose agentic_payment_discovery for payable-tool lookup', async () => {
+      await withTempTreasuryFixture(async ({ pricingPath, dbPath }) => {
+        const server = createStatesetMcpServer({
+          commerce: mockCommerce,
+          treasury: {
+            enabled: true,
+            agentId: 'buyer-agent',
+            dbPath,
+            pricingPath,
+          },
+        });
+
+        const tool = server.instance._registeredTools.agentic_payment_discovery;
+        const res = await tool.handler({ pricedOnly: true });
+        const payload = JSON.parse(res.content[0].text);
+
+        assert.equal(payload.protocol, 'mpp');
+        assert.equal(Array.isArray(payload.tools), true);
+        assert.equal(payload.tools[0].name, 'list_customers');
+        assert.equal(payload.tools[0].paymentInfo.amount.asset, 'BTC');
+      });
+    });
+
+    it('should return payment-aware tool discovery search results', async () => {
+      await withTempTreasuryFixture(async ({ pricingPath, dbPath }) => {
+        const server = createStatesetMcpServer({
+          commerce: mockCommerce,
+          treasury: {
+            enabled: true,
+            agentId: 'buyer-agent',
+            dbPath,
+            pricingPath,
+          },
+        });
+
+        const tool = server.instance._registeredTools.discover_tools;
+        const res = await tool.handler({ intent: 'customer', limit: 5 });
+        const payload = JSON.parse(res.content[0].text);
+        const payable = payload.tools.find((entry) => entry.name === 'list_customers');
+
+        assert.equal(payload.success, true);
+        assert.equal(payable.payable, true);
+        assert.equal(payable.paymentInfo.amount.asset, 'BTC');
+      });
+    });
+
+    it('should expose agentic_prepare_payment with challenge and retry template', async () => {
+      await withTempTreasuryFixture(async ({ pricingPath, dbPath }) => {
+        const server = createStatesetMcpServer({
+          commerce: mockCommerce,
+          treasury: {
+            enabled: true,
+            agentId: 'buyer-agent',
+            dbPath,
+            pricingPath,
+          },
+        });
+
+        const tool = server.instance._registeredTools.agentic_prepare_payment;
+        const res = await tool.handler({
+          tool: 'list_customers',
+          params: {},
+          requestId: 'req-prep-1',
+          sessionId: 'sess-prep-1',
+        });
+        const payload = JSON.parse(res.content[0].text);
+
+        assert.equal(payload.success, true);
+        assert.equal(payload.payable, true);
+        assert.equal(payload.challenge.tool, 'list_customers');
+        assert.equal(payload.retryExample._meta.payment.challengeId, payload.challenge.challengeId);
+      });
     });
   });
 

@@ -385,89 +385,198 @@ export const a2aAutomationTools = [
   {
     name: 'a2a_cost_summary',
     description:
-      'Get spend summary for an agent: total spent, earned, net margin, avg transaction, count.',
+      'Get spend summary for an agent with optional asset/network filters and per-rail breakdowns.',
     inputSchema: {
       agentAddress: z.string().min(1).describe('Agent wallet address'),
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network filter, for example set_chain, bitcoin, or zcash'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       if (!commerce._costAnalytics) {
         return { success: false, error: 'Cost analytics not initialized' };
       }
-      return commerce._costAnalytics.getAgentSpendSummary(params.agentAddress);
+      return commerce._costAnalytics.getAgentSpendSummary(params.agentAddress, {
+        asset: params.asset,
+        network: params.network,
+      });
     },
   },
   {
     name: 'a2a_cost_counterparty_breakdown',
-    description: 'Get per-counterparty spend/earn breakdown for an agent, ranked by volume.',
+    description:
+      'Get per-counterparty spend/earn breakdown for an agent, with optional asset/network filters and per-rail details.',
     inputSchema: {
       agentAddress: z.string().min(1).describe('Agent wallet address'),
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network filter, for example set_chain, bitcoin, or zcash'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       if (!commerce._costAnalytics) {
         return { success: false, error: 'Cost analytics not initialized' };
       }
-      return commerce._costAnalytics.getCounterpartyBreakdown(params.agentAddress);
+      return commerce._costAnalytics.getCounterpartyBreakdown(params.agentAddress, {
+        asset: params.asset,
+        network: params.network,
+      });
+    },
+  },
+  {
+    name: 'a2a_cost_operation_breakdown',
+    description:
+      'Get per-operation cost breakdown for an agent, with optional asset/network filters and per-rail details.',
+    inputSchema: {
+      agentAddress: z.string().min(1).describe('Agent wallet address'),
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network filter, for example set_chain, bitcoin, or zcash'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      if (!commerce._costAnalytics) {
+        return { success: false, error: 'Cost analytics not initialized' };
+      }
+      return commerce._costAnalytics.getOperationBreakdown(params.agentAddress, {
+        asset: params.asset,
+        network: params.network,
+      });
+    },
+  },
+  {
+    name: 'a2a_cost_daily_trend',
+    description:
+      'Get daily spend and earnings trend for an agent, with optional asset/network filters and per-rail day breakdowns.',
+    inputSchema: {
+      agentAddress: z.string().min(1).describe('Agent wallet address'),
+      days: z.number().int().positive().optional().default(30).describe('Lookback window in days'),
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network filter, for example set_chain, bitcoin, or zcash'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      if (!commerce._costAnalytics) {
+        return { success: false, error: 'Cost analytics not initialized' };
+      }
+      return commerce._costAnalytics.getDailySpendTrend(params.agentAddress, params.days, {
+        asset: params.asset,
+        network: params.network,
+      });
     },
   },
   {
     name: 'a2a_cost_anomalies',
     description:
-      'Detect spending anomalies: transactions >3x average, daily spend >2x daily average.',
+      'Detect per-rail spending anomalies, with optional asset/network filters to avoid mixed-unit comparisons.',
     inputSchema: {
       agentAddress: z.string().min(1).describe('Agent wallet address'),
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network filter, for example set_chain, bitcoin, or zcash'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       if (!commerce._costAnalytics) {
         return { success: false, error: 'Cost analytics not initialized' };
       }
-      return commerce._costAnalytics.detectAnomalies(params.agentAddress);
+      return commerce._costAnalytics.detectAnomalies(params.agentAddress, {
+        asset: params.asset,
+        network: params.network,
+      });
     },
   },
   {
     name: 'a2a_cost_margin_analysis',
     description:
-      'Get margin analysis: gross margin, per-counterparty margin, best/worst trading partners.',
+      'Get margin analysis with optional asset/network filters and per-rail counterparty breakdowns.',
     inputSchema: {
       agentAddress: z.string().min(1).describe('Agent wallet address'),
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network filter, for example set_chain, bitcoin, or zcash'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       if (!commerce._costAnalytics) {
         return { success: false, error: 'Cost analytics not initialized' };
       }
-      return commerce._costAnalytics.getMarginAnalysis(params.agentAddress);
+      return commerce._costAnalytics.getMarginAnalysis(params.agentAddress, {
+        asset: params.asset,
+        network: params.network,
+      });
     },
   },
   {
     name: 'a2a_cost_budget_forecast',
-    description: 'Forecast when monthly budget will be exhausted based on spending trends.',
+    description:
+      'Forecast when a budget in the selected asset units will be exhausted, with optional asset/network filters and per-rail spend breakdowns.',
     inputSchema: {
       agentAddress: z.string().min(1).describe('Agent wallet address'),
-      monthlyBudget: z.number().positive().describe('Monthly budget in USD'),
+      monthlyBudget: z.number().positive().describe('Monthly budget in the selected asset units'),
+      lookbackDays: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .default(30)
+        .describe('Optional lookback window for spend trend analysis'),
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network filter, for example set_chain, bitcoin, or zcash'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       if (!commerce._costAnalytics) {
         return { success: false, error: 'Cost analytics not initialized' };
       }
-      return commerce._costAnalytics.getBudgetForecast(params.agentAddress, params.monthlyBudget);
+      return commerce._costAnalytics.getBudgetForecast(
+        params.agentAddress,
+        params.monthlyBudget,
+        params.lookbackDays,
+        {
+          asset: params.asset,
+          network: params.network,
+        },
+      );
     },
   },
   {
     name: 'a2a_cost_top_spenders',
-    description: 'Get top-spending agents across the system.',
+    description: 'Get top-spending agents across the system, with optional asset/network filters.',
     inputSchema: {
       limit: z.number().optional().default(10).describe('Max results'),
+      asset: z.string().optional().describe('Optional asset filter, for example USDC, BTC, or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network filter, for example set_chain, bitcoin, or zcash'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       if (!commerce._costAnalytics) {
         return { success: false, error: 'Cost analytics not initialized' };
       }
-      return commerce._costAnalytics.getTopSpenders(params.limit);
+      return commerce._costAnalytics.getTopSpenders(params.limit, {
+        asset: params.asset,
+        network: params.network,
+      });
     },
   },
 

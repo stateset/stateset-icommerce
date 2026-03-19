@@ -104,6 +104,11 @@ const EVENT_MAP = [
     bridgeType: 'agent.budget.warning',
   },
   {
+    runtimeEvent: 'budget:exceeded',
+    streamType: 'a2a_runtime.budget_exceeded',
+    bridgeType: 'agent.budget.exceeded',
+  },
+  {
     runtimeEvent: 'service:registered',
     streamType: 'a2a_runtime.service_registered',
     bridgeType: 'agent.service.registered',

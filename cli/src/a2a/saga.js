@@ -498,12 +498,13 @@ export const PURCHASE_SAGA = {
     {
       name: 'request_quote',
       execute: async (ctx) => {
-        const { services, sellerAddress, items, asset } = ctx;
+        const { services, sellerAddress, items, asset, network } = ctx;
         if (!services.a2a) throw new Error('a2a service required');
         return services.a2a.requestQuote({
           seller: sellerAddress,
           items: items || [{ description: 'Purchase item', quantity: 1 }],
-          asset: asset || 'USDC',
+          asset,
+          network,
         });
       },
       compensate: async (ctx, result) => {
@@ -531,13 +532,14 @@ export const PURCHASE_SAGA = {
     {
       name: 'create_escrow',
       execute: async (ctx) => {
-        const { services, sellerAddress, asset } = ctx;
+        const { services, sellerAddress, asset, network } = ctx;
         const quoteResult = ctx.request_quote;
         const total = quoteResult?.quote?.total || ctx.amount || 0;
         return services.a2a.createConditionalPayment({
           sellerAddress,
           amount: total,
-          asset: asset || 'USDC',
+          asset,
+          network,
           quoteId: quoteResult?.quote?.id,
           conditions: [{ type: 'seller_fulfilled', quoteId: quoteResult?.quote?.id }],
         });
@@ -651,7 +653,7 @@ export const SUBSCRIPTION_SAGA = {
         return services.billing.processPayment({
           subscriptionId: subResult.subscription.id,
           amount: subResult.subscription.amount || ctx.amount,
-          asset: ctx.asset || 'USDC',
+          asset: subResult.subscription.asset || ctx.asset,
         });
       },
       compensate: async (ctx, result) => {
@@ -745,12 +747,13 @@ export const RFQ_SAGA = {
       execute: async (ctx) => {
         const awardResult = ctx.award_winner;
         if (!awardResult?.winnerAddress) throw new Error('No winner address');
-        const { services, asset } = ctx;
+        const { services, asset, network } = ctx;
         if (!services.a2a) throw new Error('a2a service required');
         return services.a2a.createConditionalPayment({
           sellerAddress: awardResult.winnerAddress,
           amount: awardResult.amount || ctx.amount || 0,
-          asset: asset || 'USDC',
+          asset,
+          network,
           conditions: [{ type: 'seller_fulfilled' }],
         });
       },

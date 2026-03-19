@@ -45,10 +45,25 @@ const CHAIN_FINALITY_REQUIREMENTS = {
   ethereum: 12, // ~3min
   arbitrum: 1, // instant
   solana: 32, // ~13s (slots)
+  bitcoin: 6, // standard Bitcoin settlement threshold
+  bitcoin_testnet: 3, // faster operator feedback on testnet
+  zcash: 10, // aligned with chain config
+  zcash_testnet: 6, // aligned with testnet config
 };
 
 /** Conservative default for unknown chains. */
 const DEFAULT_FINALITY_BLOCKS = 12;
+
+/**
+ * Return the finality requirement (block count) for a chain.
+ * Unknown chains default to 12 (conservative).
+ *
+ * @param {string} chain
+ * @returns {number}
+ */
+export function getFinalityRequirement(chain) {
+  return CHAIN_FINALITY_REQUIREMENTS[chain] ?? DEFAULT_FINALITY_BLOCKS;
+}
 
 // ---------------------------------------------------------------------------
 // Finality states
@@ -102,17 +117,6 @@ export function createFinalityTracker() {
   // -----------------------------------------------------------------------
   // Helpers
   // -----------------------------------------------------------------------
-
-  /**
-   * Return the finality requirement (block count) for a chain.
-   * Unknown chains default to 12 (conservative).
-   *
-   * @param {string} chain
-   * @returns {number}
-   */
-  function getFinalityRequirement(chain) {
-    return CHAIN_FINALITY_REQUIREMENTS[chain] ?? DEFAULT_FINALITY_BLOCKS;
-  }
 
   /**
    * Derive the correct FinalityState from current confirmations.

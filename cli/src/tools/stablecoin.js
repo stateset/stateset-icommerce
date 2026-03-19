@@ -2,7 +2,7 @@
  * Stablecoin Payment Tools Module
  *
  * MCP tool definitions for native crypto/stablecoin payment operations.
- * Supports USDC on Solana, ssUSD on SET Chain, and other chain/token combinations.
+ * Supports stablecoins plus native BTC/ZEC payment flows where configured.
  * Modularized from mcp-server.js for better maintainability.
  */
 
@@ -22,23 +22,24 @@ export const stablecoinTools = [
         .min(1)
         .optional()
         .describe(
-          'Blockchain: set_chain, base, ethereum, arbitrum, solana, solana_devnet (default: set_chain)',
+          'Blockchain: set_chain, base, ethereum, arbitrum, solana, solana_devnet, bitcoin, bitcoin_testnet, zcash, zcash_testnet (default: set_chain)',
         ),
     },
     permission: 'read',
     handler: async ({ params }) => {
       const chain = params.chain || 'set_chain';
-      const { getWalletAddress, getChain, getDefaultStablecoin, getExplorerAddressUrl } =
+      const { getWalletAddress, getChain, getDefaultPaymentToken, getExplorerAddressUrl } =
         await import('../chains/index.js');
       const address = await getWalletAddress('default', chain, { configDir: '.stateset' });
       const chainConfig = getChain(chain);
-      const stablecoin = getDefaultStablecoin(chain);
+      const defaultToken = getDefaultPaymentToken(chain);
       return {
         success: true,
         chain: chainConfig?.name || chain,
         network: chainConfig?.network,
         address,
-        stablecoin: stablecoin?.symbol,
+        stablecoin: defaultToken?.symbol,
+        defaultToken: defaultToken?.symbol,
         explorerUrl: getExplorerAddressUrl(chain, address),
       };
     },
@@ -46,18 +47,22 @@ export const stablecoinTools = [
 
   {
     name: 'get_wallet_balance',
-    description: 'Check the stablecoin balance of the agent wallet on a blockchain.',
+    description: 'Check the balance of the agent wallet on a blockchain.',
     inputSchema: {
       chain: z
         .string()
         .min(1)
         .optional()
-        .describe('Blockchain: set_chain, base, ethereum, arbitrum, solana (default: set_chain)'),
+        .describe(
+          'Blockchain: set_chain, base, ethereum, arbitrum, solana, bitcoin, bitcoin_testnet, zcash, zcash_testnet (default: set_chain)',
+        ),
       token: z
         .string()
         .min(1)
         .optional()
-        .describe('Token symbol: USDC, ssUSD, USDT (default: chain stablecoin)'),
+        .describe(
+          'Token symbol: USDC, ssUSD, USDT, BTC, ZEC (default: chain default payment token)',
+        ),
     },
     permission: 'read',
     handler: async ({ params }) => {
@@ -79,7 +84,7 @@ export const stablecoinTools = [
   {
     name: 'create_stablecoin_payment',
     description:
-      'Create and execute a stablecoin payment to a wallet address. Supports USDC on Solana, ssUSD on SET Chain, etc.',
+      'Create and execute a blockchain payment to a wallet address. Supports stablecoins plus native BTC and shielded ZEC flows.',
     inputSchema: {
       toAddress: z.string().min(1).describe('Recipient wallet address'),
       amount: z.number().positive().describe('Amount to send (e.g., 50.00)'),
@@ -87,12 +92,14 @@ export const stablecoinTools = [
         .string()
         .min(1)
         .optional()
-        .describe('Blockchain: set_chain, base, ethereum, arbitrum, solana (default: set_chain)'),
+        .describe(
+          'Blockchain: set_chain, base, ethereum, arbitrum, solana, bitcoin, bitcoin_testnet, zcash, zcash_testnet (default: set_chain)',
+        ),
       token: z
         .string()
         .min(1)
         .optional()
-        .describe('Token: USDC, ssUSD (default: chain stablecoin)'),
+        .describe('Token: USDC, ssUSD, BTC, ZEC (default: chain default payment token)'),
       orderId: z.string().min(1).optional().describe('Order ID for audit trail'),
       customerId: z.string().min(1).optional().describe('Customer ID for audit trail'),
       memo: z.string().max(500).optional().describe('Payment memo'),
@@ -116,14 +123,14 @@ export const stablecoinTools = [
             to: params.toAddress,
             amount: params.amount,
             chain: params.chain || 'set_chain',
-            token: params.token || 'default_stablecoin_for_chain',
+            token: params.token || 'default_payment_token_for_chain',
           },
           instruction: 'Run with --apply to execute this payment',
         };
       }
 
       const effectiveAgentId = resolveTreasuryAgentId ? await resolveTreasuryAgentId() : 'default';
-      const { executePayment, getDefaultStablecoin } = await import('../chains/index.js');
+      const { executePayment, getDefaultPaymentToken } = await import('../chains/index.js');
       const result = await executePayment(
         {
           agentId: effectiveAgentId,
@@ -151,7 +158,7 @@ export const stablecoinTools = [
           const audit = buildAuditContext
             ? buildAuditContext(extra, 'create_stablecoin_payment')
             : {};
-          const defaultStablecoin = getDefaultStablecoin(chainId);
+          const defaultToken = getDefaultPaymentToken(chainId);
           const identityMeta = buildTreasuryIdentityMetadata
             ? await buildTreasuryIdentityMetadata()
             : {};
@@ -159,7 +166,7 @@ export const stablecoinTools = [
             {
               agentId: effectiveAgentId,
               chainId,
-              tokenSymbol: params.token || defaultStablecoin?.symbol,
+              tokenSymbol: params.token || defaultToken?.symbol,
               amount: params.amount,
               txId: result.txHash || null,
               toAddress: params.toAddress,
@@ -198,19 +205,20 @@ export const stablecoinTools = [
 
   {
     name: 'list_supported_chains',
-    description: 'List all supported blockchain networks for stablecoin payments.',
+    description: 'List all supported blockchain networks for agent payment execution.',
     inputSchema: {},
     permission: 'read',
     handler: async () => {
-      const { listChains, getChain, getDefaultStablecoin } = await import('../chains/index.js');
+      const { listChains, getChain, getDefaultPaymentToken } = await import('../chains/index.js');
       const chains = listChains().map((id) => {
         const chain = getChain(id);
-        const stablecoin = getDefaultStablecoin(id);
+        const defaultToken = getDefaultPaymentToken(id);
         return {
           id,
           name: chain?.name,
           network: chain?.network,
-          stablecoin: stablecoin?.symbol,
+          stablecoin: defaultToken?.symbol,
+          defaultToken: defaultToken?.symbol,
           blockTime: chain?.blockTimeMs ? `${chain.blockTimeMs}ms` : null,
         };
       });

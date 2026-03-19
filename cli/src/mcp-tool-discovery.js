@@ -12,6 +12,18 @@ export class ToolDiscoveryEngine {
     this.toolRelationships = new Map();
   }
 
+  summarizeTool(tool) {
+    if (!tool) return null;
+    return {
+      name: tool.name,
+      category: tool.category,
+      description: tool.description,
+      purpose: tool.purpose,
+      payable: tool.payable || false,
+      paymentInfo: tool.paymentInfo || null,
+    };
+  }
+
   /**
    * Register a tool with enhanced metadata
    */
@@ -29,6 +41,8 @@ export class ToolDiscoveryEngine {
       relatedTools: metadata.relatedTools || [],
       alternatives: metadata.alternatives || [],
       examples: metadata.examples || [],
+      payable: metadata.payable || false,
+      paymentInfo: metadata.paymentInfo || null,
       errorPatterns: metadata.errorPatterns || {},
       failureRecovery: metadata.failureRecovery || [],
     });
@@ -112,7 +126,16 @@ export class ToolDiscoveryEngine {
         'create_stablecoin_payment',
         'list_supported_chains',
       ],
+      machine_payments: [
+        'agentic_tool_catalog',
+        'agentic_payment_discovery',
+        'agentic_prepare_payment',
+        'agentic_runtime_contract',
+      ],
       agentic_payments: [
+        'agentic_tool_catalog',
+        'agentic_payment_discovery',
+        'agentic_prepare_payment',
         'x402_execute_agent_payment',
         'x402_create_payment_intent',
         'x402_sign_intent',
@@ -232,6 +255,10 @@ export class ToolDiscoveryEngine {
       agent_to_agent_payment: [
         'x402_execute_agent_payment', // Step 1: Create, sign, settle, and (optionally) credit incoming settlement
         'x402_get_intent', // Step 2: Verify settlement details
+      ],
+      mpp_paid_tool_call: [
+        'agentic_payment_discovery', // Step 1: Discover payable tools and pricing metadata
+        'agentic_prepare_payment', // Step 2: Bind params into an MPP challenge and retry template
       ],
       inventory_replenishment: [
         'get_stock', // Step 1: Check current levels
@@ -383,6 +410,8 @@ export class ToolDiscoveryEngine {
           category: tool.category,
           description: tool.description,
           purpose: tool.purpose,
+          payable: tool.payable || false,
+          paymentInfo: tool.paymentInfo || null,
         });
       }
     }
@@ -431,6 +460,8 @@ export class ToolDiscoveryEngine {
           whenToUse: tool.description,
           inputSchema: tool.inputSchema,
           permission: tool.permission,
+          payable: tool.payable || false,
+          paymentInfo: tool.paymentInfo || null,
         });
       }
     }
@@ -450,9 +481,7 @@ export class ToolDiscoveryEngine {
       if (!seen.has(name)) {
         seen.add(name);
         const tool = this.toolRegistry.get(name);
-        results.push(
-          tool ? { name, description: tool.description, category: tool.category } : { name },
-        );
+        results.push(tool ? this.summarizeTool(tool) : { name });
       }
     }
 
@@ -485,6 +514,8 @@ export class ToolDiscoveryEngine {
         complexity: tool.complexity,
         relatedTools: tool.relatedTools,
         examples: tool.examples,
+        payable: tool.payable || false,
+        paymentInfo: tool.paymentInfo || null,
       };
     }
     return exported;

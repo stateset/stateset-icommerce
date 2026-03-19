@@ -1,5 +1,6 @@
 import { getCommerce, getGlobalManager } from './database.js';
 import { createStatesetMcpServer } from './mcp-server.js';
+import { createMppHttpAgent, discoverMppHttpService } from './mpp/agent.js';
 import { createToolInputSchema } from './tool-schema.js';
 
 function normalizeToolName(toolName) {
@@ -53,10 +54,66 @@ function normalizeToolFormat(format) {
   return format || 'generic';
 }
 
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function buildRemoteHttpUrl(baseUrl, routePath, query = null) {
+  const url = new URL(String(routePath || '/'), new URL(baseUrl).toString());
+  if (isPlainObject(query)) {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === null) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (item === undefined || item === null) continue;
+          url.searchParams.append(key, String(item));
+        }
+        continue;
+      }
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
+function normalizeRemoteHttpHeaders(headers = {}) {
+  if (!headers || typeof headers !== 'object') return {};
+  return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key, String(value)]));
+}
+
+function createRemoteHttpDescriptor(route, baseUrl, executeRoute) {
+  return {
+    name: route.operationId || `${route.method} ${route.path}`,
+    description: route.summary || route.description || `${route.method} ${route.path}`,
+    baseUrl,
+    path: route.path,
+    method: route.method,
+    tags: Array.isArray(route.tags) ? [...route.tags] : [],
+    payable: Boolean(route.paymentInfo),
+    paymentInfo: route.paymentInfo || null,
+    pluginId: route.pluginId || null,
+    serviceInfo: route.serviceInfo || null,
+    execute: async (request = {}, executionOptions = {}) =>
+      executeRoute(route, request, executionOptions),
+    executeWithPayment: async (request = {}, paymentOptions = {}, executionOptions = {}) =>
+      executeRoute(route, request, {
+        ...executionOptions,
+        payment: {
+          ...((executionOptions && executionOptions.payment) || {}),
+          ...(paymentOptions || {}),
+        },
+      }),
+  };
+}
+
 export function createEmbeddedAgentToolkit(options = {}) {
   const dbPath = options.dbPath || './store.db';
   const ownsCommerce = !options.commerce;
   const commerce = options.commerce || getCommerce(dbPath);
+  const defaultPaymentOptions = {
+    ...(options.mpp || {}),
+    payer: options?.mpp?.payer || options?.treasury?.agentId || options?.agentId || null,
+  };
   const server = createStatesetMcpServer({
     ...options,
     commerce,
@@ -68,6 +125,94 @@ export function createEmbeddedAgentToolkit(options = {}) {
   };
 
   const getRawTools = () => server.getRawToolDefinitions();
+
+  const getToolCatalog = async ({ tool = null, format = 'generic', payableOnly = false } = {}) =>
+    server.getToolCatalog({ tool, format, payableOnly });
+
+  const getPayableToolCatalog = async ({ tool = null, format = 'generic' } = {}) =>
+    server.getToolCatalog({ tool, format, payableOnly: true });
+
+  const getPaymentDiscovery = async ({ tool = null, format = 'json', pricedOnly = false } = {}) =>
+    server.getPaymentDiscovery({ tool, format, pricedOnly });
+
+  const discoverPayableTools = async ({ tool = null, format = 'json' } = {}) =>
+    server.getPaymentDiscovery({ tool, format, pricedOnly: true });
+
+  const prepareToolPayment = async ({
+    tool,
+    params = {},
+    requestId = null,
+    sessionId = null,
+    includeSchema = false,
+  } = {}) =>
+    server.preparePayment({
+      tool: normalizeToolName(tool),
+      params,
+      requestId,
+      sessionId,
+      includeSchema,
+    });
+
+  const createHttpPaymentAgent = (httpOptions = {}) =>
+    createMppHttpAgent({
+      ...defaultPaymentOptions,
+      ...(httpOptions || {}),
+    });
+
+  const discoverRemotePaymentService = async (baseUrl, options = {}) =>
+    discoverMppHttpService(baseUrl, {
+      ...defaultPaymentOptions,
+      ...(options || {}),
+    });
+
+  const discoverRemotePayableRoutes = async (baseUrl, options = {}) => {
+    const discovery = await discoverRemotePaymentService(baseUrl, options);
+    return discovery.payableRoutes;
+  };
+
+  const executeRemoteHttpRoute = async (baseUrl, route, request = {}, executionOptions = {}) => {
+    const method = String(request?.method || route?.method || 'GET').toUpperCase();
+    const url = buildRemoteHttpUrl(baseUrl, route?.path || '/', request?.query || null);
+    const headers = normalizeRemoteHttpHeaders(request?.headers);
+    const requestOptions = {
+      ...request,
+      method,
+      headers,
+    };
+    delete requestOptions.query;
+
+    const httpAgent = createHttpPaymentAgent({
+      ...((executionOptions && executionOptions.payment) || {}),
+      ...((executionOptions && executionOptions.http) || {}),
+    });
+
+    return httpAgent.fetch(url, requestOptions);
+  };
+
+  const createRemoteHttpToolDescriptors = async (baseUrl, options = {}) => {
+    const { executionOptions = {}, ...discoveryOptions } = options || {};
+    const discovery = await discoverRemotePaymentService(baseUrl, discoveryOptions);
+
+    return discovery.payableRoutes.map((route) =>
+      createRemoteHttpDescriptor(
+        route,
+        discovery.baseUrl,
+        (selectedRoute, request, routeExecutionOptions) =>
+          executeRemoteHttpRoute(discovery.baseUrl, selectedRoute, request, {
+            ...executionOptions,
+            ...(routeExecutionOptions || {}),
+            payment: {
+              ...((executionOptions && executionOptions.payment) || {}),
+              ...((routeExecutionOptions && routeExecutionOptions.payment) || {}),
+            },
+            http: {
+              ...((executionOptions && executionOptions.http) || {}),
+              ...((routeExecutionOptions && routeExecutionOptions.http) || {}),
+            },
+          }),
+      ),
+    );
+  };
 
   const getTool = (toolName, { format = 'generic' } = {}) => {
     const normalizedFormat = normalizeToolFormat(format);
@@ -89,6 +234,24 @@ export function createEmbeddedAgentToolkit(options = {}) {
     return server.executeTool(normalizeToolName(toolName), params, executionOptions);
   };
 
+  const executeToolWithPayment = async (toolName, params = {}, executionOptions = {}) => {
+    const mergedPayment = {
+      ...defaultPaymentOptions,
+      ...((executionOptions && executionOptions.payment) || {}),
+    };
+    return server.executeToolWithPayment(normalizeToolName(toolName), params, {
+      ...executionOptions,
+      payment: mergedPayment,
+    });
+  };
+
+  const runTool = async (toolName, params = {}, executionOptions = {}) => {
+    if (executionOptions && executionOptions.payment) {
+      return executeToolWithPayment(toolName, params, executionOptions);
+    }
+    return executeTool(toolName, params, executionOptions);
+  };
+
   const executeToolCalls = async (toolCalls = [], executionOptions = {}) => {
     const normalizedCalls = Array.isArray(toolCalls) ? toolCalls : [];
     const results = [];
@@ -104,7 +267,7 @@ export function createEmbeddedAgentToolkit(options = {}) {
         callId: toolCall?.callId || toolCall?.id || null,
         name,
         arguments: parseToolArguments(toolCall?.arguments || toolCall?.params || {}),
-        result: await executeTool(
+        result: await runTool(
           name,
           parseToolArguments(toolCall?.arguments || toolCall?.params || {}),
           executionOptions,
@@ -117,11 +280,7 @@ export function createEmbeddedAgentToolkit(options = {}) {
 
   const executeOpenAIToolCall = async (toolCall, executionOptions = {}) => {
     const normalizedCall = normalizeOpenAIToolCall(toolCall);
-    const result = await executeTool(
-      normalizedCall.name,
-      normalizedCall.arguments,
-      executionOptions,
-    );
+    const result = await runTool(normalizedCall.name, normalizedCall.arguments, executionOptions);
 
     return {
       ...normalizedCall,
@@ -135,6 +294,18 @@ export function createEmbeddedAgentToolkit(options = {}) {
         : null,
     };
   };
+
+  const executePaidTool = async (toolName, params = {}, executionOptions = {}) =>
+    executeToolWithPayment(toolName, params, executionOptions);
+
+  const executePaidOpenAIToolCall = async (toolCall, executionOptions = {}) =>
+    executeOpenAIToolCall(toolCall, {
+      ...executionOptions,
+      payment: {
+        ...defaultPaymentOptions,
+        ...((executionOptions && executionOptions.payment) || {}),
+      },
+    });
 
   const simulateMutation = async ({
     tool,
@@ -173,7 +344,7 @@ export function createEmbeddedAgentToolkit(options = {}) {
         toolFactory({
           description: toolDef.description,
           parameters: createToolInputSchema(toolDef.inputSchema),
-          execute: async (params) => executeTool(toolDef.name, params, executionOptions),
+          execute: async (params) => runTool(toolDef.name, params, executionOptions),
         }),
       ]),
     );
@@ -201,7 +372,7 @@ export function createEmbeddedAgentToolkit(options = {}) {
             description: toolDef.description,
             schema: createToolInputSchema(toolDef.inputSchema),
             func: async (params) => {
-              const result = await executeTool(toolDef.name, params, executionOptions);
+              const result = await runTool(toolDef.name, params, executionOptions);
               return JSON.stringify(result);
             },
           }),
@@ -221,7 +392,29 @@ export function createEmbeddedAgentToolkit(options = {}) {
         permission: toolDef.permission,
         policyDomain: toolDef.policyDomain,
         runtime: toolDef.runtime,
-        execute: async (params) => executeTool(toolDef.name, params, executionOptions),
+        preparePayment: async ({
+          params = {},
+          requestId = null,
+          sessionId = null,
+          includeSchema = false,
+        } = {}) =>
+          prepareToolPayment({
+            tool: toolDef.name,
+            params,
+            requestId,
+            sessionId,
+            includeSchema,
+          }),
+        execute: async (params) => runTool(toolDef.name, params, executionOptions),
+        executeWithPayment: async (params, paymentOptions = {}) =>
+          executeToolWithPayment(toolDef.name, params, {
+            ...executionOptions,
+            payment: {
+              ...defaultPaymentOptions,
+              ...((executionOptions && executionOptions.payment) || {}),
+              ...(paymentOptions || {}),
+            },
+          }),
       }));
   };
 
@@ -237,10 +430,22 @@ export function createEmbeddedAgentToolkit(options = {}) {
     server,
     getTools,
     getRawTools,
+    getToolCatalog,
+    getPayableToolCatalog,
+    getPaymentDiscovery,
+    discoverPayableTools,
+    prepareToolPayment,
+    createHttpPaymentAgent,
+    discoverRemotePaymentService,
+    discoverRemotePayableRoutes,
+    executeRemoteHttpRoute,
+    createRemoteHttpToolDescriptors,
     listTools: getTools,
     getTool,
     getRawTool,
     executeTool,
+    executeToolWithPayment,
+    executePaidTool,
     executeToolCalls,
     executePlan: (planOptions) => server.executePlan(planOptions),
     simulatePlan: (planOptions) => server.simulatePlan(planOptions),
@@ -249,6 +454,7 @@ export function createEmbeddedAgentToolkit(options = {}) {
     replayMutation: (replayOptions) => server.replayMutation(replayOptions),
     getReplayLog: (replayOptions) => server.getReplayLog(replayOptions),
     executeOpenAIToolCall,
+    executePaidOpenAIToolCall,
     createVercelAITools,
     createLangChainTools,
     createToolDescriptors,

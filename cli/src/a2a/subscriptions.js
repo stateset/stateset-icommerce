@@ -39,16 +39,17 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import {
+  DEFAULT_NETWORK,
+  getAssetDecimals,
+  getDefaultAssetForNetwork,
+  toSmallestUnit,
+} from './assets.js';
 
 // Allowed billing intervals
 const VALID_INTERVALS = ['weekly', 'biweekly', 'monthly', 'quarterly', 'annual'];
 
-// USDC uses 6 decimal places
-const USDC_DECIMALS = 1_000_000;
-
 // Default configuration
-const DEFAULT_ASSET = 'USDC';
-const DEFAULT_NETWORK = 'set_chain';
 const DEFAULT_MAX_PAST_DUE_CYCLES = 3;
 
 /**
@@ -160,13 +161,15 @@ export function createA2ASubscriptionService(store) {
       serviceId,
       planName,
       amount,
-      asset = DEFAULT_ASSET,
       network = DEFAULT_NETWORK,
+      asset: requestedAsset = null,
       billingInterval = 'monthly',
       trialDays = 0,
       maxPastDueCycles = DEFAULT_MAX_PAST_DUE_CYCLES,
       metadata,
     } = params;
+
+    const asset = requestedAsset || getDefaultAssetForNetwork(network);
 
     // Validate required fields
     if (!subscriberAddress) {
@@ -196,8 +199,7 @@ export function createA2ASubscriptionService(store) {
     const now = new Date();
     const nowIso = now.toISOString();
 
-    // Convert amount to smallest unit (USDC has 6 decimals)
-    const amountSmallest = Math.round(amount * USDC_DECIMALS);
+    const amountSmallest = toSmallestUnit(amount, getAssetDecimals(asset));
 
     let status;
     let trialEndDate = null;

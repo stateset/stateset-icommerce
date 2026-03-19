@@ -24,6 +24,8 @@ import {
 } from './http-auth.js';
 import { createRateLimiter } from './rate-limiter.js';
 import { validateBrowserExpression } from './browser-evaluate-policy.js';
+import { buildMppServiceInfo } from '../mpp/index.js';
+import { buildHttpRouteDiscoveryDocument } from '../mpp/http.js';
 
 // ============================================================================
 // Helpers
@@ -129,6 +131,22 @@ function safeParseUrl(reqUrl, hostHeader) {
   }
 }
 
+function getForwardedProto(headerValue) {
+  if (Array.isArray(headerValue)) {
+    return getForwardedProto(headerValue[0]);
+  }
+  const normalized = String(headerValue || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  return normalized === 'https' ? 'https' : 'http';
+}
+
+function getRequestOrigin(req) {
+  const protocol = getForwardedProto(req.headers['x-forwarded-proto']);
+  return `${protocol}://${sanitizeHostHeader(req.headers.host)}`;
+}
+
 function validateBrowserUrl(value) {
   if (typeof value !== 'string') {
     return 'Missing required field: url';
@@ -203,10 +221,22 @@ function parseBody(req, maxSize = MAX_BODY_SIZE) {
  * @param {Object} data
  */
 function sendJson(res, status, data) {
+  return sendJsonWithHeaders(res, status, data);
+}
+
+/**
+ * Send a JSON response with additional headers.
+ * @param {http.ServerResponse} res
+ * @param {number} status
+ * @param {Object} data
+ * @param {Record<string, string|number|boolean>} [extraHeaders]
+ */
+function sendJsonWithHeaders(res, status, data, extraHeaders = {}) {
   const body = JSON.stringify(data, null, 2);
   res.writeHead(status, {
     'Content-Type': 'application/json',
     ...SECURITY_HEADERS,
+    ...(extraHeaders || {}),
   });
   res.end(body);
 }
@@ -241,9 +271,21 @@ function parseRawBody(req, maxSize = MAX_BODY_SIZE) {
  * @param {string} html
  */
 function sendHtml(res, status, html) {
+  return sendHtmlWithHeaders(res, status, html);
+}
+
+/**
+ * Send an HTML response with additional headers.
+ * @param {http.ServerResponse} res
+ * @param {number} status
+ * @param {string} html
+ * @param {Record<string, string|number|boolean>} [extraHeaders]
+ */
+function sendHtmlWithHeaders(res, status, html, extraHeaders = {}) {
   res.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     ...SECURITY_HEADERS,
+    ...(extraHeaders || {}),
   });
   res.end(html);
 }
@@ -256,12 +298,80 @@ function sendHtml(res, status, html) {
  * @param {string} contentType
  */
 function sendBinary(res, status, data, contentType) {
+  return sendBinaryWithHeaders(res, status, data, contentType);
+}
+
+/**
+ * Send a binary response with additional headers.
+ * @param {http.ServerResponse} res
+ * @param {number} status
+ * @param {Buffer} data
+ * @param {string} contentType
+ * @param {Record<string, string|number|boolean>} [extraHeaders]
+ */
+function sendBinaryWithHeaders(res, status, data, contentType, extraHeaders = {}) {
   res.writeHead(status, {
     'Content-Type': contentType,
     'Content-Length': data.length,
     ...SECURITY_HEADERS,
+    ...(extraHeaders || {}),
   });
   res.end(data);
+}
+
+function sendPluginRouteResponse(res, result) {
+  const status =
+    result && typeof result === 'object' && !Array.isArray(result) ? result.status || 200 : 200;
+  const headers =
+    result && typeof result === 'object' && !Array.isArray(result) ? result.headers || {} : {};
+
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    if (result._html) {
+      return sendHtmlWithHeaders(res, status, result._html, headers);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(result, 'rawBody')) {
+      const rawBody = Buffer.isBuffer(result.rawBody)
+        ? result.rawBody
+        : Buffer.from(String(result.rawBody ?? ''), 'utf8');
+      return sendBinaryWithHeaders(
+        res,
+        status,
+        rawBody,
+        result.contentType || 'application/octet-stream',
+        headers,
+      );
+    }
+
+    if (Buffer.isBuffer(result.body)) {
+      return sendBinaryWithHeaders(
+        res,
+        status,
+        result.body,
+        result.contentType || 'application/octet-stream',
+        headers,
+      );
+    }
+
+    if (
+      typeof result.body === 'string' &&
+      result.contentType &&
+      result.contentType !== 'application/json'
+    ) {
+      return sendBinaryWithHeaders(
+        res,
+        status,
+        Buffer.from(result.body, 'utf8'),
+        result.contentType,
+        headers,
+      );
+    }
+
+    const payload = Object.prototype.hasOwnProperty.call(result, 'body') ? result.body : result;
+    return sendJsonWithHeaders(res, status, payload, headers);
+  }
+
+  return sendJsonWithHeaders(res, status, result, headers);
 }
 
 /**
@@ -644,6 +754,35 @@ export class HttpGateway {
           timestamp: new Date().toISOString(),
           checks,
         });
+      }
+
+      if (method === 'GET' && pathname === '/.well-known/service-info') {
+        const origin = getRequestOrigin(req);
+        const serviceInfo = buildMppServiceInfo({
+          serviceId: 'stateset-http-gateway',
+          serviceName: 'StateSet HTTP Gateway',
+          serverName: 'stateset-http-gateway',
+          serverUrl: origin,
+          transportType: 'http',
+        });
+        return sendJson(res, 200, serviceInfo);
+      }
+
+      if (method === 'GET' && pathname === '/openapi.json') {
+        const origin = getRequestOrigin(req);
+        const serviceInfo = buildMppServiceInfo({
+          serviceId: 'stateset-http-gateway',
+          serviceName: 'StateSet HTTP Gateway',
+          serverName: 'stateset-http-gateway',
+          serverUrl: origin,
+          transportType: 'http',
+        });
+        const document = buildHttpRouteDiscoveryDocument({
+          routes: getPluginRegistry().getRoutes(),
+          serviceInfo,
+          serverUrl: origin,
+        });
+        return sendJson(res, 200, document);
       }
 
       // --- Authentication & Permission Check (only when required) ---
@@ -1403,11 +1542,7 @@ export class HttpGateway {
         });
 
         if (result && typeof result === 'object') {
-          // Support _html flag for webchat HTML responses
-          if (result._html) {
-            return sendHtml(res, result.status || 200, result._html);
-          }
-          return sendJson(res, result.status || 200, result.body || result);
+          return sendPluginRouteResponse(res, result);
         }
         return sendJson(res, 200, { ok: true });
       }

@@ -13,10 +13,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.8.0    # Python
-gem install stateset_embedded -v 0.8.0  # Ruby
-npm install @stateset/embedded@0.8.0    # Node.js
-npm install -g @stateset/cli@0.8.0      # CLI
+pip install stateset-embedded==0.8.1    # Python
+gem install stateset_embedded -v 0.8.1  # Ruby
+npm install @stateset/embedded@0.8.1    # Node.js
+npm install -g @stateset/cli@0.8.1      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -89,7 +89,7 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/cli@0.8.0 @stateset/embedded@0.8.0
+npm install @stateset/cli@0.8.1 @stateset/embedded@0.8.1
 ```
 
 ```javascript
@@ -144,30 +144,15 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.8.0
+## What's New in v0.8.1
 
-**Embedded agent onboarding** — This release adds a first-class embedded agent toolkit for JSON-schema tool export and direct execution, repairs the public standalone import surface, and syncs the broader docs/bindings release metadata around `0.8.0`.
+This release centers on native agent payments and Machine Payments Protocol support.
 
-| Feature | Description |
-|---------|-------------|
-| **Embedded Agent Toolkit** | New `@stateset/cli/agent-toolkit` surface for OpenAI-style tools, direct execution, replay access, and plan/simulation helpers |
-| **Agent Simulation Playground** | New `stateset simulate` flow for sandboxed A2A runs with scenario selection, virtual clocks, snapshots, and supplier-offline failure injection |
-| **21 Rust Crates** | Fully modular workspace: primitives, core, db, embedded, crypto, protocol, policy, authz, pricing, migrations, jobs, http, sync, a2a, ffi, sdk, observability, macros, test-utils, integration-tests, benches |
-| **stateset-protocol** | Wire types: `EventEnvelope`, `SyncBatch`, Merkle trees, JCS canonical JSON, schema versioning (148 tests) |
-| **stateset-http** | Axum REST + SSE server: 19 endpoints, middleware (auth, CORS, tracing), `ServerBuilder` (92 tests) |
-| **stateset-ffi** | Stable C ABI: `#[repr(C)]` types, 9 `extern "C"` functions, ABI versioning (125 tests) |
-| **stateset-a2a** | Escrow state machine, split payments, subscriptions, HMAC webhooks, SSRF protection (201 tests) |
-| **stateset-sync** | Outbox, conflict resolution, transport traits, sync engine (103 tests) |
-| **stateset-authz** | RBAC permissions, rate limiting, audit logging, JSON redaction (162 tests) |
-| **stateset-pricing** | Deterministic pricing: line items, order totals, promotions, currency conversion, tax, rounding (161 tests) |
-| **stateset-migrations** | SQL migrations with SHA-256 checksums, rollback support, 4 built-in versions (87 tests) |
-| **stateset-jobs** | Background job scheduler: cron, intervals, events, retries, backoff strategies, 5 built-in jobs (150 tests) |
-| **stateset-crypto** | VES v1.0: JCS canonicalization, Ed25519 signing, AES-256-GCM encryption, Merkle trees (91 tests) |
-| **Policy Runtime** | Policy-driven tool guardrails (allow/deny/transform) with explainable denials and dry-run evaluation |
-| **A2A Commerce** | 53 A2A tools: payments, quotes, subscriptions, splits, escrow, webhooks, event streaming, discovery |
-| **256 MCP Tools** | 248 domain tools + 8 agentic runtime tools across 27 modular domain modules |
-| **Modular MCP Server** | Rewritten from 9,340 to 470 lines (95% reduction) with `adaptTool()` composition |
-| **9,500+ Tests** | 6,611 CLI + 2,671 Rust + 261 admin |
+- Added native Bitcoin settlement, including SegWit-aware wallet and payment execution paths for autonomous agent commerce.
+- Added shielded Zcash settlement support through wallet-enabled `zcashd` JSON-RPC flows.
+- Added Machine Payments Protocol primitives across MCP and HTTP: `402` challenges, credentials, receipts, discovery metadata, and retry helpers.
+- Added embedded-toolkit support for remote payable HTTP route discovery and auto-paying execution, so agents can discover and transact with external paid services through one API.
+- Synced workspace, bindings, templates, docs, and release metadata to `0.8.1`.
 
 ---
 
@@ -1311,7 +1296,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.8.0"
+stateset-embedded = "0.8.1"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1361,14 +1346,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.8.0</version>
+    <version>0.8.1</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.8.0'
+implementation 'com.stateset:embedded:0.8.1'
 ```
 
 ### Kotlin (Gradle)
@@ -1376,7 +1361,7 @@ implementation 'com.stateset:embedded:0.8.0'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.8.0")
+    implementation("com.stateset:embedded-kotlin:0.8.1")
 }
 ```
 
@@ -1385,32 +1370,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.8.0")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.8.1")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.8.0'
+pod 'StateSet', '~> 0.8.1'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.8.0
+dotnet add package StateSet.Embedded --version 0.8.1
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.8.0" />
+<PackageReference Include="StateSet.Embedded" Version="0.8.1" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.8.0
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.8.1
 ```
 
 ### CLI

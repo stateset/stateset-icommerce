@@ -2,10 +2,11 @@
  * Blockchain Chain Configuration for StateSet iCommerce
  *
  * Supports:
- * - Solana (mainnet & devnet) - USDC stablecoin
- * - SET Chain (mainnet & testnet) - ssUSD native stablecoin
- * - Base L2 - USDC
- * - Ethereum - USDC
+ * - Solana (mainnet & devnet) - USDC / SOL
+ * - SET Chain (mainnet & testnet) - ssUSD / ETH
+ * - Base / Ethereum / Arbitrum / Arc - USDC, USDT, ETH
+ * - Bitcoin (mainnet & testnet) - BTC
+ * - Zcash (mainnet & testnet) - ZEC
  */
 
 // =============================================================================
@@ -327,6 +328,9 @@ export const CHAINS = {
     rpcUrl: process.env.ZCASH_RPC_URL || 'https://mainnet.lightwalletd.com:9067',
     explorerUrl: 'https://zcashblockexplorer.com',
     confirmations: 10,
+    executionConfirmations: 1,
+    confirmationPollIntervalMs: 15_000,
+    maxConfirmationAttempts: 40,
     blockTimeMs: 75000, // ~75 seconds
     derivationPath: "m/44'/133'/0'/0/0", // BIP-44 coin type 133 for Zcash
     tokens: {
@@ -346,6 +350,9 @@ export const CHAINS = {
     rpcUrl: process.env.ZCASH_TESTNET_RPC_URL || 'https://testnet.lightwalletd.com:9067',
     explorerUrl: 'https://testnet.zcashblockexplorer.com',
     confirmations: 6,
+    executionConfirmations: 1,
+    confirmationPollIntervalMs: 10_000,
+    maxConfirmationAttempts: 40,
     blockTimeMs: 75000,
     derivationPath: "m/44'/1'/0'/0/0", // BIP-44 coin type 1 for testnet
     tokens: {
@@ -368,8 +375,11 @@ export const CHAINS = {
     rpcUrl: process.env.BITCOIN_RPC_URL || 'https://blockstream.info/api',
     explorerUrl: 'https://blockstream.info',
     confirmations: 6,
+    executionConfirmations: 1,
+    confirmationPollIntervalMs: 30_000,
+    maxConfirmationAttempts: 40,
     blockTimeMs: 600000, // ~10 minutes
-    derivationPath: "m/44'/0'/0'/0/0", // BIP-44 coin type 0 for Bitcoin
+    derivationPath: "m/84'/0'/0'/0/0", // BIP-84 native SegWit
     tokens: {
       BTC: {
         symbol: 'BTC',
@@ -387,8 +397,11 @@ export const CHAINS = {
     rpcUrl: process.env.BITCOIN_TESTNET_RPC_URL || 'https://blockstream.info/testnet/api',
     explorerUrl: 'https://blockstream.info/testnet',
     confirmations: 3,
+    executionConfirmations: 1,
+    confirmationPollIntervalMs: 15_000,
+    maxConfirmationAttempts: 40,
     blockTimeMs: 600000,
-    derivationPath: "m/44'/1'/0'/0/0", // BIP-44 coin type 1 for testnet
+    derivationPath: "m/84'/1'/0'/0/0", // BIP-84 native SegWit on testnet
     tokens: {
       BTC: {
         symbol: 'BTC',
@@ -457,6 +470,40 @@ export function getDefaultStablecoin(chainId) {
   if (chain.tokens.USDT) return chain.tokens.USDT;
 
   return null;
+}
+
+/**
+ * Get the default payment token for a chain.
+ *
+ * Stablecoins remain preferred where available. For native-value chains such as
+ * Bitcoin and Zcash, this falls back to the canonical native asset so higher
+ * layers can operate without special-casing "no stablecoin" networks.
+ *
+ * @param {string} chainId - Chain identifier
+ * @returns {TokenConfig|null}
+ */
+export function getDefaultPaymentToken(chainId) {
+  const stablecoin = getDefaultStablecoin(chainId);
+  if (stablecoin) {
+    return stablecoin;
+  }
+
+  const chain = CHAINS[chainId];
+  if (!chain) return null;
+
+  const preferredNativeSymbols = ['BTC', 'ZEC', 'ETH', 'SOL'];
+  for (const symbol of preferredNativeSymbols) {
+    if (chain.tokens[symbol]) {
+      return chain.tokens[symbol];
+    }
+  }
+
+  const nativeToken = Object.values(chain.tokens).find((token) => token.type === 'native') || null;
+  if (nativeToken) {
+    return nativeToken;
+  }
+
+  return Object.values(chain.tokens)[0] || null;
 }
 
 /**
@@ -709,6 +756,7 @@ export default {
   getChain,
   getToken,
   getDefaultStablecoin,
+  getDefaultPaymentToken,
   getExplorerTxUrl,
   getExplorerAddressUrl,
   toSmallestUnit,

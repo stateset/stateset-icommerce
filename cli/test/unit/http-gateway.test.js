@@ -9,6 +9,9 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import http from 'node:http';
 import { HttpGateway } from '../../src/channels/http-gateway.js';
+import { getPluginRegistry, resetPluginRegistry } from '../../src/channels/plugin-api.js';
+import { createPaymentCredential } from '../../src/mpp/index.js';
+import { createMppHttpRouteHandler } from '../../src/mpp/http.js';
 
 const TRANSIENT_REQUEST_ERROR_CODES = new Set([
   'ECONNRESET',
@@ -577,6 +580,135 @@ describe('HttpGateway /browser/navigate URL safety', () => {
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(lastNavigated, 'https://example.com/products');
+  });
+});
+
+describe('HttpGateway plugin payment routes', () => {
+  /** @type {HttpGateway} */
+  let gw;
+  let baseUrl;
+
+  before(async () => {
+    await resetPluginRegistry();
+    await getPluginRegistry().register('mpp-http-test', async (api) => {
+      api.registerHttpRoute({
+        method: 'GET',
+        path: '/headers',
+        level: 'none',
+        handler: async () => ({
+          status: 201,
+          headers: {
+            'x-test-header': 'ok',
+          },
+          body: {
+            ok: true,
+          },
+        }),
+      });
+
+      api.registerHttpRoute({
+        method: 'POST',
+        path: '/payable',
+        level: 'none',
+        handler: createMppHttpRouteHandler({
+          routeId: 'POST /payable',
+          description: 'Payable plugin route',
+          pricing: {
+            chainId: 'bitcoin',
+            tokenSymbol: 'BTC',
+            amount: 0.0001,
+            amountSmallest: '10000',
+            token: { symbol: 'BTC', decimals: 8, address: null },
+          },
+          handler: async ({ payment, body }) => ({
+            status: 200,
+            headers: {
+              'x-plugin-handler': 'executed',
+            },
+            body: {
+              ok: true,
+              sku: body.sku,
+              payer: payment.payer || payment.credential?.payer || null,
+            },
+          }),
+        }),
+      });
+    });
+
+    gw = new HttpGateway({ port: 0, host: '127.0.0.1' });
+    const addr = await startGateway(gw);
+    baseUrl = `http://${addr.host}:${addr.port}`;
+  });
+
+  after(async () => {
+    await gw.stop();
+    await resetPluginRegistry();
+  });
+
+  it('passes custom plugin response headers through the gateway', async () => {
+    const res = await request(`${baseUrl}/headers`);
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.headers['x-test-header'], 'ok');
+    assert.strictEqual(res.body.ok, true);
+  });
+
+  it('serves public HTTP service info for gateway discovery', async () => {
+    const res = await request(`${baseUrl}/.well-known/service-info`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.protocol, 'mpp');
+    assert.strictEqual(res.body.transport.type, 'http');
+    assert.ok(res.body.discovery.canonicalOpenapiPath);
+  });
+
+  it('serves OpenAPI payment discovery for plugin routes', async () => {
+    const res = await request(`${baseUrl}/openapi.json`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.openapi, '3.1.0');
+    assert.strictEqual(res.body['x-service-info'].protocol, 'mpp');
+    assert.strictEqual(res.body['x-service-info'].transport.type, 'http');
+    assert.strictEqual(res.body.paths['/payable'].post['x-payment-info'].amount.asset, 'BTC');
+    assert.strictEqual(res.body.paths['/headers'].get['x-payment-info'], undefined);
+  });
+
+  it('supports MPP 402 challenge and receipt flow for plugin routes', async () => {
+    const first = await request(`${baseUrl}/payable`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sku: 'sku_1' }),
+    });
+
+    assert.strictEqual(first.status, 402);
+    assert.strictEqual(typeof first.headers['payment-required'], 'string');
+    assert.strictEqual(first.body.paymentChallenge.tool, 'POST /payable');
+
+    const credential = createPaymentCredential({
+      challenge: first.body.paymentChallenge,
+      payer: 'buyer-agent',
+      authorization: { type: 'http-gateway-test' },
+    });
+
+    const second = await request(`${baseUrl}/payable`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        payment: Buffer.from(JSON.stringify(credential), 'utf8').toString('base64url'),
+      },
+      body: JSON.stringify({ sku: 'sku_1' }),
+    });
+
+    assert.strictEqual(second.status, 200);
+    assert.strictEqual(second.headers['x-plugin-handler'], 'executed');
+    assert.strictEqual(typeof second.headers['payment-response'], 'string');
+    assert.strictEqual(second.body.ok, true);
+    assert.strictEqual(second.body.sku, 'sku_1');
+    assert.strictEqual(second.body.payer, 'buyer-agent');
+    assert.strictEqual(second.body._meta.payment.receipt.tool, 'POST /payable');
+    assert.strictEqual(second.body._meta.payment.receipt.payer, 'buyer-agent');
   });
 });
 

@@ -51,6 +51,207 @@ function roundAmount(amount) {
   return Math.round(amount * 100) / 100;
 }
 
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getPaymentAsset(payment) {
+  return payment?.asset || parseJsonObject(payment?.metadata)?.asset || 'UNKNOWN';
+}
+
+function getPaymentNetwork(payment) {
+  const metadata = parseJsonObject(payment?.metadata);
+  return payment?.network || metadata?.chain_id || 'unknown';
+}
+
+function getPaymentAmount(payment) {
+  return typeof payment?.amount_decimal === 'number' ? payment.amount_decimal : 0;
+}
+
+function createReportBucket() {
+  return {
+    totalSent: 0,
+    totalReceived: 0,
+    totalVolume: 0,
+    netFlow: 0,
+    sentCount: 0,
+    receivedCount: 0,
+    transactionCount: 0,
+    networks: {},
+  };
+}
+
+function createCounterpartyBucket(address) {
+  return {
+    address,
+    totalSent: 0,
+    totalReceived: 0,
+    totalVolume: 0,
+    netFlow: 0,
+    sentCount: 0,
+    receivedCount: 0,
+    transactionCount: 0,
+    breakdownByAsset: {},
+  };
+}
+
+function applyDirectionalMetrics(bucket, amount, direction) {
+  if (direction === 'sent') {
+    bucket.totalSent += amount;
+    bucket.sentCount += 1;
+  } else {
+    bucket.totalReceived += amount;
+    bucket.receivedCount += 1;
+  }
+  bucket.totalVolume += amount;
+  bucket.transactionCount += 1;
+}
+
+function finalizeRailBuckets(breakdownByAsset) {
+  const assets = Object.keys(breakdownByAsset).sort();
+
+  for (const asset of assets) {
+    const assetBucket = breakdownByAsset[asset];
+    assetBucket.netFlow = assetBucket.totalReceived - assetBucket.totalSent;
+
+    const orderedNetworks = Object.keys(assetBucket.networks).sort();
+    const nextNetworks = {};
+    for (const network of orderedNetworks) {
+      const networkBucket = assetBucket.networks[network];
+      networkBucket.netFlow = networkBucket.totalReceived - networkBucket.totalSent;
+      nextNetworks[network] = networkBucket;
+    }
+    assetBucket.networks = nextNetworks;
+  }
+
+  return assets;
+}
+
+function buildRailBreakdown(sentPayments, receivedPayments) {
+  const breakdownByAsset = {};
+  let totalSent = 0;
+  let totalReceived = 0;
+
+  function apply(payment, direction) {
+    const asset = getPaymentAsset(payment);
+    const network = getPaymentNetwork(payment);
+    const amount = getPaymentAmount(payment);
+    const assetBucket = breakdownByAsset[asset] || createReportBucket();
+    const networkBucket = assetBucket.networks[network] || {
+      totalSent: 0,
+      totalReceived: 0,
+      totalVolume: 0,
+      netFlow: 0,
+      sentCount: 0,
+      receivedCount: 0,
+      transactionCount: 0,
+    };
+
+    applyDirectionalMetrics(assetBucket, amount, direction);
+    applyDirectionalMetrics(networkBucket, amount, direction);
+    assetBucket.networks[network] = networkBucket;
+    breakdownByAsset[asset] = assetBucket;
+
+    if (direction === 'sent') {
+      totalSent += amount;
+    } else {
+      totalReceived += amount;
+    }
+  }
+
+  for (const payment of sentPayments) apply(payment, 'sent');
+  for (const payment of receivedPayments) apply(payment, 'received');
+
+  const assets = finalizeRailBuckets(breakdownByAsset);
+  return {
+    breakdownByAsset,
+    assets,
+    totalSent,
+    totalReceived,
+    totalVolume: totalSent + totalReceived,
+    netFlow: totalReceived - totalSent,
+    sentCount: sentPayments.length,
+    receivedCount: receivedPayments.length,
+    transactionCount: sentPayments.length + receivedPayments.length,
+  };
+}
+
+function buildCounterpartySummaries(sentPayments, receivedPayments) {
+  const counterparties = new Map();
+
+  function apply(payment, direction, address) {
+    const asset = getPaymentAsset(payment);
+    const network = getPaymentNetwork(payment);
+    const amount = getPaymentAmount(payment);
+    const counterparty = counterparties.get(address) || createCounterpartyBucket(address);
+    const assetBucket = counterparty.breakdownByAsset[asset] || createReportBucket();
+    const networkBucket = assetBucket.networks[network] || {
+      totalSent: 0,
+      totalReceived: 0,
+      totalVolume: 0,
+      netFlow: 0,
+      sentCount: 0,
+      receivedCount: 0,
+      transactionCount: 0,
+    };
+
+    applyDirectionalMetrics(counterparty, amount, direction);
+    applyDirectionalMetrics(assetBucket, amount, direction);
+    applyDirectionalMetrics(networkBucket, amount, direction);
+
+    assetBucket.networks[network] = networkBucket;
+    counterparty.breakdownByAsset[asset] = assetBucket;
+    counterparties.set(address, counterparty);
+  }
+
+  for (const payment of sentPayments) {
+    apply(payment, 'sent', payment.recipient_address || 'unknown');
+  }
+  for (const payment of receivedPayments) {
+    apply(payment, 'received', payment.sender_address || 'unknown');
+  }
+
+  return [...counterparties.values()]
+    .map((counterparty) => {
+      const assets = finalizeRailBuckets(counterparty.breakdownByAsset);
+      const aggregateAsset = assets.length === 1 ? assets[0] : null;
+      const aggregateVolumeMeaningful = Boolean(aggregateAsset) || assets.length <= 1;
+      const marginMeaningful = aggregateVolumeMeaningful && counterparty.totalReceived > 0;
+
+      return {
+        address: counterparty.address,
+        volume: roundAmount(counterparty.totalVolume),
+        totalSent: roundAmount(counterparty.totalSent),
+        totalReceived: roundAmount(counterparty.totalReceived),
+        netFlow: roundAmount(counterparty.totalReceived - counterparty.totalSent),
+        margin: roundAmount(
+          counterparty.totalReceived > 0
+            ? ((counterparty.totalReceived - counterparty.totalSent) / counterparty.totalReceived) *
+                100
+            : 0,
+        ),
+        marginMeaningful,
+        aggregateVolumeMeaningful,
+        aggregateAsset,
+        assets,
+        sentCount: counterparty.sentCount,
+        receivedCount: counterparty.receivedCount,
+        transactionCount: counterparty.transactionCount,
+        breakdownByAsset: counterparty.breakdownByAsset,
+      };
+    })
+    .sort((a, b) => b.volume - a.volume)
+    .slice(0, 10);
+}
+
 /**
  * Apply privacy redaction to an array of records.
  * Masks addresses and rounds amounts.
@@ -349,48 +550,46 @@ export function createDataExportService(store) {
       disputesAgainst = filterByDateRange(disputesAgainst, dateRange);
     }
 
-    // Compute metrics
-    const totalSent = sentPayments.reduce((s, p) => s + (p.amount_decimal || 0), 0);
-    const totalReceived = receivedPayments.reduce((s, p) => s + (p.amount_decimal || 0), 0);
-    const totalTransactions = sentPayments.length + receivedPayments.length;
+    // Compute payment metrics with per-rail breakdowns so mixed native assets
+    // do not get flattened into a single unlabeled total.
+    const paymentSummary = buildRailBreakdown(sentPayments, receivedPayments);
+    const totalSent = paymentSummary.totalSent;
+    const totalReceived = paymentSummary.totalReceived;
+    const totalTransactions = paymentSummary.transactionCount;
 
     // Dispute rate
     const allDisputes = [...disputes, ...disputesAgainst];
     const totalQuotes = buyerQuotes.length + sellerQuotes.length;
     const disputeRate = totalQuotes > 0 ? allDisputes.length / totalQuotes : 0;
 
-    // Top counterparties (by volume)
-    const counterpartyVolume = new Map();
-    for (const p of sentPayments) {
-      const addr = p.recipient_address;
-      counterpartyVolume.set(addr, (counterpartyVolume.get(addr) || 0) + (p.amount_decimal || 0));
-    }
-    for (const p of receivedPayments) {
-      const addr = p.sender_address;
-      counterpartyVolume.set(addr, (counterpartyVolume.get(addr) || 0) + (p.amount_decimal || 0));
-    }
-    const topCounterparties = [...counterpartyVolume.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([address, volume]) => ({ address, volume: roundAmount(volume) }));
+    // Top counterparties with the same per-rail semantics.
+    const topCounterparties = buildCounterpartySummaries(sentPayments, receivedPayments);
 
     // Margin analysis
-    const netFlow = totalReceived - totalSent;
+    const netFlow = paymentSummary.netFlow;
     const margin = totalReceived > 0 ? (netFlow / totalReceived) * 100 : 0;
+    const aggregateAsset = paymentSummary.assets.length === 1 ? paymentSummary.assets[0] : null;
+    const aggregateTotalsMeaningful = Boolean(aggregateAsset) || paymentSummary.assets.length <= 1;
+    const marginMeaningful = aggregateTotalsMeaningful && totalReceived > 0;
 
     return {
       agentAddress,
       dateRange: dateRange || null,
       generatedAt: new Date().toISOString(),
       summary: {
-        totalVolume: roundAmount(totalSent + totalReceived),
+        totalVolume: roundAmount(paymentSummary.totalVolume),
         totalSent: roundAmount(totalSent),
         totalReceived: roundAmount(totalReceived),
         netFlow: roundAmount(netFlow),
         margin: roundAmount(margin),
+        marginMeaningful,
+        aggregateTotalsMeaningful,
+        aggregateAsset,
+        assets: paymentSummary.assets,
         transactionCount: totalTransactions,
-        sentCount: sentPayments.length,
-        receivedCount: receivedPayments.length,
+        sentCount: paymentSummary.sentCount,
+        receivedCount: paymentSummary.receivedCount,
+        breakdownByAsset: paymentSummary.breakdownByAsset,
       },
       quotes: {
         asBuyer: buyerQuotes.length,

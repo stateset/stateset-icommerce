@@ -21,8 +21,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-
-const USDC_DECIMALS = 1_000_000;
+import { DEFAULT_NETWORK, getDefaultAssetForNetwork } from './assets.js';
 
 const INTERVAL_DAYS = {
   weekly: 7,
@@ -215,8 +214,8 @@ export function createBillingExecutor(store, a2aService, notificationService, op
             const payResult = await a2aService.pay({
               to: sub.provider_address,
               amount: sub.amount_decimal,
-              asset: sub.asset || 'USDC',
-              network: sub.network || 'set_chain',
+              asset: sub.asset || getDefaultAssetForNetwork(sub.network || DEFAULT_NETWORK),
+              network: sub.network || DEFAULT_NETWORK,
               memo: `Subscription billing: ${sub.plan_name} (${sub.billing_interval})`,
               idempotencyKey: `sub-${sub.id}-${nowIso}`,
             });

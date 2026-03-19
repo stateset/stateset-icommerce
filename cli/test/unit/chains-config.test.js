@@ -9,6 +9,7 @@ import {
   getChain,
   getToken,
   getDefaultStablecoin,
+  getDefaultPaymentToken,
   getExplorerTxUrl,
   getExplorerAddressUrl,
   toSmallestUnit,
@@ -147,6 +148,27 @@ describe('getDefaultStablecoin', () => {
 
   it('returns null for bitcoin (no stablecoin)', () => {
     assert.equal(getDefaultStablecoin('bitcoin'), null);
+  });
+});
+
+describe('getDefaultPaymentToken', () => {
+  it('returns ssUSD for set_chain', () => {
+    const token = getDefaultPaymentToken('set_chain');
+    assert.equal(token.symbol, 'ssUSD');
+  });
+
+  it('returns BTC for bitcoin', () => {
+    const token = getDefaultPaymentToken('bitcoin');
+    assert.equal(token.symbol, 'BTC');
+  });
+
+  it('returns ZEC for zcash', () => {
+    const token = getDefaultPaymentToken('zcash');
+    assert.equal(token.symbol, 'ZEC');
+  });
+
+  it('returns null for unknown chain', () => {
+    assert.equal(getDefaultPaymentToken('unknown'), null);
   });
 });
 

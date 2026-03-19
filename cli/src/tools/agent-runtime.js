@@ -9,6 +9,107 @@
 import { z } from 'zod';
 import crypto from 'node:crypto';
 
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildRuntimeBudgetScope(rt, override = {}) {
+  const defaultPayment = rt.getDefaultPaymentConfig?.() || {};
+  return {
+    asset: override.asset || defaultPayment.asset || null,
+    network: override.network || defaultPayment.network || null,
+  };
+}
+
+function buildRuntimeBudgetView(rt, override = {}) {
+  const budget = rt.getBudget();
+  const budgetScope = buildRuntimeBudgetScope(rt, override);
+  const hasScope = Boolean(budgetScope.asset || budgetScope.network);
+  return {
+    budget,
+    budgetScope: hasScope ? budgetScope : null,
+    budgetScoped: hasScope ? rt.getBudget(budgetScope) : null,
+  };
+}
+
+function normalizeEventFilterAsset(asset) {
+  return asset ? String(asset).toUpperCase() : null;
+}
+
+function normalizeEventFilterNetwork(network) {
+  return network ? String(network).toLowerCase() : null;
+}
+
+function formatRuntimeEventLogRow(row) {
+  const payloadObject = parseJsonObject(row?.payload);
+  return {
+    ...row,
+    eventType: row?.event_type || null,
+    agentAddress: row?.agent_address || null,
+    createdAt: row?.created_at || null,
+    payloadObject,
+  };
+}
+
+function matchesRuntimeEventHistoryFilter(event, params = {}) {
+  if (params.eventTypes?.length > 0 && !params.eventTypes.includes(event.event_type)) {
+    return false;
+  }
+
+  if (params.asset || params.network) {
+    const payload = event.payloadObject || parseJsonObject(event.payload);
+    const eventAsset = normalizeEventFilterAsset(payload?.asset);
+    const eventNetwork = normalizeEventFilterNetwork(payload?.network);
+
+    if (params.asset && eventAsset !== normalizeEventFilterAsset(params.asset)) {
+      return false;
+    }
+    if (params.network && eventNetwork !== normalizeEventFilterNetwork(params.network)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function summarizeRuntimeEvents(events) {
+  const byEventType = {};
+  const budgetAlerts = {
+    total: 0,
+    warning: 0,
+    exceeded: 0,
+    byConstraintType: {},
+  };
+
+  for (const event of events) {
+    byEventType[event.event_type] = (byEventType[event.event_type] || 0) + 1;
+    if (event.event_type === 'a2a_runtime.budget_warning') {
+      budgetAlerts.total++;
+      budgetAlerts.warning++;
+    } else if (event.event_type === 'a2a_runtime.budget_exceeded') {
+      budgetAlerts.total++;
+      budgetAlerts.exceeded++;
+    } else {
+      continue;
+    }
+
+    const payload = event.payloadObject || parseJsonObject(event.payload);
+    const constraintType = payload?.type || 'unknown';
+    budgetAlerts.byConstraintType[constraintType] =
+      (budgetAlerts.byConstraintType[constraintType] || 0) + 1;
+  }
+
+  return { byEventType, budgetAlerts };
+}
+
 // Session-scoped runtime registry (keyed by name)
 const runtimes = new Map();
 
@@ -110,14 +211,26 @@ export const agentRuntimeTools = [
         .optional()
         .default({})
         .describe('Strategy configuration (e.g., { markup: 1.5, basePrice: 50 })'),
-      budgetDaily: z.number().positive().optional().describe('Maximum daily spend in USDC'),
-      budgetMonthly: z.number().positive().optional().describe('Maximum monthly spend in USDC'),
+      budgetDaily: z
+        .number()
+        .positive()
+        .optional()
+        .describe("Maximum daily spend per payment rail, in that rail's token units"),
+      budgetMonthly: z
+        .number()
+        .positive()
+        .optional()
+        .describe("Maximum monthly spend per payment rail, in that rail's token units"),
       budgetPerTransaction: z
         .number()
         .positive()
         .optional()
-        .describe('Maximum per-transaction spend'),
-      startingBalance: z.number().nonnegative().optional().describe('Starting balance in USDC'),
+        .describe('Maximum per-transaction spend per payment rail'),
+      startingBalance: z
+        .number()
+        .nonnegative()
+        .optional()
+        .describe("Starting balance per payment rail, in that rail's token units"),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -162,6 +275,8 @@ export const agentRuntimeTools = [
       });
 
       runtimes.set(params.name, rt);
+      const defaultPayment = rt.getDefaultPaymentConfig?.() || null;
+      const budgetView = buildRuntimeBudgetView(rt);
 
       return {
         success: true,
@@ -171,7 +286,10 @@ export const agentRuntimeTools = [
           agentId: rt.agentId,
           walletAddress: rt.walletAddress,
           strategy: params.strategy,
-          budget: rt.getBudget(),
+          budget: budgetView.budget,
+          budgetScope: budgetView.budgetScope,
+          budgetScoped: budgetView.budgetScoped,
+          defaultPayment,
         },
       };
     },
@@ -197,19 +315,33 @@ export const agentRuntimeTools = [
 
   {
     name: 'agent_list_runtimes',
-    description: 'List all active agent runtimes in this session.',
-    inputSchema: {},
+    description:
+      'List all active agent runtimes in this session, with optional asset/network budget scope.',
+    inputSchema: {
+      asset: z
+        .string()
+        .optional()
+        .describe('Optional asset scope for budget views, for example BTC or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network scope for budget views, for example bitcoin or zcash'),
+    },
     permission: 'read',
-    handler: async () => {
+    handler: async ({ params }) => {
       const agents = [];
       for (const rt of runtimes.values()) {
+        const budgetView = buildRuntimeBudgetView(rt, params);
         agents.push({
           name: rt.name,
           agentId: rt.agentId,
           walletAddress: rt.walletAddress,
           strategy: rt.getStrategy().name,
           running: rt.isRunning(),
-          budget: rt.getBudget(),
+          budget: budgetView.budget,
+          budgetScope: budgetView.budgetScope,
+          budgetScoped: budgetView.budgetScoped,
+          defaultPayment: rt.getDefaultPaymentConfig?.() || null,
         });
       }
       return { success: true, agents, count: agents.length };
@@ -219,9 +351,19 @@ export const agentRuntimeTools = [
   {
     name: 'agent_get_status',
     description:
-      'Get detailed status of an agent runtime including budget, strategy, and registered services.',
+      'Get detailed status of an agent runtime including budget, strategy, registered services, and optional rail-specific settlement context.',
     inputSchema: {
       name: z.string().min(1).describe('Agent name or ID'),
+      asset: z
+        .string()
+        .optional()
+        .describe('Optional asset scope for budget and settlement context, for example BTC or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe(
+          'Optional network scope for budget and settlement context, for example bitcoin or zcash',
+        ),
     },
     permission: 'read',
     handler: async ({ params }) => {
@@ -229,6 +371,24 @@ export const agentRuntimeTools = [
       if (!rt) {
         return { success: false, error: `Agent "${params.name}" not found.` };
       }
+      const defaultPayment = rt.getDefaultPaymentConfig?.() || null;
+      const budgetView = buildRuntimeBudgetView(rt, params);
+      const selectedNetwork = budgetView.budgetScope?.network || defaultPayment?.network || null;
+      const settlementService =
+        selectedNetwork && typeof rt.getSettlement === 'function'
+          ? rt.getSettlement(selectedNetwork)
+          : rt.settlement;
+      let chainWalletAddress = null;
+      if (selectedNetwork && typeof rt.getChainWalletAddress === 'function') {
+        try {
+          chainWalletAddress = await rt.getChainWalletAddress(selectedNetwork);
+        } catch {
+          // Non-fatal in status calls.
+        }
+      }
+      const settlementChains =
+        rt.listSettlementChains?.() || (rt.settlement ? [rt.settlement.chainId] : []);
+      const card = typeof rt.getAgentCard === 'function' ? rt.getAgentCard() : null;
       return {
         success: true,
         agent: {
@@ -237,7 +397,19 @@ export const agentRuntimeTools = [
           walletAddress: rt.walletAddress,
           strategy: rt.getStrategy().name,
           running: rt.isRunning(),
-          budget: rt.getBudget(),
+          budget: budgetView.budget,
+          budgetScope: budgetView.budgetScope,
+          budgetScoped: budgetView.budgetScoped,
+          defaultPayment,
+          settlementChains,
+          paymentAddresses: parseJsonObject(card?.payment_addresses),
+          settlement: settlementService
+            ? {
+                chainId: settlementService.chainId,
+                simulate: settlementService.isSimulation,
+                walletAddress: chainWalletAddress,
+              }
+            : null,
           services: rt.listMyServices(),
         },
       };
@@ -289,9 +461,15 @@ export const agentRuntimeTools = [
 
   {
     name: 'agent_get_budget',
-    description: 'Get the current budget status of an agent: spent today, remaining, limits.',
+    description:
+      'Get the current budget status of an agent, with optional asset/network scope for multi-rail payment budgets.',
     inputSchema: {
       name: z.string().min(1).describe('Agent name or ID'),
+      asset: z.string().optional().describe('Optional asset scope, for example BTC or ZEC'),
+      network: z
+        .string()
+        .optional()
+        .describe('Optional network scope, for example bitcoin or zcash'),
     },
     permission: 'read',
     handler: async ({ params }) => {
@@ -299,7 +477,13 @@ export const agentRuntimeTools = [
       if (!rt) {
         return { success: false, error: `Agent "${params.name}" not found.` };
       }
-      return { success: true, budget: rt.getBudget() };
+      return {
+        success: true,
+        budget: rt.getBudget({
+          asset: params.asset,
+          network: params.network,
+        }),
+      };
     },
   },
 
@@ -451,8 +635,15 @@ export const agentRuntimeTools = [
       'Create an escrow-backed transaction between agents. Funds are held until conditions are met (seller fulfilled, buyer confirmed, time lock, or milestone).',
     inputSchema: {
       buyerName: z.string().min(1).describe('Buyer agent name or ID'),
-      sellerAddress: z.string().min(1).describe('Seller wallet address (0x...)'),
-      amount: z.number().positive().describe('Amount in USDC'),
+      sellerAddress: z.string().min(1).describe('Seller wallet address'),
+      amount: z.number().positive().describe('Amount in the selected asset'),
+      asset: z.string().optional().describe('Asset override (e.g., USDC, ssUSD, BTC, ZEC)'),
+      network: z
+        .string()
+        .optional()
+        .describe('Settlement network override (e.g., set_chain, base, bitcoin, zcash)'),
+      quoteId: z.string().optional().describe('Associated quote ID'),
+      memo: z.string().max(500).optional().describe('Escrow memo'),
       conditions: z
         .array(
           z.object({
@@ -475,22 +666,44 @@ export const agentRuntimeTools = [
       if (!rt) {
         return { success: false, error: `Agent "${params.buyerName}" not found.` };
       }
-      if (!rt.canAfford(params.amount)) {
-        return { success: false, error: `Agent "${rt.name}" cannot afford $${params.amount}.` };
+      if (
+        !rt.canAfford(params.amount, {
+          asset: params.asset,
+          network: params.network,
+        })
+      ) {
+        return {
+          success: false,
+          error: `Agent "${rt.name}" cannot afford amount ${params.amount}.`,
+        };
       }
       if (typeof rt.createEscrowDeal === 'function') {
         const result = await rt.createEscrowDeal(params);
         return { success: true, ...result };
       }
+      const defaultPayment = rt.getDefaultPaymentConfig?.() || {};
       // Fallback: use underlying A2A service directly
       const result = await rt.a2a.createConditionalPayment({
         sellerAddress: params.sellerAddress,
         amount: params.amount,
+        asset: params.asset || defaultPayment.asset,
+        network: params.network || defaultPayment.network,
+        quoteId: params.quoteId,
         conditions: params.conditions,
         expiresInHours: params.expiresInHours,
+        memo: params.memo,
       });
-      rt.recordSpend(params.amount, { type: 'escrow', escrowId: result.escrow?.id });
-      return { success: true, message: `Escrow created for $${params.amount} USDC`, ...result };
+      rt.recordSpend(params.amount, {
+        type: 'escrow',
+        escrowId: result.escrow?.id,
+        asset: params.asset || defaultPayment.asset,
+        network: params.network || defaultPayment.network,
+      });
+      return {
+        success: true,
+        message: `Escrow created for ${params.amount} ${params.asset || defaultPayment.asset || 'default asset'}`,
+        ...result,
+      };
     },
   },
 
@@ -502,7 +715,12 @@ export const agentRuntimeTools = [
       subscriberName: z.string().min(1).describe('Subscriber agent name'),
       providerAddress: z.string().min(1).describe('Service provider wallet address'),
       planName: z.string().min(1).describe('Subscription plan name'),
-      amount: z.number().positive().describe('Recurring amount in USDC'),
+      amount: z.number().positive().describe('Recurring amount in the selected asset'),
+      asset: z.string().optional().describe('Asset override (e.g., USDC, ssUSD, BTC, ZEC)'),
+      network: z
+        .string()
+        .optional()
+        .describe('Settlement network override (e.g., set_chain, base, bitcoin, zcash)'),
       interval: z
         .enum(['weekly', 'biweekly', 'monthly', 'quarterly', 'annual'])
         .optional()
@@ -522,6 +740,7 @@ export const agentRuntimeTools = [
         const result = await rt.subscribeTo(params);
         return { success: true, ...result };
       }
+      const defaultPayment = rt.getDefaultPaymentConfig?.() || {};
       // Fallback: use subscription service directly
       const { createA2ASubscriptionService } = await import('../a2a/subscriptions.js');
       const subSvc = createA2ASubscriptionService(commerce.a2a());
@@ -530,8 +749,8 @@ export const agentRuntimeTools = [
         providerAddress: params.providerAddress,
         planName: params.planName,
         amount: params.amount,
-        asset: 'USDC',
-        network: 'set_chain',
+        asset: params.asset || defaultPayment.asset,
+        network: params.network || defaultPayment.network,
         billingInterval: params.interval,
         trialDays: params.trialDays,
       });
@@ -600,6 +819,11 @@ export const agentRuntimeTools = [
     inputSchema: {
       payerName: z.string().min(1).describe('Payer agent name'),
       totalAmount: z.number().positive().describe('Total amount to split'),
+      asset: z.string().optional().describe('Asset override (e.g., USDC, ssUSD, BTC, ZEC)'),
+      network: z
+        .string()
+        .optional()
+        .describe('Settlement network override (e.g., set_chain, base, bitcoin, zcash)'),
       recipients: z
         .array(
           z.object({
@@ -620,10 +844,15 @@ export const agentRuntimeTools = [
       if (!rt) {
         return { success: false, error: `Agent "${params.payerName}" not found.` };
       }
-      if (!rt.canAfford(params.totalAmount)) {
+      if (
+        !rt.canAfford(params.totalAmount, {
+          asset: params.asset,
+          network: params.network,
+        })
+      ) {
         return {
           success: false,
-          error: `Agent "${rt.name}" cannot afford $${params.totalAmount}.`,
+          error: `Agent "${rt.name}" cannot afford amount ${params.totalAmount}.`,
         };
       }
       // Map schema field 'percentage' → 'percent' for splits service
@@ -635,27 +864,53 @@ export const agentRuntimeTools = [
         const result = await rt.createSplitDeal({ ...params, recipients: mappedRecipients });
         return { success: true, ...result };
       }
+      const defaultPayment = rt.getDefaultPaymentConfig?.() || {};
       // Fallback: use splits service directly
       const { createSplitPaymentService } = await import('../a2a/splits.js');
       const splitSvc = createSplitPaymentService(commerce.a2a());
       const split = await splitSvc.createSplitPayment({
-        payerAddress: rt.walletAddress,
+        senderAddress: rt.walletAddress,
         totalAmount: params.totalAmount,
-        asset: 'USDC',
-        network: 'set_chain',
+        asset: params.asset || defaultPayment.asset,
+        network: params.network || defaultPayment.network,
         splitType: 'percentage',
         recipients: mappedRecipients,
         memo: params.memo || '',
       });
-      return { success: true, message: `Split payment created for $${params.totalAmount}`, split };
+      return {
+        success: true,
+        message: `Split payment created for ${params.totalAmount} ${params.asset || defaultPayment.asset || 'default asset'}`,
+        split,
+      };
     },
   },
 
   {
     name: 'agent_get_event_history',
-    description: "Get an agent's event stream history — all quotes, payments, and state changes.",
+    description:
+      "Get an agent's event stream history with optional filters for event type, time window, and payment rail.",
     inputSchema: {
       name: z.string().min(1).describe('Agent name or ID'),
+      eventTypes: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('Optional event types to include, for example a2a_runtime.budget_exceeded'),
+      since: z
+        .string()
+        .optional()
+        .describe('Optional ISO timestamp; only events after this time are returned'),
+      asset: z
+        .string()
+        .optional()
+        .describe(
+          'Optional asset filter applied against event payload metadata, for example BTC or ZEC',
+        ),
+      network: z
+        .string()
+        .optional()
+        .describe(
+          'Optional network filter applied against event payload metadata, for example bitcoin or zcash',
+        ),
       limit: z.number().int().positive().optional().default(50).describe('Max events to return'),
     },
     permission: 'read',
@@ -665,11 +920,67 @@ export const agentRuntimeTools = [
         return { success: false, error: `Agent "${params.name}" not found.` };
       }
       const a2a = commerce.a2a();
-      const events =
-        typeof a2a.listEventLog === 'function'
-          ? a2a.listEventLog({ agent_address: rt.walletAddress, limit: params.limit })
-          : [];
-      return { success: true, events, count: events.length };
+      if (typeof a2a.listEventLog !== 'function') {
+        return {
+          success: true,
+          events: [],
+          count: 0,
+          summary: {
+            byEventType: {},
+            budgetAlerts: { total: 0, warning: 0, exceeded: 0, byConstraintType: {} },
+          },
+        };
+      }
+
+      const eventTypes = Array.isArray(params.eventTypes)
+        ? params.eventTypes.filter((value) => typeof value === 'string' && value.length > 0)
+        : [];
+      const overfetchMultiplier = params.asset || params.network ? 5 : 1;
+      const fetchLimit = Math.max(params.limit || 50, 1) * overfetchMultiplier;
+
+      let rows = [];
+      if (eventTypes.length > 0) {
+        rows = eventTypes.flatMap(
+          (eventType) =>
+            a2a.listEventLog({
+              agent_address: rt.walletAddress,
+              event_type: eventType,
+              since: params.since,
+              limit: fetchLimit,
+            }) || [],
+        );
+      } else {
+        rows =
+          a2a.listEventLog({
+            agent_address: rt.walletAddress,
+            since: params.since,
+            limit: fetchLimit,
+          }) || [];
+      }
+
+      const uniqueRows = [...new Map(rows.filter(Boolean).map((row) => [row.id, row])).values()];
+      const events = uniqueRows
+        .map(formatRuntimeEventLogRow)
+        .filter((event) => matchesRuntimeEventHistoryFilter(event, params))
+        .sort((left, right) => {
+          const leftTime = left.created_at ? new Date(left.created_at).getTime() : 0;
+          const rightTime = right.created_at ? new Date(right.created_at).getTime() : 0;
+          return rightTime - leftTime;
+        })
+        .slice(0, params.limit);
+
+      return {
+        success: true,
+        filters: {
+          eventTypes,
+          since: params.since || null,
+          asset: params.asset || null,
+          network: params.network || null,
+        },
+        events,
+        count: events.length,
+        summary: summarizeRuntimeEvents(events),
+      };
     },
   },
 
@@ -679,7 +990,7 @@ export const agentRuntimeTools = [
   {
     name: 'agent_enable_settlement',
     description:
-      'Enable on-chain stablecoin settlement for an agent runtime. ' +
+      'Enable on-chain payment settlement for an agent runtime. ' +
       'The agent will settle payments on the specified blockchain using derived wallets.',
     inputSchema: {
       type: 'object',
@@ -687,7 +998,8 @@ export const agentRuntimeTools = [
         name: { type: 'string', description: 'Agent name' },
         chainId: {
           type: 'string',
-          description: 'Target blockchain (base, solana, set_chain, ethereum, arbitrum)',
+          description:
+            'Target blockchain (base, solana, set_chain, ethereum, arbitrum, bitcoin, zcash)',
           default: 'base',
         },
         simulate: {
@@ -697,7 +1009,7 @@ export const agentRuntimeTools = [
         },
         tokenSymbol: {
           type: 'string',
-          description: 'Override token (default: chain stablecoin)',
+          description: 'Override token (default: chain payment token)',
         },
       },
       required: ['name'],
@@ -731,14 +1043,26 @@ export const agentRuntimeTools = [
         configDir: '.stateset',
       });
 
-      // Attach to runtime
-      rt.settlement = settlement;
+      // Attach to runtime and update dynamic payment defaults
+      if (typeof rt.setSettlement === 'function') {
+        rt.setSettlement(settlement);
+      } else {
+        rt.settlement = settlement;
+      }
 
       let address = null;
       try {
         address = await settlement.getAddress();
       } catch {
         // Address derivation may fail without key material — non-fatal
+      }
+
+      if (typeof rt.syncAgentCard === 'function') {
+        try {
+          await rt.syncAgentCard({ settlementAddress: address || undefined });
+        } catch (cardErr) {
+          console.debug('[agent-runtime] Failed to sync settlement card:', cardErr.message);
+        }
       }
 
       return {
@@ -749,6 +1073,8 @@ export const agentRuntimeTools = [
           walletAddress: address,
           simulate: settlement.isSimulation,
           tokenSymbol: params.tokenSymbol || 'default',
+          availableChains: rt.listSettlementChains?.() || [settlement.chainId],
+          defaultPayment: rt.getDefaultPaymentConfig?.() || null,
         },
       };
     },
@@ -756,11 +1082,16 @@ export const agentRuntimeTools = [
   {
     name: 'agent_get_chain_balance',
     description:
-      'Get the on-chain stablecoin balance for an agent runtime with settlement enabled.',
+      'Get the on-chain payment-token balance for an agent runtime with settlement enabled.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Agent name' },
+        chainId: {
+          type: 'string',
+          description:
+            'Specific settlement chain to query (default: current runtime settlement chain)',
+        },
       },
       required: ['name'],
     },
@@ -770,21 +1101,32 @@ export const agentRuntimeTools = [
       if (!rt) {
         return { success: false, error: `Agent "${params.name}" not found.` };
       }
-      if (!rt.settlement) {
+      const settlement =
+        (typeof rt.getSettlement === 'function' ? rt.getSettlement(params.chainId) : null) ||
+        (!params.chainId ? rt.settlement : null);
+      if (!settlement) {
         return {
           success: false,
-          error: `Agent "${params.name}" has no settlement service. Use agent_enable_settlement first.`,
+          error: params.chainId
+            ? `Agent "${params.name}" has no settlement service for chain ${params.chainId}.`
+            : `Agent "${params.name}" has no settlement service. Use agent_enable_settlement first.`,
         };
       }
 
       try {
-        const balance = await rt.settlement.getBalance();
-        const address = await rt.settlement.getAddress();
+        const balance =
+          typeof rt.getOnChainBalance === 'function'
+            ? await rt.getOnChainBalance(params.chainId)
+            : await settlement.getBalance();
+        const address =
+          typeof rt.getChainWalletAddress === 'function'
+            ? await rt.getChainWalletAddress(params.chainId)
+            : await settlement.getAddress();
 
         return {
           success: true,
           agent: params.name,
-          chainId: rt.settlement.chainId,
+          chainId: settlement.chainId,
           walletAddress: address,
           balance: balance.balance,
           symbol: balance.symbol,
@@ -1148,4 +1490,14 @@ export const agentRuntimeTools = [
  */
 export function _getRuntimeRegistry() {
   return runtimes;
+}
+
+export function findRuntimeByWalletAddress(walletAddress) {
+  if (!walletAddress) return null;
+  for (const rt of runtimes.values()) {
+    if (rt.walletAddress === walletAddress) {
+      return rt;
+    }
+  }
+  return null;
 }

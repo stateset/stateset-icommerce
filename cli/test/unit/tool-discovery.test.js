@@ -112,6 +112,13 @@ describe('ToolDiscoveryEngine.discoverToolsByIntent', () => {
     assert.ok(tools.includes('list_supported_chains'));
   });
 
+  it('returns MPP discovery tools for machine_payments intent', () => {
+    const tools = engine.discoverToolsByIntent('machine_payments');
+    assert.ok(tools.includes('agentic_payment_discovery'));
+    assert.ok(tools.includes('agentic_prepare_payment'));
+    assert.ok(tools.includes('agentic_runtime_contract'));
+  });
+
   it('returns x402 toolchain for agentic_payments intent', () => {
     const tools = engine.discoverToolsByIntent('agentic_payments');
     assert.ok(tools.includes('x402_execute_agent_payment'));
@@ -206,6 +213,12 @@ describe('ToolDiscoveryEngine.getOrchestrationPlan', () => {
     const plan = engine.getOrchestrationPlan('agent_to_agent_payment');
     assert.ok(plan.includes('x402_execute_agent_payment'));
     assert.ok(plan.includes('x402_get_intent'));
+  });
+
+  it('returns plan for mpp_paid_tool_call', () => {
+    const plan = engine.getOrchestrationPlan('mpp_paid_tool_call');
+    assert.ok(plan.includes('agentic_payment_discovery'));
+    assert.ok(plan.includes('agentic_prepare_payment'));
   });
 
   it('returns empty array for unknown operation type', () => {
@@ -409,6 +422,21 @@ describe('ToolDiscoveryEngine.searchTools', () => {
     const results = engine.searchTools('quantum');
     assert.equal(results.length, 0);
   });
+
+  it('includes payment metadata in search results', () => {
+    engine.registerTool('priced_customers', {
+      category: 'Customers',
+      description: 'Search priced customers',
+      purpose: 'Customer pricing lookup',
+      whenToUse: 'When a paid customer query is needed',
+      payable: true,
+      paymentInfo: { amount: { asset: 'BTC', network: 'bitcoin' } },
+    });
+    const results = engine.searchTools('priced');
+    const match = results.find((r) => r.name === 'priced_customers');
+    assert.equal(match.payable, true);
+    assert.equal(match.paymentInfo.amount.asset, 'BTC');
+  });
 });
 
 // ===========================================================================
@@ -468,6 +496,21 @@ describe('ToolDiscoveryEngine.exportRegistry', () => {
   it('returns empty object for empty registry', () => {
     const exported = engine.exportRegistry();
     assert.deepEqual(exported, {});
+  });
+
+  it('preserves payment metadata in exported registry', () => {
+    registerTestTool(engine, 'list_customers', {
+      extra: {
+        payable: true,
+        paymentInfo: {
+          amount: { asset: 'BTC', network: 'bitcoin' },
+        },
+      },
+    });
+
+    const exported = engine.exportRegistry();
+    assert.equal(exported.list_customers.payable, true);
+    assert.equal(exported.list_customers.paymentInfo.amount.asset, 'BTC');
   });
 });
 

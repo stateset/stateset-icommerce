@@ -6,6 +6,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-03-18
+
+### Added
+- Added native Bitcoin settlement flows for autonomous agent payments, including wallet, signing, execution, and observability plumbing.
+- Added shielded Zcash settlement support for agent-to-agent payments through wallet-enabled JSON-RPC flows.
+- Added Machine Payments Protocol support across MCP and HTTP, including challenge/credential/receipt handling, discovery metadata, and client retry helpers.
+- Added embedded toolkit support for remote payable HTTP route discovery and paid execution.
+
+### Changed
+- Bumped workspace and cross-language release metadata from `0.8.0` to `0.8.1`.
+- Synced docs, templates, examples, and packaging references around the `0.8.1` native payments and MPP release.
+
 ## [0.8.0] - 2026-03-11
 
 ### Added

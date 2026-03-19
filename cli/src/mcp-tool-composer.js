@@ -393,6 +393,11 @@ export const ORCHESTRATION_TEMPLATES = {
     steps: [{ tool: 'x402_execute_agent_payment' }, { tool: 'x402_get_intent' }],
   },
 
+  mpp_paid_tool_call: {
+    name: 'MPP Paid Tool Call',
+    steps: [{ tool: 'agentic_payment_discovery' }, { tool: 'agentic_prepare_payment' }],
+  },
+
   fulfillment: {
     name: 'Order Fulfillment',
     steps: [

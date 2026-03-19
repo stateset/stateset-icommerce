@@ -194,6 +194,8 @@ export function createIntegratedA2AService(coreA2A, services = {}) {
         }
 
         const result = await coreA2A.pay(params);
+        const paymentAsset = asset || result?.payment?.asset || null;
+        const paymentNetwork = params.network || result?.payment?.network || null;
 
         // -- Cost analytics --
         safeCall(costAnalytics, 'record', {
@@ -201,8 +203,10 @@ export function createIntegratedA2AService(coreA2A, services = {}) {
           counterparty: recipientAddress,
           direction: 'spend',
           amount,
+          asset: paymentAsset,
+          network: paymentNetwork,
           operation: 'quote_payment',
-          metadata: { memo, asset },
+          metadata: { memo, asset: paymentAsset, network: paymentNetwork },
         });
 
         // -- Memory --
@@ -350,6 +354,8 @@ export function createIntegratedA2AService(coreA2A, services = {}) {
       // Extract counterparty from result
       const sellerAddress = result.quote?.seller || result.quote?.sellerAddress || counterparty;
       const quoteAmount = result.quote?.total || 0;
+      const quoteAsset = result.quote?.asset || result.payment?.asset || null;
+      const quoteNetwork = result.quote?.network || result.payment?.network || null;
 
       if (span) {
         span.setAttribute('seller', sellerAddress);
@@ -378,8 +384,10 @@ export function createIntegratedA2AService(coreA2A, services = {}) {
           counterparty: sellerAddress,
           direction: 'spend',
           amount: quoteAmount,
+          asset: quoteAsset,
+          network: quoteNetwork,
           operation: 'quote_payment',
-          metadata: { quoteId },
+          metadata: { quoteId, asset: quoteAsset, network: quoteNetwork },
         });
       }
 

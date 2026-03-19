@@ -32,20 +32,22 @@
  * });
  *
  * // Execute the split (sends actual payments)
- * await splits.executeSplitPayment(result.splitPayment.id, async (to, amount, asset, memo) => {
- *   return paymentService.send(to, amount, asset, memo);
+ * await splits.executeSplitPayment(result.splitPayment.id, async (to, amount, asset, network, memo) => {
+ *   return paymentService.send(to, amount, asset, network, memo);
  * });
  * ```
  */
 
 import { randomUUID } from 'node:crypto';
-
-// USDC uses 6 decimal places
-const DECIMALS_MULTIPLIER = 1_000_000;
+import {
+  DEFAULT_NETWORK,
+  fromSmallestUnit,
+  getAssetDecimals,
+  getDefaultAssetForNetwork,
+  toSmallestUnit,
+} from './assets.js';
 
 // Default configuration
-const DEFAULT_ASSET = 'USDC';
-const DEFAULT_NETWORK = 'set_chain';
 const VALID_SPLIT_TYPES = ['percentage', 'fixed'];
 
 /**
@@ -143,8 +145,8 @@ export function createSplitPaymentService(store) {
     const {
       senderAddress,
       totalAmount,
-      asset = DEFAULT_ASSET,
       network = DEFAULT_NETWORK,
+      asset: requestedAsset = null,
       splitType = 'percentage',
       recipients,
       platformFeePercent = 0,
@@ -154,6 +156,9 @@ export function createSplitPaymentService(store) {
       referenceId,
       metadata,
     } = params;
+
+    const asset = requestedAsset || getDefaultAssetForNetwork(network);
+    const assetDecimals = getAssetDecimals(asset);
 
     // --- Validate required fields ---
     if (!senderAddress) {
@@ -187,7 +192,7 @@ export function createSplitPaymentService(store) {
     }
 
     // --- Convert total to smallest unit ---
-    const totalAmountSmallest = Math.round(totalAmount * DECIMALS_MULTIPLIER);
+    const totalAmountSmallest = toSmallestUnit(totalAmount, assetDecimals);
 
     // --- Platform fee calculation ---
     let platformFeeAmountSmallest = 0;
@@ -230,13 +235,13 @@ export function createSplitPaymentService(store) {
     } else {
       // Fixed splits — validate amounts sum to remaining
       const fixedSumSmallest = recipients.reduce(
-        (sum, r) => sum + Math.round(r.amount * DECIMALS_MULTIPLIER),
+        (sum, r) => sum + toSmallestUnit(r.amount, assetDecimals),
         0,
       );
 
       if (Math.abs(fixedSumSmallest - remainingSmallest) > 1) {
-        const expectedDecimal = remainingSmallest / DECIMALS_MULTIPLIER;
-        const actualDecimal = fixedSumSmallest / DECIMALS_MULTIPLIER;
+        const expectedDecimal = fromSmallestUnit(remainingSmallest, assetDecimals);
+        const actualDecimal = fromSmallestUnit(fixedSumSmallest, assetDecimals);
         throw new Error(
           `Fixed recipient amounts must sum to ${expectedDecimal} ` +
             `(total minus platform fee), got ${actualDecimal}`,
@@ -247,7 +252,7 @@ export function createSplitPaymentService(store) {
         computedRecipients.push({
           address: r.address,
           percent: null,
-          amountSmallest: Math.round(r.amount * DECIMALS_MULTIPLIER),
+          amountSmallest: toSmallestUnit(r.amount, assetDecimals),
         });
       }
     }
@@ -284,7 +289,7 @@ export function createSplitPaymentService(store) {
         recipient_address: cr.address,
         share_percent: cr.percent,
         share_amount: cr.amountSmallest,
-        share_amount_decimal: cr.amountSmallest / DECIMALS_MULTIPLIER,
+        share_amount_decimal: fromSmallestUnit(cr.amountSmallest, assetDecimals),
         status: 'pending',
       });
     }
@@ -297,7 +302,7 @@ export function createSplitPaymentService(store) {
         recipient_address: platformFeeAddress,
         share_percent: platformFeePercent,
         share_amount: platformFeeAmountSmallest,
-        share_amount_decimal: platformFeeAmountSmallest / DECIMALS_MULTIPLIER,
+        share_amount_decimal: fromSmallestUnit(platformFeeAmountSmallest, assetDecimals),
         status: 'pending',
       });
     }
@@ -318,7 +323,7 @@ export function createSplitPaymentService(store) {
    * Updates each recipient's status and the parent's overall status based on results.
    *
    * @param {string} splitPaymentId - Split payment ID
-   * @param {Function} payFn - Async payment function: (to, amount, asset, memo) => paymentResult
+   * @param {Function} payFn - Async payment function: (to, amount, asset, network, memo) => paymentResult
    * @returns {Promise<Object>} Updated split payment with execution results
    */
   async function executeSplitPayment(splitPaymentId, payFn) {
@@ -346,6 +351,7 @@ export function createSplitPaymentService(store) {
           recipient.recipient_address,
           recipient.share_amount_decimal,
           split.asset,
+          split.network,
           split.memo,
         );
 

@@ -16,6 +16,23 @@ import { PolicyEngine } from './policies/engine.js';
 import { createMcpEventStreamer } from './mcp-event-streamer.js';
 import { ToolDiscoveryEngine } from './mcp-tool-discovery.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
+import {
+  MPP_PROTOCOL,
+  MPP_JSONRPC_PAYMENT_REQUIRED_CODE,
+  MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
+  MPP_VERSION,
+  attachPaymentMetadata,
+  buildMppServiceInfo,
+  buildPaymentInfoFromPricing,
+  buildPaymentRequiredPayload,
+  createPaymentChallenge,
+  createPaymentDiscoveryDocument,
+  createPaymentReceipt,
+  executeMppToolWithPayment,
+  extractPaymentCredential,
+  listPaymentMethodAdapters,
+  verifyPaymentCredential,
+} from './mpp/index.js';
 
 // Domain tool modules
 import { customerTools } from './tools/customers.js';
@@ -72,11 +89,16 @@ import {
   validateToolInput,
 } from './tool-schema.js';
 
-let toolDiscoveryEngine = null;
-
 const AGENTIC_TOOL_RESULT_SCHEMA_VERSION = '1.0.0';
 const AGENTIC_POLICY_DECISION_BUNDLE_VERSION = '2026-03-01';
 const AGENTIC_SLA_LEVELS = ['standard', 'expedited', 'critical'];
+const MPP_SERVICE_INFO = buildMppServiceInfo({
+  serviceId: 'stateset-commerce-mcp',
+  serviceName: 'StateSet Commerce MCP',
+  version: '1.0.0',
+  serverName: 'stateset-commerce',
+  serverUrl: '/mcp',
+});
 
 /**
  * All domain tool definitions, collected from modules.
@@ -98,6 +120,91 @@ const AGENTIC_RUNTIME_TOOLS = [
         includeLegacyDefaults: params?.includeLegacyDefaults || false,
       });
       return payload;
+    },
+  },
+  {
+    name: 'agentic_tool_catalog',
+    description:
+      'Return a machine-readable tool catalog with runtime metadata and optional Machine Payments Protocol pricing info.',
+    inputSchema: {
+      tool: z.string().optional().describe('Optional tool name to filter the catalog'),
+      format: z
+        .enum(['generic', 'mcp', 'openai'])
+        .optional()
+        .default('generic')
+        .describe('Catalog output format'),
+      payableOnly: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Only include tools with configured payment pricing'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, getToolCatalog }) => {
+      return getToolCatalog({
+        tool: params?.tool || null,
+        format: params?.format || 'generic',
+        payableOnly: params?.payableOnly ?? false,
+      });
+    },
+  },
+  {
+    name: 'agentic_payment_discovery',
+    description:
+      'Discover payable MCP tools with Machine Payments Protocol metadata, pricing, and optional OpenAPI output.',
+    inputSchema: {
+      tool: z.string().optional().describe('Optional tool name to filter discovery output'),
+      format: z
+        .enum(['json', 'openapi'])
+        .optional()
+        .default('json')
+        .describe('Discovery output format'),
+      pricedOnly: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Return only tools with configured pricing'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, getPaymentDiscovery }) => {
+      return getPaymentDiscovery({
+        tool: params?.tool || null,
+        format: params?.format || 'json',
+        pricedOnly: params?.pricedOnly ?? true,
+      });
+    },
+  },
+  {
+    name: 'agentic_prepare_payment',
+    description:
+      'Prepare a Machine Payments Protocol challenge and retry template for a priced MCP tool call.',
+    inputSchema: {
+      tool: z.string().min(1).describe('Tool name without server prefix'),
+      params: z
+        .record(z.string(), z.any())
+        .optional()
+        .default({})
+        .describe('Tool parameters to bind into the challenge'),
+      requestId: z.string().optional().describe('Optional correlation id'),
+      sessionId: z.string().optional().describe('Optional MCP session id'),
+      includeSchema: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Include the tool input JSON Schema in the response'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, preparePaymentForTool }) => {
+      return preparePaymentForTool({
+        tool: params?.tool,
+        params: params?.params || {},
+        requestId: params?.requestId || null,
+        sessionId: params?.sessionId || null,
+        includeSchema: params?.includeSchema ?? false,
+      });
     },
   },
   {
@@ -410,13 +517,9 @@ const AGENTIC_RUNTIME_TOOLS = [
     },
     permission: 'read',
     policyDomain: 'agentic',
-    handler: async ({ params }) => {
-      // Lazy-initialize singleton
-      if (!toolDiscoveryEngine) {
-        toolDiscoveryEngine = new ToolDiscoveryEngine();
-        toolDiscoveryEngine.registerFromToolDefs(ALL_TOOL_DEFS);
-      }
-      const results = toolDiscoveryEngine.discover(params.intent, params.limit || 5);
+    handler: async ({ params, getToolDiscoveryEngine }) => {
+      const engine = await getToolDiscoveryEngine();
+      const results = engine.discover(params.intent, params.limit || 5);
       return { success: true, tools: results };
     },
   },
@@ -1248,7 +1351,7 @@ function autoIndexEntity(entityType, entity) {
  * @param {PolicyEngine} options.policyEngine - PolicyEngine instance (optional)
  * @param {string} options.policyStorePath - Policy store root path (optional)
  * @param {string} options.dbPath - Commerce database path (used for ERC-8004 lookups)
- * @param {Object} options.treasury - Treasury configuration (agentId, dbPath, ERC-8004 registry)
+ * @param {Object} options.treasury - Treasury configuration (agentId, dbPath, pricingPath, registryPath, ERC-8004 registry)
  * @param {Object} options.agentConfig - Agent configuration for A2A payments
  * @param {string} options.agentConfig.agentId - This agent's ID
  * @param {string} options.agentConfig.walletAddress - This agent's wallet address
@@ -1284,6 +1387,7 @@ export function createStatesetMcpServer({
       updatePayment: (id, u) => a2aStore.updatePayment(id, u),
       listPayments: (f) => a2aStore.listPayments(f),
       sumPayments: (f) => a2aStore.sumPayments(f),
+      summarizePayments: (f) => a2aStore.summarizePayments(f),
       createPaymentRequest: (r) => a2aStore.createPaymentRequest(r),
       getPaymentRequest: (id) => a2aStore.getPaymentRequest(id),
       updatePaymentRequest: (id, u) => a2aStore.updatePaymentRequest(id, u),
@@ -1907,6 +2011,348 @@ export function createStatesetMcpServer({
     }
   };
 
+  const attachPaymentMetadataToResponse = (response, paymentMetadata = {}) => {
+    if (!response || !Array.isArray(response.content) || response.content.length === 0) {
+      return response;
+    }
+
+    const first = response.content[0];
+    if (!first || first.type !== 'text' || typeof first.text !== 'string') {
+      return response;
+    }
+
+    try {
+      const parsed = JSON.parse(first.text);
+      const nextPayload = attachPaymentMetadata(parsed, paymentMetadata);
+      return {
+        ...response,
+        content: [{ ...first, text: JSON.stringify(nextPayload) }, ...response.content.slice(1)],
+      };
+    } catch {
+      return response;
+    }
+  };
+
+  const resolveMppPaymentContext = async ({
+    toolName,
+    description = '',
+    params = {},
+    extra = {},
+    requestId = null,
+    sessionId = null,
+  } = {}) => {
+    const pricing = await getAgenticToolPricing(toolName);
+    if (!pricing) {
+      return {
+        pricing: null,
+        challenge: null,
+        credential: null,
+        authorized: false,
+      };
+    }
+
+    const challenge = createPaymentChallenge({
+      toolName,
+      description,
+      pricing,
+      params,
+      requestId,
+      sessionId,
+      serviceId: MPP_SERVICE_INFO.id,
+      serviceName: MPP_SERVICE_INFO.name,
+    });
+    const credential = extractPaymentCredential(params, extra);
+    if (!credential) {
+      return {
+        pricing,
+        challenge,
+        credential: null,
+        authorized: false,
+        errorPayload: buildPaymentRequiredPayload({ challenge }),
+      };
+    }
+
+    const verification = verifyPaymentCredential(credential, challenge);
+    if (!verification.valid) {
+      return {
+        pricing,
+        challenge,
+        credential,
+        authorized: false,
+        verification,
+        errorPayload: buildPaymentRequiredPayload({
+          challenge,
+          reason: MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
+          validationError: verification.reason,
+        }),
+      };
+    }
+
+    return {
+      pricing,
+      challenge,
+      credential: verification.credential,
+      verification,
+      authorized: true,
+    };
+  };
+
+  const buildPaymentDiscovery = async ({
+    format = 'json',
+    tool = null,
+    pricedOnly = false,
+  } = {}) => {
+    const normalizedTool = normalizeToolName(tool || '');
+    const tools = [];
+
+    for (const toolDef of ALL_TOOL_DEFS) {
+      if (normalizedTool && toolDef.name !== normalizedTool) continue;
+      const pricing = await getAgenticToolPricing(toolDef.name);
+      if (pricedOnly && !pricing) continue;
+      tools.push({
+        name: toolDef.name,
+        description: toolDef.description,
+        inputSchema: inputSchemaDefToJsonSchema(toolDef.inputSchema || {}),
+        runtime: getToolRuntimeMeta(toolDef.name),
+        pricing,
+        paymentInfo: buildPaymentInfoFromPricing({
+          toolName: toolDef.name,
+          description: toolDef.description,
+          pricing,
+        }),
+      });
+    }
+
+    if (format === 'openapi') {
+      return createPaymentDiscoveryDocument({
+        serviceInfo: MPP_SERVICE_INFO,
+        tools,
+        serverUrl: '/mcp',
+      });
+    }
+
+    return {
+      protocol: 'mpp',
+      protocolVersion: MPP_SERVICE_INFO.protocolVersion,
+      service: MPP_SERVICE_INFO,
+      tools: tools.map((entry) => ({
+        name: entry.name,
+        description: entry.description,
+        runtime: entry.runtime,
+        pricing: entry.pricing,
+        paymentInfo: entry.paymentInfo,
+      })),
+    };
+  };
+
+  const buildToolCatalog = async ({
+    format = 'generic',
+    mcpPrefix = null,
+    tool = null,
+    payableOnly = false,
+  } = {}) => {
+    const normalizedTool = normalizeToolName(tool || '');
+    const normalizedFormat = format || 'generic';
+    const tools = [];
+
+    for (const toolDef of ALL_TOOL_DEFS) {
+      if (normalizedTool && toolDef.name !== normalizedTool) continue;
+      const runtime = getToolRuntimeMeta(toolDef.name);
+      const parameters = inputSchemaDefToJsonSchema(toolDef.inputSchema || {});
+      const pricing = await getAgenticToolPricing(toolDef.name);
+      const paymentInfo = buildPaymentInfoFromPricing({
+        toolName: toolDef.name,
+        description: toolDef.description,
+        pricing,
+      });
+      const payable = Boolean(paymentInfo);
+      if (payableOnly && !payable) continue;
+
+      const resolvedName = mcpPrefix ? `${mcpPrefix}${toolDef.name}` : toolDef.name;
+      if (normalizedFormat === 'openai') {
+        tools.push({
+          type: 'function',
+          function: {
+            name: toolDef.name,
+            description: toolDef.description,
+            parameters,
+          },
+          stateset: {
+            permission: toolDef.permission || runtime.permission,
+            policyDomain: runtime.policyDomain,
+            payable,
+            payment: paymentInfo,
+          },
+        });
+        continue;
+      }
+
+      tools.push({
+        name: normalizedFormat === 'mcp' ? `mcp__stateset-commerce__${toolDef.name}` : resolvedName,
+        toolName: toolDef.name,
+        description: toolDef.description,
+        inputSchema: parameters,
+        permission: toolDef.permission || runtime.permission,
+        policyDomain: runtime.policyDomain,
+        runtime,
+        payable,
+        paymentInfo,
+      });
+    }
+
+    return {
+      format: normalizedFormat,
+      service: MPP_SERVICE_INFO,
+      count: tools.length,
+      tools,
+    };
+  };
+
+  let toolDiscoveryEnginePromise = null;
+  const getToolDiscoveryEngine = async () => {
+    if (toolDiscoveryEnginePromise) return toolDiscoveryEnginePromise;
+    toolDiscoveryEnginePromise = (async () => {
+      const engine = new ToolDiscoveryEngine();
+      const catalog = await buildToolCatalog({ format: 'generic', payableOnly: false });
+      for (const tool of catalog.tools) {
+        engine.registerTool(tool.toolName || tool.name, {
+          name: tool.toolName || tool.name,
+          description: tool.description,
+          category: tool.policyDomain || 'general',
+          purpose: tool.description,
+          whenToUse: tool.description,
+          inputSchema: tool.inputSchema,
+          permission: tool.permission,
+          payable: tool.payable || false,
+          paymentInfo: tool.paymentInfo || null,
+        });
+      }
+      return engine;
+    })();
+    return toolDiscoveryEnginePromise;
+  };
+
+  const preparePaymentForTool = async ({
+    tool,
+    params = {},
+    requestId = null,
+    sessionId = null,
+    includeSchema = false,
+  } = {}) => {
+    const resolvedToolName = normalizeToolName(tool || '');
+    if (!resolvedToolName) {
+      return {
+        success: false,
+        payable: false,
+        error: 'tool is required',
+      };
+    }
+
+    const toolDef = TOOL_DEFS_BY_NAME.get(resolvedToolName);
+    if (!toolDef) {
+      return {
+        success: false,
+        tool: resolvedToolName,
+        payable: false,
+        error: `Unknown tool '${resolvedToolName}'`,
+      };
+    }
+
+    const validation = validateToolInput(toolDef.inputSchema || {}, params || {});
+    if (!validation.success) {
+      return {
+        success: false,
+        tool: resolvedToolName,
+        payable: false,
+        error: `Invalid parameters for tool '${resolvedToolName}'`,
+        validation: {
+          valid: false,
+          issues: formatValidationIssues(validation.error),
+        },
+      };
+    }
+
+    const pricing = await getAgenticToolPricing(resolvedToolName);
+    const paymentInfo = buildPaymentInfoFromPricing({
+      toolName: resolvedToolName,
+      description: toolDef.description,
+      pricing,
+    });
+
+    if (!pricing || !paymentInfo) {
+      return {
+        success: true,
+        tool: resolvedToolName,
+        payable: false,
+        service: MPP_SERVICE_INFO,
+        validation: { valid: true },
+        paymentInfo: null,
+        challenge: null,
+        reason: 'No pricing configured for this tool.',
+        ...(includeSchema
+          ? { inputSchema: inputSchemaDefToJsonSchema(toolDef.inputSchema || {}) }
+          : {}),
+      };
+    }
+
+    const challenge = createPaymentChallenge({
+      toolName: resolvedToolName,
+      description: toolDef.description,
+      pricing,
+      params: validation.data,
+      requestId,
+      sessionId,
+      serviceId: MPP_SERVICE_INFO.id,
+      serviceName: MPP_SERVICE_INFO.name,
+    });
+    const primaryMethod = Array.isArray(challenge.paymentMethods)
+      ? challenge.paymentMethods[0] || null
+      : null;
+    const credentialTemplate = {
+      protocol: MPP_PROTOCOL,
+      protocolVersion: MPP_VERSION,
+      type: 'credential',
+      challengeId: challenge.challengeId,
+      payer: '<payer-id>',
+      method: primaryMethod
+        ? {
+            kind: primaryMethod.kind || null,
+            asset: primaryMethod.asset || null,
+            network: primaryMethod.network || null,
+          }
+        : null,
+      amount: challenge.amount,
+      binding: challenge.binding,
+      authorization: {
+        type: '<signature-or-proof>',
+      },
+    };
+
+    return {
+      success: true,
+      tool: resolvedToolName,
+      payable: true,
+      service: MPP_SERVICE_INFO,
+      paymentInfo,
+      challenge,
+      acceptedPaymentMethods: challenge.paymentMethods || [],
+      validation: { valid: true },
+      credentialTemplate,
+      retryExample: {
+        jsonrpc: '2.0',
+        id: requestId || '<request-id>',
+        method: resolvedToolName,
+        params: validation.data,
+        _meta: {
+          payment: credentialTemplate,
+        },
+      },
+      ...(includeSchema
+        ? { inputSchema: inputSchemaDefToJsonSchema(toolDef.inputSchema || {}) }
+        : {}),
+    };
+  };
+
   const buildPolicyDecisionBundle = ({
     toolName,
     domain,
@@ -2003,6 +2449,24 @@ export function createStatesetMcpServer({
           'mutation',
           'timing',
         ],
+      },
+      mpp: {
+        enabled: true,
+        service: MPP_SERVICE_INFO,
+        transport: {
+          jsonrpc: {
+            paymentRequiredCode: MPP_JSONRPC_PAYMENT_REQUIRED_CODE,
+            paymentRequiredMessage: MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
+            credentialMetaKey: 'payment',
+            receiptMetaKey: 'payment',
+          },
+          http: {
+            paymentRequiredStatus: 402,
+            discoveryExtensions: ['x-payment-info', 'x-service-info'],
+          },
+        },
+        intents: ['charge', 'session'],
+        methodAdapters: listPaymentMethodAdapters(),
       },
       purpose: 'agentic_runtime_contract',
       generatedAt: new Date().toISOString(),
@@ -2594,7 +3058,70 @@ export function createStatesetMcpServer({
         };
       }
 
-      charge = await maybeChargeForTool(resolvedToolName, { requestId, sessionId }, { dryRun });
+      const mpp = await resolveMppPaymentContext({
+        toolName: resolvedToolName,
+        description: toolDef.description,
+        params: nextArgs,
+        extra,
+        requestId,
+        sessionId,
+      });
+
+      if (mpp?.pricing && !mpp.authorized) {
+        return {
+          index: stepIndex,
+          tool: resolvedToolName,
+          status: 'payment_required',
+          elapsedMs: Date.now() - startedAt,
+          policy: {
+            allowed: policy.allowed,
+            domain: policy.domain,
+            actions: policy.actions || [],
+            decisionBundle: policy.policyDecisionBundle || null,
+          },
+          permission: {
+            allowed: permission.allowed,
+            preview: permission.preview || false,
+            reason: permission.reason || null,
+          },
+          charge: {
+            charged: false,
+            blocked: true,
+            reason: MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
+            paymentRequired: true,
+            pricing: mpp.pricing,
+            challenge: mpp.challenge,
+          },
+          params: compactReplayValue(nextArgs),
+          paramsHash: replayEventHash(nextArgs),
+          result: compactReplayValue(mpp.errorPayload),
+          resultHash: replayEventHash(mpp.errorPayload),
+          runtime: {
+            policyDomain: effectivePolicyDomain,
+            sideEffect: baseMeta.sideEffect,
+            compensations: baseMeta.compensations,
+            idempotent: baseMeta.idempotent,
+          },
+          simulation: dryRun,
+          mutationManifest: buildStepMutationManifest(
+            nextArgs,
+            policy,
+            permission,
+            'payment_required',
+          ),
+          error: mpp?.verification?.reason || MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
+        };
+      }
+
+      charge = await maybeChargeForTool(
+        resolvedToolName,
+        { requestId, sessionId },
+        {
+          dryRun,
+          allowChargeWrite: Boolean(mpp?.authorized),
+          paymentCredential: mpp?.credential || null,
+        },
+      );
       if (charge?.blocked) {
         return {
           index: stepIndex,
@@ -2695,7 +3222,22 @@ export function createStatesetMcpServer({
         },
       };
       const wrapped = wrapWithTelemetry(resolvedToolName, (payload) => toolDef.handler(payload));
-      const result = await wrapped(toolPayload);
+      let result = await wrapped(toolPayload);
+      if (mpp?.authorized && charge?.charged) {
+        const receipt = createPaymentReceipt({
+          challenge: mpp.challenge,
+          credential: mpp.credential,
+          charge,
+          toolName: resolvedToolName,
+          requestId,
+          sessionId,
+        });
+        result = attachPaymentMetadata(result, {
+          protocol: 'mpp',
+          receipt,
+          credentialId: mpp?.credential?.credentialId || null,
+        });
+      }
       if (includeHooks && hookRunner?.hasHooks?.('after_tool_call')) {
         await hookRunner.run('after_tool_call', {
           tool: resolvedToolName,
@@ -3821,12 +4363,20 @@ export function createStatesetMcpServer({
 
   const treasuryAgentId = treasury?.agentId || process.env.TREASURY_AGENT || 'default';
   const treasuryDbPath = treasury?.dbPath || process.env.TREASURY_DB || null;
-  const treasuryContextOptions = treasuryDbPath ? { dbPath: treasuryDbPath } : {};
+  const treasuryPricingPath = treasury?.pricingPath || process.env.TREASURY_PRICING_PATH || null;
+  const treasuryRegistryPath = treasury?.registryPath || process.env.TREASURY_REGISTRY_PATH || null;
+  const treasuryContextOptions = {
+    ...(treasuryDbPath ? { dbPath: treasuryDbPath } : {}),
+    ...(treasuryPricingPath ? { pricingPath: treasuryPricingPath } : {}),
+    ...(treasuryRegistryPath ? { registryPath: treasuryRegistryPath } : {}),
+  };
   const treasuryRegistry =
     treasury?.erc8004Registry || process.env.TREASURY_ERC8004_REGISTRY || null;
   const treasuryEnabled = Boolean(
     treasury?.enabled ||
     treasuryDbPath ||
+    treasuryPricingPath ||
+    treasuryRegistryPath ||
     treasury?.chainId ||
     treasury?.tokenSymbol ||
     treasuryRegistry ||
@@ -3907,7 +4457,11 @@ export function createStatesetMcpServer({
     toolName,
   });
 
-  const maybeChargeForTool = async (toolName, extra, { dryRun = false } = {}) => {
+  const maybeChargeForTool = async (
+    toolName,
+    extra,
+    { dryRun = false, allowChargeWrite = false, paymentCredential = null } = {},
+  ) => {
     if (!treasuryEnabled) {
       return { charged: false };
     }
@@ -3919,7 +4473,7 @@ export function createStatesetMcpServer({
       const rule = getToolPricing(ctx.pricing, toolName);
       if (!rule) return { charged: false };
 
-      if (!allowApply) {
+      if (!allowApply && !allowChargeWrite) {
         return {
           charged: false,
           blocked: true,
@@ -3981,6 +4535,13 @@ export function createStatesetMcpServer({
           source: 'task',
           metadata: {
             pricingRule: rule,
+            mpp: paymentCredential
+              ? {
+                  challengeId: paymentCredential.challengeId || null,
+                  credentialId: paymentCredential.credentialId || null,
+                  paymentMethod: paymentCredential?.method?.kind || null,
+                }
+              : null,
             ...identityMeta,
           },
           ...audit,
@@ -3988,7 +4549,17 @@ export function createStatesetMcpServer({
         ctx,
       );
 
-      return { charged: true, rule };
+      return {
+        charged: true,
+        rule,
+        mpp: paymentCredential
+          ? {
+              challengeId: paymentCredential.challengeId || null,
+              credentialId: paymentCredential.credentialId || null,
+              paymentMethod: paymentCredential?.method?.kind || null,
+            }
+          : null,
+      };
     } catch (error) {
       return { charged: false, blocked: true, reason: error.message };
     }
@@ -4308,7 +4879,60 @@ export function createStatesetMcpServer({
           );
         }
 
-        charge = await maybeChargeForTool(name, extra);
+        const mpp = await resolveMppPaymentContext({
+          toolName: name,
+          description,
+          params: nextArgs,
+          extra,
+          requestId: baseToolContext.requestId,
+          sessionId: baseToolContext.sessionId,
+        });
+
+        if (mpp?.pricing && !mpp.authorized) {
+          await logEvent('payment_required', {
+            params: nextArgs,
+            permission,
+            policy,
+            charge: {
+              paymentRequired: true,
+              pricing: mpp.pricing,
+              challenge: mpp.challenge,
+            },
+            error: mpp?.verification?.reason || MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
+          });
+          return buildToolResultResponse(
+            {
+              ...mpp.errorPayload,
+              tool: name,
+            },
+            'payment_required',
+            startedAt,
+            {
+              requestId: baseToolContext.requestId,
+              sessionId: baseToolContext.sessionId,
+              policy,
+              permission,
+              charge: {
+                paymentRequired: true,
+                pricing: mpp.pricing,
+                challenge: mpp.challenge,
+              },
+              mutationManifest: buildMutationManifest(
+                nextArgs,
+                policy,
+                permission,
+                'payment_required',
+              ),
+              name,
+            },
+            true,
+          );
+        }
+
+        charge = await maybeChargeForTool(name, extra, {
+          allowChargeWrite: Boolean(mpp?.authorized),
+          paymentCredential: mpp?.credential || null,
+        });
         if (charge?.blocked) {
           await logEvent('treasury_block', {
             params: nextArgs,
@@ -4346,7 +4970,22 @@ export function createStatesetMcpServer({
         }
 
         const wrapped = wrapWithTelemetry(name, handler);
-        const result = await wrapped(nextArgs, extra);
+        let result = await wrapped(nextArgs, extra);
+        if (mpp?.authorized && charge?.charged) {
+          const receipt = createPaymentReceipt({
+            challenge: mpp.challenge,
+            credential: mpp.credential,
+            charge,
+            toolName: name,
+            requestId: baseToolContext.requestId,
+            sessionId: baseToolContext.sessionId,
+          });
+          result = attachPaymentMetadata(result, {
+            protocol: 'mpp',
+            receipt,
+            credentialId: mpp?.credential?.credentialId || null,
+          });
+        }
         if (hookRunner?.hasHooks?.('after_tool_call')) {
           await hookRunner.run('after_tool_call', {
             tool: name,
@@ -4368,20 +5007,22 @@ export function createStatesetMcpServer({
             decisionBundle: policy.policyDecisionBundle || null,
           },
         });
-        const maybeStructured = attachStructuredToolMetadataToResponse(
-          result,
-          'success',
-          startedAt,
-          {
-            requestId: baseToolContext.requestId,
-            sessionId: baseToolContext.sessionId,
-            policy,
-            permission,
-            charge,
-            mutationManifest: buildMutationManifest(nextArgs, policy, permission, 'success'),
-            name,
-          },
-        );
+        let maybeStructured = attachStructuredToolMetadataToResponse(result, 'success', startedAt, {
+          requestId: baseToolContext.requestId,
+          sessionId: baseToolContext.sessionId,
+          policy,
+          permission,
+          charge,
+          mutationManifest: buildMutationManifest(nextArgs, policy, permission, 'success'),
+          name,
+        });
+        if (mpp?.authorized && charge?.charged) {
+          maybeStructured = attachPaymentMetadataToResponse(maybeStructured, {
+            protocol: 'mpp',
+            receipt: result?._meta?.payment?.receipt || null,
+            credentialId: mpp?.credential?.credentialId || null,
+          });
+        }
         return maybeStructured;
       } catch (error) {
         if (hookRunner?.hasHooks?.('after_tool_call')) {
@@ -4431,6 +5072,10 @@ export function createStatesetMcpServer({
     agentConfig,
     mcpEventStream: activeMcpEventStream,
     getAgenticRuntimeContract,
+    getToolCatalog: buildToolCatalog,
+    getToolDiscoveryEngine,
+    getPaymentDiscovery: buildPaymentDiscovery,
+    preparePaymentForTool,
     executeAgenticPlan,
     simulateAgenticPlan,
     simulateMutationToolCall,
@@ -4552,6 +5197,17 @@ export function createStatesetMcpServer({
     };
   };
 
+  const executeToolWithPayment = async (toolName, params = {}, options = {}) => {
+    const { payment = {}, ...executionOptions } = options || {};
+    return executeMppToolWithPayment({
+      executor: executeTool,
+      toolName: normalizeToolName(toolName),
+      params,
+      executionOptions,
+      payment,
+    });
+  };
+
   /**
    * Convert a domain tool definition into an SDK-wrapped MCP tool.
    * Bridges the module handler signature `({ commerce, params, ... }) => plainObject`
@@ -4595,7 +5251,12 @@ export function createStatesetMcpServer({
   server.mcpEventStream = activeMcpEventStream;
   server.getToolDefinitions = getToolDefinitions;
   server.getRawToolDefinitions = getRawToolDefinitions;
+  server.getToolCatalog = buildToolCatalog;
+  server.getToolDiscoveryEngine = getToolDiscoveryEngine;
+  server.getPaymentDiscovery = buildPaymentDiscovery;
+  server.preparePayment = preparePaymentForTool;
   server.executeTool = executeTool;
+  server.executeToolWithPayment = executeToolWithPayment;
   server.getRuntimeContract = getAgenticRuntimeContract;
   server.simulatePlan = simulateAgenticPlan;
   server.executePlan = executeAgenticPlan;

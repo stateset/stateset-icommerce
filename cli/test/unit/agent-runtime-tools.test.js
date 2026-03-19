@@ -260,7 +260,32 @@ describe('Agent Runtime Tools — lifecycle', () => {
       assert.ok(typeof agent.strategy === 'string');
       assert.strictEqual(typeof agent.running, 'boolean');
       assert.ok(agent.budget);
+      assert.ok(agent.budgetScope);
+      assert.ok(agent.budgetScoped);
+      assert.deepStrictEqual(agent.budgetScope, agent.defaultPayment);
     }
+  });
+
+  it('agent_list_runtimes applies a shared rail-specific budget scope', async () => {
+    await createAgent('ListScoped');
+    const rt = _getRuntimeRegistry().get('ListScoped');
+    rt.recordSpend(0.4, { asset: 'BTC', network: 'bitcoin' });
+    rt.recordSpend(1.25, { asset: 'ZEC', network: 'zcash' });
+
+    const result = await invoke('agent_list_runtimes', {
+      asset: 'ZEC',
+      network: 'zcash',
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.count, 1);
+    assert.deepStrictEqual(result.agents[0].budgetScope, {
+      asset: 'ZEC',
+      network: 'zcash',
+    });
+    assert.strictEqual(result.agents[0].budgetScoped.asset, 'ZEC');
+    assert.strictEqual(result.agents[0].budgetScoped.network, 'zcash');
+    assert.ok(Math.abs(result.agents[0].budgetScoped.spentToday - 1.25) < 1e-12);
   });
 });
 
@@ -281,7 +306,140 @@ describe('Agent Runtime Tools — agent operations', () => {
     assert.strictEqual(typeof result.agent.strategy, 'string');
     assert.strictEqual(result.agent.running, false);
     assert.ok(result.agent.budget);
+    assert.ok(result.agent.budgetScope);
+    assert.ok(result.agent.budgetScoped);
+    assert.deepStrictEqual(result.agent.budgetScope, result.agent.defaultPayment);
     assert.ok(Array.isArray(result.agent.services));
+  });
+
+  it('agent_get_status exposes settlement wallet and advertised payment addresses', async () => {
+    await createAgent('ChainStatusBot');
+    const rt = _getRuntimeRegistry().get('ChainStatusBot');
+    rt.settlement = {
+      chainId: 'bitcoin',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '0.5', symbol: 'BTC' }),
+      getAddress: async () => 'bc1qstatusbot',
+    };
+    await rt.syncAgentCard();
+
+    const result = await invoke('agent_get_status', { name: 'ChainStatusBot' });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.agent.settlementChains, ['bitcoin']);
+    assert.deepStrictEqual(result.agent.paymentAddresses, {
+      bitcoin: 'bc1qstatusbot',
+    });
+    assert.deepStrictEqual(result.agent.settlement, {
+      chainId: 'bitcoin',
+      simulate: true,
+      walletAddress: 'bc1qstatusbot',
+    });
+  });
+
+  it('agent_get_status preserves previously advertised payout addresses after settlement sync', async () => {
+    await createAgent('MultiRailBot');
+    const rt = _getRuntimeRegistry().get('MultiRailBot');
+    rt.ensureAgentCard();
+    const card = rt.getAgentCard();
+    commerce.x402().updateAgent(card.id, {
+      payment_addresses: JSON.stringify({ zcash: 'u1multirail' }),
+    });
+    rt.settlement = {
+      chainId: 'bitcoin',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '1.0', symbol: 'BTC' }),
+      getAddress: async () => 'bc1qmultirail',
+    };
+    rt.setSettlement({
+      chainId: 'zcash',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '2.0', symbol: 'ZEC' }),
+      getAddress: async () => 'u1multirail',
+    });
+    await rt.syncAgentCard();
+
+    const result = await invoke('agent_get_status', { name: 'MultiRailBot' });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.agent.settlementChains.sort(), ['bitcoin', 'zcash']);
+    assert.deepStrictEqual(result.agent.paymentAddresses, {
+      zcash: 'u1multirail',
+      bitcoin: 'bc1qmultirail',
+    });
+    assert.deepStrictEqual(result.agent.budgetScope, {
+      asset: 'ZEC',
+      network: 'zcash',
+    });
+    assert.strictEqual(result.agent.budgetScoped.asset, 'ZEC');
+    assert.strictEqual(result.agent.budgetScoped.network, 'zcash');
+  });
+
+  it('agent_get_status can scope budget and settlement to a requested rail', async () => {
+    await createAgent('ScopedStatusBot');
+    const rt = _getRuntimeRegistry().get('ScopedStatusBot');
+    rt.setSettlement({
+      chainId: 'bitcoin',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '0.5', symbol: 'BTC' }),
+      getAddress: async () => 'bc1qscopedstatus',
+    });
+    rt.setSettlement({
+      chainId: 'zcash',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '1.25', symbol: 'ZEC' }),
+      getAddress: async () => 'u1scopedstatus',
+    });
+    rt.recordSpend(0.4, { asset: 'BTC', network: 'bitcoin' });
+    rt.recordSpend(1.25, { asset: 'ZEC', network: 'zcash' });
+
+    const result = await invoke('agent_get_status', {
+      name: 'ScopedStatusBot',
+      asset: 'BTC',
+      network: 'bitcoin',
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.agent.budgetScope, {
+      asset: 'BTC',
+      network: 'bitcoin',
+    });
+    assert.strictEqual(result.agent.budgetScoped.asset, 'BTC');
+    assert.strictEqual(result.agent.budgetScoped.network, 'bitcoin');
+    assert.ok(Math.abs(result.agent.budgetScoped.spentToday - 0.4) < 1e-12);
+    assert.deepStrictEqual(result.agent.settlement, {
+      chainId: 'bitcoin',
+      simulate: true,
+      walletAddress: 'bc1qscopedstatus',
+    });
+  });
+
+  it('agent_get_chain_balance can query a specific settlement chain', async () => {
+    await createAgent('BalanceBot');
+    const rt = _getRuntimeRegistry().get('BalanceBot');
+    rt.setSettlement({
+      chainId: 'bitcoin',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '0.5', symbol: 'BTC' }),
+      getAddress: async () => 'bc1qbalance',
+    });
+    rt.setSettlement({
+      chainId: 'zcash',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '1.25', symbol: 'ZEC' }),
+      getAddress: async () => 'u1balance',
+    });
+
+    const result = await invoke('agent_get_chain_balance', {
+      name: 'BalanceBot',
+      chainId: 'bitcoin',
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.chainId, 'bitcoin');
+    assert.strictEqual(result.walletAddress, 'bc1qbalance');
+    assert.strictEqual(result.symbol, 'BTC');
+    assert.strictEqual(result.balance, '0.5');
   });
 
   it('agent_get_status returns error for non-existent agent', async () => {
@@ -348,6 +506,39 @@ describe('Agent Runtime Tools — agent operations', () => {
     assert.strictEqual(result.budget.spentThisMonth, 0);
     assert.strictEqual(result.budget.remainingDaily, 200);
     assert.strictEqual(result.budget.remainingMonthly, 5000);
+  });
+
+  it('agent_get_budget supports rail filters and mixed-rail breakdowns', async () => {
+    await createAgent('MultiRailBudget', {
+      strategy: 'budget-gated',
+      budgetDaily: 5,
+      budgetMonthly: 50,
+      budgetPerTransaction: 2,
+      settlementChain: 'bitcoin',
+    });
+
+    const rt = _getRuntimeRegistry().get('MultiRailBudget');
+    rt.recordSpend(0.4, { asset: 'BTC', network: 'bitcoin' });
+    rt.recordSpend(1.25, { asset: 'ZEC', network: 'zcash' });
+
+    const mixed = await invoke('agent_get_budget', { name: 'MultiRailBudget' });
+    assert.strictEqual(mixed.success, true);
+    assert.strictEqual(mixed.budget.aggregateTotalsMeaningful, false);
+    assert.strictEqual(mixed.budget.spentToday, null);
+    assert.deepStrictEqual(mixed.budget.assets, ['BTC', 'ZEC']);
+    assert.ok(Math.abs(mixed.budget.breakdownByAsset.BTC.networks.bitcoin.spentToday - 0.4) < 1e-12);
+    assert.ok(Math.abs(mixed.budget.breakdownByAsset.ZEC.networks.zcash.spentToday - 1.25) < 1e-12);
+
+    const btc = await invoke('agent_get_budget', {
+      name: 'MultiRailBudget',
+      asset: 'BTC',
+      network: 'bitcoin',
+    });
+    assert.strictEqual(btc.success, true);
+    assert.strictEqual(btc.budget.aggregateTotalsMeaningful, true);
+    assert.strictEqual(btc.budget.asset, 'BTC');
+    assert.strictEqual(btc.budget.network, 'bitcoin');
+    assert.ok(Math.abs(btc.budget.spentToday - 0.4) < 1e-12);
   });
 
   it('agent_get_budget returns error for non-existent agent', async () => {
@@ -676,6 +867,29 @@ describe('Agent Runtime Tools — advanced operations', () => {
     assert.ok(result.subscription || result.message);
   });
 
+  it('agent_subscribe_to_service defaults to the settlement payment config', async () => {
+    await createAgent('NativeSubBot', { startingBalance: 500 });
+    const rt = _getRuntimeRegistry().get('NativeSubBot');
+    rt.settlement = {
+      chainId: 'bitcoin',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '1.0', symbol: 'BTC' }),
+      getAddress: async () => 'bc1qsubbot',
+    };
+
+    const result = await invoke('agent_subscribe_to_service', {
+      subscriberName: 'NativeSubBot',
+      providerAddress: '0xProvider1234567890abcdef1234567890abcdef',
+      planName: 'BTC Feed',
+      amount: 0.0025,
+      interval: 'monthly',
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.subscription.asset, 'BTC');
+    assert.strictEqual(result.subscription.network, 'bitcoin');
+  });
+
   it('agent_subscribe_to_service without --apply returns error', async () => {
     await createAgent('SubGuard');
     const result = await invoke(
@@ -726,6 +940,31 @@ describe('Agent Runtime Tools — advanced operations', () => {
 
     assert.strictEqual(result.success, true);
     assert.ok(result.split || result.splitPayment || result.message);
+  });
+
+  it('agent_create_split_deal defaults to the settlement payment config', async () => {
+    await createAgent('NativeSplitBot', { startingBalance: 1000 });
+    const rt = _getRuntimeRegistry().get('NativeSplitBot');
+    rt.settlement = {
+      chainId: 'zcash',
+      isSimulation: true,
+      getBalance: async () => ({ balance: '5.0', symbol: 'ZEC' }),
+      getAddress: async () => 'u1splitbot',
+    };
+
+    const result = await invoke('agent_create_split_deal', {
+      payerName: 'NativeSplitBot',
+      totalAmount: 0.5,
+      recipients: [
+        { address: 'u1alice', percentage: 50, percent: 50 },
+        { address: 'u1bob', percentage: 50, percent: 50 },
+      ],
+      memo: 'Shielded revenue split',
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.split.asset, 'ZEC');
+    assert.strictEqual(result.split.network, 'zcash');
   });
 
   it('agent_create_split_deal without --apply returns error', async () => {
@@ -790,6 +1029,82 @@ describe('Agent Runtime Tools — advanced operations', () => {
     assert.strictEqual(result.success, true);
     assert.ok(Array.isArray(result.events));
     assert.strictEqual(typeof result.count, 'number');
+    assert.ok(result.summary);
+  });
+
+  it('agent_get_event_history filters by event type and payment rail', async () => {
+    await createAgent('HistoryFilterBot');
+    const rt = _getRuntimeRegistry().get('HistoryFilterBot');
+
+    store.createEventLog({
+      id: 'evt-zec-exceeded',
+      event_type: 'a2a_runtime.budget_exceeded',
+      agent_address: rt.walletAddress,
+      payload: {
+        type: 'balance',
+        asset: 'ZEC',
+        network: 'zcash',
+        attempted: 2,
+        limit: 1.25,
+        operation: 'subscription:create',
+      },
+      created_at: '2026-03-18T08:00:00.000Z',
+    });
+    store.createEventLog({
+      id: 'evt-btc-warning',
+      event_type: 'a2a_runtime.budget_warning',
+      agent_address: rt.walletAddress,
+      payload: {
+        type: 'daily',
+        asset: 'BTC',
+        network: 'bitcoin',
+        spent: 0.8,
+        limit: 1,
+      },
+      created_at: '2026-03-18T09:00:00.000Z',
+    });
+    store.createEventLog({
+      id: 'evt-payment',
+      event_type: 'a2a_runtime.payment_sent',
+      agent_address: rt.walletAddress,
+      payload: {
+        asset: 'BTC',
+        network: 'bitcoin',
+      },
+      created_at: '2026-03-18T10:00:00.000Z',
+    });
+
+    const result = await invoke('agent_get_event_history', {
+      name: 'HistoryFilterBot',
+      eventTypes: ['a2a_runtime.budget_exceeded', 'a2a_runtime.budget_warning'],
+      asset: 'ZEC',
+      network: 'zcash',
+      since: '2026-03-18T00:00:00.000Z',
+      limit: 10,
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.filters, {
+      eventTypes: ['a2a_runtime.budget_exceeded', 'a2a_runtime.budget_warning'],
+      since: '2026-03-18T00:00:00.000Z',
+      asset: 'ZEC',
+      network: 'zcash',
+    });
+    assert.strictEqual(result.count, 1);
+    assert.strictEqual(result.events[0].eventType, 'a2a_runtime.budget_exceeded');
+    assert.strictEqual(result.events[0].payloadObject.asset, 'ZEC');
+    assert.strictEqual(result.events[0].payloadObject.network, 'zcash');
+    assert.deepStrictEqual(result.summary.byEventType, {
+      'a2a_runtime.budget_exceeded': 1,
+    });
+    assert.deepStrictEqual(result.summary.budgetAlerts, {
+      total: 1,
+      warning: 0,
+      exceeded: 1,
+      byConstraintType: {
+        balance: 1,
+      },
+    });
   });
 
   it('agent_get_event_history returns error for non-existent agent', async () => {

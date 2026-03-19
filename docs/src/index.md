@@ -125,4 +125,4 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 4. [Compliance & Audit](advanced/compliance.md) — GDPR, SOC 2, audit trails
 5. [Testing Strategy](advanced/testing.md) — 15,300+ tests across all layers
 
-Current release: **0.8.0**
+Current release: **0.8.1**

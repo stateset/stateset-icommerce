@@ -1,13 +1,15 @@
 /**
  * StateSet iCommerce Blockchain Integration
  *
- * Provides native stablecoin payment capabilities for AI agents.
+ * Provides native blockchain payment capabilities for AI agents.
  *
  * Supports:
  * - Solana (USDC) - Fast, cheap, proven liquidity
  * - SET Chain (ssUSD) - StateSet native, yield-bearing stablecoin
  * - Base (USDC) - Coinbase L2, low fees
  * - Ethereum (USDC) - Maximum security and liquidity
+ * - Bitcoin (BTC) - Native UTXO payments
+ * - Zcash (ZEC) - Shielded payments via wallet RPC
  */
 
 // Chain configuration
@@ -16,6 +18,7 @@ export {
   getChain,
   getToken,
   getDefaultStablecoin,
+  getDefaultPaymentToken,
   getExplorerTxUrl,
   getExplorerAddressUrl,
   toSmallestUnit,
@@ -41,10 +44,11 @@ export {
   compressPublicKey,
 } from './wallet.js';
 
-// Stablecoin payments
+// Chain payments
 export {
   createPaymentIntent,
   executePayment,
+  getTransactionStatus,
   getBalance,
   hasSufficientBalance,
 } from './stablecoin.js';

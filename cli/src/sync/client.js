@@ -132,7 +132,13 @@ export class SequencerClient {
 
     const creds = this.config.getCredentials();
     if (creds.apiKey) {
-      headers['Authorization'] = `Bearer ${creds.apiKey}`;
+      // API keys with ss_ prefix go in x-api-key header;
+      // otherwise fall back to Authorization Bearer
+      if (creds.apiKey.startsWith('ss_')) {
+        headers['x-api-key'] = creds.apiKey;
+      } else {
+        headers['Authorization'] = `Bearer ${creds.apiKey}`;
+      }
     } else if (creds.jwt) {
       headers['Authorization'] = `Bearer ${creds.jwt}`;
     }

@@ -171,6 +171,10 @@ export const a2aPlatformTools = [
           z.object({
             seller: z.string().min(1),
             items: z.array(z.any()).min(1),
+            asset: z.string().optional(),
+            network: z.string().optional(),
+            message: z.string().optional(),
+            maxRounds: z.number().int().positive().optional(),
           }),
         )
         .min(1)
@@ -259,7 +263,7 @@ export const a2aPlatformTools = [
   {
     name: 'a2a_commerce_report',
     description:
-      'Generate a commerce report for an agent: volume, transactions, dispute rate, top counterparties, margin.',
+      'Generate a commerce report for an agent: per-rail volume, transactions, dispute rate, top counterparties, and margin.',
     inputSchema: {
       agentAddress: z.string().min(1).describe('Agent wallet address'),
       since: z.string().optional().describe('ISO date — report start'),

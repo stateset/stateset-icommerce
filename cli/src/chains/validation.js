@@ -1,5 +1,5 @@
 /**
- * Input Validation for Stablecoin Payments
+ * Input validation for blockchain payments.
  *
  * Validates payment parameters before execution to catch errors early.
  */
@@ -8,7 +8,7 @@ import {
   CHAINS,
   getChain,
   getToken,
-  getDefaultStablecoin,
+  getDefaultPaymentToken,
   isEd25519Chain,
   isEvmChain,
   isZcashChain,
@@ -96,13 +96,13 @@ export function validateChainId(chainId) {
 export function validateToken(chainId, tokenSymbol) {
   validateChainId(chainId);
 
-  // If no token specified, check default exists
+  // If no token specified, check a default payment asset exists
   if (!tokenSymbol) {
-    const defaultToken = getDefaultStablecoin(chainId);
+    const defaultToken = getDefaultPaymentToken(chainId);
     if (!defaultToken) {
       throw new ValidationError(
         ValidationErrorCodes.INVALID_TOKEN,
-        `No default stablecoin configured for chain ${chainId}`,
+        `No default payment token configured for chain ${chainId}`,
         { chainId },
       );
     }

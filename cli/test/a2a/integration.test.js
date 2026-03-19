@@ -220,6 +220,26 @@ describe('A2A Integration Layer', () => {
       assert.equal(summary.transactionCount, 2);
       assert.equal(summary.totalSpent, 300);
     });
+
+    it('should preserve asset and network metadata for filtered summaries', async () => {
+      await a2a.pay({
+        to: SELLER_ADDRESS,
+        amount: 0.01,
+        asset: 'BTC',
+        network: 'bitcoin',
+        memo: 'native btc payment',
+      });
+
+      const filtered = services.costAnalytics.getAgentSpendSummary(AGENT_ADDRESS, {
+        asset: 'BTC',
+        network: 'bitcoin',
+      });
+      assert.equal(filtered.transactionCount, 1);
+      assert.equal(filtered.aggregateAsset, 'BTC');
+      assert.equal(filtered.aggregateTotalsMeaningful, true);
+      assert.ok(Math.abs(filtered.totalSpent - 0.01) < 1e-12);
+      assert.ok(Math.abs(filtered.breakdownByAsset.BTC.networks.bitcoin.totalSpent - 0.01) < 1e-12);
+    });
   });
 
   // -------------------------------------------------------------------------

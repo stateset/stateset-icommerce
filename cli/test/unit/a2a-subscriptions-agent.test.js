@@ -260,6 +260,12 @@ describe('createSubscription', () => {
     assert.strictEqual(result.subscription.network, 'set_chain');
   });
 
+  it('derives BTC as the default asset for bitcoin subscriptions', async () => {
+    const result = await svc.createSubscription(validCreateParams({ network: 'bitcoin' }));
+    assert.strictEqual(result.subscription.asset, 'BTC');
+    assert.strictEqual(result.subscription.network, 'bitcoin');
+  });
+
   it('defaults to monthly billing interval', async () => {
     const result = await svc.createSubscription(validCreateParams());
     assert.strictEqual(result.subscription.billingInterval, 'monthly');
@@ -276,6 +282,14 @@ describe('createSubscription', () => {
     const storeCall = store.createSubscription.mock.calls[0].arguments[0];
     assert.strictEqual(storeCall.amount, 10_000_000);
     assert.strictEqual(storeCall.amount_decimal, 10);
+  });
+
+  it('converts amount to BTC smallest unit (8 decimals) for bitcoin subscriptions', async () => {
+    await svc.createSubscription(validCreateParams({ amount: 0.125, network: 'bitcoin' }));
+    const storeCall = store.createSubscription.mock.calls[0].arguments[0];
+    assert.strictEqual(storeCall.asset, 'BTC');
+    assert.strictEqual(storeCall.amount, 12_500_000);
+    assert.strictEqual(storeCall.amount_decimal, 0.125);
   });
 
   it('sets status to active when trialDays is 0', async () => {

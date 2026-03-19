@@ -279,6 +279,9 @@ export const TOOL_PERMISSIONS = {
 
   // Agentic Runtime
   agentic_runtime_contract: 'read',
+  agentic_tool_catalog: 'read',
+  agentic_payment_discovery: 'read',
+  agentic_prepare_payment: 'read',
   agentic_plan: 'read',
   agentic_simulate_mutation: 'read',
   agentic_replay_mutation: 'read',
@@ -510,6 +513,8 @@ export const TOOL_PERMISSIONS = {
   a2a_saga_cancel: 'write',
   a2a_cost_summary: 'read',
   a2a_cost_counterparty_breakdown: 'read',
+  a2a_cost_operation_breakdown: 'read',
+  a2a_cost_daily_trend: 'read',
   a2a_cost_anomalies: 'read',
   a2a_cost_margin_analysis: 'read',
   a2a_cost_budget_forecast: 'read',
@@ -524,6 +529,7 @@ export const TOOL_PERMISSIONS = {
   a2a_agent_performance: 'read',
   a2a_agent_tick_metrics: 'read',
   a2a_agent_lifecycle: 'read',
+  a2a_agent_alerts: 'read',
   a2a_settlement_status: 'read',
   a2a_settlement_pending: 'read',
   a2a_settlement_finality_metrics: 'read',
