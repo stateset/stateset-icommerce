@@ -310,9 +310,11 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Commerce, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, VectorSearch } = nativeBinding
+const { Commerce, Events, CommerceEventSubscription, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, X402, VectorSearch, jcsCanonicalize, domainHash, ed25519Sign, ed25519Verify, aesGcmEncrypt, aesGcmDecrypt, merkleRoot } = nativeBinding
 
 module.exports.Commerce = Commerce
+module.exports.Events = Events
+module.exports.CommerceEventSubscription = CommerceEventSubscription
 module.exports.Customers = Customers
 module.exports.Orders = Orders
 module.exports.Products = Products
@@ -344,4 +346,12 @@ module.exports.CostAccounting = CostAccounting
 module.exports.Credit = Credit
 module.exports.Backorders = Backorders
 module.exports.GeneralLedger = GeneralLedger
+module.exports.X402 = X402
 module.exports.VectorSearch = VectorSearch
+module.exports.jcsCanonicalize = jcsCanonicalize
+module.exports.domainHash = domainHash
+module.exports.ed25519Sign = ed25519Sign
+module.exports.ed25519Verify = ed25519Verify
+module.exports.aesGcmEncrypt = aesGcmEncrypt
+module.exports.aesGcmDecrypt = aesGcmDecrypt
+module.exports.merkleRoot = merkleRoot
