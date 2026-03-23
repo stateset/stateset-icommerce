@@ -7,6 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { CLI_VERSION } from '../config.js';
 import {
   DisconnectReason,
   fetchLatestBaileysVersion,
@@ -66,7 +67,7 @@ export async function createWhatsAppSocket({
     version,
     logger,
     printQRInTerminal: false,
-    browser: ['StateSet Commerce', 'CLI', '0.8.0'],
+    browser: ['StateSet Commerce', 'CLI', CLI_VERSION],
     syncFullHistory: false,
     markOnlineOnConnect: false,
   });

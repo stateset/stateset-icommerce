@@ -381,7 +381,15 @@ impl PgCustomerRepository {
 
     /// List customers (async)
     pub async fn list_async(&self, filter: CustomerFilter) -> Result<Vec<Customer>> {
-        let CustomerFilter { email, status, tag, accepts_marketing, limit, offset, after_cursor: _ } = filter;
+        let CustomerFilter {
+            email,
+            status,
+            tag,
+            accepts_marketing,
+            limit,
+            offset,
+            after_cursor: _,
+        } = filter;
 
         let mut builder = QueryBuilder::new("SELECT * FROM customers WHERE 1=1");
 
@@ -798,7 +806,15 @@ impl PgCustomerRepository {
 
     /// Count customers (async)
     pub async fn count_async(&self, filter: CustomerFilter) -> Result<u64> {
-        let CustomerFilter { email, status, tag, accepts_marketing, limit: _, offset: _, after_cursor: _ } = filter;
+        let CustomerFilter {
+            email,
+            status,
+            tag,
+            accepts_marketing,
+            limit: _,
+            offset: _,
+            after_cursor: _,
+        } = filter;
 
         let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM customers WHERE 1=1");
 

@@ -196,7 +196,7 @@ export function createBillingExecutor(store, a2aService, notificationService, op
                     pastDueCycles,
                   },
                 });
-              } catch (_notifErr) {
+              } catch {
                 // Best effort
               }
             }
@@ -297,7 +297,7 @@ export function createBillingExecutor(store, a2aService, notificationService, op
                 },
               });
               dunningsSent++;
-            } catch (_notifErr) {
+            } catch {
               // Best effort
             }
           }

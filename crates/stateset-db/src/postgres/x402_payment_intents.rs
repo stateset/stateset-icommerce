@@ -185,8 +185,7 @@ impl PgX402PaymentIntentRepository {
     fn is_unique_violation_for_constraint(error: &sqlx::Error, constraint: &str) -> bool {
         match error {
             sqlx::Error::Database(db_err) => {
-                db_err.code().as_deref() == Some("23505")
-                    && db_err.constraint() == Some(constraint)
+                db_err.code().as_deref() == Some("23505") && db_err.constraint() == Some(constraint)
             }
             _ => false,
         }

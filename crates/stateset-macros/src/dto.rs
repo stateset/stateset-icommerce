@@ -510,18 +510,16 @@ mod tests {
 
         // id should be skipped from Create and Update but present in Filter
         // Split at each struct to check field presence per DTO
-        let create_section = output_str
-            .split("struct CreateMixed")
-            .nth(1)
-            .expect("CreateMixed should exist");
-        let create_section = create_section.split("struct UpdateMixed").next().unwrap_or(create_section);
+        let create_section =
+            output_str.split("struct CreateMixed").nth(1).expect("CreateMixed should exist");
+        let create_section =
+            create_section.split("struct UpdateMixed").next().unwrap_or(create_section);
         assert!(!create_section.contains("id"), "id should be skipped in CreateMixed");
 
-        let update_section = output_str
-            .split("struct UpdateMixed")
-            .nth(1)
-            .expect("UpdateMixed should exist");
-        let update_section = update_section.split("struct MixedFilter").next().unwrap_or(update_section);
+        let update_section =
+            output_str.split("struct UpdateMixed").nth(1).expect("UpdateMixed should exist");
+        let update_section =
+            update_section.split("struct MixedFilter").next().unwrap_or(update_section);
         assert!(!update_section.contains("id"), "id should be skipped in UpdateMixed");
     }
 
@@ -540,18 +538,9 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
 
-        assert!(
-            output_str.contains("struct CreateMinimal"),
-            "should still generate the struct"
-        );
-        assert!(
-            !output_str.contains("pub id"),
-            "id should be skipped"
-        );
-        assert!(
-            !output_str.contains("pub created_at"),
-            "created_at should be skipped"
-        );
+        assert!(output_str.contains("struct CreateMinimal"), "should still generate the struct");
+        assert!(!output_str.contains("pub id"), "id should be skipped");
+        assert!(!output_str.contains("pub created_at"), "created_at should be skipped");
     }
 
     #[test]

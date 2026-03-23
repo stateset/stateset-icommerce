@@ -64,8 +64,6 @@ const VALID_ACTION_TYPES = new Set([
  * Valid action states.
  * @type {ReadonlySet<string>}
  */
-const VALID_STATUSES = new Set(['pending', 'executing', 'completed', 'failed', 'cancelled']);
-
 /**
  * Default no-op executor — returns the action payload.
  *

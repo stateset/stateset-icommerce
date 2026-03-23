@@ -416,7 +416,7 @@ export function createEventStreamService(store) {
       if (typeof payload === 'string') {
         try {
           payload = JSON.parse(payload);
-        } catch (_) {
+        } catch {
           // leave as string
         }
       }

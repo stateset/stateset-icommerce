@@ -7,6 +7,12 @@ const DEFAULT_BUFFER_CAPACITY: usize = 1000;
 const DEFAULT_BATCH_SIZE: usize = 100;
 /// Default outbox capacity for pending local events.
 const DEFAULT_OUTBOX_CAPACITY: usize = 10_000;
+/// Default number of retained push confirmations persisted in sync state.
+const DEFAULT_CONFIRMATION_CAPACITY: usize = 1000;
+
+const fn default_confirmation_capacity() -> usize {
+    DEFAULT_CONFIRMATION_CAPACITY
+}
 
 /// Configuration for the sync engine.
 ///
@@ -38,6 +44,11 @@ pub struct SyncConfig {
     pub outbox_capacity: usize,
     /// Optional durable outbox snapshot path.
     pub outbox_path: Option<String>,
+    /// Optional durable sync-state snapshot path.
+    pub state_path: Option<String>,
+    /// Maximum number of sequencer push confirmations to retain durably.
+    #[serde(default = "default_confirmation_capacity")]
+    pub confirmation_capacity: usize,
 }
 
 impl SyncConfig {
@@ -56,6 +67,8 @@ impl SyncConfig {
             batch_size: DEFAULT_BATCH_SIZE,
             outbox_capacity: DEFAULT_OUTBOX_CAPACITY,
             outbox_path: None,
+            state_path: None,
+            confirmation_capacity: DEFAULT_CONFIRMATION_CAPACITY,
         }
     }
 
@@ -87,6 +100,20 @@ impl SyncConfig {
         self
     }
 
+    /// Set the durable sync-state snapshot path.
+    #[must_use]
+    pub fn with_state_path(mut self, path: impl Into<String>) -> Self {
+        self.state_path = Some(path.into());
+        self
+    }
+
+    /// Set the retained confirmation capacity.
+    #[must_use]
+    pub const fn with_confirmation_capacity(mut self, capacity: usize) -> Self {
+        self.confirmation_capacity = capacity;
+        self
+    }
+
     /// Resolve a valid buffer capacity.
     #[must_use]
     pub fn resolved_buffer_capacity(&self) -> usize {
@@ -103,6 +130,12 @@ impl SyncConfig {
     #[must_use]
     pub fn resolved_outbox_capacity(&self) -> usize {
         self.outbox_capacity.max(1)
+    }
+
+    /// Resolve a valid confirmation retention capacity.
+    #[must_use]
+    pub fn resolved_confirmation_capacity(&self) -> usize {
+        self.confirmation_capacity.max(1)
     }
 
     /// Validate the configuration.
@@ -135,9 +168,19 @@ impl SyncConfig {
                 "outbox_capacity must be greater than 0".into(),
             ));
         }
+        if self.confirmation_capacity == 0 {
+            return Err(crate::SyncError::InvalidConfig(
+                "confirmation_capacity must be greater than 0".into(),
+            ));
+        }
         if self.outbox_path.as_ref().is_some_and(|path| path.trim().is_empty()) {
             return Err(crate::SyncError::InvalidConfig(
                 "outbox_path must not be empty when provided".into(),
+            ));
+        }
+        if self.state_path.as_ref().is_some_and(|path| path.trim().is_empty()) {
+            return Err(crate::SyncError::InvalidConfig(
+                "state_path must not be empty when provided".into(),
             ));
         }
         Ok(())
@@ -157,7 +200,9 @@ mod tests {
         assert_eq!(config.buffer_capacity, DEFAULT_BUFFER_CAPACITY);
         assert_eq!(config.batch_size, DEFAULT_BATCH_SIZE);
         assert_eq!(config.outbox_capacity, DEFAULT_OUTBOX_CAPACITY);
+        assert_eq!(config.confirmation_capacity, DEFAULT_CONFIRMATION_CAPACITY);
         assert!(config.outbox_path.is_none());
+        assert!(config.state_path.is_none());
     }
 
     #[test]
@@ -166,11 +211,15 @@ mod tests {
             .with_buffer_capacity(500)
             .with_batch_size(50)
             .with_outbox_capacity(900)
-            .with_outbox_path("/tmp/sync-outbox.json");
+            .with_outbox_path("/tmp/sync-outbox.json")
+            .with_state_path("/tmp/sync-state.json")
+            .with_confirmation_capacity(128);
         assert_eq!(config.buffer_capacity, 500);
         assert_eq!(config.batch_size, 50);
         assert_eq!(config.outbox_capacity, 900);
+        assert_eq!(config.confirmation_capacity, 128);
         assert_eq!(config.outbox_path.as_deref(), Some("/tmp/sync-outbox.json"));
+        assert_eq!(config.state_path.as_deref(), Some("/tmp/sync-state.json"));
     }
 
     #[test]
@@ -184,7 +233,9 @@ mod tests {
         assert_eq!(deserialized.buffer_capacity, config.buffer_capacity);
         assert_eq!(deserialized.batch_size, config.batch_size);
         assert_eq!(deserialized.outbox_capacity, config.outbox_capacity);
+        assert_eq!(deserialized.confirmation_capacity, config.confirmation_capacity);
         assert_eq!(deserialized.outbox_path, config.outbox_path);
+        assert_eq!(deserialized.state_path, config.state_path);
     }
 
     #[test]
@@ -213,7 +264,8 @@ mod tests {
         let bad = SyncConfig::new("agent", "tenant", "")
             .with_batch_size(0)
             .with_buffer_capacity(0)
-            .with_outbox_capacity(0);
+            .with_outbox_capacity(0)
+            .with_confirmation_capacity(0);
         assert!(bad.validate().is_err());
     }
 
@@ -223,7 +275,9 @@ mod tests {
             .with_buffer_capacity(100)
             .with_batch_size(10)
             .with_outbox_capacity(1000)
-            .with_outbox_path("/tmp/outbox.json");
+            .with_outbox_path("/tmp/outbox.json")
+            .with_state_path("/tmp/state.json")
+            .with_confirmation_capacity(64);
         assert!(ok.validate().is_ok());
     }
 }

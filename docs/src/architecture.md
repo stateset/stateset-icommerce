@@ -109,7 +109,7 @@ Each layer is independently verifiable — no layer trusts the one above it. See
 | `stateset-ffi` | Stable C ABI for bindings | `#[repr(C)]`, ABI versioning |
 | `stateset-macros` | Procedural macros | Code generation for domain models |
 | `stateset-migrations` | Database schema migrations | Checksummed, rollback support |
-| `stateset-sdk` | Facade with feature gates | Single entry point |
+| `stateset-sdk` | Facade with feature gates | Single entry point for commerce and optional sync |
 | `stateset-test-utils` | Shared test fixtures | Builder pattern, assertion macros |
 | `stateset-benches` | Criterion benchmarks | Performance regression detection |
 | `stateset-integration-tests` | Cross-crate tests | End-to-end validation |
@@ -161,7 +161,9 @@ A Next.js + TypeScript web application providing:
 When configured with a sequencer URL, iCommerce syncs commerce events for multi-agent coordination:
 
 - Events signed with Ed25519 and submitted via the [VES v1.0](security/ves.md) protocol
-- Sequencer assigns gap-free sequence numbers and issues signed receipts
+- Local event-log and outbox ordering stay provisional; only the sequencer assigns canonical distributed sequence numbers
+- Sequencer assigns gap-free sequence numbers, returns canonical acknowledgements, and issues signed receipts
+- The Rust sync layer now includes a concrete `SequencerHttpTransport`; canonical remote cursor state, latest sequencer commitment metadata, retained push confirmations, inspectable dead-lettered rejections, and core VES envelope metadata on `SyncEvent` are all preserved separately from the local outbox
 - Merkle commitments enable efficient event verification
 - See [Sequencer](trilogy/sequencer.md) for details
 

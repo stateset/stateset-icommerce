@@ -41,7 +41,7 @@ OPTIONS:
 EXAMPLES:
   stateset update
   stateset update status --json
-  stateset update apply --tag 0.8.0 --yes
+  stateset update apply --tag ${CLI_VERSION} --yes
 `;
 
 function parseTimeout(value) {

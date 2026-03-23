@@ -90,6 +90,12 @@ impl EventBuffer {
         self.buffer.iter().skip(start).collect()
     }
 
+    /// Snapshot all buffered events in FIFO order without draining them.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<SyncEvent> {
+        self.buffer.iter().cloned().collect()
+    }
+
     /// Clear the buffer.
     pub fn clear(&mut self) {
         self.buffer.clear();
@@ -224,6 +230,20 @@ mod tests {
         buffer.clear();
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
+    }
+
+    #[test]
+    fn snapshot_clones_fifo_contents_without_draining() {
+        let mut buffer = EventBuffer::new(10);
+        buffer.push(make_event("a"));
+        buffer.push(make_event("b"));
+
+        let snapshot = buffer.snapshot();
+
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].event_type, "a");
+        assert_eq!(snapshot[1].event_type, "b");
+        assert_eq!(buffer.len(), 2);
     }
 
     #[test]

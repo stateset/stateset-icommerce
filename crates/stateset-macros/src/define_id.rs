@@ -309,10 +309,7 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("Display for OrderId"),
-            "should implement Display for OrderId"
-        );
+        assert!(output_str.contains("Display for OrderId"), "should implement Display for OrderId");
     }
 
     #[test]
@@ -323,10 +320,7 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("Debug for InvoiceId"),
-            "should implement Debug for InvoiceId"
-        );
+        assert!(output_str.contains("Debug for InvoiceId"), "should implement Debug for InvoiceId");
         // Debug format includes the struct name string
         assert!(
             output_str.contains("\"InvoiceId\""),
@@ -410,10 +404,7 @@ mod tests {
         let output = derive(input);
         let output_str = output.to_string();
         assert!(output_str.contains("fn nil"), "should contain nil() method");
-        assert!(
-            output_str.contains("Uuid :: nil ()"),
-            "nil() should create a nil UUID"
-        );
+        assert!(output_str.contains("Uuid :: nil ()"), "nil() should create a nil UUID");
     }
 
     #[test]
@@ -435,14 +426,8 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("Default for TagId"),
-            "should implement Default"
-        );
-        assert!(
-            output_str.contains("Self :: new ()"),
-            "Default should call Self::new()"
-        );
+        assert!(output_str.contains("Default for TagId"), "should implement Default");
+        assert!(output_str.contains("Self :: new ()"), "Default should call Self::new()");
     }
 
     #[test]
@@ -455,10 +440,7 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("compile_error"),
-            "named-field structs must be rejected"
-        );
+        assert!(output_str.contains("compile_error"), "named-field structs must be rejected");
     }
 
     #[test]
@@ -469,10 +451,7 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("compile_error"),
-            "multi-field tuple structs must be rejected"
-        );
+        assert!(output_str.contains("compile_error"), "multi-field tuple structs must be rejected");
     }
 
     #[test]
@@ -486,10 +465,7 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("compile_error"),
-            "enums must be rejected"
-        );
+        assert!(output_str.contains("compile_error"), "enums must be rejected");
     }
 
     #[test]
@@ -500,14 +476,8 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("impl InternalId"),
-            "should generate impls for private struct"
-        );
-        assert!(
-            output_str.contains("fn new"),
-            "should still generate new() for private struct"
-        );
+        assert!(output_str.contains("impl InternalId"), "should generate impls for private struct");
+        assert!(output_str.contains("fn new"), "should still generate new() for private struct");
     }
 
     #[test]
@@ -522,9 +492,6 @@ mod tests {
             !output_str.contains("compile_error"),
             "fully-qualified uuid::Uuid path should be accepted"
         );
-        assert!(
-            output_str.contains("impl QualifiedId"),
-            "should generate impls"
-        );
+        assert!(output_str.contains("impl QualifiedId"), "should generate impls");
     }
 }

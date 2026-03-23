@@ -43,7 +43,7 @@ This creates `.stateset/sync.json` which activates Tier 2 capabilities.
 stateset-sync push
 ```
 
-Pushes all unsent events from the local outbox to the sequencer. Each event is signed with the agent's Ed25519 key before transmission.
+Pushes all unsent events from the local outbox to the sequencer. Each event is signed with the agent's Ed25519 key before transmission. If a `SyncEvent` already carries VES envelope metadata such as `command_id`, `base_version`, `source_agent_id`, or `agent_key_id`, the Rust transport forwards it instead of reconstructing it. On success, the sequencer can acknowledge each event with its canonical remote sequence number, and the Rust engine retains that local-to-canonical mapping plus any receipt handle in a bounded durable confirmation log.
 
 ### Pull — Receive Remote Events
 
@@ -82,6 +82,15 @@ Events progress through states:
 local → outbox → pushed → confirmed → anchored (Tier 3)
 ```
 
+Ordering authority:
+
+- `local` and `outbox` are provisional local states.
+- `confirmed` begins only after the sequencer assigns a canonical remote sequence number or acknowledgement.
+- Explicit non-retryable rejections are terminal for that local attempt and move the event to a dead-letter queue until an operator resolves or replays it.
+- Use canonical remote sequence numbers for replication cursors; never local outbox positions.
+- Persist remote cursor state separately from the local outbox; local FIFO position and distributed replication position are different pieces of state.
+- If the sequencer returns a continuation cursor for the next page request, keep it separate from the highest canonical sequence actually observed in pulled events.
+
 | State | Description |
 |-------|-------------|
 | `local` | Event created by a commerce operation |
@@ -115,7 +124,7 @@ Events are never sent directly. Instead, they're written to a local outbox table
 - **Durability**: Events survive process crashes
 - **Ordering**: Events are sent in the order they were created
 
-The push operation drains the outbox:
+The push operation drains the outbox. The local outbox preserves FIFO for one node, but distributed ordering is finalized only by the sequencer. When the sequencer returns per-event acknowledgements, the engine removes the acknowledged local event ids directly instead of assuming acceptance was a contiguous prefix. When the sequencer explicitly rejects a local event, `stateset-sync` keeps retryable rejections in the outbox and moves non-retryable rejections into a dead-letter queue:
 
 ```javascript
 // Under the hood
@@ -129,6 +138,15 @@ await db.transaction(async (tx) => {
 });
 // Later: stateset-sync push → sends outbox events
 ```
+
+For durable Rust sync runtimes, persist both layers explicitly:
+
+- `outbox_path` stores pending local events.
+- `state_path` stores the remote cursor, latest remote head metadata (`state_root`, `last_commitment_id`), highest acknowledged remote sequence, retained push confirmations, retained dead-letter entries, and any in-progress pull continuation cursor.
+- `confirmation_capacity` bounds how many local-to-canonical confirmations are retained after the outbox drains.
+- If `state_path` is omitted and `outbox_path` is set, `stateset-sync` derives a sibling `*.state.json` snapshot automatically.
+
+The Rust crate now also ships a concrete `SequencerHttpTransport` for the documented REST flow (`POST /api/v1/ves/events/ingest`, `GET /api/v1/events`), so the Rust path is no longer just a trait boundary. `SyncEvent` now preserves core VES envelope metadata across push and pull flows, dead-letter entries can be inspected through `dead_letter_for_event`, `dead_letters_for_command`, `dead_letters_for_entity`, `latest_dead_letter_for_command`, and `latest_dead_letter_for_entity` before operators requeue or discard them, and `SyncEngine::confirmations()` plus lookup helpers like `confirmation_for_event`, `confirmations_for_command`, `confirmations_for_entity`, `latest_confirmation_for_command`, and `latest_confirmation_for_entity` expose the retained acknowledgement log when exact receipts are available.
 
 ## Event Replay
 
@@ -157,6 +175,7 @@ This is useful for:
 stateset-sync status
 # → { lastPush: '2026-03-16T10:30:00Z', lastPull: '2026-03-16T10:30:05Z',
 #     outboxPending: 0, eventsReceived: 1547, conflicts: 0 }
+# Rust `SyncEngine::status()` also reports `caught_up`, `next_pull_cursor`, and `retained_confirmations` for pagination-aware health checks.
 
 # View sync history
 stateset-sync history --limit 20

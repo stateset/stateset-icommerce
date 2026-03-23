@@ -310,7 +310,7 @@ export const a2aPlatformTools = [
         .describe('X-StateSet-Timestamp header for replay protection'),
     },
     permission: 'read',
-    handler: async ({ commerce, params }) => {
+    handler: async ({ commerce: _commerce, params }) => {
       let verify;
       try {
         const mod = await import('../a2a/webhook-verify.js');

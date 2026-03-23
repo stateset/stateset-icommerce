@@ -16,11 +16,14 @@
 #![allow(clippy::too_many_arguments)]
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::marker::Ungil;
 use pyo3::prelude::*;
 use rust_decimal::Decimal;
 // Use :: prefix to refer to the external crate, not the pymodule
 use ::stateset_embedded::Commerce as RustCommerce;
 use stateset_primitives::CurrencyCode;
+use stateset_sdk::sync::SyncEvent as RustSyncEvent;
+use stateset_sdk::{SyncRuntime as RustSyncRuntime, SyncRuntimeConfig as RustSyncRuntimeConfig};
 use std::sync::{Arc, Mutex};
 
 fn decimal_from_f64(value: f64, field: &str) -> PyResult<Decimal> {
@@ -84,6 +87,46 @@ where
     U: TryFrom<T, Error = PyErr>,
 {
     values.into_iter().map(convert_output).collect()
+}
+
+fn sync_runtime_error<E>(context: &str, error: E) -> PyErr
+where
+    E: std::fmt::Display,
+{
+    PyRuntimeError::new_err(format!("{context}: {error}"))
+}
+
+fn serialize_json<T>(value: &T, label: &str) -> PyResult<String>
+where
+    T: serde::Serialize,
+{
+    serde_json::to_string(value)
+        .map_err(|error| PyRuntimeError::new_err(format!("Failed to serialize {label}: {error}")))
+}
+
+fn serialize_json_pretty<T>(value: &T, label: &str) -> PyResult<String>
+where
+    T: serde::Serialize,
+{
+    serde_json::to_string_pretty(value)
+        .map_err(|error| PyRuntimeError::new_err(format!("Failed to serialize {label}: {error}")))
+}
+
+fn parse_json_value(value: &str, field: &str) -> PyResult<serde_json::Value> {
+    serde_json::from_str(value)
+        .map_err(|error| PyValueError::new_err(format!("Invalid {field} JSON: {error}")))
+}
+
+fn parse_uuid_str(value: &str, field: &str) -> PyResult<uuid::Uuid> {
+    value.parse().map_err(|error| PyValueError::new_err(format!("Invalid {field} UUID: {error}")))
+}
+
+fn json_value_to_string(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
+fn sync_sequence_authority_name(event: &RustSyncEvent) -> &'static str {
+    if event.is_canonical_remote() { "canonical_remote" } else { "local_outbox" }
 }
 
 // ============================================================================
@@ -11293,6 +11336,873 @@ impl VectorSearch {
 }
 
 // ============================================================================
+// Sync Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncEvent {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    sequence: u64,
+    #[pyo3(get)]
+    sequence_authority: String,
+    #[pyo3(get)]
+    canonical_sequence: Option<u64>,
+    #[pyo3(get)]
+    local_sequence: Option<u64>,
+    #[pyo3(get)]
+    event_type: String,
+    #[pyo3(get)]
+    entity_type: String,
+    #[pyo3(get)]
+    entity_id: String,
+    #[pyo3(get)]
+    payload_json: String,
+    #[pyo3(get)]
+    hash: String,
+    #[pyo3(get)]
+    signature: Option<String>,
+    #[pyo3(get)]
+    command_id: Option<String>,
+    #[pyo3(get)]
+    base_version: Option<u64>,
+    #[pyo3(get)]
+    source_agent_id: Option<String>,
+    #[pyo3(get)]
+    agent_key_id: Option<u32>,
+    #[pyo3(get)]
+    timestamp: String,
+}
+
+#[pymethods]
+impl SyncEvent {
+    fn __repr__(&self) -> String {
+        format!(
+            "SyncEvent(event_type='{}', entity_type='{}', entity_id='{}', sequence={})",
+            self.event_type, self.entity_type, self.entity_id, self.sequence
+        )
+    }
+}
+
+impl From<&RustSyncEvent> for SyncEvent {
+    fn from(event: &RustSyncEvent) -> Self {
+        Self {
+            id: event.id.to_string(),
+            sequence: event.sequence,
+            sequence_authority: sync_sequence_authority_name(event).to_string(),
+            canonical_sequence: event.canonical_sequence(),
+            local_sequence: event.local_sequence(),
+            event_type: event.event_type.clone(),
+            entity_type: event.entity_type.clone(),
+            entity_id: event.entity_id.clone(),
+            payload_json: json_value_to_string(&event.payload),
+            hash: event.hash.clone(),
+            signature: event.signature.clone(),
+            command_id: event.command_id.clone(),
+            base_version: event.base_version,
+            source_agent_id: event.source_agent_id.clone(),
+            agent_key_id: event.agent_key_id,
+            timestamp: event.timestamp.to_rfc3339(),
+        }
+    }
+}
+
+impl From<RustSyncEvent> for SyncEvent {
+    fn from(event: RustSyncEvent) -> Self {
+        Self::from(&event)
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncStatus {
+    #[pyo3(get)]
+    initialized: bool,
+    #[pyo3(get)]
+    local_head: u64,
+    #[pyo3(get)]
+    remote_head: u64,
+    #[pyo3(get)]
+    remote_state_root: Option<String>,
+    #[pyo3(get)]
+    last_commitment_id: Option<String>,
+    #[pyo3(get)]
+    remote_cursor: u64,
+    #[pyo3(get)]
+    next_pull_cursor: Option<u64>,
+    #[pyo3(get)]
+    last_acknowledged_remote_sequence: Option<u64>,
+    #[pyo3(get)]
+    pending: usize,
+    #[pyo3(get)]
+    dead_letters: usize,
+    #[pyo3(get)]
+    retained_confirmations: usize,
+    #[pyo3(get)]
+    lag: u64,
+    #[pyo3(get)]
+    caught_up: bool,
+    #[pyo3(get)]
+    last_push: Option<String>,
+    #[pyo3(get)]
+    last_pull: Option<String>,
+    #[pyo3(get)]
+    buffered_events: usize,
+}
+
+#[pymethods]
+impl SyncStatus {
+    fn __repr__(&self) -> String {
+        format!(
+            "SyncStatus(local_head={}, remote_head={}, pending={}, lag={})",
+            self.local_head, self.remote_head, self.pending, self.lag
+        )
+    }
+}
+
+impl From<stateset_sdk::sync::SyncStatus> for SyncStatus {
+    fn from(status: stateset_sdk::sync::SyncStatus) -> Self {
+        Self {
+            initialized: status.initialized,
+            local_head: status.local_head,
+            remote_head: status.remote_head,
+            remote_state_root: status.remote_state_root,
+            last_commitment_id: status.last_commitment_id,
+            remote_cursor: status.remote_cursor,
+            next_pull_cursor: status.next_pull_cursor,
+            last_acknowledged_remote_sequence: status.last_acknowledged_remote_sequence,
+            pending: status.pending,
+            dead_letters: status.dead_letters,
+            retained_confirmations: status.retained_confirmations,
+            lag: status.lag,
+            caught_up: status.caught_up,
+            last_push: status.last_push.map(|value| value.to_rfc3339()),
+            last_pull: status.last_pull.map(|value| value.to_rfc3339()),
+            buffered_events: status.buffered_events,
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncRemoteHead {
+    #[pyo3(get)]
+    remote_head: u64,
+    #[pyo3(get)]
+    state_root: Option<String>,
+    #[pyo3(get)]
+    last_commitment_id: Option<String>,
+}
+
+impl From<stateset_sdk::sync::RemoteHead> for SyncRemoteHead {
+    fn from(head: stateset_sdk::sync::RemoteHead) -> Self {
+        Self {
+            remote_head: head.remote_head,
+            state_root: head.state_root,
+            last_commitment_id: head.last_commitment_id,
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncAcknowledgement {
+    #[pyo3(get)]
+    event_id: String,
+    #[pyo3(get)]
+    remote_sequence: u64,
+    #[pyo3(get)]
+    receipt: Option<String>,
+}
+
+impl From<&stateset_sdk::sync::PushAcknowledgement> for SyncAcknowledgement {
+    fn from(acknowledgement: &stateset_sdk::sync::PushAcknowledgement) -> Self {
+        Self {
+            event_id: acknowledgement.event_id.to_string(),
+            remote_sequence: acknowledgement.remote_sequence,
+            receipt: acknowledgement.receipt.clone(),
+        }
+    }
+}
+
+impl From<stateset_sdk::sync::PushAcknowledgement> for SyncAcknowledgement {
+    fn from(acknowledgement: stateset_sdk::sync::PushAcknowledgement) -> Self {
+        Self::from(&acknowledgement)
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncRejection {
+    #[pyo3(get)]
+    event_id: String,
+    #[pyo3(get)]
+    code: Option<String>,
+    #[pyo3(get)]
+    reason: Option<String>,
+    #[pyo3(get)]
+    retryable: Option<bool>,
+}
+
+impl From<&stateset_sdk::sync::PushRejection> for SyncRejection {
+    fn from(rejection: &stateset_sdk::sync::PushRejection) -> Self {
+        Self {
+            event_id: rejection.event_id.to_string(),
+            code: rejection.code.clone(),
+            reason: rejection.reason.clone(),
+            retryable: rejection.retryable,
+        }
+    }
+}
+
+impl From<stateset_sdk::sync::PushRejection> for SyncRejection {
+    fn from(rejection: stateset_sdk::sync::PushRejection) -> Self {
+        Self::from(&rejection)
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncPushResult {
+    #[pyo3(get)]
+    accepted: usize,
+    #[pyo3(get)]
+    remote_head: u64,
+    #[pyo3(get)]
+    acknowledged_head: Option<u64>,
+    #[pyo3(get)]
+    acknowledgements: Vec<SyncAcknowledgement>,
+    #[pyo3(get)]
+    rejections: Vec<SyncRejection>,
+}
+
+impl From<stateset_sdk::sync::PushResult> for SyncPushResult {
+    fn from(result: stateset_sdk::sync::PushResult) -> Self {
+        let acknowledged_head = result.acknowledged_head();
+        Self {
+            accepted: result.accepted,
+            remote_head: result.remote_head,
+            acknowledged_head,
+            acknowledgements: result
+                .acknowledgements
+                .into_iter()
+                .map(SyncAcknowledgement::from)
+                .collect(),
+            rejections: result.rejections.into_iter().map(SyncRejection::from).collect(),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncConfirmation {
+    #[pyo3(get)]
+    event_id: String,
+    #[pyo3(get)]
+    command_id: Option<String>,
+    #[pyo3(get)]
+    event_type: String,
+    #[pyo3(get)]
+    entity_type: String,
+    #[pyo3(get)]
+    entity_id: String,
+    #[pyo3(get)]
+    local_sequence: Option<u64>,
+    #[pyo3(get)]
+    remote_sequence: u64,
+    #[pyo3(get)]
+    hash: String,
+    #[pyo3(get)]
+    receipt: Option<String>,
+    #[pyo3(get)]
+    confirmed_at: String,
+}
+
+impl From<&stateset_sdk::sync::PushConfirmation> for SyncConfirmation {
+    fn from(confirmation: &stateset_sdk::sync::PushConfirmation) -> Self {
+        Self {
+            event_id: confirmation.event_id.to_string(),
+            command_id: confirmation.command_id.clone(),
+            event_type: confirmation.event_type.clone(),
+            entity_type: confirmation.entity_type.clone(),
+            entity_id: confirmation.entity_id.clone(),
+            local_sequence: confirmation.local_sequence,
+            remote_sequence: confirmation.remote_sequence,
+            hash: confirmation.hash.clone(),
+            receipt: confirmation.receipt.clone(),
+            confirmed_at: confirmation.confirmed_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<stateset_sdk::sync::PushConfirmation> for SyncConfirmation {
+    fn from(confirmation: stateset_sdk::sync::PushConfirmation) -> Self {
+        Self::from(&confirmation)
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncDeadLetter {
+    #[pyo3(get)]
+    event: SyncEvent,
+    #[pyo3(get)]
+    rejection: SyncRejection,
+    #[pyo3(get)]
+    rejected_at: String,
+}
+
+impl From<&stateset_sdk::sync::DeadLetter> for SyncDeadLetter {
+    fn from(dead_letter: &stateset_sdk::sync::DeadLetter) -> Self {
+        Self {
+            event: SyncEvent::from(&dead_letter.event),
+            rejection: SyncRejection::from(&dead_letter.rejection),
+            rejected_at: dead_letter.rejected_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<stateset_sdk::sync::DeadLetter> for SyncDeadLetter {
+    fn from(dead_letter: stateset_sdk::sync::DeadLetter) -> Self {
+        Self::from(&dead_letter)
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncPullResult {
+    #[pyo3(get)]
+    events: Vec<SyncEvent>,
+    #[pyo3(get)]
+    remote_head: u64,
+    #[pyo3(get)]
+    has_more: bool,
+}
+
+impl From<stateset_sdk::sync::PullResult> for SyncPullResult {
+    fn from(result: stateset_sdk::sync::PullResult) -> Self {
+        Self {
+            events: result.events.into_iter().map(SyncEvent::from).collect(),
+            remote_head: result.remote_head,
+            has_more: result.has_more,
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncSnapshot {
+    #[pyo3(get)]
+    status: SyncStatus,
+    #[pyo3(get)]
+    confirmations: Vec<SyncConfirmation>,
+    #[pyo3(get)]
+    dead_letters: Vec<SyncDeadLetter>,
+    #[pyo3(get)]
+    buffered_events: Vec<SyncEvent>,
+}
+
+impl From<stateset_sdk::SyncRuntimeSnapshot> for SyncSnapshot {
+    fn from(snapshot: stateset_sdk::SyncRuntimeSnapshot) -> Self {
+        Self {
+            status: SyncStatus::from(snapshot.status),
+            confirmations: snapshot.confirmations.into_iter().map(SyncConfirmation::from).collect(),
+            dead_letters: snapshot.dead_letters.into_iter().map(SyncDeadLetter::from).collect(),
+            buffered_events: snapshot.buffered_events.into_iter().map(SyncEvent::from).collect(),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SyncFullSyncResult {
+    #[pyo3(get)]
+    push: SyncPushResult,
+    #[pyo3(get)]
+    pull: SyncPullResult,
+}
+
+// ============================================================================
+// Sync Runtime
+// ============================================================================
+
+/// Sync runtime for pushing local events to a remote sequencer and pulling
+/// canonical remote events back into the local buffer.
+///
+/// Construct from a serialized `SyncRuntimeConfig` JSON document, or use
+/// `from_file` / `from_env` for file and environment-backed config loading.
+#[pyclass]
+pub struct SyncRuntime {
+    inner: Arc<Mutex<RustSyncRuntime>>,
+}
+
+impl SyncRuntime {
+    fn from_runtime_config(config: RustSyncRuntimeConfig) -> PyResult<Self> {
+        let runtime = RustSyncRuntime::from_runtime_config(config)
+            .map_err(|error| sync_runtime_error("Failed to initialize sync runtime", error))?;
+        Ok(Self { inner: Arc::new(Mutex::new(runtime)) })
+    }
+
+    fn with_runtime<T>(&self, f: impl FnOnce(&RustSyncRuntime) -> PyResult<T>) -> PyResult<T> {
+        let runtime = self
+            .inner
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        f(&runtime)
+    }
+
+    fn with_runtime_mut<T>(
+        &self,
+        f: impl FnOnce(&mut RustSyncRuntime) -> PyResult<T>,
+    ) -> PyResult<T> {
+        let mut runtime = self
+            .inner
+            .lock()
+            .map_err(|error| PyRuntimeError::new_err(format!("Lock error: {error}")))?;
+        f(&mut runtime)
+    }
+
+    fn status_snapshot(&self) -> PyResult<stateset_sdk::sync::SyncStatus> {
+        self.with_runtime(|runtime| Ok(runtime.status()))
+    }
+
+    fn run_async<T, F>(&self, py: Python<'_>, context: &str, f: F) -> PyResult<T>
+    where
+        F: FnOnce(
+                &mut RustSyncRuntime,
+                &tokio::runtime::Runtime,
+            ) -> Result<T, stateset_sdk::sync::SyncError>
+            + Ungil
+            + Send,
+        T: Ungil + Send,
+    {
+        let context = context.to_string();
+        py.allow_threads(move || {
+            let mut runtime = self.inner.lock().map_err(|error| format!("Lock error: {error}"))?;
+            let executor = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| format!("Failed to initialize async runtime: {error}"))?;
+            f(&mut runtime, &executor).map_err(|error| format!("{context}: {error}"))
+        })
+        .map_err(PyRuntimeError::new_err)
+    }
+}
+
+#[pymethods]
+impl SyncRuntime {
+    /// Create a sync runtime from a JSON-serialized `SyncRuntimeConfig`.
+    #[new]
+    fn new(config_json: String) -> PyResult<Self> {
+        let config = RustSyncRuntimeConfig::from_json_str(&config_json)
+            .map_err(|error| sync_runtime_error("Failed to parse sync runtime config", error))?;
+        Self::from_runtime_config(config)
+    }
+
+    /// Create a sync runtime from a JSON config file.
+    #[staticmethod]
+    fn from_file(path: String) -> PyResult<Self> {
+        let config = RustSyncRuntimeConfig::from_file(&path)
+            .map_err(|error| sync_runtime_error("Failed to load sync runtime config", error))?;
+        Self::from_runtime_config(config)
+    }
+
+    /// Create a sync runtime from environment variables.
+    ///
+    /// Uses `STATESET_SYNC_` by default, or a custom prefix when provided.
+    #[staticmethod]
+    #[pyo3(signature = (prefix=None))]
+    fn from_env(prefix: Option<String>) -> PyResult<Self> {
+        let config = if let Some(prefix) = prefix {
+            RustSyncRuntimeConfig::from_env_prefixed(&prefix)
+        } else {
+            RustSyncRuntimeConfig::from_env()
+        }
+        .map_err(|error| sync_runtime_error("Failed to load sync runtime config", error))?;
+        Self::from_runtime_config(config)
+    }
+
+    /// Record a new local event from basic Python-friendly inputs.
+    #[pyo3(signature = (event_type, entity_type, entity_id, payload_json, command_id=None, base_version=None, source_agent_id=None, agent_key_id=None, signature=None))]
+    fn record(
+        &self,
+        event_type: String,
+        entity_type: String,
+        entity_id: String,
+        payload_json: String,
+        command_id: Option<String>,
+        base_version: Option<u64>,
+        source_agent_id: Option<String>,
+        agent_key_id: Option<u32>,
+        signature: Option<String>,
+    ) -> PyResult<u64> {
+        let payload = parse_json_value(&payload_json, "payload")?;
+        let mut event = RustSyncEvent::new(event_type, entity_type, entity_id, payload);
+        if let Some(command_id) = command_id {
+            event = event.with_command_id(command_id);
+        }
+        if let Some(base_version) = base_version {
+            event = event.with_base_version(base_version);
+        }
+        if let Some(source_agent_id) = source_agent_id {
+            event = event.with_source_agent_id(source_agent_id);
+        }
+        if let Some(agent_key_id) = agent_key_id {
+            event = event.with_agent_key_id(agent_key_id);
+        }
+        if let Some(signature) = signature {
+            event = event.with_signature(signature);
+        }
+        self.with_runtime_mut(|runtime| {
+            runtime
+                .record(event)
+                .map_err(|error| sync_runtime_error("Failed to record sync event", error))
+        })
+    }
+
+    /// Record a full JSON-serialized `SyncEvent`.
+    fn record_event_json(&self, event_json: String) -> PyResult<u64> {
+        let event: RustSyncEvent = serde_json::from_str(&event_json)
+            .map_err(|error| PyValueError::new_err(format!("Invalid sync event JSON: {error}")))?;
+        self.with_runtime_mut(|runtime| {
+            runtime
+                .record(event)
+                .map_err(|error| sync_runtime_error("Failed to record sync event", error))
+        })
+    }
+
+    fn status(&self) -> PyResult<SyncStatus> {
+        Ok(SyncStatus::from(self.status_snapshot()?))
+    }
+
+    fn snapshot(&self) -> PyResult<SyncSnapshot> {
+        self.with_runtime(|runtime| Ok(SyncSnapshot::from(runtime.snapshot())))
+    }
+
+    fn confirmations(&self) -> PyResult<Vec<SyncConfirmation>> {
+        self.with_runtime(|runtime| {
+            Ok(runtime.confirmations().iter().map(SyncConfirmation::from).collect())
+        })
+    }
+
+    fn confirmation_for_event(&self, event_id: String) -> PyResult<Option<SyncConfirmation>> {
+        let event_id = parse_uuid_str(&event_id, "event_id")?;
+        self.with_runtime(|runtime| {
+            Ok(runtime.confirmation_for_event(event_id).map(SyncConfirmation::from))
+        })
+    }
+
+    fn drain_confirmations(&self) -> PyResult<Vec<SyncConfirmation>> {
+        self.with_runtime_mut(|runtime| {
+            let confirmations = runtime
+                .drain_confirmations()
+                .map_err(|error| sync_runtime_error("Failed to drain confirmations", error))?;
+            Ok(confirmations.into_iter().map(SyncConfirmation::from).collect())
+        })
+    }
+
+    fn dead_letters(&self) -> PyResult<Vec<SyncDeadLetter>> {
+        self.with_runtime(|runtime| {
+            Ok(runtime.dead_letters().iter().map(SyncDeadLetter::from).collect())
+        })
+    }
+
+    fn dead_letter_for_event(&self, event_id: String) -> PyResult<Option<SyncDeadLetter>> {
+        let event_id = parse_uuid_str(&event_id, "event_id")?;
+        self.with_runtime(|runtime| {
+            Ok(runtime.dead_letter_for_event(event_id).map(SyncDeadLetter::from))
+        })
+    }
+
+    fn discard_dead_letter(&self, event_id: String) -> PyResult<SyncDeadLetter> {
+        let event_id = parse_uuid_str(&event_id, "event_id")?;
+        self.with_runtime_mut(|runtime| {
+            let dead_letter = runtime
+                .discard_dead_letter(event_id)
+                .map_err(|error| sync_runtime_error("Failed to discard dead letter", error))?;
+            Ok(SyncDeadLetter::from(dead_letter))
+        })
+    }
+
+    fn drain_dead_letters(&self) -> PyResult<Vec<SyncDeadLetter>> {
+        self.with_runtime_mut(|runtime| {
+            let dead_letters = runtime
+                .drain_dead_letters()
+                .map_err(|error| sync_runtime_error("Failed to drain dead letters", error))?;
+            Ok(dead_letters.into_iter().map(SyncDeadLetter::from).collect())
+        })
+    }
+
+    fn buffered_events(&self) -> PyResult<Vec<SyncEvent>> {
+        self.with_runtime(|runtime| {
+            Ok(runtime.engine().buffered_events().into_iter().map(SyncEvent::from).collect())
+        })
+    }
+
+    fn drain_buffer(&self) -> PyResult<Vec<SyncEvent>> {
+        self.with_runtime_mut(|runtime| {
+            Ok(runtime.drain_buffer().into_iter().map(SyncEvent::from).collect())
+        })
+    }
+
+    fn refresh_remote_head(&self, py: Python<'_>) -> PyResult<SyncRemoteHead> {
+        let head = self.run_async(py, "Failed to refresh remote head", |runtime, executor| {
+            executor.block_on(runtime.refresh_remote_head())
+        })?;
+        Ok(SyncRemoteHead::from(head))
+    }
+
+    fn push(&self, py: Python<'_>) -> PyResult<SyncPushResult> {
+        let result = self.run_async(py, "Failed to push sync events", |runtime, executor| {
+            executor.block_on(runtime.push())
+        })?;
+        Ok(SyncPushResult::from(result))
+    }
+
+    fn pull(&self, py: Python<'_>) -> PyResult<SyncPullResult> {
+        let result = self.run_async(py, "Failed to pull sync events", |runtime, executor| {
+            executor.block_on(runtime.pull())
+        })?;
+        Ok(SyncPullResult::from(result))
+    }
+
+    fn full_sync(&self, py: Python<'_>) -> PyResult<SyncFullSyncResult> {
+        let (push, pull) =
+            self.run_async(py, "Failed to perform full sync", |runtime, executor| {
+                executor.block_on(runtime.full_sync())
+            })?;
+        Ok(SyncFullSyncResult {
+            push: SyncPushResult::from(push),
+            pull: SyncPullResult::from(pull),
+        })
+    }
+
+    /// Serialize the current sync status as JSON.
+    fn status_json(&self) -> PyResult<String> {
+        serialize_json(&self.status_snapshot()?, "sync status")
+    }
+
+    /// Serialize the full runtime snapshot as JSON.
+    #[pyo3(signature = (pretty=false))]
+    fn snapshot_json(&self, pretty: bool) -> PyResult<String> {
+        let snapshot = self.with_runtime(|runtime| Ok(runtime.snapshot()))?;
+        if pretty {
+            serialize_json_pretty(&snapshot, "sync snapshot")
+        } else {
+            serialize_json(&snapshot, "sync snapshot")
+        }
+    }
+
+    /// Serialize retained confirmations as JSON.
+    fn confirmations_json(&self) -> PyResult<String> {
+        self.with_runtime(|runtime| serialize_json(&runtime.confirmations(), "confirmations"))
+    }
+
+    /// Serialize a retained confirmation for one event id as JSON.
+    fn confirmation_for_event_json(&self, event_id: String) -> PyResult<String> {
+        let event_id = parse_uuid_str(&event_id, "event_id")?;
+        self.with_runtime(|runtime| {
+            serialize_json(&runtime.confirmation_for_event(event_id), "confirmation lookup")
+        })
+    }
+
+    /// Drain retained confirmations and serialize them as JSON.
+    fn drain_confirmations_json(&self) -> PyResult<String> {
+        self.with_runtime_mut(|runtime| {
+            let confirmations = runtime
+                .drain_confirmations()
+                .map_err(|error| sync_runtime_error("Failed to drain confirmations", error))?;
+            serialize_json(&confirmations, "drained confirmations")
+        })
+    }
+
+    /// Serialize retained dead letters as JSON.
+    fn dead_letters_json(&self) -> PyResult<String> {
+        self.with_runtime(|runtime| serialize_json(&runtime.dead_letters(), "dead letters"))
+    }
+
+    /// Serialize a retained dead letter for one event id as JSON.
+    fn dead_letter_for_event_json(&self, event_id: String) -> PyResult<String> {
+        let event_id = parse_uuid_str(&event_id, "event_id")?;
+        self.with_runtime(|runtime| {
+            serialize_json(&runtime.dead_letter_for_event(event_id), "dead-letter lookup")
+        })
+    }
+
+    /// Requeue a dead-lettered event back into the local outbox.
+    fn requeue_dead_letter(&self, event_id: String) -> PyResult<u64> {
+        let event_id = parse_uuid_str(&event_id, "event_id")?;
+        self.with_runtime_mut(|runtime| {
+            runtime
+                .requeue_dead_letter(event_id)
+                .map_err(|error| sync_runtime_error("Failed to requeue dead letter", error))
+        })
+    }
+
+    /// Discard a dead-lettered event and serialize the removed record as JSON.
+    fn discard_dead_letter_json(&self, event_id: String) -> PyResult<String> {
+        let event_id = parse_uuid_str(&event_id, "event_id")?;
+        self.with_runtime_mut(|runtime| {
+            let dead_letter = runtime
+                .discard_dead_letter(event_id)
+                .map_err(|error| sync_runtime_error("Failed to discard dead letter", error))?;
+            serialize_json(&dead_letter, "discarded dead letter")
+        })
+    }
+
+    /// Drain retained dead letters and serialize them as JSON.
+    fn drain_dead_letters_json(&self) -> PyResult<String> {
+        self.with_runtime_mut(|runtime| {
+            let dead_letters = runtime
+                .drain_dead_letters()
+                .map_err(|error| sync_runtime_error("Failed to drain dead letters", error))?;
+            serialize_json(&dead_letters, "drained dead letters")
+        })
+    }
+
+    /// Serialize buffered pulled events as JSON.
+    fn buffered_events_json(&self) -> PyResult<String> {
+        self.with_runtime(|runtime| {
+            serialize_json(&runtime.engine().buffered_events(), "buffered events")
+        })
+    }
+
+    /// Drain buffered pulled events and serialize them as JSON.
+    fn drain_buffer_json(&self) -> PyResult<String> {
+        self.with_runtime_mut(|runtime| {
+            let events = runtime.drain_buffer();
+            serialize_json(&events, "drained buffered events")
+        })
+    }
+
+    /// Probe the remote sequencer health endpoint.
+    fn healthcheck(&self, py: Python<'_>) -> PyResult<bool> {
+        self.run_async(py, "Healthcheck failed", |runtime, executor| {
+            executor.block_on(runtime.healthcheck()).map(|_| true)
+        })
+    }
+
+    /// Refresh the known remote head and serialize it as JSON.
+    fn refresh_remote_head_json(&self, py: Python<'_>) -> PyResult<String> {
+        let head = self.run_async(py, "Failed to refresh remote head", |runtime, executor| {
+            executor.block_on(runtime.refresh_remote_head())
+        })?;
+        serialize_json(&head, "remote head")
+    }
+
+    /// Push pending local events and serialize the result as JSON.
+    fn push_json(&self, py: Python<'_>) -> PyResult<String> {
+        let result = self.run_async(py, "Failed to push sync events", |runtime, executor| {
+            executor.block_on(runtime.push())
+        })?;
+        serialize_json(&result, "push result")
+    }
+
+    /// Pull remote events and serialize the result as JSON.
+    fn pull_json(&self, py: Python<'_>) -> PyResult<String> {
+        let result = self.run_async(py, "Failed to pull sync events", |runtime, executor| {
+            executor.block_on(runtime.pull())
+        })?;
+        serialize_json(&result, "pull result")
+    }
+
+    /// Perform a push followed by a pull and serialize the combined result as JSON.
+    fn full_sync_json(&self, py: Python<'_>) -> PyResult<String> {
+        let (push, pull) =
+            self.run_async(py, "Failed to perform full sync", |runtime, executor| {
+                executor.block_on(runtime.full_sync())
+            })?;
+        serialize_json(&serde_json::json!({ "push": push, "pull": pull }), "full sync result")
+    }
+
+    /// Whether the runtime is initialized.
+    #[getter]
+    fn initialized(&self) -> PyResult<bool> {
+        Ok(self.status_snapshot()?.initialized)
+    }
+
+    /// Whether the runtime has no pending events and has observed the known remote head.
+    #[getter]
+    fn caught_up(&self) -> PyResult<bool> {
+        Ok(self.status_snapshot()?.caught_up)
+    }
+
+    /// Current local outbox head sequence.
+    #[getter]
+    fn local_head(&self) -> PyResult<u64> {
+        Ok(self.status_snapshot()?.local_head)
+    }
+
+    /// Current known remote head sequence.
+    #[getter]
+    fn remote_head(&self) -> PyResult<u64> {
+        Ok(self.status_snapshot()?.remote_head)
+    }
+
+    /// Current observed canonical remote cursor.
+    #[getter]
+    fn remote_cursor(&self) -> PyResult<u64> {
+        Ok(self.status_snapshot()?.remote_cursor)
+    }
+
+    /// Current next-pull continuation cursor, if present.
+    #[getter]
+    fn next_pull_cursor(&self) -> PyResult<Option<u64>> {
+        Ok(self.status_snapshot()?.next_pull_cursor)
+    }
+
+    /// Current known remote state root, if present.
+    #[getter]
+    fn remote_state_root(&self) -> PyResult<Option<String>> {
+        Ok(self.status_snapshot()?.remote_state_root)
+    }
+
+    /// Current known remote commitment id, if present.
+    #[getter]
+    fn last_commitment_id(&self) -> PyResult<Option<String>> {
+        Ok(self.status_snapshot()?.last_commitment_id)
+    }
+
+    /// Latest canonical remote sequence acknowledged for a local push, if present.
+    #[getter]
+    fn last_acknowledged_remote_sequence(&self) -> PyResult<Option<u64>> {
+        Ok(self.status_snapshot()?.last_acknowledged_remote_sequence)
+    }
+
+    /// Canonical lag between the known remote head and the local pull cursor.
+    #[getter]
+    fn lag(&self) -> PyResult<u64> {
+        Ok(self.status_snapshot()?.lag)
+    }
+
+    /// Number of pending local events.
+    #[getter]
+    fn pending_count(&self) -> PyResult<usize> {
+        self.with_runtime(|runtime| Ok(runtime.pending_count()))
+    }
+
+    /// Number of retained confirmations.
+    #[getter]
+    fn confirmation_count(&self) -> PyResult<usize> {
+        self.with_runtime(|runtime| Ok(runtime.confirmation_count()))
+    }
+
+    /// Number of retained dead letters.
+    #[getter]
+    fn dead_letter_count(&self) -> PyResult<usize> {
+        self.with_runtime(|runtime| Ok(runtime.dead_letter_count()))
+    }
+
+    /// Number of buffered pulled events.
+    #[getter]
+    fn buffered_count(&self) -> PyResult<usize> {
+        self.with_runtime(|runtime| Ok(runtime.buffered_count()))
+    }
+}
+
+// ============================================================================
 // Module Definition
 // ============================================================================
 
@@ -11301,6 +12211,18 @@ impl VectorSearch {
 fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core
     m.add_class::<Commerce>()?;
+    m.add_class::<SyncRuntime>()?;
+    m.add_class::<SyncEvent>()?;
+    m.add_class::<SyncStatus>()?;
+    m.add_class::<SyncRemoteHead>()?;
+    m.add_class::<SyncAcknowledgement>()?;
+    m.add_class::<SyncRejection>()?;
+    m.add_class::<SyncPushResult>()?;
+    m.add_class::<SyncConfirmation>()?;
+    m.add_class::<SyncDeadLetter>()?;
+    m.add_class::<SyncPullResult>()?;
+    m.add_class::<SyncSnapshot>()?;
+    m.add_class::<SyncFullSyncResult>()?;
 
     // Customers
     m.add_class::<Customers>()?;

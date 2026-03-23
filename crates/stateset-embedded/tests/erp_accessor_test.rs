@@ -21,9 +21,9 @@ use stateset_embedded::{
     CreateBill,
     CreateBillItem,
     CreateCollectionActivity,
+    CreateCouponCode,
     CreateCreditAccount,
     CreateCreditMemo,
-    CreateCouponCode,
     CreateCustomer,
     CreateGlAccount,
     CreateGlPeriod,
@@ -254,10 +254,10 @@ fn ap_update_bill_changes_payment_terms() {
 
     let updated = commerce
         .accounts_payable()
-        .update_bill(bill.id, UpdateBill {
-            payment_terms: Some("Net 45".into()),
-            ..Default::default()
-        })
+        .update_bill(
+            bill.id,
+            UpdateBill { payment_terms: Some("Net 45".into()), ..Default::default() },
+        )
         .expect("Failed to update bill");
 
     assert_eq!(updated.payment_terms.as_deref(), Some("Net 45"));
@@ -283,10 +283,8 @@ fn ap_approve_bill_changes_status() {
 
     assert_eq!(bill.status, BillStatus::Draft);
 
-    let approved = commerce
-        .accounts_payable()
-        .approve_bill(bill.id)
-        .expect("Failed to approve bill");
+    let approved =
+        commerce.accounts_payable().approve_bill(bill.id).expect("Failed to approve bill");
 
     assert_eq!(approved.status, BillStatus::Approved);
 }
@@ -295,10 +293,8 @@ fn ap_approve_bill_changes_status() {
 fn ap_aging_summary_is_zero_on_empty_db() {
     let commerce = new_commerce();
 
-    let aging = commerce
-        .accounts_payable()
-        .get_aging_summary()
-        .expect("Failed to get AP aging summary");
+    let aging =
+        commerce.accounts_payable().get_aging_summary().expect("Failed to get AP aging summary");
 
     assert_eq!(aging.total, dec!(0));
     assert_eq!(aging.current, dec!(0));
@@ -322,15 +318,10 @@ fn ap_delete_draft_bill() {
         })
         .expect("Failed to create bill");
 
-    commerce
-        .accounts_payable()
-        .delete_bill(bill.id)
-        .expect("Failed to delete bill");
+    commerce.accounts_payable().delete_bill(bill.id).expect("Failed to delete bill");
 
-    let result = commerce
-        .accounts_payable()
-        .get_bill(bill.id)
-        .expect("get_bill after delete failed");
+    let result =
+        commerce.accounts_payable().get_bill(bill.id).expect("get_bill after delete failed");
 
     assert!(result.is_none());
 }
@@ -343,10 +334,8 @@ fn ap_delete_draft_bill() {
 fn ar_aging_summary_starts_zero() {
     let commerce = new_commerce();
 
-    let summary = commerce
-        .accounts_receivable()
-        .get_aging_summary()
-        .expect("Failed to get AR aging summary");
+    let summary =
+        commerce.accounts_receivable().get_aging_summary().expect("Failed to get AR aging summary");
 
     assert_eq!(summary.total, dec!(0));
     assert_eq!(summary.current, dec!(0));
@@ -732,10 +721,8 @@ fn gl_get_account_hierarchy_returns_accounts() {
         })
         .expect("Failed to create child account");
 
-    let hierarchy = commerce
-        .general_ledger()
-        .get_account_hierarchy()
-        .expect("Failed to get account hierarchy");
+    let hierarchy =
+        commerce.general_ledger().get_account_hierarchy().expect("Failed to get account hierarchy");
 
     let ids: Vec<_> = hierarchy.iter().map(|a| a.id).collect();
     assert!(ids.contains(&parent.id));
@@ -881,10 +868,7 @@ fn gl_create_journal_entry_requires_open_period() {
         auto_post: None,
     });
 
-    assert!(
-        result.is_err(),
-        "Expected journal entry creation to fail without an open period"
-    );
+    assert!(result.is_err(), "Expected journal entry creation to fail without an open period");
 }
 
 #[test]
@@ -1042,10 +1026,8 @@ fn credit_check_credit_approved_when_under_limit() {
         })
         .expect("Failed to create credit account");
 
-    let result = commerce
-        .credit()
-        .check_credit(customer_id, dec!(500.00))
-        .expect("check_credit failed");
+    let result =
+        commerce.credit().check_credit(customer_id, dec!(500.00)).expect("check_credit failed");
 
     assert!(result.approved, "Expected credit to be approved for amount well under limit");
 }
@@ -1067,10 +1049,10 @@ fn credit_update_account_changes_payment_terms() {
 
     let updated = commerce
         .credit()
-        .update_credit_account(account.id, UpdateCreditAccount {
-            payment_terms: Some("Net 60".into()),
-            ..Default::default()
-        })
+        .update_credit_account(
+            account.id,
+            UpdateCreditAccount { payment_terms: Some("Net 60".into()), ..Default::default() },
+        )
         .expect("Failed to update credit account");
 
     assert_eq!(updated.payment_terms.as_deref(), Some("Net 60"));
@@ -1178,17 +1160,12 @@ fn promotions_activate_and_deactivate() {
         })
         .expect("Failed to create promotion");
 
-    let activated = commerce
-        .promotions()
-        .activate(promo.id)
-        .expect("Failed to activate promotion");
+    let activated = commerce.promotions().activate(promo.id).expect("Failed to activate promotion");
 
     assert!(activated.is_active(), "Expected promotion to be active after activation");
 
-    let deactivated = commerce
-        .promotions()
-        .deactivate(promo.id)
-        .expect("Failed to deactivate promotion");
+    let deactivated =
+        commerce.promotions().deactivate(promo.id).expect("Failed to deactivate promotion");
 
     assert!(!deactivated.is_active(), "Expected promotion to be inactive after deactivation");
 }
@@ -1209,11 +1186,14 @@ fn promotions_update_name_and_description() {
 
     let updated = commerce
         .promotions()
-        .update(promo.id, UpdatePromotion {
-            name: Some("New Name".into()),
-            description: Some("Updated description".into()),
-            ..Default::default()
-        })
+        .update(
+            promo.id,
+            UpdatePromotion {
+                name: Some("New Name".into()),
+                description: Some("Updated description".into()),
+                ..Default::default()
+            },
+        )
         .expect("Failed to update promotion");
 
     assert_eq!(updated.name, "New Name");
@@ -1252,10 +1232,8 @@ fn promotions_create_coupon_and_validate() {
     assert_eq!(coupon.code, "SAVE25");
     assert_eq!(coupon.usage_limit, Some(50));
 
-    let validated = commerce
-        .promotions()
-        .validate_coupon("SAVE25")
-        .expect("validate_coupon failed");
+    let validated =
+        commerce.promotions().validate_coupon("SAVE25").expect("validate_coupon failed");
 
     assert!(validated.is_some(), "Expected coupon to be valid");
 }
@@ -1611,10 +1589,8 @@ fn warranties_get_claims_for_warranty() {
         })
         .expect("Failed to create claim");
 
-    let claims = commerce
-        .warranties()
-        .get_claims(warranty.id.into())
-        .expect("Failed to get claims");
+    let claims =
+        commerce.warranties().get_claims(warranty.id.into()).expect("Failed to get claims");
 
     assert!(!claims.is_empty(), "Expected at least one claim for the warranty");
     assert!(claims.iter().any(|c| c.id == claim.id));
@@ -1653,10 +1629,7 @@ fn warranties_approve_claim_changes_status() {
         })
         .expect("Failed to create claim");
 
-    let approved = commerce
-        .warranties()
-        .approve_claim(claim.id)
-        .expect("Failed to approve claim");
+    let approved = commerce.warranties().approve_claim(claim.id).expect("Failed to approve claim");
 
     assert_eq!(approved.id, claim.id);
     // Approved status should differ from the initial open status

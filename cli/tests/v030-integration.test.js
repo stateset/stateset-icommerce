@@ -71,14 +71,18 @@ function request(port, method, path, body = null, headers = {}) {
 // ============================================================================
 
 describe('v0.3.0 — Package version', () => {
-  it('package.json version should be 0.8.0', () => {
+  it('package-lock.json versions should match package.json', () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-    assert.equal(pkg.version, '0.8.0');
+    const lockfile = JSON.parse(readFileSync(join(__dirname, '..', 'package-lock.json'), 'utf-8'));
+    assert.equal(lockfile.version, pkg.version);
+    assert.equal(lockfile.packages[''].version, pkg.version);
+    assert.equal(lockfile.packages['../bindings/node'].version, pkg.version);
   });
 
-  it('config CLI_VERSION should be 0.8.0', async () => {
+  it('config CLI_VERSION should match package.json version', async () => {
+    const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
     const config = await import('../src/config.js');
-    assert.equal(config.CLI_VERSION, '0.8.0');
+    assert.equal(config.CLI_VERSION, pkg.version);
   });
 
   it('package.json should have botbuilder in optionalDependencies', () => {

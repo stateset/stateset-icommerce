@@ -109,6 +109,287 @@ class Commerce:
         ...
 
 # ============================================================================
+# Sync Runtime
+# ============================================================================
+
+class SyncEvent:
+    id: str
+    sequence: int
+    sequence_authority: str
+    canonical_sequence: Optional[int]
+    local_sequence: Optional[int]
+    event_type: str
+    entity_type: str
+    entity_id: str
+    payload_json: str
+    hash: str
+    signature: Optional[str]
+    command_id: Optional[str]
+    base_version: Optional[int]
+    source_agent_id: Optional[str]
+    agent_key_id: Optional[int]
+    timestamp: str
+
+class SyncStatus:
+    initialized: bool
+    local_head: int
+    remote_head: int
+    remote_state_root: Optional[str]
+    last_commitment_id: Optional[str]
+    remote_cursor: int
+    next_pull_cursor: Optional[int]
+    last_acknowledged_remote_sequence: Optional[int]
+    pending: int
+    dead_letters: int
+    retained_confirmations: int
+    lag: int
+    caught_up: bool
+    last_push: Optional[str]
+    last_pull: Optional[str]
+    buffered_events: int
+
+class SyncRemoteHead:
+    remote_head: int
+    state_root: Optional[str]
+    last_commitment_id: Optional[str]
+
+class SyncAcknowledgement:
+    event_id: str
+    remote_sequence: int
+    receipt: Optional[str]
+
+class SyncRejection:
+    event_id: str
+    code: Optional[str]
+    reason: Optional[str]
+    retryable: Optional[bool]
+
+class SyncPushResult:
+    accepted: int
+    remote_head: int
+    acknowledged_head: Optional[int]
+    acknowledgements: List[SyncAcknowledgement]
+    rejections: List[SyncRejection]
+
+class SyncConfirmation:
+    event_id: str
+    command_id: Optional[str]
+    event_type: str
+    entity_type: str
+    entity_id: str
+    local_sequence: Optional[int]
+    remote_sequence: int
+    hash: str
+    receipt: Optional[str]
+    confirmed_at: str
+
+class SyncDeadLetter:
+    event: SyncEvent
+    rejection: SyncRejection
+    rejected_at: str
+
+class SyncPullResult:
+    events: List[SyncEvent]
+    remote_head: int
+    has_more: bool
+
+class SyncSnapshot:
+    status: SyncStatus
+    confirmations: List[SyncConfirmation]
+    dead_letters: List[SyncDeadLetter]
+    buffered_events: List[SyncEvent]
+
+class SyncFullSyncResult:
+    push: SyncPushResult
+    pull: SyncPullResult
+
+class SyncRuntime:
+    """Sequencer sync runtime for recording, pushing, and pulling events."""
+
+    def __init__(self, config_json: str) -> None:
+        """Create a sync runtime from a JSON-serialized SyncRuntimeConfig."""
+        ...
+
+    @staticmethod
+    def from_file(path: str) -> "SyncRuntime":
+        """Create a sync runtime from a JSON config file."""
+        ...
+
+    @staticmethod
+    def from_env(prefix: Optional[str] = None) -> "SyncRuntime":
+        """Create a sync runtime from environment variables."""
+        ...
+
+    @property
+    def initialized(self) -> bool:
+        ...
+
+    @property
+    def caught_up(self) -> bool:
+        ...
+
+    @property
+    def local_head(self) -> int:
+        ...
+
+    @property
+    def remote_head(self) -> int:
+        ...
+
+    @property
+    def remote_cursor(self) -> int:
+        ...
+
+    @property
+    def next_pull_cursor(self) -> Optional[int]:
+        ...
+
+    @property
+    def remote_state_root(self) -> Optional[str]:
+        ...
+
+    @property
+    def last_commitment_id(self) -> Optional[str]:
+        ...
+
+    @property
+    def last_acknowledged_remote_sequence(self) -> Optional[int]:
+        ...
+
+    @property
+    def lag(self) -> int:
+        ...
+
+    @property
+    def pending_count(self) -> int:
+        ...
+
+    @property
+    def confirmation_count(self) -> int:
+        ...
+
+    @property
+    def dead_letter_count(self) -> int:
+        ...
+
+    @property
+    def buffered_count(self) -> int:
+        ...
+
+    def record(
+        self,
+        event_type: str,
+        entity_type: str,
+        entity_id: str,
+        payload_json: str,
+        command_id: Optional[str] = None,
+        base_version: Optional[int] = None,
+        source_agent_id: Optional[str] = None,
+        agent_key_id: Optional[int] = None,
+        signature: Optional[str] = None,
+    ) -> int:
+        ...
+
+    def record_event_json(self, event_json: str) -> int:
+        ...
+
+    def status(self) -> SyncStatus:
+        ...
+
+    def snapshot(self) -> SyncSnapshot:
+        ...
+
+    def confirmations(self) -> List[SyncConfirmation]:
+        ...
+
+    def confirmation_for_event(self, event_id: str) -> Optional[SyncConfirmation]:
+        ...
+
+    def drain_confirmations(self) -> List[SyncConfirmation]:
+        ...
+
+    def dead_letters(self) -> List[SyncDeadLetter]:
+        ...
+
+    def dead_letter_for_event(self, event_id: str) -> Optional[SyncDeadLetter]:
+        ...
+
+    def requeue_dead_letter(self, event_id: str) -> int:
+        ...
+
+    def discard_dead_letter(self, event_id: str) -> SyncDeadLetter:
+        ...
+
+    def drain_dead_letters(self) -> List[SyncDeadLetter]:
+        ...
+
+    def buffered_events(self) -> List[SyncEvent]:
+        ...
+
+    def drain_buffer(self) -> List[SyncEvent]:
+        ...
+
+    def healthcheck(self) -> bool:
+        ...
+
+    def refresh_remote_head(self) -> SyncRemoteHead:
+        ...
+
+    def push(self) -> SyncPushResult:
+        ...
+
+    def pull(self) -> SyncPullResult:
+        ...
+
+    def full_sync(self) -> SyncFullSyncResult:
+        ...
+
+    def status_json(self) -> str:
+        ...
+
+    def snapshot_json(self, pretty: bool = False) -> str:
+        ...
+
+    def confirmations_json(self) -> str:
+        ...
+
+    def confirmation_for_event_json(self, event_id: str) -> str:
+        ...
+
+    def drain_confirmations_json(self) -> str:
+        ...
+
+    def dead_letters_json(self) -> str:
+        ...
+
+    def dead_letter_for_event_json(self, event_id: str) -> str:
+        ...
+
+    def discard_dead_letter_json(self, event_id: str) -> str:
+        ...
+
+    def drain_dead_letters_json(self) -> str:
+        ...
+
+    def buffered_events_json(self) -> str:
+        ...
+
+    def drain_buffer_json(self) -> str:
+        ...
+
+    def refresh_remote_head_json(self) -> str:
+        ...
+
+    def push_json(self) -> str:
+        ...
+
+    def pull_json(self) -> str:
+        ...
+
+    def full_sync_json(self) -> str:
+        ...
+
+# ============================================================================
 # Customers
 # ============================================================================
 

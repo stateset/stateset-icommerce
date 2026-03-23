@@ -59,25 +59,6 @@ function safeCall(service, method, ...args) {
   }
 }
 
-/**
- * Safely call an async function if the service exists.
- *
- * @param {*} service
- * @param {string} method
- * @param {...*} args
- * @returns {Promise<*>}
- */
-async function safeCallAsync(service, method, ...args) {
-  if (service === null || service === undefined || typeof service[method] !== 'function') {
-    return undefined;
-  }
-  try {
-    return await service[method](...args);
-  } catch {
-    return undefined;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // initializeServices
 // ---------------------------------------------------------------------------

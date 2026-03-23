@@ -27,6 +27,12 @@ Commerce Operation
          └── Heartbeat Monitor (trigger checks)
 ```
 
+### Authority Model
+
+- The local event log and outbox are **provisional** records owned by the commerce runtime.
+- The sequencer is the **canonical authority** for cross-agent ordering.
+- Local outbox sequence numbers must never be reused as distributed ordering cursors.
+
 ### Event Categories
 
 | Category | Events |

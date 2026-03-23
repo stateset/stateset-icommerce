@@ -1287,9 +1287,7 @@ async fn get_return_by_id_returns_correct_return() {
     // Get return by ID
     let get_router = stateset_http::routes::api_router().with_state(state);
     let resp = get_router
-        .oneshot(
-            Request::get(format!("/api/v1/returns/{return_id}")).body(Body::empty()).unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/returns/{return_id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -1395,10 +1393,8 @@ async fn e2e_create_return_then_list_returns() {
 
 #[tokio::test]
 async fn list_payments_returns_200_with_empty_list() {
-    let resp = app()
-        .oneshot(Request::get("/api/v1/payments").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
+    let resp =
+        app().oneshot(Request::get("/api/v1/payments").body(Body::empty()).unwrap()).await.unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
@@ -1488,8 +1484,10 @@ async fn e2e_create_payments_then_list_payments() {
     }
 
     let router = stateset_http::routes::api_router().with_state(state);
-    let resp =
-        router.oneshot(Request::get("/api/v1/payments").body(Body::empty()).unwrap()).await.unwrap();
+    let resp = router
+        .oneshot(Request::get("/api/v1/payments").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let list = body_json(resp).await;
@@ -1648,9 +1646,7 @@ async fn list_shipments_invalid_status_returns_400() {
 #[tokio::test]
 async fn list_shipments_invalid_order_id_returns_400() {
     let resp = app()
-        .oneshot(
-            Request::get("/api/v1/shipments?order_id=not-a-uuid").body(Body::empty()).unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/shipments?order_id=not-a-uuid").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -1706,9 +1702,7 @@ async fn get_stock_by_sku_returns_correct_stock_levels() {
 
     let router = stateset_http::routes::api_router().with_state(state);
     let resp = router
-        .oneshot(
-            Request::get("/api/v1/inventory/WIDGET-INT-001").body(Body::empty()).unwrap(),
-        )
+        .oneshot(Request::get("/api/v1/inventory/WIDGET-INT-001").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -1813,8 +1807,10 @@ async fn e2e_create_inventory_items_then_list_inventory() {
     }
 
     let router = stateset_http::routes::api_router().with_state(state);
-    let resp =
-        router.oneshot(Request::get("/api/v1/inventory").body(Body::empty()).unwrap()).await.unwrap();
+    let resp = router
+        .oneshot(Request::get("/api/v1/inventory").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
     let list = body_json(resp).await;

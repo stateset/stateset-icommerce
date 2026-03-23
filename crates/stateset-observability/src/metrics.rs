@@ -1182,7 +1182,8 @@ mod tests {
     #[test]
     fn slo_evaluation_zero_requests() {
         let snap = RedSnapshot::from_counts(0, 0, 0);
-        let target = SloTarget { min_success_rate: 0.99, max_avg_latency_ms: 100.0, min_requests: 1 };
+        let target =
+            SloTarget { min_success_rate: 0.99, max_avg_latency_ms: 100.0, min_requests: 1 };
         let eval = snap.evaluate_slo(target);
         assert!(!eval.passed);
         assert!(eval.reason.unwrap().contains("insufficient requests"));
@@ -1191,7 +1192,8 @@ mod tests {
     #[test]
     fn slo_evaluation_min_requests_zero_threshold() {
         let snap = RedSnapshot::from_counts(0, 0, 0);
-        let target = SloTarget { min_success_rate: 0.0, max_avg_latency_ms: f64::MAX, min_requests: 0 };
+        let target =
+            SloTarget { min_success_rate: 0.0, max_avg_latency_ms: f64::MAX, min_requests: 0 };
         let eval = snap.evaluate_slo(target);
         // 0 >= 0 min_requests, 0.0 error_rate -> success 1.0 >= 0.0, avg 0.0 <= MAX
         assert!(eval.passed);
@@ -1201,7 +1203,8 @@ mod tests {
     fn slo_evaluation_exactly_at_threshold() {
         // 10 requests, 1 error -> success_rate = 0.9 exactly
         let snap = RedSnapshot::from_counts(10, 1, 1_000_000);
-        let target = SloTarget { min_success_rate: 0.9, max_avg_latency_ms: 100.0, min_requests: 10 };
+        let target =
+            SloTarget { min_success_rate: 0.9, max_avg_latency_ms: 100.0, min_requests: 10 };
         let eval = snap.evaluate_slo(target);
         assert!(eval.passed, "Should pass when success_rate == min_success_rate");
         assert!(eval.reason.is_none());
@@ -1211,7 +1214,8 @@ mod tests {
     fn slo_evaluation_just_below_success_threshold() {
         // 100 requests, 11 errors -> success_rate = 0.89
         let snap = RedSnapshot::from_counts(100, 11, 10_000_000);
-        let target = SloTarget { min_success_rate: 0.9, max_avg_latency_ms: 200.0, min_requests: 10 };
+        let target =
+            SloTarget { min_success_rate: 0.9, max_avg_latency_ms: 200.0, min_requests: 10 };
         let eval = snap.evaluate_slo(target);
         assert!(!eval.passed);
         assert!(eval.reason.unwrap().contains("success rate"));
@@ -1221,7 +1225,8 @@ mod tests {
     fn slo_evaluation_latency_just_above_threshold() {
         // 10 requests, 0 errors, total 2_000_000 micros -> avg = 200ms
         let snap = RedSnapshot::from_counts(10, 0, 2_000_000);
-        let target = SloTarget { min_success_rate: 0.9, max_avg_latency_ms: 199.0, min_requests: 5 };
+        let target =
+            SloTarget { min_success_rate: 0.9, max_avg_latency_ms: 199.0, min_requests: 5 };
         let eval = snap.evaluate_slo(target);
         assert!(!eval.passed);
         assert!(eval.reason.unwrap().contains("avg latency"));
@@ -1230,7 +1235,8 @@ mod tests {
     #[test]
     fn slo_evaluation_latency_exactly_at_threshold() {
         let snap = RedSnapshot::from_counts(10, 0, 1_000_000);
-        let target = SloTarget { min_success_rate: 0.9, max_avg_latency_ms: 100.0, min_requests: 5 };
+        let target =
+            SloTarget { min_success_rate: 0.9, max_avg_latency_ms: 100.0, min_requests: 5 };
         let eval = snap.evaluate_slo(target);
         assert!(eval.passed);
     }
@@ -1238,7 +1244,8 @@ mod tests {
     #[test]
     fn slo_evaluation_all_errors() {
         let snap = RedSnapshot::from_counts(10, 10, 500_000);
-        let target = SloTarget { min_success_rate: 0.01, max_avg_latency_ms: 1000.0, min_requests: 1 };
+        let target =
+            SloTarget { min_success_rate: 0.01, max_avg_latency_ms: 1000.0, min_requests: 1 };
         let eval = snap.evaluate_slo(target);
         assert!(!eval.passed);
         assert!(eval.reason.unwrap().contains("success rate"));
@@ -1247,7 +1254,8 @@ mod tests {
     #[test]
     fn slo_evaluation_report_fields() {
         let snap = RedSnapshot::from_counts(20, 4, 2_000_000);
-        let target = SloTarget { min_success_rate: 0.5, max_avg_latency_ms: 200.0, min_requests: 10 };
+        let target =
+            SloTarget { min_success_rate: 0.5, max_avg_latency_ms: 200.0, min_requests: 10 };
         let eval = snap.evaluate_slo(target);
         assert!(eval.passed);
         assert_eq!(eval.requests, 20);
@@ -1274,7 +1282,8 @@ mod tests {
 
     #[test]
     fn slo_target_clone() {
-        let target = SloTarget { min_success_rate: 0.95, max_avg_latency_ms: 100.0, min_requests: 50 };
+        let target =
+            SloTarget { min_success_rate: 0.95, max_avg_latency_ms: 100.0, min_requests: 50 };
         let cloned = target;
         assert_eq!(target, cloned);
     }
@@ -1304,7 +1313,8 @@ mod tests {
             m.record_request_success("op", Duration::from_millis(10));
         }
         let snap = m.snapshot();
-        let target = SloTarget { min_success_rate: 0.99, max_avg_latency_ms: 50.0, min_requests: 100 };
+        let target =
+            SloTarget { min_success_rate: 0.99, max_avg_latency_ms: 50.0, min_requests: 100 };
         let eval = snap.evaluate_global_slo(target);
         assert!(eval.passed);
     }
@@ -1319,7 +1329,8 @@ mod tests {
             m.record_request_error("op", Duration::from_millis(10));
         }
         let snap = m.snapshot();
-        let target = SloTarget { min_success_rate: 0.95, max_avg_latency_ms: 50.0, min_requests: 50 };
+        let target =
+            SloTarget { min_success_rate: 0.95, max_avg_latency_ms: 50.0, min_requests: 50 };
         let eval = snap.evaluate_global_slo(target);
         assert!(!eval.passed);
     }
@@ -1340,7 +1351,10 @@ mod tests {
         m.record_request_success("Order Created", Duration::from_millis(10));
         let snap = m.snapshot();
         // Query with different casing/separator — should still resolve via normalization
-        let result = snap.evaluate_operation_slo("order-created", SloTarget { min_success_rate: 0.5, max_avg_latency_ms: 100.0, min_requests: 1 });
+        let result = snap.evaluate_operation_slo(
+            "order-created",
+            SloTarget { min_success_rate: 0.5, max_avg_latency_ms: 100.0, min_requests: 1 },
+        );
         assert!(result.is_some());
         assert!(result.unwrap().passed);
     }
@@ -2238,11 +2252,7 @@ mod tests {
         let m = init_metrics(MetricsConfig::default());
         for i in 0..500 {
             let is_error = i % 10 == 0;
-            m.record_request(
-                "bulk_op",
-                Duration::from_millis(10 + (i % 50)),
-                is_error,
-            );
+            m.record_request("bulk_op", Duration::from_millis(10 + (i % 50)), is_error);
         }
         let snap = m.snapshot();
         let op = snap.red_by_operation.get("bulk_op").unwrap();

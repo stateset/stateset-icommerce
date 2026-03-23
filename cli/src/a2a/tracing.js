@@ -299,7 +299,7 @@ export function createTracingService(options = {}) {
    * Rebuild the trace index for a specific traceId after eviction.
    * @param {string} traceId
    */
-  function _rebuildTraceIndex(traceId) {
+  function _rebuildTraceIndex(_traceId) {
     // After a shift, ALL indices change — full rebuild is safer
     _traceIndex.clear();
     for (let i = 0; i < _spans.length; i++) {

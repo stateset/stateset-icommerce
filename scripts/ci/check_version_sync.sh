@@ -4,18 +4,25 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-workspace_version="$(grep -E '^[[:space:]]*version = "[0-9]+\.[0-9]+\.[0-9]+"' Cargo.toml | head -n1 | sed -E 's/^[^"]*"([^"]+)".*$/\1/')"
-cli_version="$(grep -E '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' cli/package.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
-cli_runtime_version="$(grep -E "^export const CLI_VERSION = '[0-9]+\.[0-9]+\.[0-9]+';" cli/src/config.js | head -n1 | sed -E "s/^[^']*'([^']+)'.*$/\1/")"
-node_binding_version="$(grep -E '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/node/package.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
-wasm_binding_version="$(grep -E '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/wasm/package.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
-python_binding_version="$(grep -E '^[[:space:]]*version = "[0-9]+\.[0-9]+\.[0-9]+"' bindings/python/pyproject.toml | head -n1 | sed -E 's/^[^"]*"([^"]+)".*$/\1/')"
-python_wrapper_version="$(grep -E '^__version__ = "[0-9]+\.[0-9]+\.[0-9]+"$' bindings/python/python/stateset_embedded/__init__.py | head -n1 | sed -E 's/^[^"]*"([^"]+)".*$/\1/')"
-ruby_binding_version="$(grep -E "VERSION = '[0-9]+\.[0-9]+\.[0-9]+'" bindings/ruby/lib/stateset_embedded.rb | head -n1 | sed -E "s/^[^']*'([^']+)'.*$/\1/")"
-php_binding_version="$(grep -E '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/php/composer.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
-generator_spec_version="$(grep -E '^version: "[0-9]+\.[0-9]+\.[0-9]+"' bindings/generator/spec.yaml | head -n1 | sed -E 's/^[^"]*"([^"]+)".*$/\1/')"
-cli_embedded_dep_version="$(grep -E '^[[:space:]]*"@stateset/embedded":[[:space:]]*"\^?[0-9]+\.[0-9]+\.[0-9]+"' cli/package.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"\^?([^"]+)".*$/\1/')"
-admin_version="$(grep -E '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' admin/package.json | head -n1 | sed -E 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
+extract_with_regex() {
+  local pattern="$1"
+  local file="$2"
+  local sed_expr="$3"
+  { grep -E "$pattern" "$file" | head -n1 | sed -E "$sed_expr"; } || true
+}
+
+workspace_version="$(extract_with_regex '^[[:space:]]*version = "[0-9]+\.[0-9]+\.[0-9]+"' Cargo.toml 's/^[^"]*"([^"]+)".*$/\1/')"
+cli_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' cli/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
+cli_runtime_version="$(node --input-type=module -e "import { CLI_VERSION } from './cli/src/config.js'; console.log(CLI_VERSION);" 2>/dev/null || true)"
+node_binding_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/node/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
+wasm_binding_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/wasm/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
+python_binding_version="$(extract_with_regex '^[[:space:]]*version = "[0-9]+\.[0-9]+\.[0-9]+"' bindings/python/pyproject.toml 's/^[^"]*"([^"]+)".*$/\1/')"
+python_wrapper_version="$(extract_with_regex '^__version__ = "[0-9]+\.[0-9]+\.[0-9]+"$' bindings/python/python/stateset_embedded/__init__.py 's/^[^"]*"([^"]+)".*$/\1/')"
+ruby_binding_version="$(extract_with_regex "VERSION = '[0-9]+\.[0-9]+\.[0-9]+'" bindings/ruby/lib/stateset_embedded.rb "s/^[^']*'([^']+)'.*$/\1/")"
+php_binding_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' bindings/php/composer.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
+generator_spec_version="$(extract_with_regex '^version: "[0-9]+\.[0-9]+\.[0-9]+"' bindings/generator/spec.yaml 's/^[^"]*"([^"]+)".*$/\1/')"
+cli_embedded_dep_version="$(extract_with_regex '^[[:space:]]*"@stateset/embedded":[[:space:]]*"\^?[0-9]+\.[0-9]+\.[0-9]+"' cli/package.json 's/^[^:]+:[[:space:]]*"\^?([^"]+)".*$/\1/')"
+admin_version="$(extract_with_regex '^[[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' admin/package.json 's/^[^:]+:[[:space:]]*"([^"]+)".*$/\1/')"
 
 if [[ -z "$workspace_version" || -z "$cli_version" || -z "$cli_runtime_version" || -z "$node_binding_version" || -z "$wasm_binding_version" || -z "$python_binding_version" || -z "$python_wrapper_version" || -z "$ruby_binding_version" || -z "$php_binding_version" || -z "$generator_spec_version" || -z "$cli_embedded_dep_version" || -z "$admin_version" ]]; then
   echo "::error::Failed to parse one or more release versions"

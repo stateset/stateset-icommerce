@@ -408,7 +408,9 @@ mod tests {
 
     #[test]
     fn all_integer_types_map_to_integer() {
-        for int_type in &["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize"] {
+        for int_type in &[
+            "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+        ] {
             let ident = syn::Ident::new(int_type, proc_macro2::Span::call_site());
             let input = quote! {
                 pub struct IntTest {
@@ -449,10 +451,7 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("\"string\""),
-            "unknown types should fall back to \"string\""
-        );
+        assert!(output_str.contains("\"string\""), "unknown types should fall back to \"string\"");
     }
 
     #[test]
@@ -526,14 +525,8 @@ mod tests {
         let parts: Vec<&str> = output_str.splitn(2, "\"required\"").collect();
         assert!(parts.len() == 2, "should have 'required' key");
         let after_required = parts[1];
-        assert!(
-            !after_required.contains("\"name\""),
-            "name should NOT be in required array"
-        );
-        assert!(
-            !after_required.contains("\"count\""),
-            "count should NOT be in required array"
-        );
+        assert!(!after_required.contains("\"name\""), "name should NOT be in required array");
+        assert!(!after_required.contains("\"count\""), "count should NOT be in required array");
     }
 
     #[test]
@@ -544,14 +537,8 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("fn empty_json_schema"),
-            "should generate the schema function"
-        );
-        assert!(
-            output_str.contains("\"object\""),
-            "should produce object type"
-        );
+        assert!(output_str.contains("fn empty_json_schema"), "should generate the schema function");
+        assert!(output_str.contains("\"object\""), "should produce object type");
     }
 
     #[test]
@@ -572,10 +559,7 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(
-            output_str.contains("compile_error"),
-            "tuple structs should produce compile error"
-        );
+        assert!(output_str.contains("compile_error"), "tuple structs should produce compile error");
     }
 
     #[test]

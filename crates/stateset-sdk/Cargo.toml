@@ -22,6 +22,10 @@ stateset-observability = { workspace = true, optional = true }
 stateset-crypto = { workspace = true, optional = true }
 stateset-policy = { workspace = true, optional = true }
 stateset-macros = { workspace = true, optional = true }
+stateset-sync = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [features]
 default = ["core"]
@@ -32,10 +36,15 @@ core = [
     "dep:stateset-embedded",
     "dep:stateset-observability",
 ]
-full = ["core", "crypto", "policy", "macros"]
+full = ["core", "crypto", "policy", "macros", "sync"]
 crypto = ["dep:stateset-crypto"]
 policy = ["dep:stateset-policy"]
 macros = ["dep:stateset-macros"]
+sync = ["dep:stateset-sync", "dep:serde", "dep:serde_json", "dep:uuid"]
+
+[dev-dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true }
 
 [lints]
 workspace = true

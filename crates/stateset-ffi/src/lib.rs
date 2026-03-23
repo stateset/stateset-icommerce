@@ -55,6 +55,7 @@ pub mod api;
 pub mod convert;
 pub mod error;
 pub mod strings;
+pub mod sync_api;
 pub mod types;
 pub mod version;
 
@@ -62,6 +63,7 @@ pub mod version;
 pub use api::CommerceHandle;
 pub use convert::{FromFfi, IntoFfi, TryIntoFfi};
 pub use error::{FfiErrorCode, FfiResult};
+pub use sync_api::SyncRuntimeHandle;
 pub use types::{
     FfiCustomer, FfiInventoryLevel, FfiMoney, FfiOrder, FfiOrderStatus, FfiProduct, FfiUuid,
 };

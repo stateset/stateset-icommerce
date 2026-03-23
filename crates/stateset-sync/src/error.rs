@@ -36,6 +36,10 @@ pub enum SyncError {
     #[error("sync engine not initialized")]
     NotInitialized,
 
+    /// A requested sync resource could not be found.
+    #[error("not found: {0}")]
+    NotFound(String),
+
     /// A serialization or deserialization error occurred.
     #[error("serialization error: {0}")]
     Serialization(String),
@@ -51,6 +55,10 @@ pub enum SyncError {
     /// An event with a duplicate ID was detected.
     #[error("duplicate event id: {0}")]
     DuplicateEvent(String),
+
+    /// The event metadata is incompatible with the requested operation.
+    #[error("invalid event: {0}")]
+    InvalidEvent(String),
 
     /// The requested sequence number is out of range.
     #[error("sequence {requested} is out of range (head: {head})")]
@@ -105,6 +113,12 @@ mod tests {
     fn error_display_storage() {
         let err = SyncError::Storage("disk full".into());
         assert_eq!(err.to_string(), "storage error: disk full");
+    }
+
+    #[test]
+    fn error_display_not_found() {
+        let err = SyncError::NotFound("dead-letter event missing".into());
+        assert_eq!(err.to_string(), "not found: dead-letter event missing");
     }
 
     #[test]

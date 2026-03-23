@@ -29,7 +29,6 @@
 
 import { randomUUID } from 'node:crypto';
 import {
-  DEFAULT_ASSET,
   DEFAULT_NETWORK,
   getDefaultAssetForNetwork,
   getAssetDecimals,

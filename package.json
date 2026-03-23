@@ -16,7 +16,7 @@
     "check:shell": "bash -n examples/setup-sync.sh examples/verify-setup.sh scripts/arc_e2e_demo.sh",
     "check:rust": "cargo fmt --all -- --check && cargo test -p stateset-core -p stateset-db -p stateset-embedded -p stateset-observability -p stateset-integration-tests --quiet && cargo test -p stateset-core --features metrics --quiet",
     "check:admin": "npm --prefix admin run check",
-    "check:cli": "npm run check:env && npm run test:env-check && npm --prefix cli run lint && npm --prefix cli run typecheck:supported",
+    "check:cli": "npm run check:env && npm run test:env-check && npm --prefix cli run check",
     "check": "npm run check:versions && npm run check:rust && npm run check:shell && npm run check:admin && npm run check:cli"
   },
   "devDependencies": {

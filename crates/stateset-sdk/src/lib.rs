@@ -17,7 +17,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "0.8.0"
+//! stateset-sdk = "0.8.1"
 //! ```
 //!
 //! ```rust,ignore
@@ -40,7 +40,15 @@
 //! | `crypto` | VES v1.0 cryptographic operations | No |
 //! | `policy` | Declarative policy engine | No |
 //! | `macros` | Proc macros (StateSetId, GenerateDto, JsonSchema) | No |
+//! | `sync` | Outbox-driven sync engine and sequencer transport facade | No |
 //! | `full` | All features enabled | No |
+//!
+//! With `sync` enabled, [`SyncRuntime`] and [`SyncRuntimeConfig`] bundle the
+//! sync engine, sequencer HTTP transport, and runtime auth/options into a
+//! single Rust-facing helper surface for config loading, sync operations,
+//! JSON-ready runtime snapshots, and local confirmation/dead-letter
+//! inspection. [`SyncRuntimeConfig`] can also load from JSON or environment
+//! variables via `from_file`, `from_json_str`, and `from_env`.
 
 // ── Core (always available) ──────────────────────────────────────────
 
@@ -77,6 +85,16 @@ pub use stateset_policy as policy;
 /// Procedural macros: `#[derive(StateSetId)]`, `#[derive(GenerateDto)]`, `#[derive(JsonSchema)]`.
 #[cfg(feature = "macros")]
 pub use stateset_macros as macros;
+
+/// Outbox-driven sync engine, transport abstraction, and sequencer HTTP client.
+#[cfg(feature = "sync")]
+pub use stateset_sync as sync;
+
+#[cfg(feature = "sync")]
+pub mod sync_runtime;
+
+#[cfg(feature = "sync")]
+pub use sync_runtime::{SyncRuntime, SyncRuntimeAuth, SyncRuntimeConfig, SyncRuntimeSnapshot};
 
 // ── Prelude ──────────────────────────────────────────────────────────
 
@@ -153,6 +171,16 @@ pub mod prelude {
 
     // Observability
     pub use stateset_observability::{Metrics, MetricsConfig};
+
+    // Sync
+    #[cfg(feature = "sync")]
+    pub use crate::{SyncRuntime, SyncRuntimeAuth, SyncRuntimeConfig, SyncRuntimeSnapshot};
+
+    #[cfg(feature = "sync")]
+    pub use stateset_sync::{
+        DeadLetter, PullResult, PushConfirmation, PushResult, RemoteHead, SequenceAuthority,
+        SequencerHttpTransport, SyncConfig, SyncEngine, SyncError, SyncEvent, SyncStatus,
+    };
 }
 
 #[cfg(test)]
@@ -166,6 +194,22 @@ mod tests {
         use crate::prelude::*;
         let _: Money = Money::zero(CurrencyCode::USD);
         let _: OrderId = OrderId::new();
+
+        #[cfg(feature = "sync")]
+        {
+            let _: SyncConfig = SyncConfig::new("agent-1", "tenant-1", "store-1");
+            let _: SequenceAuthority = SequenceAuthority::LocalOutbox;
+            let runtime = SyncRuntimeConfig::new(
+                "https://sequencer.stateset.com",
+                SyncConfig::new("agent-1", "tenant-1", "store-1"),
+            )
+            .with_agent_key_id(5)
+            .build()
+            .unwrap();
+            let _: SyncRuntimeSnapshot = runtime.snapshot();
+            assert_eq!(runtime.transport().agent_id(), "agent-1");
+            assert_eq!(runtime.transport().agent_key_id(), 5);
+        }
     }
 
     #[cfg(feature = "core")]
@@ -199,6 +243,20 @@ mod tests {
         let _ = crypto::ZERO_HASH;
     }
 
+    #[cfg(feature = "sync")]
+    #[test]
+    fn sync_reexport_accessible() {
+        let runtime = SyncRuntimeConfig::new(
+            "https://sequencer.stateset.com",
+            sync::SyncConfig::new("agent-1", "tenant-1", "store-1"),
+        )
+        .with_api_key("ss_example_key")
+        .with_agent_key_id(11)
+        .build()
+        .unwrap();
+        assert_eq!(runtime.transport().agent_key_id(), 11);
+    }
+
     #[cfg(feature = "policy")]
     #[test]
     fn policy_reexport_accessible() {
@@ -208,6 +266,7 @@ mod tests {
     #[cfg(feature = "macros")]
     #[test]
     fn macros_reexport_accessible() {
+        #[allow(unused_imports)]
         use crate::macros as _;
     }
 }

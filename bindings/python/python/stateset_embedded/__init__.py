@@ -18,6 +18,18 @@ Example:
 
 from stateset_embedded.stateset_embedded import (
     Commerce,
+    SyncRuntime,
+    SyncEvent,
+    SyncStatus,
+    SyncRemoteHead,
+    SyncAcknowledgement,
+    SyncRejection,
+    SyncPushResult,
+    SyncConfirmation,
+    SyncDeadLetter,
+    SyncPullResult,
+    SyncSnapshot,
+    SyncFullSyncResult,
     Customers,
     Customer,
     Orders,
@@ -96,6 +108,18 @@ __version__ = "0.8.1"
 __all__ = [
     # Main entry point
     "Commerce",
+    "SyncRuntime",
+    "SyncEvent",
+    "SyncStatus",
+    "SyncRemoteHead",
+    "SyncAcknowledgement",
+    "SyncRejection",
+    "SyncPushResult",
+    "SyncConfirmation",
+    "SyncDeadLetter",
+    "SyncPullResult",
+    "SyncSnapshot",
+    "SyncFullSyncResult",
     # Customers
     "Customers",
     "Customer",

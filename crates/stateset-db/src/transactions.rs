@@ -644,10 +644,7 @@ mod tests {
 
         handle.commit().unwrap();
         let entries = log.lock().unwrap();
-        assert_eq!(
-            *entries,
-            vec!["exec:first", "exec:second", "exec:third"]
-        );
+        assert_eq!(*entries, vec!["exec:first", "exec:second", "exec:third"]);
     }
 
     #[test]
@@ -674,10 +671,7 @@ mod tests {
         assert!(handle.commit().is_err());
         let entries = log.lock().unwrap();
         // exec:A, exec:B, exec:C (fails), comp:B, comp:A (reverse of completed)
-        assert_eq!(
-            *entries,
-            vec!["exec:A", "exec:B", "exec:C", "comp:B", "comp:A"]
-        );
+        assert_eq!(*entries, vec!["exec:A", "exec:B", "exec:C", "comp:B", "comp:A"]);
     }
 
     #[test]
@@ -834,10 +828,7 @@ mod tests {
         let (op1, _exec1, comp1) = simple_op("ok");
         let (op2, _, _) = simple_op("fail-here");
 
-        let result = TransactionBuilder::new()
-            .push(Box::new(op1))
-            .push(Box::new(op2))
-            .execute();
+        let result = TransactionBuilder::new().push(Box::new(op1)).push(Box::new(op2)).execute();
 
         assert!(result.is_err());
         assert!(*comp1.lock().unwrap());

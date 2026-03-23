@@ -422,7 +422,7 @@ export function createDataExportService(store) {
         return result;
       }
       return result || [];
-    } catch (_) {
+    } catch {
       return [];
     }
   }
@@ -478,7 +478,7 @@ export function createDataExportService(store) {
         if (reputation && typeof reputation.then === 'function') {
           reputation = await reputation;
         }
-      } catch (_) {
+      } catch {
         reputation = null;
       }
     }

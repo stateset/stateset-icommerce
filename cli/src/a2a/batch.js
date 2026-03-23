@@ -61,7 +61,7 @@ async function runWithConcurrency(items, concurrency, fn, onProgress) {
             index: idx,
             result: results[idx],
           });
-        } catch (_) {
+        } catch {
           // progress callback errors are non-fatal
         }
       }

@@ -16,6 +16,7 @@ use std::os::raw::c_char;
 use std::panic::{self, AssertUnwindSafe};
 
 use stateset_core::CommerceError;
+use stateset_sdk::sync::SyncError;
 
 // ---------------------------------------------------------------------------
 // FfiErrorCode
@@ -105,6 +106,25 @@ impl From<&CommerceError> for FfiErrorCode {
     }
 }
 
+impl From<&SyncError> for FfiErrorCode {
+    fn from(err: &SyncError) -> Self {
+        match err {
+            SyncError::NotFound(_) => Self::NotFound,
+            SyncError::InvalidConfig(_)
+            | SyncError::DuplicateEvent(_)
+            | SyncError::InvalidEvent(_)
+            | SyncError::SequenceOutOfRange { .. } => Self::InvalidArgument,
+            SyncError::Serialization(_) => Self::SerializationError,
+            SyncError::Storage(_) => Self::DatabaseError,
+            SyncError::OutboxFull { .. } | SyncError::BufferFull(_) => Self::BufferTooSmall,
+            SyncError::Transport(_) | SyncError::Conflict { .. } | SyncError::NotInitialized => {
+                Self::InternalError
+            }
+            _ => Self::InternalError,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FfiResult<T>
 // ---------------------------------------------------------------------------
@@ -160,6 +180,13 @@ pub(crate) fn set_last_error(msg: &str) {
 /// Store a [`CommerceError`] in thread-local storage and return the
 /// corresponding [`FfiErrorCode`].
 pub(crate) fn set_commerce_error(err: &CommerceError) -> FfiErrorCode {
+    set_last_error(&err.to_string());
+    FfiErrorCode::from(err)
+}
+
+/// Store a [`SyncError`] in thread-local storage and return the corresponding
+/// [`FfiErrorCode`].
+pub(crate) fn set_sync_error(err: &SyncError) -> FfiErrorCode {
     set_last_error(&err.to_string());
     FfiErrorCode::from(err)
 }
@@ -459,6 +486,20 @@ mod tests {
         let err = CommerceError::ValidationError("bad email".into());
         let code = set_commerce_error(&err);
         assert_eq!(code, FfiErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn sync_error_invalid_config_maps_to_invalid_argument() {
+        let err = SyncError::InvalidConfig("bad config".into());
+        let code = set_sync_error(&err);
+        assert_eq!(code, FfiErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn sync_error_storage_maps_to_database_error() {
+        let err = SyncError::Storage("disk full".into());
+        let code = set_sync_error(&err);
+        assert_eq!(code, FfiErrorCode::DatabaseError);
     }
 
     #[test]

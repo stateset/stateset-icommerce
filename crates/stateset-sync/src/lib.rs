@@ -9,6 +9,7 @@
 //! - [`buffer`] -- Bounded FIFO [`EventBuffer`] for pulled events
 //! - [`conflict`] -- [`ConflictResolver`] with pluggable strategies
 //! - [`transport`] -- Async [`Transport`] trait for push/pull
+//! - [`http_transport`] -- Concrete HTTP transport for the StateSet sequencer
 //! - [`engine`] -- The main [`SyncEngine`] orchestrator
 //! - [`config`] -- [`SyncConfig`] for engine configuration
 //! - [`state`] -- [`SyncState`] and [`SyncStatus`] types
@@ -20,6 +21,7 @@ pub mod conflict;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod http_transport;
 pub mod outbox;
 pub mod state;
 pub mod transport;
@@ -28,9 +30,13 @@ pub mod transport;
 pub use buffer::EventBuffer;
 pub use config::SyncConfig;
 pub use conflict::{ConflictResolver, ConflictStrategy, Resolution};
-pub use engine::SyncEngine;
+pub use engine::{DeadLetter, PushConfirmation, SyncEngine};
 pub use error::SyncError;
-pub use event::SyncEvent;
+pub use event::{SequenceAuthority, SyncEvent};
+pub use http_transport::SequencerHttpTransport;
 pub use outbox::Outbox;
 pub use state::{SyncState, SyncStatus};
-pub use transport::{NullTransport, PullPage, PullResult, PushResult, Transport};
+pub use transport::{
+    NullTransport, PullPage, PullResult, PushAcknowledgement, PushRejection, PushResult,
+    RemoteHead, Transport,
+};

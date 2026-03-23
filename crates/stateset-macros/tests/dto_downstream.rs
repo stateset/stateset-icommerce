@@ -83,12 +83,7 @@ fn update_product_all_fields_optional() {
 #[test]
 fn update_product_skips_created_at() {
     // UpdateProduct should not have `created_at` — compile-time check.
-    let dto = UpdateProduct {
-        name: None,
-        sku: None,
-        price: None,
-        id: None,
-    };
+    let dto = UpdateProduct { name: None, sku: None, price: None, id: None };
     let _ = dto;
 }
 
@@ -109,10 +104,7 @@ fn filter_product_has_limit_offset() {
 
 #[test]
 fn create_simple_item_compiles() {
-    let item = CreateSimpleItem {
-        title: "Test".to_string(),
-        quantity: 5,
-    };
+    let item = CreateSimpleItem { title: "Test".to_string(), quantity: 5 };
     assert_eq!(item.title, "Test");
     assert_eq!(item.quantity, 5);
 }
@@ -153,20 +145,14 @@ fn filter_skip_filter_excludes_field() {
 
 #[test]
 fn dto_structs_implement_debug() {
-    let dto = CreateSimpleItem {
-        title: "Test".to_string(),
-        quantity: 1,
-    };
+    let dto = CreateSimpleItem { title: "Test".to_string(), quantity: 1 };
     let debug = format!("{:?}", dto);
     assert!(debug.contains("Test"), "Debug output should contain field values");
 }
 
 #[test]
 fn dto_structs_implement_clone() {
-    let dto = CreateSimpleItem {
-        title: "Original".to_string(),
-        quantity: 42,
-    };
+    let dto = CreateSimpleItem { title: "Original".to_string(), quantity: 42 };
     #[allow(clippy::redundant_clone)]
     let cloned = dto.clone();
     assert_eq!(cloned.title, "Original");
@@ -182,10 +168,7 @@ fn dto_structs_implement_default() {
 
 #[test]
 fn dto_structs_implement_serialize() {
-    let dto = CreateSimpleItem {
-        title: "Widget".to_string(),
-        quantity: 10,
-    };
+    let dto = CreateSimpleItem { title: "Widget".to_string(), quantity: 10 };
     let json = serde_json::to_string(&dto).expect("serialize");
     assert!(json.contains("Widget"));
     assert!(json.contains("10"));

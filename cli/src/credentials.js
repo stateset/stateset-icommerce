@@ -189,12 +189,41 @@ export class CredentialStore {
 }
 
 let _store = null;
+let _storeInitError = null;
+let _storeWarningShown = false;
+
+function normalizeStoreError(err) {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+function warnStoreFallbackOnce(err) {
+  if (_storeWarningShown) {
+    return;
+  }
+
+  const message = normalizeStoreError(err).message;
+  console.warn(
+    '[credentials] Credential store unavailable, falling back to environment variables:',
+    message,
+  );
+  _storeWarningShown = true;
+}
 
 export function getCredentialStore(options = {}) {
-  if (!_store) {
-    _store = new CredentialStore(options);
+  if (_store) {
+    return _store;
   }
-  return _store;
+  if (_storeInitError) {
+    throw _storeInitError;
+  }
+
+  try {
+    _store = new CredentialStore(options);
+    return _store;
+  } catch (err) {
+    _storeInitError = normalizeStoreError(err);
+    throw _storeInitError;
+  }
 }
 
 /**
@@ -208,7 +237,7 @@ export function resolveProviderApiKey(provider) {
     const storeKey = getCredentialStore().getApiKey(provider);
     if (storeKey) return storeKey;
   } catch (err) {
-    console.warn(`[credentials] Store lookup failed for ${provider}:`, err.message);
+    warnStoreFallbackOnce(err);
   }
 
   const envKey = PROVIDERS[provider]?.envKey;
@@ -225,4 +254,6 @@ export function resetCredentialStore() {
     }
   }
   _store = null;
+  _storeInitError = null;
+  _storeWarningShown = false;
 }

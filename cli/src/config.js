@@ -7,6 +7,10 @@
 
 // Auto-load ~/.stateset/.env before anything checks for API keys
 import './load-env.js';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { version: packageVersion } = require('../package.json');
 
 // =============================================================================
 // MODEL CONFIGURATION
@@ -84,7 +88,7 @@ export const DEFAULT_DB_PATH = './store.db';
 // CLI CONFIGURATION
 // =============================================================================
 
-export const CLI_VERSION = '0.8.1';
+export const CLI_VERSION = process.env.npm_package_version || packageVersion;
 
 export const CLI_DEFAULTS = {
   dbPath: DEFAULT_DB_PATH,

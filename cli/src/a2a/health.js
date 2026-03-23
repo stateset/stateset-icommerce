@@ -24,7 +24,7 @@
  * @returns {Object} Health service API
  */
 export function createHealthService(store, sequencerClient, subsystems = {}) {
-  let _startedAt = new Date().toISOString();
+  const startedAt = new Date().toISOString();
 
   /**
    * Full health check — tests all dependencies.
@@ -37,11 +37,11 @@ export function createHealthService(store, sequencerClient, subsystems = {}) {
     // 1. Database check
     try {
       // Simple query to test DB connectivity
-      const testResult = store.listPayments
-        ? await store.listPayments({ limit: 1 })
+      await (store.listPayments
+        ? store.listPayments({ limit: 1 })
         : store.listAgentCards
           ? store.listAgentCards({ limit: 1 })
-          : [];
+          : []);
       checks.database = { status: 'ok', latencyMs: 0 };
     } catch (err) {
       checks.database = { status: 'error', error: err.message };
@@ -95,7 +95,7 @@ export function createHealthService(store, sequencerClient, subsystems = {}) {
       status: overallHealthy ? 'healthy' : 'unhealthy',
       timestamp: new Date().toISOString(),
       uptime: _uptimeMs(),
-      startedAt: _startedAt,
+      startedAt,
       checks,
     };
   }
@@ -114,7 +114,7 @@ export function createHealthService(store, sequencerClient, subsystems = {}) {
    */
   async function ready() {
     try {
-      const testResult = store.listPayments ? await store.listPayments({ limit: 1 }) : [];
+      await (store.listPayments ? store.listPayments({ limit: 1 }) : []);
       return { status: 'ready', timestamp: new Date().toISOString() };
     } catch (err) {
       return { status: 'not_ready', error: err.message, timestamp: new Date().toISOString() };
@@ -149,7 +149,7 @@ export function createHealthService(store, sequencerClient, subsystems = {}) {
   }
 
   function _uptimeMs() {
-    return Date.now() - new Date(_startedAt).getTime();
+    return Date.now() - new Date(startedAt).getTime();
   }
 
   return {

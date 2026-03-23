@@ -73,6 +73,7 @@
     "url": "https://github.com/stateset/stateset-icommerce/issues"
   },
   "scripts": {
+    "check": "npm run check:env && npm run lint && npm run typecheck:supported && npm run test:smoke",
     "check:env": "node ../scripts/check-node.mjs 20.20.0 10.0.0",
     "prelint": "npm run check:env",
     "pretypecheck": "npm run check:env",
@@ -88,6 +89,7 @@
     "pretest:heartbeat": "npm run check:env",
     "pretest:permissions": "npm run check:env",
     "pretest:v031": "npm run check:env",
+    "pretest:smoke": "npm run check:env",
     "pretest:coverage": "npm run check:env",
     "test": "node --test test/*.test.js test/unit/*.test.js test/integration/*.test.js test/e2e/*.test.js test/a2a/*.test.js test/adapters/*.test.js test/x402/*.test.js tests/*.test.js",
     "test:unit": "node --test test/unit/*.test.js",
@@ -99,6 +101,7 @@
     "test:heartbeat": "node --test tests/v031-heartbeat.test.js",
     "test:permissions": "node --test tests/v031-permissions.test.js",
     "test:v031": "node --test tests/v031-permissions.test.js tests/v031-heartbeat.test.js",
+    "test:smoke": "node --test tests/credentials.test.js tests/v028-features.test.js tests/v030-integration.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js test/unit/*.test.js test/integration/*.test.js test/e2e/*.test.js test/a2a/*.test.js test/adapters/*.test.js test/x402/*.test.js tests/*.test.js",
     "lint": "npx eslint src/ bin/",
     "lint:fix": "npx eslint --fix src/ bin/",

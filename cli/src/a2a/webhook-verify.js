@@ -227,7 +227,7 @@ export function createWebhookVerifier(secret, options = {}) {
     let payload;
     try {
       payload = JSON.parse(rawBody);
-    } catch (_err) {
+    } catch {
       return { valid: false, error: 'Failed to parse request body as JSON' };
     }
 

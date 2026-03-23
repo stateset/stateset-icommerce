@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::SyncError;
 use crate::event::SyncEvent;
@@ -19,7 +20,10 @@ struct OutboxSnapshot {
 
 /// An event outbox.
 ///
-/// Events are appended and assigned monotonically increasing sequence numbers.
+/// Events are appended and assigned monotonically increasing local sequence
+/// numbers. Those numbers are only meaningful inside one node's pending queue;
+/// canonical cross-agent ordering is assigned later by the sequencer.
+///
 /// The outbox can be drained (consumed) in order for push operations, or
 /// peeked without consuming.
 ///
@@ -84,7 +88,12 @@ impl Outbox {
                 let snapshot: OutboxSnapshot = serde_json::from_str(&contents)?;
                 outbox.events = snapshot.events.into();
                 outbox.next_sequence = snapshot.next_sequence.max(
-                    outbox.events.back().map(|event| event.sequence.saturating_add(1)).unwrap_or(1),
+                    outbox
+                        .events
+                        .back()
+                        .and_then(SyncEvent::local_sequence)
+                        .map(|seq| seq.saturating_add(1))
+                        .unwrap_or(1),
                 );
                 while outbox.events.len() > outbox.max_capacity {
                     let _ = outbox.events.pop_front();
@@ -106,6 +115,12 @@ impl Outbox {
     /// Returns [`SyncError::OutboxFull`] if the outbox is at capacity or
     /// [`SyncError::Storage`] if durable persistence fails.
     pub fn append(&mut self, event: SyncEvent) -> Result<u64, SyncError> {
+        if event.is_canonical_remote() {
+            return Err(SyncError::InvalidEvent(
+                "canonical remote events cannot be appended to the local outbox".into(),
+            ));
+        }
+
         if self.events.len() >= self.max_capacity {
             return Err(SyncError::OutboxFull {
                 capacity: self.max_capacity,
@@ -115,7 +130,7 @@ impl Outbox {
 
         let seq = self.next_sequence;
         self.next_sequence += 1;
-        let event = event.with_sequence(seq);
+        let event = event.with_local_sequence(seq);
         self.events.push_back(event);
 
         if let Err(err) = self.persist() {
@@ -194,6 +209,12 @@ impl Outbox {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    /// Whether the outbox already contains an event with the given id.
+    #[must_use]
+    pub fn contains_event_id(&self, event_id: Uuid) -> bool {
+        self.events.iter().any(|event| event.id == event_id)
     }
 
     /// Whether the outbox is at maximum capacity.
@@ -288,6 +309,14 @@ mod tests {
     }
 
     #[test]
+    fn append_rejects_canonical_remote_event() {
+        let mut outbox = Outbox::new(10);
+        let err = outbox.append(make_event("remote").with_remote_sequence(42)).unwrap_err();
+        assert!(matches!(err, SyncError::InvalidEvent(_)));
+        assert!(outbox.is_empty());
+    }
+
+    #[test]
     fn append_at_capacity_fails() {
         let mut outbox = Outbox::new(2);
         outbox.append(make_event("a")).unwrap();
@@ -306,8 +335,8 @@ mod tests {
 
         let drained = outbox.drain(2).unwrap();
         assert_eq!(drained.len(), 2);
-        assert_eq!(drained[0].sequence, 1);
-        assert_eq!(drained[1].sequence, 2);
+        assert_eq!(drained[0].local_sequence(), Some(1));
+        assert_eq!(drained[1].local_sequence(), Some(2));
         assert_eq!(outbox.count(), 1);
     }
 
@@ -337,7 +366,7 @@ mod tests {
 
         let peeked = outbox.peek(1);
         assert_eq!(peeked.len(), 1);
-        assert_eq!(peeked[0].sequence, 1);
+        assert_eq!(peeked[0].local_sequence(), Some(1));
         assert_eq!(outbox.count(), 2); // still there
     }
 
@@ -373,6 +402,17 @@ mod tests {
         outbox.clear();
         assert!(outbox.is_empty());
         assert_eq!(outbox.count(), 0);
+    }
+
+    #[test]
+    fn contains_event_id_detects_existing_event() {
+        let mut outbox = Outbox::new(100);
+        let event = make_event("a");
+        let event_id = event.id;
+        outbox.append(event).unwrap();
+
+        assert!(outbox.contains_event_id(event_id));
+        assert!(!outbox.contains_event_id(uuid::Uuid::new_v4()));
     }
 
     #[test]

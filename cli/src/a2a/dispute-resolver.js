@@ -26,8 +26,6 @@
 
 import { EventEmitter } from 'node:events';
 
-const EVIDENCE_DEADLINE_MS = 72 * 60 * 60 * 1000; // 72 hours
-const REVIEW_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const AUTO_EVIDENCE_PERIOD_MS = 24 * 60 * 60 * 1000; // 24h grace to enter evidence period
 
 /**
@@ -101,7 +99,7 @@ export function createDisputeResolver(
                       'Dispute has entered evidence period. Submit evidence before the deadline.',
                   },
                 });
-              } catch (_) {
+              } catch {
                 // best effort
               }
             }
@@ -195,7 +193,7 @@ export function createDisputeResolver(
                   note: decision.note,
                 },
               });
-            } catch (_) {
+            } catch {
               // best effort
             }
           }
@@ -228,7 +226,7 @@ export function createDisputeResolver(
     let sellerReputation = null;
     try {
       sellerReputation = store.getReputationScore(dispute.filed_against);
-    } catch (_) {
+    } catch {
       // no reputation data
     }
     const sellerScore = sellerReputation?.average_score ?? 3;

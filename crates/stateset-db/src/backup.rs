@@ -483,10 +483,7 @@ mod tests {
         let result = manager.backup(&conn, &malicious);
         assert!(result.is_err(), "Stem containing '..' should be blocked");
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("escapes"),
-            "Error should mention escaping, got: {err_msg}"
-        );
+        assert!(err_msg.contains("escapes"), "Error should mention escaping, got: {err_msg}");
     }
 
     #[test]
@@ -578,8 +575,7 @@ mod tests {
 
         // Restore to a new location
         let restore_path = temp_dir.path().join("restored.db");
-        let restore_result =
-            manager.restore(&conn, &backup_result.path, &restore_path).unwrap();
+        let restore_result = manager.restore(&conn, &backup_result.path, &restore_path).unwrap();
 
         assert!(restore_result.success);
         assert!(restore_result.table_count > 0);
@@ -925,10 +921,7 @@ mod tests {
         let manager = BackupManager::new(&backup_dir, BackupConfig::default()).unwrap();
         let result = manager.backup(&conn, &db_path).unwrap();
 
-        assert!(
-            result.path.starts_with(&backup_dir),
-            "Backup path should be under backup_dir"
-        );
+        assert!(result.path.starts_with(&backup_dir), "Backup path should be under backup_dir");
     }
 
     #[test]
@@ -1016,11 +1009,7 @@ mod tests {
 
     #[test]
     fn test_restore_result_debug() {
-        let result = RestoreResult {
-            restored_at: Utc::now(),
-            table_count: 5,
-            success: true,
-        };
+        let result = RestoreResult { restored_at: Utc::now(), table_count: 5, success: true };
         let dbg = format!("{result:?}");
         assert!(dbg.contains("RestoreResult"));
         assert!(dbg.contains("true"));

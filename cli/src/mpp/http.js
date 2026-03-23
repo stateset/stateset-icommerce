@@ -354,7 +354,7 @@ export function createMppHttpRouteHandler({
   resolveAuthorization = null,
   resolveMethod = null,
   resolveProof = null,
-  resolveCredentialMetadata = null,
+  _resolveCredentialMetadata = null,
   resolveChallengeMetadata = null,
   resolveReceiptMetadata = null,
   attachReceiptToBody = true,

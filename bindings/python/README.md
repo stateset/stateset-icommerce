@@ -79,6 +79,44 @@ conversion = commerce.currency.convert("USD", "EUR", 100.0)
 print(f"$100 USD = €{conversion.converted_amount} EUR")
 ```
 
+## Sequencer Sync
+
+```python
+from stateset_embedded import SyncRuntime
+import json
+
+runtime = SyncRuntime(json.dumps({
+    "sequencer_base_url": "http://127.0.0.1:4000",
+    "engine": {
+        "agent_id": "agent-1",
+        "tenant_id": "tenant-1",
+        "store_id": "store-1",
+        "outbox_path": "/tmp/stateset-sync-outbox.json",
+        "state_path": "/tmp/stateset-sync-state.json"
+    },
+    "agent_key_id": 7
+}))
+
+runtime.record(
+    "order.created",
+    "order",
+    "ORD-1001",
+    json.dumps({"total": 42.50}),
+    command_id="cmd-1001",
+)
+
+push = runtime.push()
+status = runtime.status()
+print(push.remote_head)
+print(status.caught_up)
+```
+
+`SyncRuntime` mirrors the Rust SDK sync surface for local event recording,
+sequencer health checks, remote-head refresh, push/pull/full-sync operations,
+and inspection of confirmations, dead letters, and buffered pulled events.
+Typed Python classes are available for the main sync surfaces, and the JSON
+helpers remain available when a serialized view is more convenient.
+
 ## Features
 
 - **Local-First**: All data stored in SQLite, works offline

@@ -15,6 +15,7 @@ import { isIP } from 'node:net';
 import { getPluginRegistry } from './plugin-api.js';
 import { getCommandRegistry } from './command-registry.js';
 import { getMetrics } from './metrics.js';
+import { CLI_VERSION } from '../config.js';
 import {
   LEVELS,
   createApiKeyAuth,
@@ -262,16 +263,6 @@ function parseRawBody(req, maxSize = MAX_BODY_SIZE) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
-}
-
-/**
- * Send an HTML response.
- * @param {http.ServerResponse} res
- * @param {number} status
- * @param {string} html
- */
-function sendHtml(res, status, html) {
-  return sendHtmlWithHeaders(res, status, html);
 }
 
 /**
@@ -689,7 +680,7 @@ export class HttpGateway {
           status: 'ok',
           uptime: Date.now() - startTime,
           timestamp: new Date().toISOString(),
-          version: process.env.npm_package_version || '0.8.0',
+          version: CLI_VERSION,
           subsystems: {
             voice: this._subsystems.voice ? 'enabled' : 'disabled',
             browser: this._subsystems.browser ? 'enabled' : 'disabled',

@@ -147,10 +147,7 @@ fn serde_json_roundtrip_with_struct() {
         name: String,
     }
 
-    let w = Wrapper {
-        id: OrderId::new(),
-        name: "test".to_string(),
-    };
+    let w = Wrapper { id: OrderId::new(), name: "test".to_string() };
 
     let json = serde_json::to_string(&w).expect("serialize");
     let decoded: Wrapper = serde_json::from_str(&json).expect("deserialize");

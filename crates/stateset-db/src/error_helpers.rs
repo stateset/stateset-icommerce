@@ -310,16 +310,12 @@ mod tests {
         fn test_constraint_violation_unique() {
             // Create a DB with a unique constraint and violate it
             let conn = Connection::open_in_memory().unwrap();
-            conn.execute(
-                "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE)",
-                [],
-            )
-            .unwrap();
+            conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE)", [])
+                .unwrap();
             conn.execute("INSERT INTO users (email) VALUES ('a@b.com')", []).unwrap();
 
-            let raw_err = conn
-                .execute("INSERT INTO users (email) VALUES ('a@b.com')", [])
-                .unwrap_err();
+            let raw_err =
+                conn.execute("INSERT INTO users (email) VALUES ('a@b.com')", []).unwrap_err();
 
             let mapped = sqlite::map_error("users", "insert", raw_err);
             assert!(mapped.is_database());
@@ -344,11 +340,8 @@ mod tests {
 
         #[test]
         fn test_invalid_column_type() {
-            let err = SqliteError::InvalidColumnType(
-                0,
-                "amount".into(),
-                rusqlite::types::Type::Text,
-            );
+            let err =
+                SqliteError::InvalidColumnType(0, "amount".into(), rusqlite::types::Type::Text);
             let mapped = sqlite::map_error("invoices", "get", err);
             assert!(mapped.is_database());
             let msg = format!("{mapped}");
@@ -358,7 +351,8 @@ mod tests {
         #[test]
         fn test_from_sql_conversion_failure() {
             let inner = Box::new(std::fmt::Error); // any Display error
-            let err = SqliteError::FromSqlConversionFailure(3, rusqlite::types::Type::Integer, inner);
+            let err =
+                SqliteError::FromSqlConversionFailure(3, rusqlite::types::Type::Integer, inner);
             let mapped = sqlite::map_error("payments", "get", err);
             assert!(mapped.is_database());
         }
@@ -413,10 +407,7 @@ mod tests {
                         !constraint.contains(':'),
                         "Constraint should not contain colon: {constraint}"
                     );
-                    assert!(
-                        constraint.contains("UNIQUE"),
-                        "Should contain UNIQUE: {constraint}"
-                    );
+                    assert!(constraint.contains("UNIQUE"), "Should contain UNIQUE: {constraint}");
                 }
                 other => panic!("Expected ConstraintViolation, got: {other:?}"),
             }
@@ -431,9 +422,7 @@ mod tests {
             conn.execute("CREATE TABLE t (id INTEGER)", []).unwrap();
             // Verify the connection works — the busy branch is tested implicitly
             // via code review; difficult to trigger without concurrency.
-            let count: i64 = conn
-                .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
-                .unwrap();
+            let count: i64 = conn.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
             assert_eq!(count, 0);
         }
 
@@ -448,15 +437,16 @@ mod tests {
         fn test_multiple_tables_constraint_violations() {
             let conn = Connection::open_in_memory().unwrap();
             conn.execute("CREATE TABLE a (id INTEGER PRIMARY KEY)", []).unwrap();
-            conn.execute("CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES a(id))", [])
-                .unwrap();
+            conn.execute(
+                "CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES a(id))",
+                [],
+            )
+            .unwrap();
 
             // Insert into b with a foreign key that doesn't exist
             // Note: SQLite doesn't enforce FK by default, need PRAGMA
             conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
-            let raw_err = conn
-                .execute("INSERT INTO b (id, a_id) VALUES (1, 999)", [])
-                .unwrap_err();
+            let raw_err = conn.execute("INSERT INTO b (id, a_id) VALUES (1, 999)", []).unwrap_err();
 
             let mapped = sqlite::map_error("b", "insert", raw_err);
             assert!(mapped.is_database());

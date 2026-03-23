@@ -456,7 +456,7 @@ export function createAgentMemory() {
    * @param {string} actionType - The action being considered
    * @returns {{ recommended: boolean, confidence: number, reason: string, suggestedTerms?: Object }}
    */
-  function getRecommendation(agentAddress, counterpartyAddress, actionType) {
+  function getRecommendation(agentAddress, counterpartyAddress, _actionType) {
     const profile = getCounterpartyProfile(agentAddress, counterpartyAddress);
 
     // No history — neutral recommendation
