@@ -291,6 +291,8 @@ export class ChannelOrchestrator {
       dbPath: shared.dbPath || './store.db',
       allowApply: shared.allowApply ?? false,
       model: shared.model,
+      provider: shared.provider,
+      enableFallback: shared.enableFallback,
       maxTurns: shared.maxTurns || 10,
       agent: shared.agent,
       verbose: shared.verbose ?? false,

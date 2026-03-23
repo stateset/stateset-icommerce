@@ -587,6 +587,8 @@ header button:hover {
  * @param {string}      [config.dbPath='./store.db']
  * @param {boolean}     [config.allowApply=false]
  * @param {string}      [config.model]
+ * @param {string}      [config.provider='claude']
+ * @param {boolean}     [config.enableFallback=true]
  * @param {number}      [config.maxTurns=10]
  * @param {string}      [config.agent]
  * @param {boolean}     [config.verbose=false]
@@ -601,6 +603,8 @@ export function startWebChatChannel(config = {}) {
     dbPath = './store.db',
     allowApply = false,
     model,
+    provider = 'claude',
+    enableFallback = true,
     maxTurns = 10,
     agent,
     verbose = false,
@@ -611,7 +615,9 @@ export function startWebChatChannel(config = {}) {
   const sessionManager = createSessionManager({ store: sessionStore, channel: 'webchat' });
   const cleanupHandle = sessionManager.startCleanup();
 
-  console.info('[WebChat] Channel initialised.');
+  console.info(
+    `[WebChat] Channel initialised (provider=${provider}, enableFallback=${enableFallback}).`,
+  );
 
   // ── Cached HTML ──
   const chatHTML = buildChatHTML();
@@ -636,6 +642,10 @@ export function startWebChatChannel(config = {}) {
     // Resolve or create session id
     const sessionId = incomingSessionId || crypto.randomUUID();
     const session = sessionManager.getSession(sessionId);
+    // Force provider from channel config for deterministic runtime behavior in API mode.
+    if (provider) {
+      session.provider = provider;
+    }
 
     let trimmed = text.trim();
 
@@ -676,6 +686,9 @@ export function startWebChatChannel(config = {}) {
 
     if (verbose) {
       console.debug(`[WebChat] ${sessionId}: ${trimmed.slice(0, 120)}`);
+      console.debug(
+        `[WebChat] ${sessionId}: provider=${session.provider || provider || 'claude'} fallback=${enableFallback}`,
+      );
     }
 
     // 1. Check bot commands first
@@ -706,6 +719,8 @@ export function startWebChatChannel(config = {}) {
         dbPath,
         allowApply,
         model,
+        provider,
+        enableFallback,
         maxTurns,
         agent,
         channel: 'webchat',

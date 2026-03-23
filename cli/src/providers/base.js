@@ -226,6 +226,7 @@ class ProviderRegistry {
 // ============================================================================
 
 let _registry = null;
+let _registryInitPromise = null;
 
 /**
  * Get the global ProviderRegistry singleton.
@@ -236,9 +237,18 @@ export function getProviderRegistry() {
   if (!_registry) {
     _registry = new ProviderRegistry();
     // Auto-register providers on first access
-    _autoRegister();
+    _registryInitPromise = _autoRegister();
   }
   return _registry;
+}
+
+/**
+ * Ensure async auto-registration has completed before provider selection.
+ */
+async function ensureProviderRegistryReady() {
+  if (_registryInitPromise) {
+    await _registryInitPromise;
+  }
 }
 
 /**
@@ -246,6 +256,7 @@ export function getProviderRegistry() {
  */
 export function resetProviderRegistry() {
   _registry = null;
+  _registryInitPromise = null;
   _fallbackChain = null;
 }
 
@@ -389,6 +400,7 @@ class FallbackChain {
   async chat(messages, options = {}) {
     const preferred = options.preferredProvider || this._order[0];
     const registry = getProviderRegistry();
+    await ensureProviderRegistryReady();
     const attempted = [];
 
     // Build provider order: preferred first, then fallback chain
