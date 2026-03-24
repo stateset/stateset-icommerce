@@ -7,6 +7,7 @@ import assert from 'node:assert';
 import {
   extractHistoryText,
   formatConversationHistory,
+  buildPromptReport,
   buildPromptWithHistory,
   extractCompactionSummary,
   estimateTokensFromText,
@@ -251,6 +252,62 @@ describe('buildPromptWithHistory', () => {
       redactOptions: { enabled: false },
     });
     assert.ok(result.includes('alice@example.com'));
+  });
+});
+
+
+// ===========================================================================
+// buildPromptReport
+// ===========================================================================
+
+describe('buildPromptReport', () => {
+  it('captures injected history, system prompt, and compaction data', () => {
+    const report = buildPromptReport({
+      request: 'Show me alternatives',
+      history: [
+        { role: 'user', content: 'What is the price?' },
+        { role: 'assistant', content: 'It is $29.99' },
+      ],
+      systemPrompt: 'You are a commerce assistant.',
+      includeHistory: true,
+      historySource: 'conversation_history',
+      compactionSummary: 'Prior order and pricing discussion.',
+      contextGuardResult: {
+        action: 'compact',
+        usage: {
+          tokens: 400,
+          afterCompaction: { tokens: 250, tokensSaved: 150 },
+        },
+      },
+    });
+
+    assert.strictEqual(report.historySource, 'conversation_history');
+    assert.strictEqual(report.historyInjected, true);
+    assert.strictEqual(report.historyMessagesAvailable, 2);
+    assert.strictEqual(report.historyMessagesInjected, 2);
+    assert.ok(report.historyTokensInjected > 0);
+    assert.ok(report.systemPromptTokens > 0);
+    assert.ok(report.userPromptTokens > report.requestTokens);
+    assert.strictEqual(report.compactionApplied, true);
+    assert.strictEqual(report.estimatedContextTokensSaved, 150);
+  });
+
+  it('tracks available but non-injected history for resumed sessions', () => {
+    const report = buildPromptReport({
+      request: 'Continue',
+      history: [{ role: 'user', content: 'Earlier context' }],
+      systemPrompt: 'You are a commerce assistant.',
+      includeHistory: false,
+      resumeSession: true,
+      historySource: 'session_summary',
+    });
+
+    assert.strictEqual(report.resumeSession, true);
+    assert.strictEqual(report.historyInjected, false);
+    assert.strictEqual(report.historyMessagesAvailable, 1);
+    assert.strictEqual(report.historyMessagesInjected, 0);
+    assert.strictEqual(report.historyTokensInjected, 0);
+    assert.ok(report.totalInputTokens >= report.requestTokens + report.systemPromptTokens);
   });
 });
 

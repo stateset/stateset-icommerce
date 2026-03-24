@@ -149,6 +149,7 @@ const _COMMANDS = {
       '--think',
       '--stream',
       '--budget',
+      '--stats',
       '--memory',
       '--no-memory',
       '--x402',
@@ -419,7 +420,7 @@ _stateset_complete() {
             ;;
         stateset-chat)
             if [[ "\${cur}" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--db --apply --model --provider --think --stream --budget --memory --no-memory --x402 --treasury --treasury-chain --treasury-token --treasury-agent --treasury-db --treasury-erc8004-registry --treasury-erc8004-db --verbose --yes --help" -- "\${cur}") )
+                COMPREPLY=( $(compgen -W "--db --apply --model --provider --think --stream --budget --stats --memory --no-memory --x402 --treasury --treasury-chain --treasury-token --treasury-agent --treasury-db --treasury-erc8004-registry --treasury-erc8004-db --verbose --yes --help" -- "\${cur}") )
             fi
             ;;
         stateset-direct)
@@ -653,6 +654,7 @@ _stateset_chat() {
         '--think[Extended thinking]:level:(off low medium high)' \\
         '--stream[Stream output]' \\
         '--budget[Maximum spend in USD]:usd:' \\
+        '--stats[Show execution stats]' \
         '--memory[Enable memory]' \\
         '--no-memory[Disable memory]' \\
         '--x402[Enable x402 MCP tools]' \\
@@ -1281,6 +1283,7 @@ complete -c stateset-chat -l provider -d 'AI provider' -xa 'claude openai gemini
 complete -c stateset-chat -l think -d 'Extended thinking' -xa 'off low medium high'
 complete -c stateset-chat -l stream -d 'Stream output'
 complete -c stateset-chat -l budget -d 'Maximum spend in USD' -r
+complete -c stateset-chat -l stats -d 'Show execution stats'
 complete -c stateset-chat -l memory -d 'Enable memory'
 complete -c stateset-chat -l no-memory -d 'Disable memory'
 complete -c stateset-chat -l x402 -d 'Enable x402 MCP tools'

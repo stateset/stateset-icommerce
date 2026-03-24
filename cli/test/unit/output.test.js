@@ -270,6 +270,50 @@ describe('output', () => {
       });
     });
 
+
+    describe('promptReport', () => {
+      it('should format injected prompt budget details', () => {
+        const result = output.promptReport({
+          totalInputTokens: 240,
+          systemPromptTokens: 60,
+          userPromptTokens: 180,
+          historySource: 'conversation_history',
+          historyInjected: true,
+          historyMessagesInjected: 3,
+          historyTokensInjected: 90,
+          compactionApplied: true,
+          estimatedContextTokensSaved: 55,
+        });
+
+        assert.ok(result.includes('Prompt Budget'));
+        assert.ok(result.includes('240'));
+        assert.ok(result.includes('60 system + 180 user'));
+        assert.ok(result.includes('conversation_history'));
+        assert.ok(result.includes('3 msg'));
+        assert.ok(result.includes('saved ~55 tokens'));
+      });
+
+      it('should format resumed session history reuse', () => {
+        const result = output.promptReport({
+          totalInputTokens: 80,
+          systemPromptTokens: 30,
+          userPromptTokens: 50,
+          historySource: 'session_summary',
+          resumeSession: true,
+          historyInjected: false,
+          historyMessagesAvailable: 2,
+        });
+
+        assert.ok(result.includes('reused by resumed session'));
+        assert.ok(result.includes('session_summary'));
+      });
+
+      it('should handle missing prompt report data', () => {
+        const result = output.promptReport(null);
+        assert.ok(result.includes('Prompt budget unavailable'));
+      });
+    });
+
     describe('toolCall', () => {
       it('should format tool call', () => {
         const result = output.toolCall('list_customers', { limit: 10 });

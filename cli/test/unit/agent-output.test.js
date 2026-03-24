@@ -11,7 +11,7 @@ import path from 'node:path';
 import {
   buildAgentOutputData,
   resolveOutputFormat,
-  writeAgentOutputFile
+  writeAgentOutputFile,
 } from '../../src/utils/agent-output.js';
 
 describe('agent-output utils', () => {
@@ -80,9 +80,40 @@ describe('agent-output utils', () => {
         {
           tool: 'mcp__stateset-commerce__list_orders',
           input: { limit: 1 },
-          result: [{ id: 'ord-1' }]
-        }
+          result: [{ id: 'ord-1' }],
+        },
       ]);
+    });
+
+    it('adds telemetry and prompt reports only when requested', () => {
+      const result = {
+        sessionId: 'sess-123',
+        traceId: 'trace-abc',
+        response: 'ok',
+        telemetry: { duration: 125 },
+        promptReport: { totalInputTokens: 321 },
+        toolResults: [],
+      };
+
+      const baseline = buildAgentOutputData({
+        agent: 'orders',
+        request: 'list orders',
+        allowApply: false,
+        result,
+      });
+      const withStats = buildAgentOutputData({
+        agent: 'orders',
+        request: 'list orders',
+        allowApply: false,
+        result,
+        includeTelemetry: true,
+        includePromptReport: true,
+      });
+
+      assert.strictEqual(baseline.telemetry, undefined);
+      assert.strictEqual(baseline.promptReport, undefined);
+      assert.deepStrictEqual(withStats.telemetry, { duration: 125 });
+      assert.deepStrictEqual(withStats.promptReport, { totalInputTokens: 321 });
     });
   });
 

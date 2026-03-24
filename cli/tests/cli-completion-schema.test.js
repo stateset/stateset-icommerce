@@ -41,4 +41,19 @@ describe('stateset-completion schema parity', () => {
       assert.match(result.stdout, new RegExp(`-l\\s+${longName}\\b`), `Missing ${flag} in fish completion`);
     }
   });
+
+  it('chat completion surfaces the --stats flag across shells', () => {
+    const bash = runCompletion('bash');
+    const zsh = runCompletion('zsh');
+    const fish = runCompletion('fish');
+
+    assert.equal(bash.status, 0, bash.stderr);
+    assert.equal(zsh.status, 0, zsh.stderr);
+    assert.equal(fish.status, 0, fish.stderr);
+
+    assert.match(bash.stdout, /stateset-chat[\s\S]*--stats/);
+    assert.match(zsh.stdout, /--stats\[Show execution stats\]/);
+    assert.match(fish.stdout, /complete -c stateset-chat -l stats -d 'Show execution stats'/);
+  });
+
 });

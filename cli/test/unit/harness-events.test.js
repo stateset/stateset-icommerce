@@ -87,6 +87,10 @@ describe('runAgentLoop (non-Claude) enhancements', () => {
     });
 
     assert.strictEqual(result.response, 'mock response');
+    assert.ok(result.promptReport, 'prompt report should be returned');
+    assert.strictEqual(result.promptReport.historySource, 'conversation_history');
+    assert.strictEqual(result.promptReport.historyInjected, true);
+    assert.ok(result.promptReport.totalInputTokens > 0);
     assert.ok(provider.lastOptions, 'provider chat options should be captured');
     assert.strictEqual(provider.lastOptions.apiKey, 'override-key');
     assert.ok(provider.lastOptions.signal, 'provider signal should be set');
@@ -103,6 +107,7 @@ describe('runAgentLoop (non-Claude) enhancements', () => {
       'turn_start',
       'message_start',
       'message_end',
+      'prompt_report',
       'message_start',
       'message_end',
       'turn_end',

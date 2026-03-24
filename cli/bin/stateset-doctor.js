@@ -23,6 +23,7 @@ import { parseArgs } from 'node:util';
 import { RichOutput, ICONS } from '../src/claude-harness.js';
 import { CLI_VERSION, DEFAULT_MODEL, FEATURES } from '../src/config.js';
 import { checkApiAvailability } from '../src/offline.js';
+import { checkHarnessSettings, checkSessionStoreHealth } from '../src/doctor-checks.js';
 import { theme } from '../src/theme.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -53,6 +54,8 @@ CHECKS:
   sync            Checks sync configuration (if configured)
   plugins         Validates installed plugins
   config          Verifies CLI configuration
+  harness         Validates effective harness settings
+  sessions        Checks persisted agent session metadata
   disk            Shows database size
 
 EXAMPLES:
@@ -574,6 +577,8 @@ async function main() {
     Sync: checkSync,
     Plugins: checkPlugins,
     Config: checkConfig,
+    Harness: () => checkHarnessSettings(),
+    Sessions: () => checkSessionStoreHealth(),
     'Disk Space': () => checkDiskSpace(values.db),
   };
 
@@ -593,6 +598,10 @@ async function main() {
       sync: 'Sync',
       plugins: 'Plugins',
       config: 'Config',
+      harness: 'Harness',
+      session: 'Sessions',
+      sessions: 'Sessions',
+      'session-store': 'Sessions',
       disk: 'Disk Space',
     };
     checksToRun = requested.map((r) => checkMap[r]).filter(Boolean);

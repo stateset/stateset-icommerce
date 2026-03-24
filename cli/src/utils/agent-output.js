@@ -40,7 +40,14 @@ export function resolveOutputFormat({ format = 'table', json = false, argv = pro
 /**
  * Build standard agent output payload.
  */
-export function buildAgentOutputData({ agent, request, allowApply, result }) {
+export function buildAgentOutputData({
+  agent,
+  request,
+  allowApply,
+  result,
+  includeTelemetry = false,
+  includePromptReport = false,
+}) {
   const output = {
     agent,
     request,
@@ -76,6 +83,14 @@ export function buildAgentOutputData({ agent, request, allowApply, result }) {
 
   if (result?.routing) {
     output.routing = result.routing;
+  }
+
+  if (includeTelemetry && result?.telemetry) {
+    output.telemetry = result.telemetry;
+  }
+
+  if (includePromptReport && result?.promptReport) {
+    output.promptReport = result.promptReport;
   }
 
   return output;

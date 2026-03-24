@@ -30,6 +30,41 @@
 
 const POLL_INTERVAL_MS = 100;
 const CLEANUP_CHECK_INTERVAL_MS = 60_000;
+const DEFAULT_MONITOR_INTERVAL_MS = 5_000;
+const DEFAULT_WAIT_WARNING_MS = 30_000;
+const DEFAULT_RUNNING_WARNING_MS = 120_000;
+const DEFAULT_WARNING_THROTTLE_MS = 30_000;
+
+function normalizePositiveNumber(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+
+function normalizeThreshold(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : fallback;
+}
+
+function createWarningState() {
+  return {
+    pending: { key: null, lastAt: 0 },
+    running: { key: null, lastAt: 0 },
+  };
+}
+
+function formatQueueWarning(payload) {
+  if (payload.issue === 'pending_wait') {
+    return (
+      `[CommandQueue] Lane ${payload.laneId} has ${payload.waitingTasks} waiting task(s) ` +
+      `for ${payload.ageMs}ms (threshold ${payload.thresholdMs}ms)`
+    );
+  }
+
+  return (
+    `[CommandQueue] Lane ${payload.laneId} has ${payload.activeTasks} active task(s) ` +
+    `running for ${payload.ageMs}ms (threshold ${payload.thresholdMs}ms)`
+  );
+}
 
 // ============================================================================
 // Lane
@@ -45,10 +80,15 @@ class Lane {
     this.queue = [];
     this.processing = false;
     this.createdAt = Date.now();
-    this.maxQueueSize = options.maxQueueSize || 100;
-    this.timeout = options.timeout || 300000; // 5 minutes default
+    this.maxQueueSize = normalizePositiveNumber(options.maxQueueSize, 100);
+    this.timeout = normalizePositiveNumber(options.timeout ?? options.laneTimeout, 300000);
     this.onError =
-      options.onError || ((err, _task) => console.error(`[Lane ${id}] Error:`, err.message));
+      typeof options.onError === 'function'
+        ? options.onError
+        : (err, _task) => console.error(`[Lane ${id}] Error:`, err.message);
+    this._entryCounter = 0;
+    this.activeEntry = null;
+    this.warningState = createWarningState();
 
     // Metrics
     this.stats = {
@@ -76,6 +116,7 @@ class Lane {
 
     return new Promise((resolve, reject) => {
       const entry = {
+        entryId: `${this.id}:${++this._entryCounter}`,
         task,
         meta,
         resolve,
@@ -86,9 +127,8 @@ class Lane {
       this.queue.push(entry);
       this.stats.queueHighWaterMark = Math.max(this.stats.queueHighWaterMark, this.queue.length);
 
-      // Start processing if not already running
       if (!this.processing) {
-        this._processQueue();
+        void this._processQueue();
       }
     });
   }
@@ -118,20 +158,25 @@ class Lane {
     while (this.queue.length > 0) {
       const entry = this.queue.shift();
       const startTime = Date.now();
+      this.activeEntry = {
+        entryId: entry.entryId,
+        enqueuedAt: entry.enqueuedAt,
+        startedAt: startTime,
+        meta: entry.meta,
+      };
 
       try {
-        // Execute with timeout
         const result = await this._executeWithTimeout(entry.task, this.timeout);
-
         const duration = Date.now() - startTime;
         this._updateStats(duration, false);
         entry.resolve(result);
       } catch (error) {
         const duration = Date.now() - startTime;
         this._updateStats(duration, true);
-
         this.onError(error, entry);
         entry.reject(error);
+      } finally {
+        this.activeEntry = null;
       }
     }
 
@@ -169,7 +214,6 @@ class Lane {
     this.stats.totalProcessed++;
     if (isError) this.stats.totalErrors++;
 
-    // Rolling average
     const prevTotal = this.stats.totalProcessed - 1;
     this.stats.avgDuration =
       (this.stats.avgDuration * prevTotal + duration) / this.stats.totalProcessed;
@@ -178,14 +222,128 @@ class Lane {
     this.stats.lastActivity = new Date(now).toISOString();
   }
 
+  getWaitingTaskCount() {
+    return this.queue.length;
+  }
+
+  getActiveTaskCount() {
+    return this.activeEntry ? 1 : 0;
+  }
+
+  getOldestPendingEntry() {
+    return this.queue[0] || null;
+  }
+
+  getOldestPendingMs(now = Date.now()) {
+    const oldest = this.getOldestPendingEntry();
+    return oldest ? Math.max(0, now - oldest.enqueuedAt) : null;
+  }
+
+  getLongestRunningEntry() {
+    return this.activeEntry;
+  }
+
+  getActiveTaskAgeMs(now = Date.now()) {
+    const active = this.getLongestRunningEntry();
+    return active ? Math.max(0, now - active.startedAt) : null;
+  }
+
+  _resetWarning(kind) {
+    this.warningState[kind] = { key: null, lastAt: 0 };
+  }
+
+  _maybeCollectWarning(kind, details, options, laneType, now, warnings) {
+    const thresholdMs = details.thresholdMs;
+    if (!Number.isFinite(thresholdMs) || thresholdMs <= 0) {
+      this._resetWarning(kind);
+      return;
+    }
+
+    const key = details.key;
+    const ageMs = details.ageMs;
+    if (!key || !Number.isFinite(ageMs) || ageMs < thresholdMs) {
+      this._resetWarning(kind);
+      return;
+    }
+
+    const state = this.warningState[kind];
+    if (state.key !== key) {
+      state.key = key;
+      state.lastAt = 0;
+    }
+
+    const throttleMs = normalizePositiveNumber(
+      options.warningThrottleMs,
+      DEFAULT_WARNING_THROTTLE_MS,
+    );
+    if (state.lastAt > 0 && now - state.lastAt < throttleMs) {
+      return;
+    }
+
+    state.lastAt = now;
+    warnings.push({
+      laneId: this.id,
+      laneType,
+      issue: details.issue,
+      ageMs,
+      thresholdMs,
+      waitingTasks: this.getWaitingTaskCount(),
+      activeTasks: this.getActiveTaskCount(),
+      queueHighWaterMark: this.stats.queueHighWaterMark,
+      timestamp: new Date(now).toISOString(),
+    });
+  }
+
+  collectWarnings(now, options = {}, laneType = 'serial') {
+    const warnings = [];
+    const oldestPending = this.getOldestPendingEntry();
+    this._maybeCollectWarning(
+      'pending',
+      {
+        key: oldestPending?.entryId || null,
+        ageMs: oldestPending ? Math.max(0, now - oldestPending.enqueuedAt) : null,
+        thresholdMs: options.waitWarningMs,
+        issue: 'pending_wait',
+      },
+      options,
+      laneType,
+      now,
+      warnings,
+    );
+
+    const runningEntry = this.getLongestRunningEntry();
+    this._maybeCollectWarning(
+      'running',
+      {
+        key: runningEntry?.entryId || null,
+        ageMs: runningEntry ? Math.max(0, now - runningEntry.startedAt) : null,
+        thresholdMs: options.runningWarningMs,
+        issue: 'running_task',
+      },
+      options,
+      laneType,
+      now,
+      warnings,
+    );
+
+    return warnings;
+  }
+
   /**
    * Get lane statistics.
    */
-  getStats() {
+  getStats(now = Date.now()) {
+    const waitingTasks = this.getWaitingTaskCount();
+    const activeTasks = this.getActiveTaskCount();
     return {
       ...this.stats,
-      currentQueueLength: this.queue.length,
+      currentQueueLength: waitingTasks,
+      waitingTasks,
+      activeTasks,
       isProcessing: this.processing,
+      busy: !this.idle,
+      oldestPendingMs: this.getOldestPendingMs(now),
+      activeTaskAgeMs: this.getActiveTaskAgeMs(now),
     };
   }
 }
@@ -201,20 +359,35 @@ class Lane {
 class ParallelLane extends Lane {
   constructor(id, options = {}) {
     super(id, options);
-    this.maxConcurrency = options.maxConcurrency || 5;
+    this.maxConcurrency = normalizePositiveNumber(
+      options.maxConcurrency ?? options.parallelConcurrency,
+      5,
+    );
     this.activeTasks = 0;
     this.waitingQueue = [];
+    this.activeEntries = new Map();
   }
 
   /**
    * Execute task with concurrency limit.
    */
   enqueue(task, meta = {}) {
+    if (this.waitingQueue.length >= this.maxQueueSize) {
+      return Promise.reject(new Error(`Lane ${this.id} queue full (max: ${this.maxQueueSize})`));
+    }
+
     return new Promise((resolve, reject) => {
-      const entry = { task, meta, resolve, reject, enqueuedAt: Date.now() };
+      const entry = {
+        entryId: `${this.id}:${++this._entryCounter}`,
+        task,
+        meta,
+        resolve,
+        reject,
+        enqueuedAt: Date.now(),
+      };
 
       if (this.activeTasks < this.maxConcurrency) {
-        this._executeTask(entry);
+        void this._executeTask(entry);
       } else {
         this.waitingQueue.push(entry);
         this.stats.queueHighWaterMark = Math.max(
@@ -232,6 +405,12 @@ class ParallelLane extends Lane {
   async _executeTask(entry) {
     this.activeTasks++;
     const startTime = Date.now();
+    this.activeEntries.set(entry.entryId, {
+      entryId: entry.entryId,
+      enqueuedAt: entry.enqueuedAt,
+      startedAt: startTime,
+      meta: entry.meta,
+    });
 
     try {
       const result = await this._executeWithTimeout(entry.task, this.timeout);
@@ -245,6 +424,7 @@ class ParallelLane extends Lane {
       entry.reject(error);
     } finally {
       this.activeTasks--;
+      this.activeEntries.delete(entry.entryId);
       this._tryNextTask();
     }
   }
@@ -256,7 +436,7 @@ class ParallelLane extends Lane {
   _tryNextTask() {
     if (this.waitingQueue.length > 0 && this.activeTasks < this.maxConcurrency) {
       const next = this.waitingQueue.shift();
-      this._executeTask(next);
+      void this._executeTask(next);
     }
   }
 
@@ -266,6 +446,40 @@ class ParallelLane extends Lane {
 
   get idle() {
     return this.activeTasks === 0 && this.waitingQueue.length === 0;
+  }
+
+  getWaitingTaskCount() {
+    return this.waitingQueue.length;
+  }
+
+  getActiveTaskCount() {
+    return this.activeTasks;
+  }
+
+  getOldestPendingEntry() {
+    return this.waitingQueue[0] || null;
+  }
+
+  getLongestRunningEntry() {
+    let longest = null;
+    for (const entry of this.activeEntries.values()) {
+      if (!longest || entry.startedAt < longest.startedAt) {
+        longest = entry;
+      }
+    }
+    return longest;
+  }
+
+  getStats(now = Date.now()) {
+    const base = super.getStats(now);
+    return {
+      ...base,
+      currentQueueLength: this.waitingQueue.length,
+      waitingTasks: this.waitingQueue.length,
+      activeTasks: this.activeTasks,
+      isProcessing: this.activeTasks > 0,
+      maxConcurrency: this.maxConcurrency,
+    };
   }
 }
 
@@ -282,17 +496,36 @@ export class CommandQueue {
    * @param {object} [options]
    * @param {number} [options.maxLanes=1000] - Maximum number of lanes to keep
    * @param {number} [options.laneTimeout=300000] - Default task timeout per lane (ms)
+   * @param {number} [options.laneTimeoutMs=300000] - Alias for laneTimeout
    * @param {number} [options.maxQueueSize=100] - Max queue size per lane
    * @param {number} [options.idleCleanupMs=3600000] - Cleanup idle lanes after (ms)
    * @param {number} [options.parallelConcurrency=5] - Concurrency limit for parallel lanes
+   * @param {number} [options.waitWarningMs=30000] - Warn when a task waits longer than this
+   * @param {number} [options.runningWarningMs=120000] - Warn when an active task runs longer than this
+   * @param {number} [options.warningThrottleMs=30000] - Minimum gap between warnings per task
+   * @param {number} [options.monitorIntervalMs=5000] - Warning scan interval
+   * @param {boolean} [options.emitWarnings=true] - Enable operator warnings
+   * @param {(warning: object) => void} [options.onWarning] - Custom warning sink
    */
   constructor(options = {}) {
     this.options = {
-      maxLanes: options.maxLanes || 1000,
-      laneTimeout: options.laneTimeout || 300000,
-      maxQueueSize: options.maxQueueSize || 100,
-      idleCleanupMs: options.idleCleanupMs || 3600000,
-      parallelConcurrency: options.parallelConcurrency || 5,
+      maxLanes: normalizePositiveNumber(options.maxLanes, 1000),
+      laneTimeout: normalizePositiveNumber(options.laneTimeoutMs ?? options.laneTimeout, 300000),
+      maxQueueSize: normalizePositiveNumber(options.maxQueueSize, 100),
+      idleCleanupMs: normalizePositiveNumber(options.idleCleanupMs, 3600000),
+      parallelConcurrency: normalizePositiveNumber(options.parallelConcurrency, 5),
+      waitWarningMs: normalizeThreshold(options.waitWarningMs, DEFAULT_WAIT_WARNING_MS),
+      runningWarningMs: normalizeThreshold(options.runningWarningMs, DEFAULT_RUNNING_WARNING_MS),
+      warningThrottleMs: normalizePositiveNumber(
+        options.warningThrottleMs,
+        DEFAULT_WARNING_THROTTLE_MS,
+      ),
+      monitorIntervalMs: normalizePositiveNumber(
+        options.monitorIntervalMs,
+        DEFAULT_MONITOR_INTERVAL_MS,
+      ),
+      emitWarnings: options.emitWarnings !== false,
+      onWarning: typeof options.onWarning === 'function' ? options.onWarning : null,
     };
 
     /** @type {Map<string, Lane>} */
@@ -301,9 +534,21 @@ export class CommandQueue {
     /** @type {Map<string, ParallelLane>} */
     this.parallelLanes = new Map();
 
-    // Start idle lane cleanup
     this._cleanupInterval = setInterval(() => this._cleanupIdleLanes(), CLEANUP_CHECK_INTERVAL_MS);
     this._cleanupInterval.unref?.();
+
+    if (
+      this.options.emitWarnings &&
+      (this.options.waitWarningMs > 0 || this.options.runningWarningMs > 0)
+    ) {
+      this._warningInterval = setInterval(
+        () => this._checkWarnings(),
+        this.options.monitorIntervalMs,
+      );
+      this._warningInterval.unref?.();
+    } else {
+      this._warningInterval = null;
+    }
   }
 
   /**
@@ -342,7 +587,7 @@ export class CommandQueue {
    * @returns {Promise<void>}
    */
   async waitForLane(laneId, timeout = 30000) {
-    const lane = this.lanes.get(laneId);
+    const lane = this.lanes.get(laneId) || this.parallelLanes.get(laneId);
     if (!lane || lane.idle) return;
 
     const deadline = Date.now() + timeout;
@@ -493,6 +738,31 @@ export class CommandQueue {
     }
   }
 
+  _checkWarnings() {
+    const now = Date.now();
+
+    for (const lane of this.lanes.values()) {
+      for (const warning of lane.collectWarnings(now, this.options, 'serial')) {
+        this._emitWarning(warning);
+      }
+    }
+
+    for (const lane of this.parallelLanes.values()) {
+      for (const warning of lane.collectWarnings(now, this.options, 'parallel')) {
+        this._emitWarning(warning);
+      }
+    }
+  }
+
+  _emitWarning(warning) {
+    if (this.options.onWarning) {
+      this.options.onWarning(warning);
+      return;
+    }
+
+    console.warn(formatQueueWarning(warning));
+  }
+
   _getLaneLastActivityMs(lane) {
     if (lane.stats.lastActivityMs !== null) {
       return lane.stats.lastActivityMs;
@@ -615,15 +885,15 @@ export class CommandQueue {
   /**
    * Get statistics for all lanes.
    */
-  getStats() {
+  getStats(now = Date.now()) {
     const serialLanes = [];
     for (const [id, lane] of this.lanes.entries()) {
-      serialLanes.push({ id, type: 'serial', ...lane.getStats() });
+      serialLanes.push({ id, type: 'serial', ...lane.getStats(now) });
     }
 
     const parallelLanesStats = [];
     for (const [id, lane] of this.parallelLanes.entries()) {
-      parallelLanesStats.push({ id, type: 'parallel', ...lane.getStats() });
+      parallelLanesStats.push({ id, type: 'parallel', ...lane.getStats(now) });
     }
 
     return {
@@ -636,8 +906,15 @@ export class CommandQueue {
         lanes: parallelLanesStats,
       },
       totalPending:
-        serialLanes.reduce((sum, l) => sum + l.currentQueueLength, 0) +
-        parallelLanesStats.reduce((sum, l) => sum + l.currentQueueLength, 0),
+        serialLanes.reduce((sum, lane) => sum + lane.waitingTasks, 0) +
+        parallelLanesStats.reduce((sum, lane) => sum + lane.waitingTasks, 0),
+      totalActive:
+        serialLanes.reduce((sum, lane) => sum + lane.activeTasks, 0) +
+        parallelLanesStats.reduce((sum, lane) => sum + lane.activeTasks, 0),
+      busyLanes:
+        serialLanes.filter((lane) => lane.busy).length +
+        parallelLanesStats.filter((lane) => lane.busy).length,
+      collectedAt: new Date(now).toISOString(),
     };
   }
 
@@ -645,15 +922,15 @@ export class CommandQueue {
    * Get statistics for a specific lane.
    * @param {string} laneId
    */
-  getLaneStats(laneId) {
+  getLaneStats(laneId, now = Date.now()) {
     const lane = this.lanes.get(laneId) || this.parallelLanes.get(laneId);
     if (!lane) return null;
 
     if (this.lanes.has(laneId)) {
-      return { type: 'serial', ...lane.getStats() };
+      return { type: 'serial', ...lane.getStats(now) };
     }
 
-    return { type: 'parallel', ...lane.getStats() };
+    return { type: 'parallel', ...lane.getStats(now) };
   }
 
   /**
@@ -663,6 +940,10 @@ export class CommandQueue {
     if (this._cleanupInterval) {
       clearInterval(this._cleanupInterval);
       this._cleanupInterval = null;
+    }
+    if (this._warningInterval) {
+      clearInterval(this._warningInterval);
+      this._warningInterval = null;
     }
     this.lanes.clear();
     this.parallelLanes.clear();

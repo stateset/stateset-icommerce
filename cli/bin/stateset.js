@@ -1199,6 +1199,7 @@ async function main() {
         duration: tr.duration,
       })),
       telemetry: values.stats || values.verbose ? result.telemetry : undefined,
+      promptReport: values.stats || values.verbose ? result.promptReport : undefined,
     };
 
     // Handle file output
@@ -1264,6 +1265,9 @@ async function main() {
           }
           if (result.thinkLevel && result.thinkLevel !== 'off') {
             console.log(`   ${output.dim('Thinking:')}    ${result.thinkLevel}`);
+          }
+          if (result.promptReport) {
+            console.log(`\n${output.promptReport(result.promptReport)}`);
           }
         }
 

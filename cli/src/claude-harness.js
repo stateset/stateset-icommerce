@@ -33,10 +33,18 @@ import { loadAgentSettings } from './settings.js';
 import { getAgentSessionStore } from './agent-session-store.js';
 import { ensureHarnessPluginsLoaded, getHarnessHookRunner } from './harness-hooks.js';
 import { redactSensitive, redactObject } from './privacy.js';
-import { buildClaudeEnv, emitEvent, normalizeAbortController } from './harness-utils.js';
+import {
+  buildClaudeEnv,
+  createInactivityWatchdog,
+  emitEvent,
+  InactivityWatchdogError,
+  isAbortLikeError,
+  normalizeAbortController,
+} from './harness-utils.js';
 
 // Extracted modules
 import {
+  buildPromptReport,
   buildPromptWithHistory,
   extractCompactionSummary,
   estimateTokensFromText,
@@ -81,6 +89,22 @@ export { AGENTS };
 export { routeToAgent, routeToAgentWithConfidence } from './agent-router.js';
 
 let _sdkArgvGate = Promise.resolve();
+let _claudeQueryImpl = query;
+
+function invokeClaudeQuery(args) {
+  return _claudeQueryImpl(args);
+}
+
+/**
+ * Test-only override for the Claude SDK query iterator.
+ */
+export function __setClaudeQueryImplForTest(queryImpl = query) {
+  _claudeQueryImpl = queryImpl || query;
+}
+
+export function __resetClaudeQueryImplForTest() {
+  _claudeQueryImpl = query;
+}
 
 function __withSerializedArgvLock() {
   const previous = _sdkArgvGate;
@@ -235,6 +259,7 @@ export async function runAgentLoop({
   const effectivePolicyStorePath = resolvePolicyStorePath(dbPath, policyStorePath);
   const resolvedSettings = loadAgentSettings(settings || {});
   const retrySettings = { ...resolvedSettings.retry, ...(retry || {}) };
+  const watchdogSettings = { ...resolvedSettings.watchdog };
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
   const eventRedact = privacySettings.redactLogs;
   const redactEventText = (text) => (eventRedact ? redactSensitive(text, privacySettings) : text);
@@ -379,8 +404,20 @@ export async function runAgentLoop({
     }
   }
 
+  const configuredWatchdogTimeoutMs = resumeSessionId
+    ? Number(watchdogSettings.resumeInactivityMs)
+    : Number(watchdogSettings.freshInactivityMs);
+  const watchdogTimeoutMs =
+    effectiveProvider === 'claude' &&
+    watchdogSettings.enabled !== false &&
+    Number.isFinite(configuredWatchdogTimeoutMs) &&
+    configuredWatchdogTimeoutMs > 0
+      ? configuredWatchdogTimeoutMs
+      : null;
   const resolvedAbortController = normalizeAbortController({ abortController, signal });
-  const effectiveSignal = resolvedAbortController?.signal || signal || null;
+  const effectiveAbortController =
+    resolvedAbortController || (watchdogTimeoutMs ? new AbortController() : null);
+  const effectiveSignal = effectiveAbortController?.signal || signal || null;
 
   const safeRequestForLogs = privacySettings.redactLogs
     ? redactSensitive(effectiveRequest, privacySettings)
@@ -413,6 +450,12 @@ export async function runAgentLoop({
   // v0.4.0: Context Guard - Check context window before proceeding
   // -------------------------------------------------------------------------
   const sessionSummary = sessionMeta?.summaries?.[0] || null;
+  const historySource =
+    conversationHistory.length > 0
+      ? 'conversation_history'
+      : sessionSummary
+        ? 'session_summary'
+        : 'none';
   const baseHistory =
     conversationHistory.length > 0
       ? conversationHistory
@@ -795,6 +838,20 @@ export async function runAgentLoop({
   // Build options
   const thinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
   const systemPrompt = systemPromptOverride || agentConfig.systemPrompt;
+  const promptReport = buildPromptReport({
+    request: effectiveRequest,
+    history: workingHistory,
+    systemPrompt,
+    includeHistory: shouldIncludeHistory,
+    resumeSession: Boolean(resumeSessionId),
+    historySource,
+    compactionSummary,
+    contextGuardResult,
+    redactOptions: privacySettings,
+    redactHistory: privacySettings.redactHistory,
+  });
+  emitEvent(onEvent, { type: 'prompt_report', report: promptReport });
+  telem.logCustomEvent('prompt_report', promptReport);
   let apiKeyOverride = apiKey;
   if (!apiKeyOverride && typeof getApiKey === 'function' && effectiveProvider === 'claude') {
     apiKeyOverride = await getApiKey(effectiveProvider);
@@ -817,13 +874,159 @@ export async function runAgentLoop({
     // v0.2.8: Budget controls
     ...(effectiveMaxBudgetUsd ? { maxBudgetUsd: parseFloat(effectiveMaxBudgetUsd) } : {}),
     ...(claudeEnv ? { env: claudeEnv } : {}),
-    ...(resolvedAbortController ? { abortController: resolvedAbortController } : {}),
+    ...(effectiveAbortController ? { abortController: effectiveAbortController } : {}),
   };
 
   // Track results
   const toolResults = [];
   let sessionId = resumeSessionId;
   let response = '';
+  const runStartedAt = Date.now();
+
+  const emptyUsageCounters = () => ({
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+  });
+
+  const readUsageCounter = (source, keys) => {
+    if (!source || typeof source !== 'object') return null;
+    for (const key of keys) {
+      const value = source[key];
+      if (value === null || value === undefined || value === '') continue;
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        return Math.trunc(numeric);
+      }
+    }
+    return null;
+  };
+
+  const readAnyUsageCounter = (sources, keys) => {
+    for (const source of sources) {
+      const value = readUsageCounter(source, keys);
+      if (value !== null) return value;
+    }
+    return null;
+  };
+
+  const mergeUsageCounters = (currentUsage, message) => {
+    const nextUsage = currentUsage ? { ...currentUsage } : emptyUsageCounters();
+    const direct = message && typeof message === 'object' ? message : null;
+    const usageSources = [direct, direct?.usage, direct?.result_usage, direct?.resultUsage];
+
+    const inputTokens = readAnyUsageCounter(usageSources, ['input_tokens', 'inputTokens']);
+    const outputTokens = readAnyUsageCounter(usageSources, ['output_tokens', 'outputTokens']);
+    const totalTokens = readAnyUsageCounter(usageSources, ['total_tokens', 'totalTokens']);
+    const cacheReadTokens = readAnyUsageCounter(usageSources, [
+      'cache_read_tokens',
+      'cacheReadTokens',
+      'cache_read_input_tokens',
+      'cacheReadInputTokens',
+    ]);
+    const cacheWriteTokens = readAnyUsageCounter(usageSources, [
+      'cache_write_tokens',
+      'cacheWriteTokens',
+      'cache_creation_input_tokens',
+      'cacheCreationInputTokens',
+    ]);
+
+    if (inputTokens !== null) nextUsage.inputTokens = inputTokens;
+    if (outputTokens !== null) nextUsage.outputTokens = outputTokens;
+    if (totalTokens !== null) nextUsage.totalTokens = totalTokens;
+    if (cacheReadTokens !== null) nextUsage.cacheReadTokens = cacheReadTokens;
+    if (cacheWriteTokens !== null) nextUsage.cacheWriteTokens = cacheWriteTokens;
+    if (
+      nextUsage.totalTokens === null &&
+      nextUsage.inputTokens !== null &&
+      nextUsage.outputTokens !== null
+    ) {
+      nextUsage.totalTokens = nextUsage.inputTokens + nextUsage.outputTokens;
+    }
+    return nextUsage;
+  };
+
+  let latestUsage = emptyUsageCounters();
+
+  const persistSessionRun = ({
+    responseText = response,
+    error = null,
+    modelUsed = effectiveModel,
+    sessionIdOverride = null,
+    lastCostUsd = null,
+    usage = latestUsage,
+    appendCompactionSummary = !error,
+  } = {}) => {
+    const sessionIdToStore = sessionIdOverride || sessionId || resumeSessionId;
+    if (!sessionStoreInstance || !sessionIdToStore) return;
+
+    const rawResponse =
+      typeof responseText === 'string' ? responseText : String(responseText || '');
+    const storedRequest = privacySettings.redactMemory
+      ? redactSensitive(effectiveRequest, privacySettings)
+      : effectiveRequest;
+    const storedResponse = privacySettings.redactMemory
+      ? redactSensitive(rawResponse, privacySettings)
+      : rawResponse;
+    const usageCounters = usage || emptyUsageCounters();
+    const totalTokens =
+      usageCounters.totalTokens ??
+      (usageCounters.inputTokens !== null && usageCounters.outputTokens !== null
+        ? usageCounters.inputTokens + usageCounters.outputTokens
+        : null);
+    const normalizedLastCostUsd =
+      lastCostUsd === null || lastCostUsd === undefined || lastCostUsd === ''
+        ? null
+        : Number(lastCostUsd);
+    const payload = {
+      provider: effectiveProvider,
+      model: modelUsed || effectiveModel,
+      thinkLevel: effectiveThinkLevel,
+      slaLevel: effectiveSlaLevel,
+      agent: agentName,
+      lastRequest: storedRequest,
+      lastResponse: storedResponse,
+      lastError: error ? error?.message || String(error) : null,
+      lastErrorCode: error?.code || null,
+      lastErrorAt: error ? Date.now() : null,
+      abortedLastRun: error
+        ? error instanceof InactivityWatchdogError || isAbortLikeError(error)
+        : false,
+      lastRunMs: Date.now() - runStartedAt,
+      lastCostUsd: Number.isFinite(normalizedLastCostUsd) ? normalizedLastCostUsd : null,
+      inputTokens: usageCounters.inputTokens,
+      outputTokens: usageCounters.outputTokens,
+      totalTokens,
+      cacheReadTokens: usageCounters.cacheReadTokens,
+      cacheWriteTokens: usageCounters.cacheWriteTokens,
+      compactionCount: compactionSummary ? 1 : 0,
+      promptReport,
+    };
+
+    try {
+      if (typeof sessionStoreInstance.recordRun === 'function') {
+        sessionStoreInstance.recordRun(sessionIdToStore, payload);
+      } else if (typeof sessionStoreInstance.upsert === 'function') {
+        sessionStoreInstance.upsert(sessionIdToStore, payload);
+      }
+      if (
+        appendCompactionSummary &&
+        compactionSummary &&
+        typeof sessionStoreInstance.appendSummary === 'function'
+      ) {
+        sessionStoreInstance.appendSummary(sessionIdToStore, compactionSummary);
+      }
+    } catch (err) {
+      console.warn('[Harness] Session store write failed:', err.message);
+    }
+  };
+
+  let budgetExceeded = false;
+  let totalCost = null;
+  let usedModel = effectiveModel;
+  let fallbackAttempts = [];
 
   try {
     // If resuming, add session ID to options
@@ -1032,6 +1235,7 @@ export async function runAgentLoop({
           cost: providerResult.cost || null,
           thinkLevel: effectiveThinkLevel,
           budgetExceeded,
+          promptReport,
           treasury: treasuryState
             ? {
                 requestId: treasuryState.requestId,
@@ -1046,10 +1250,6 @@ export async function runAgentLoop({
     // -------------------------------------------------------------------------
     // v0.4.0: Run query with optional model fallback
     // -------------------------------------------------------------------------
-    let budgetExceeded = false;
-    let totalCost = null;
-    let usedModel = effectiveModel;
-    let fallbackAttempts = [];
 
     // Helper function to run the actual query
     const runQuery = async (queryModel) => {
@@ -1062,23 +1262,128 @@ export async function runAgentLoop({
         totalCost: null,
         error: null,
         errorType: null,
+        usage: emptyUsageCounters(),
       };
       const pendingToolCalls = new Map();
       let assistantStarted = false;
       let assistantText = '';
+      response = '';
+      latestUsage = emptyUsageCounters();
+      if (!resumeSessionId) {
+        sessionId = null;
+      }
+      const watchdog = watchdogTimeoutMs
+        ? createInactivityWatchdog({
+            timeoutMs: watchdogTimeoutMs,
+            abortController: effectiveAbortController,
+            message: resumeSessionId
+              ? `No Claude SDK activity while resuming session after ${watchdogTimeoutMs}ms`
+              : `No Claude SDK activity received after ${watchdogTimeoutMs}ms`,
+            onTimeout: (watchdogError) => {
+              const currentSessionId = results.sessionId || sessionId || resumeSessionId || null;
+              telem.logCustomEvent('watchdog_timeout', {
+                timeoutMs: watchdogTimeoutMs,
+                elapsedMs: watchdogError.elapsedMs,
+                provider: effectiveProvider,
+                model: queryModel,
+                sessionId: currentSessionId,
+              });
+              emitEvent(onEvent, {
+                type: 'watchdog_timeout',
+                timeoutMs: watchdogTimeoutMs,
+                elapsedMs: watchdogError.elapsedMs,
+                provider: effectiveProvider,
+                model: queryModel,
+                sessionId: currentSessionId,
+              });
+            },
+          })
+        : null;
 
-      for await (const message of __runQueryWithCleanArgv(() =>
-        query({ prompt: requestWithHistory, options: queryOptions }),
-      )) {
-        // Capture session ID
-        if (message.sessionId && !results.sessionId) {
-          results.sessionId = message.sessionId;
-        }
+      try {
+        for await (const message of __runQueryWithCleanArgv(() =>
+          invokeClaudeQuery({ prompt: requestWithHistory, options: queryOptions }),
+        )) {
+          watchdog?.touch();
+          results.usage = mergeUsageCounters(results.usage, message);
+          latestUsage = results.usage;
 
-        // Handle different message types
-        if (message.type === 'assistant') {
-          const content = message.message?.content || message.content;
-          if (content) {
+          if (message.sessionId && !results.sessionId) {
+            results.sessionId = message.sessionId;
+          }
+          if (message.sessionId) {
+            sessionId = message.sessionId;
+          }
+
+          if (message.type === 'assistant') {
+            const content = message.message?.content || message.content;
+            if (content) {
+              if (!assistantStarted) {
+                assistantStarted = true;
+                emitEvent(onEvent, {
+                  type: 'message_start',
+                  message: { role: 'assistant', content: '' },
+                });
+              }
+              for (const block of content) {
+                if (block.type === 'tool_use') {
+                  const toolCall = {
+                    id: block.id,
+                    name: block.name,
+                    input: block.input,
+                    startTime: Date.now(),
+                  };
+                  const entry = { toolCall, result: null };
+                  results.toolResults.push(entry);
+                  if (toolCall.id) {
+                    pendingToolCalls.set(toolCall.id, entry);
+                  }
+                  emitEvent(onEvent, {
+                    type: 'tool_execution_start',
+                    toolCallId: toolCall.id,
+                    toolName: toolCall.name,
+                    args: redactEventValue(toolCall.input),
+                  });
+                  if (onToolCall) {
+                    onToolCall(toolCall);
+                  }
+                } else if (block.type === 'text') {
+                  results.response += block.text;
+                  assistantText = results.response;
+                  response = results.response;
+                  if (streaming) {
+                    emitEvent(onEvent, {
+                      type: 'message_update',
+                      message: { role: 'assistant', content: redactEventText(assistantText) },
+                      delta: redactEventText(block.text),
+                    });
+                  }
+                } else if (block.type === 'thinking' && onThinkingBlock) {
+                  onThinkingBlock(block);
+                }
+              }
+            }
+          } else if (message.type === 'result') {
+            results.usage = mergeUsageCounters(results.usage, message);
+            latestUsage = results.usage;
+            if (message.result) {
+              results.response = message.result;
+              assistantText = message.result;
+              response = message.result;
+            }
+            if (message.total_cost_usd !== null && message.total_cost_usd !== undefined) {
+              results.totalCost = message.total_cost_usd;
+            }
+            if (message.subtype === 'error_max_budget_usd') {
+              results.budgetExceeded = true;
+            }
+            if (message.subtype && message.subtype.startsWith('error_')) {
+              results.errorType = message.subtype;
+              results.error =
+                message.errors && message.errors.length > 0
+                  ? message.errors.join('; ')
+                  : message.subtype;
+            }
             if (!assistantStarted) {
               assistantStarted = true;
               emitEvent(onEvent, {
@@ -1086,126 +1391,72 @@ export async function runAgentLoop({
                 message: { role: 'assistant', content: '' },
               });
             }
-            for (const block of content) {
-              if (block.type === 'tool_use') {
-                const toolCall = {
-                  id: block.id,
-                  name: block.name,
-                  input: block.input,
-                  startTime: Date.now(),
-                };
-                const entry = { toolCall, result: null };
-                results.toolResults.push(entry);
-                if (toolCall.id) {
-                  pendingToolCalls.set(toolCall.id, entry);
-                }
-                emitEvent(onEvent, {
-                  type: 'tool_execution_start',
-                  toolCallId: toolCall.id,
-                  toolName: toolCall.name,
-                  args: redactEventValue(toolCall.input),
-                });
-                if (onToolCall) {
-                  onToolCall(toolCall);
-                }
-              } else if (block.type === 'text') {
-                results.response += block.text;
-                assistantText = results.response;
-                if (streaming) {
-                  emitEvent(onEvent, {
-                    type: 'message_update',
-                    message: { role: 'assistant', content: redactEventText(assistantText) },
-                    delta: redactEventText(block.text),
-                  });
-                }
-              } else if (block.type === 'thinking' && onThinkingBlock) {
-                onThinkingBlock(block);
-              }
-            }
-          }
-        } else if (message.type === 'result') {
-          if (message.result) {
-            results.response = message.result;
-            assistantText = message.result;
-          }
-          if (message.total_cost_usd !== null && message.total_cost_usd !== undefined) {
-            results.totalCost = message.total_cost_usd;
-          }
-          if (message.subtype === 'error_max_budget_usd') {
-            results.budgetExceeded = true;
-          }
-          if (message.subtype && message.subtype.startsWith('error_')) {
-            results.errorType = message.subtype;
-            results.error =
-              message.errors && message.errors.length > 0
-                ? message.errors.join('; ')
-                : message.subtype;
-          }
-          if (!assistantStarted) {
-            assistantStarted = true;
-            emitEvent(onEvent, {
-              type: 'message_start',
-              message: { role: 'assistant', content: '' },
-            });
-          }
-          if (assistantText) {
-            emitEvent(onEvent, {
-              type: 'message_end',
-              message: { role: 'assistant', content: redactEventText(assistantText) },
-            });
-          }
-        } else if (message.type === 'user') {
-          const toolUseId =
-            message.parent_tool_use_id ||
-            message.tool_use_id ||
-            message.tool_use_result?.tool_use_id ||
-            message.tool_use_result?.tool_use_id;
-          const pending = toolUseId
-            ? pendingToolCalls.get(toolUseId)
-            : results.toolResults.find((tr) => tr.result === null);
-          if (pending && message.tool_use_result) {
-            pending.result = message.tool_use_result;
-            pending.endTime = Date.now();
-            pending.duration = pending.endTime - pending.toolCall.startTime;
-            if (hooks?.hasHooks?.('tool_result_persist')) {
-              const hookResult = await hooks.run('tool_result_persist', {
-                tool: pending.toolCall.name,
-                toolCall: pending.toolCall,
-                result: pending.result,
+            if (assistantText) {
+              emitEvent(onEvent, {
+                type: 'message_end',
+                message: { role: 'assistant', content: redactEventText(assistantText) },
               });
-              if (hookResult?.result) {
-                pending.result = hookResult.result;
+            }
+          } else if (message.type === 'user') {
+            const toolUseId =
+              message.parent_tool_use_id ||
+              message.tool_use_id ||
+              message.tool_use_result?.tool_use_id ||
+              message.tool_use_result?.tool_use_id;
+            const pending = toolUseId
+              ? pendingToolCalls.get(toolUseId)
+              : results.toolResults.find((tr) => tr.result === null);
+            if (pending && message.tool_use_result) {
+              pending.result = message.tool_use_result;
+              pending.endTime = Date.now();
+              pending.duration = pending.endTime - pending.toolCall.startTime;
+              if (hooks?.hasHooks?.('tool_result_persist')) {
+                const hookResult = await hooks.run('tool_result_persist', {
+                  tool: pending.toolCall.name,
+                  toolCall: pending.toolCall,
+                  result: pending.result,
+                });
+                if (hookResult?.result) {
+                  pending.result = hookResult.result;
+                }
+              }
+              const logInput = privacySettings.redactLogs
+                ? redactObject(pending.toolCall.input, privacySettings)
+                : pending.toolCall.input;
+              const logResult = privacySettings.redactLogs
+                ? redactObject(pending.result, privacySettings)
+                : pending.result;
+              telem.logToolCall(pending.toolCall.name, logInput, logResult, pending.duration);
+              emitEvent(onEvent, {
+                type: 'tool_execution_end',
+                toolCallId: pending.toolCall.id,
+                toolName: pending.toolCall.name,
+                result: redactEventValue(pending.result),
+                isError: Boolean(pending.result?.is_error || pending.result?.isError),
+              });
+              if (toolUseId) {
+                pendingToolCalls.delete(toolUseId);
               }
             }
-            const logInput = privacySettings.redactLogs
-              ? redactObject(pending.toolCall.input, privacySettings)
-              : pending.toolCall.input;
-            const logResult = privacySettings.redactLogs
-              ? redactObject(pending.result, privacySettings)
-              : pending.result;
-            telem.logToolCall(pending.toolCall.name, logInput, logResult, pending.duration);
-            emitEvent(onEvent, {
-              type: 'tool_execution_end',
-              toolCallId: pending.toolCall.id,
-              toolName: pending.toolCall.name,
-              result: redactEventValue(pending.result),
-              isError: Boolean(pending.result?.is_error || pending.result?.isError),
-            });
-            if (toolUseId) {
-              pendingToolCalls.delete(toolUseId);
-            }
+          }
+
+          if (
+            streaming &&
+            onPartialMessage &&
+            message.type !== 'assistant' &&
+            message.type !== 'result' &&
+            message.type !== 'user'
+          ) {
+            onPartialMessage(message);
           }
         }
-
-        if (
-          streaming &&
-          onPartialMessage &&
-          message.type !== 'assistant' &&
-          message.type !== 'result' &&
-          message.type !== 'user'
-        ) {
-          onPartialMessage(message);
+      } catch (error) {
+        if (watchdog?.timedOut && isAbortLikeError(error)) {
+          throw watchdog.error || error;
         }
+        throw error;
+      } finally {
+        watchdog?.stop();
       }
 
       return results;
@@ -1243,7 +1494,10 @@ export async function runAgentLoop({
         break;
       } catch (err) {
         const errorType = queryResult?.errorType;
-        const nonRetryable = errorType && errorType.startsWith('error_max');
+        const nonRetryable =
+          (errorType && errorType.startsWith('error_max')) ||
+          err?.code === 'WATCHDOG_TIMEOUT' ||
+          err instanceof InactivityWatchdogError;
         const canRetry =
           retrySettings?.enabled &&
           attempt <= (retrySettings.maxRetries || 0) &&
@@ -1271,12 +1525,14 @@ export async function runAgentLoop({
       sessionId: querySessionId,
       budgetExceeded: queryBudgetExceeded,
       totalCost: queryTotalCost,
+      usage: queryUsage,
     } = queryResult;
     toolResults.push(...queryToolResults);
     response = queryResponse;
     if (querySessionId) sessionId = querySessionId;
     budgetExceeded = queryBudgetExceeded;
     totalCost = queryTotalCost;
+    latestUsage = queryUsage || latestUsage;
 
     if (hooks?.hasHooks?.('before_send')) {
       const hookResult = await hooks.run('before_send', {
@@ -1397,33 +1653,6 @@ export async function runAgentLoop({
       }
     }
 
-    // Persist session metadata
-    const sessionIdToStore = sessionId || resumeSessionId;
-    if (sessionStoreInstance && sessionIdToStore) {
-      const storedRequest = privacySettings.redactMemory
-        ? redactSensitive(effectiveRequest, privacySettings)
-        : effectiveRequest;
-      const storedResponse = privacySettings.redactMemory
-        ? redactSensitive(response, privacySettings)
-        : response;
-      try {
-        sessionStoreInstance.upsert(sessionIdToStore, {
-          provider: effectiveProvider,
-          model: usedModel || effectiveModel,
-          thinkLevel: effectiveThinkLevel,
-          slaLevel: effectiveSlaLevel,
-          agent: agentName,
-          lastRequest: storedRequest,
-          lastResponse: storedResponse,
-        });
-        if (compactionSummary) {
-          sessionStoreInstance.appendSummary(sessionIdToStore, compactionSummary);
-        }
-      } catch (err) {
-        console.warn('[Harness] Session store write failed:', err.message);
-      }
-    }
-
     if (hooks?.hasHooks?.('agent_end')) {
       await hooks.run('agent_end', {
         request: effectiveRequest,
@@ -1443,7 +1672,14 @@ export async function runAgentLoop({
       sessionId,
       provider: effectiveProvider,
       model: usedModel || effectiveModel,
-      usage: null,
+      usage: latestUsage,
+    });
+
+    persistSessionRun({
+      responseText: response,
+      modelUsed: usedModel || effectiveModel,
+      lastCostUsd: totalCost,
+      usage: latestUsage,
     });
 
     emitEvent(onEvent, {
@@ -1484,6 +1720,7 @@ export async function runAgentLoop({
       budgetExceeded,
       // v0.4.0: New result fields
       usedModel,
+      promptReport,
       fallbackAttempts: fallbackAttempts.length > 1 ? fallbackAttempts : undefined,
       contextGuard: contextGuardResult
         ? {
@@ -1511,13 +1748,25 @@ export async function runAgentLoop({
         console.debug('[harness] Sync engine shutdown failed:', err.message || err);
       }
     }
+    persistSessionRun({
+      responseText: response,
+      error,
+      modelUsed: usedModel || effectiveModel,
+      lastCostUsd: totalCost,
+      usage: latestUsage,
+      appendCompactionSummary: false,
+    });
+    const errorMessage = error?.message || String(error);
     emitEvent(onEvent, {
       type: 'agent_end',
-      error: error?.message || String(error),
+      error: errorMessage,
     });
     telem.logError(error, { agent: agentName, request: safeRequestForLogs.slice(0, 100) });
-    telem.endSpanRef(mainSpan, 'error', { error: error.message });
-    throw new Error(`Agent error: ${error.message}`);
+    telem.endSpanRef(mainSpan, 'error', { error: errorMessage });
+    const wrappedError = new Error(`Agent error: ${errorMessage}`);
+    if (error?.code) wrappedError.code = error.code;
+    if (error !== undefined) wrappedError.cause = error;
+    throw wrappedError;
   }
 }
 
@@ -1561,6 +1810,8 @@ export async function* runAgentStream({
 }) {
   const effectivePolicyStorePath = resolvePolicyStorePath(dbPath, policyStorePath);
   const resolvedSettings = loadAgentSettings(settings || {});
+  const watchdogSettings = { ...resolvedSettings.watchdog };
+  const memorySettings = { ...resolvedSettings.memory };
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
   const eventRedact = privacySettings.redactLogs;
   const redactEventText = (text) => (eventRedact ? redactSensitive(text, privacySettings) : text);
@@ -1642,8 +1893,20 @@ export async function* runAgentStream({
     if (hookResult?.slaLevel !== undefined) effectiveSlaLevel = hookResult.slaLevel;
   }
 
+  const configuredWatchdogTimeoutMs = resumeSessionId
+    ? Number(watchdogSettings.resumeInactivityMs)
+    : Number(watchdogSettings.freshInactivityMs);
+  const watchdogTimeoutMs =
+    effectiveProvider === 'claude' &&
+    watchdogSettings.enabled !== false &&
+    Number.isFinite(configuredWatchdogTimeoutMs) &&
+    configuredWatchdogTimeoutMs > 0
+      ? configuredWatchdogTimeoutMs
+      : null;
   const resolvedAbortController = normalizeAbortController({ abortController, signal });
-  const effectiveSignal = resolvedAbortController?.signal || signal || null;
+  const effectiveAbortController =
+    resolvedAbortController || (watchdogTimeoutMs ? new AbortController() : null);
+  const effectiveSignal = effectiveAbortController?.signal || signal || null;
 
   if (effectiveProvider !== 'claude') {
     throw new Error(
@@ -1656,6 +1919,12 @@ export async function* runAgentStream({
 
   // Context guard for streaming path (optional)
   const streamSessionSummary = sessionMeta?.summaries?.[0] || null;
+  const streamHistorySource =
+    conversationHistory.length > 0
+      ? 'conversation_history'
+      : streamSessionSummary
+        ? 'session_summary'
+        : 'none';
   const streamBaseHistory =
     conversationHistory.length > 0
       ? conversationHistory
@@ -1787,6 +2056,19 @@ export async function* runAgentStream({
         redactOptions: privacySettings,
       })
     : effectiveRequest;
+  const promptReport = buildPromptReport({
+    request: effectiveRequest,
+    history: workingHistory,
+    systemPrompt: agentConfig.systemPrompt,
+    includeHistory: shouldIncludeHistory,
+    resumeSession: Boolean(resumeSessionId),
+    historySource: streamHistorySource,
+    compactionSummary,
+    contextGuardResult,
+    redactOptions: privacySettings,
+    redactHistory: privacySettings.redactHistory,
+  });
+  emitEvent(onEvent, { type: 'prompt_report', report: promptReport });
 
   const streamThinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
   let apiKeyOverride = apiKey;
@@ -1807,7 +2089,7 @@ export async function* runAgentStream({
     allowDangerouslySkipPermissions: true,
     ...(streamThinkTokens > 0 ? { maxThinkingTokens: streamThinkTokens } : {}),
     ...(claudeEnv ? { env: claudeEnv } : {}),
-    ...(resolvedAbortController ? { abortController: resolvedAbortController } : {}),
+    ...(effectiveAbortController ? { abortController: effectiveAbortController } : {}),
   };
 
   const input = resumeSessionId
@@ -1818,381 +2100,89 @@ export async function* runAgentStream({
   let lastResponse = null;
   let assistantStarted = false;
   let assistantText = '';
+  const runStartedAt = Date.now();
 
-  try {
-    for await (const message of __runQueryWithCleanArgv(() => query({ prompt: input, options }))) {
-      if (message.sessionId && !streamSessionId) {
-        streamSessionId = message.sessionId;
-      }
-      if (message.type === 'assistant') {
-        const content = message.message?.content || message.content;
-        if (content) {
-          if (!assistantStarted) {
-            assistantStarted = true;
-            emitEvent(onEvent, {
-              type: 'message_start',
-              message: { role: 'assistant', content: '' },
-            });
-          }
-          for (const block of content) {
-            if (block.type === 'tool_use') {
-              emitEvent(onEvent, {
-                type: 'tool_execution_start',
-                toolCallId: block.id,
-                toolName: block.name,
-                args: redactEventValue(block.input),
-              });
-            } else if (block.type === 'text') {
-              assistantText += block.text;
-              emitEvent(onEvent, {
-                type: 'message_update',
-                message: { role: 'assistant', content: redactEventText(assistantText) },
-                delta: redactEventText(block.text),
-              });
-            }
-          }
-        }
-      } else if (message.type === 'user' && message.tool_use_result) {
-        let toolResult = message.tool_use_result;
-        if (hooks?.hasHooks?.('tool_result_persist')) {
-          const hookResult = await hooks.run('tool_result_persist', {
-            tool: toolResult?.name,
-            toolCall: {
-              id: toolResult?.tool_use_id,
-              name: toolResult?.name,
-              input: toolResult?.content,
-            },
-            result: toolResult,
-          });
-          if (hookResult?.result) {
-            toolResult = hookResult.result;
-          }
-        }
-        emitEvent(onEvent, {
-          type: 'tool_execution_end',
-          toolCallId: toolResult?.tool_use_id,
-          toolName: toolResult?.name,
-          result: redactEventValue(toolResult),
-          isError: Boolean(toolResult?.is_error || toolResult?.isError),
-        });
-      }
-      if (message.type === 'result' && message.result) {
-        lastResponse = message.result;
-        assistantText = message.result;
-        if (hooks?.hasHooks?.('before_send')) {
-          const hookResult = await hooks.run('before_send', {
-            request: effectiveRequest,
-            response: lastResponse,
-            agent: agentName,
-            model: effectiveModel,
-            provider: effectiveProvider,
-            toolResults: [],
-          });
-          if (hookResult?.response) {
-            lastResponse = hookResult.response;
-          }
-        }
-        if (!assistantStarted) {
-          assistantStarted = true;
-          emitEvent(onEvent, {
-            type: 'message_start',
-            message: { role: 'assistant', content: '' },
-          });
-        }
-        emitEvent(onEvent, {
-          type: 'message_end',
-          message: { role: 'assistant', content: redactEventText(lastResponse) },
-        });
-        emitEvent(onEvent, {
-          type: 'turn_end',
-          response: redactEventText(lastResponse),
-          toolResults: [],
-        });
-      }
-      yield message;
-    }
+  const persistStreamSession = ({
+    responseText = lastResponse,
+    error = null,
+    appendCompactionSummary = !error,
+  } = {}) => {
+    const sessionIdToStore = streamSessionId || resumeSessionId;
+    if (!sessionStoreInstance || !sessionIdToStore) return;
 
-    if (sessionStoreInstance && streamSessionId) {
-      const storedRequest = privacySettings.redactMemory
-        ? redactSensitive(effectiveRequest, privacySettings)
-        : effectiveRequest;
-      const storedResponse =
-        privacySettings.redactMemory && lastResponse
-          ? redactSensitive(lastResponse, privacySettings)
-          : lastResponse;
-      try {
-        sessionStoreInstance.upsert(streamSessionId, {
-          provider: effectiveProvider,
-          model: effectiveModel,
-          thinkLevel: effectiveThinkLevel,
-          slaLevel: effectiveSlaLevel,
-          agent: agentName,
-          lastRequest: storedRequest,
-          lastResponse: storedResponse,
-        });
-        if (compactionSummary) {
-          sessionStoreInstance.appendSummary(streamSessionId, compactionSummary);
-        }
-      } catch (err) {
-        console.warn('[Harness] Session store write failed:', err.message);
-      }
-    }
+    const storedRequest = privacySettings.redactMemory
+      ? redactSensitive(effectiveRequest, privacySettings)
+      : effectiveRequest;
+    const rawResponse =
+      responseText === null || responseText === undefined
+        ? null
+        : typeof responseText === 'string'
+          ? responseText
+          : String(responseText);
+    const storedResponse =
+      privacySettings.redactMemory && rawResponse
+        ? redactSensitive(rawResponse, privacySettings)
+        : rawResponse;
 
-    if (hooks?.hasHooks?.('agent_end')) {
-      await hooks.run('agent_end', {
-        request: effectiveRequest,
-        response: lastResponse,
-        agent: agentName,
-        slaLevel: effectiveSlaLevel,
-        model: effectiveModel,
-        provider: effectiveProvider,
-        toolResults: [],
-        cost: null,
-        budgetExceeded: false,
-      });
-    }
-
-    emitEvent(onEvent, {
-      type: 'agent_end',
-      response: lastResponse ? redactEventText(lastResponse) : null,
-      toolResults: [],
-      sessionId: streamSessionId,
-      agent: agentName,
-      slaLevel: effectiveSlaLevel,
-      provider: effectiveProvider,
-      model: effectiveModel,
-      cost: null,
-      budgetExceeded: false,
-    });
-  } catch (error) {
-    emitEvent(onEvent, {
-      type: 'agent_end',
-      error: error?.message || String(error),
-    });
-    throw error;
-  }
-}
-
-/**
- * Create a streaming agent session with queued inputs.
- * Messages are queued and delivered in order once the model finishes a turn.
- *
- * @param {Object} options
- * @returns {{ stream: () => AsyncGenerator, send: (text: string) => void, followUp: (text: string) => void, steer: (text: string) => void, close: () => void, abort: (reason?: any) => void, getSessionId: () => string|null }}
- */
-export function createAgentStreamSession(options = {}) {
-  const {
-    dbPath = './store.db',
-    model,
-    allowApply = false,
-    maxTurns = 10,
-    agent,
-    slaLevel = null,
-    enableSync = null,
-    guardrails = null,
-    onConfirmRequired = null,
-    permissionGate = null,
-    settings = null,
-    privacy = null,
-    hookRunner = null,
-    enablePlugins = null,
-    sessionStore = null,
-    contextGuardOptions: _contextGuardOptions = null,
-    provider,
-    thinkLevel,
-    apiKey = null,
-    getApiKey = null,
-    abortController = null,
-    signal = null,
-    policyEngine = null,
-    policyStorePath = null,
-    onEvent = null,
-  } = options;
-
-  const effectivePolicyStorePath = resolvePolicyStorePath(dbPath, policyStorePath);
-  const resolvedSettings = loadAgentSettings(settings || {});
-  const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
-  const eventRedact = privacySettings.redactLogs;
-  const redactEventText = (text) => (eventRedact ? redactSensitive(text, privacySettings) : text);
-  const redactEventValue = (value) => (eventRedact ? redactObject(value, privacySettings) : value);
-  const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
-  const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
-  const effectiveGuardrails = guardrails
-    ? { ...resolvedSettings.guardrails, ...guardrails }
-    : { ...resolvedSettings.guardrails };
-  const effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
-  const effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
-  const effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
-  const effectiveSlaLevel = slaLevel ?? resolvedSettings.agent?.slaLevel ?? null;
-
-  if (pluginsEnabled) {
-    ensureHarnessPluginsLoaded({ verbose: pluginsVerbose }).catch((err) => {
-      console.warn('[Harness] Plugin load failed:', err.message);
-    });
-  }
-
-  if (effectiveProvider !== 'claude') {
-    throw new Error(
-      `createAgentStreamSession supports only claude provider (requested: ${effectiveProvider})`,
-    );
-  }
-
-  const hooks = hookRunner || getHarnessHookRunner();
-  const useSessionStore = resolvedSettings.sessionStore?.enabled !== false;
-  let sessionStoreInstance = sessionStore || null;
-  if (!sessionStoreInstance && useSessionStore) {
     try {
-      sessionStoreInstance = getAgentSessionStore({
-        dbPath: resolvedSettings.sessionStore?.dbPath || undefined,
-        maxSummaries:
-          resolvedSettings.sessionStore?.maxSummaries || resolvedSettings.memory?.maxSummaries || 5,
+      sessionStoreInstance.upsert(sessionIdToStore, {
+        provider: effectiveProvider,
+        model: effectiveModel,
+        thinkLevel: effectiveThinkLevel,
+        slaLevel: effectiveSlaLevel,
+        agent: agentName,
+        lastRequest: storedRequest,
+        lastResponse: storedResponse,
+        lastError: error ? error?.message || String(error) : null,
+        lastErrorCode: error?.code || null,
+        lastErrorAt: error ? Date.now() : null,
+        abortedLastRun: error
+          ? error instanceof InactivityWatchdogError || isAbortLikeError(error)
+          : false,
+        lastRunMs: Date.now() - runStartedAt,
+        promptReport,
       });
-    } catch (err) {
-      console.warn('[Harness] Session store unavailable:', err.message);
-      sessionStoreInstance = null;
-    }
-  }
-
-  const routingResult = routeToAgentWithConfidence('', {
-    slaLevel: effectiveSlaLevel,
-  });
-  const agentName =
-    agent || resolvedSettings.agent?.default || routingResult.primary.agent || 'customer-service';
-  const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
-
-  const gate =
-    permissionGate ||
-    createPermissionGate({
-      apply: allowApply,
-      guardrails: effectiveGuardrails,
-      onConfirmRequired,
-    });
-
-  const Commerce = getCommerceCtor();
-  let commerce = new Commerce(dbPath);
-  let rawSyncConfig3 = null;
-  try {
-    rawSyncConfig3 = loadSyncConfig();
-  } catch (syncErr) {
-    console.debug('sync config not available (standalone mode):', syncErr.message);
-  }
-  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig3 !== null;
-  if (shouldEnableSync && rawSyncConfig3) {
-    const syncConfig = new SyncConfig(rawSyncConfig3);
-    commerce = wrapCommerceWithEvents(commerce, syncConfig);
-  }
-
-  const mcpServer = createStatesetMcpServer({
-    commerce,
-    dbPath,
-    allowApply,
-    permissionGate: gate,
-    hookRunner: hooks,
-    policyEngine,
-    policyStorePath: effectivePolicyStorePath,
-  });
-
-  const streamThinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
-  const resolvedAbortController = normalizeAbortController({ abortController, signal });
-  const baseOptionsForQuery = {
-    model: effectiveModel,
-    systemPrompt: agentConfig.systemPrompt,
-    mcpServers: {
-      'stateset-commerce': mcpServer,
-    },
-    allowedTools: agentConfig.tools,
-    maxTurns,
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
-    ...(streamThinkTokens > 0 ? { maxThinkingTokens: streamThinkTokens } : {}),
-  };
-
-  const queue = [];
-  const followUpQueue = [];
-  const steerQueue = [];
-  let inTurn = false;
-  let closed = false;
-  let sessionId = null;
-  let wakeInput = null;
-  let agentStarted = false;
-  let assistantStarted = false;
-  let assistantText = '';
-
-  const notify = () => {
-    if (wakeInput) {
-      wakeInput();
-      wakeInput = null;
-    }
-  };
-
-  const enqueue = (text, mode = 'followUp') => {
-    if (!text) return;
-    if (mode === 'steer') {
-      steerQueue.push(text);
-    } else if (mode === 'followUp') {
-      followUpQueue.push(text);
-    } else {
-      queue.push(text);
-    }
-    notify();
-  };
-
-  const nextMessage = async () => {
-    while (!closed) {
-      if (steerQueue.length > 0 && !inTurn) return steerQueue.shift();
-      if (!inTurn && followUpQueue.length > 0) return followUpQueue.shift();
-      if (!inTurn && queue.length > 0) return queue.shift();
-      await new Promise((resolve) => {
-        wakeInput = resolve;
-      });
-    }
-    return null;
-  };
-
-  async function* inputStream() {
-    while (!closed) {
-      const next = await nextMessage();
-      if (!next) continue;
-      inTurn = true;
-      assistantStarted = false;
-      assistantText = '';
-      if (!agentStarted) {
-        agentStarted = true;
-        emitEvent(onEvent, { type: 'agent_start', slaLevel: effectiveSlaLevel });
+      if (
+        appendCompactionSummary &&
+        compactionSummary &&
+        typeof sessionStoreInstance.appendSummary === 'function'
+      ) {
+        sessionStoreInstance.appendSummary(sessionIdToStore, compactionSummary);
       }
-      emitEvent(onEvent, { type: 'turn_start' });
-      const userEventMessage = { role: 'user', content: redactEventText(next) };
-      emitEvent(onEvent, { type: 'message_start', message: userEventMessage });
-      emitEvent(onEvent, { type: 'message_end', message: userEventMessage });
-      yield {
-        type: 'user',
-        session_id: sessionId || '',
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: next }],
-        },
-        parent_tool_use_id: null,
-      };
+    } catch (err) {
+      console.warn('[Harness] Session store write failed:', err.message);
     }
-  }
+  };
 
-  async function* stream() {
-    let lastResponse = null;
-    const apiKeyOverride =
-      typeof getApiKey === 'function' ? await getApiKey(effectiveProvider) : apiKey;
-    const claudeEnv = buildClaudeEnv({ apiKey: apiKeyOverride });
-    const optionsForQuery = {
-      ...baseOptionsForQuery,
-      ...(claudeEnv ? { env: claudeEnv } : {}),
-      ...(resolvedAbortController ? { abortController: resolvedAbortController } : {}),
-    };
+  try {
+    const watchdog = watchdogTimeoutMs
+      ? createInactivityWatchdog({
+          timeoutMs: watchdogTimeoutMs,
+          abortController: effectiveAbortController,
+          message: resumeSessionId
+            ? `No Claude SDK activity while resuming session after ${watchdogTimeoutMs}ms`
+            : `No Claude SDK activity received after ${watchdogTimeoutMs}ms`,
+          onTimeout: (watchdogError) => {
+            emitEvent(onEvent, {
+              type: 'watchdog_timeout',
+              timeoutMs: watchdogTimeoutMs,
+              elapsedMs: watchdogError.elapsedMs,
+              provider: effectiveProvider,
+              model: effectiveModel,
+              sessionId: streamSessionId || resumeSessionId || null,
+            });
+          },
+        })
+      : null;
 
     try {
       for await (const message of __runQueryWithCleanArgv(() =>
-        query({ prompt: inputStream(), options: optionsForQuery }),
+        invokeClaudeQuery({ prompt: input, options }),
       )) {
-        if (message.sessionId && !sessionId) {
-          sessionId = message.sessionId;
+        watchdog?.touch();
+
+        if (message.sessionId && !streamSessionId) {
+          streamSessionId = message.sessionId;
         }
         if (message.type === 'assistant') {
           const content = message.message?.content || message.content;
@@ -2246,12 +2236,12 @@ export function createAgentStreamSession(options = {}) {
             isError: Boolean(toolResult?.is_error || toolResult?.isError),
           });
         }
-        if (message.type === 'result') {
-          inTurn = false;
-          lastResponse = message.result || lastResponse;
-          if (lastResponse && hooks?.hasHooks?.('before_send')) {
+        if (message.type === 'result' && message.result) {
+          lastResponse = message.result;
+          assistantText = message.result;
+          if (hooks?.hasHooks?.('before_send')) {
             const hookResult = await hooks.run('before_send', {
-              request: null,
+              request: effectiveRequest,
               response: lastResponse,
               agent: agentName,
               model: effectiveModel,
@@ -2269,58 +2259,1099 @@ export function createAgentStreamSession(options = {}) {
               message: { role: 'assistant', content: '' },
             });
           }
-          if (lastResponse !== null && lastResponse !== undefined) {
-            emitEvent(onEvent, {
-              type: 'message_end',
-              message: { role: 'assistant', content: redactEventText(lastResponse) },
-            });
-            emitEvent(onEvent, {
-              type: 'turn_end',
-              response: redactEventText(lastResponse),
-              toolResults: [],
-            });
-          }
-          notify();
+          emitEvent(onEvent, {
+            type: 'message_end',
+            message: { role: 'assistant', content: redactEventText(lastResponse) },
+          });
+          emitEvent(onEvent, {
+            type: 'turn_end',
+            response: redactEventText(lastResponse),
+            toolResults: [],
+          });
         }
         yield message;
       }
+    } catch (error) {
+      if (watchdog?.timedOut && isAbortLikeError(error)) {
+        throw watchdog.error || error;
+      }
+      throw error;
+    } finally {
+      watchdog?.stop();
+    }
 
-      if (sessionStoreInstance && sessionId) {
-        const storedResponse =
-          privacySettings.redactMemory && lastResponse
-            ? redactSensitive(lastResponse, privacySettings)
-            : lastResponse;
-        try {
-          sessionStoreInstance.upsert(sessionId, {
-            provider: effectiveProvider,
-            model: effectiveModel,
-            thinkLevel: effectiveThinkLevel,
-            slaLevel: effectiveSlaLevel,
-            agent: agentName,
-            lastRequest: null,
-            lastResponse: storedResponse,
-          });
-        } catch (err) {
-          console.warn('[Harness] Session store write failed:', err.message);
+    persistStreamSession({ responseText: lastResponse });
+
+    if (hooks?.hasHooks?.('agent_end')) {
+      await hooks.run('agent_end', {
+        request: effectiveRequest,
+        response: lastResponse,
+        agent: agentName,
+        slaLevel: effectiveSlaLevel,
+        model: effectiveModel,
+        provider: effectiveProvider,
+        toolResults: [],
+        cost: null,
+        budgetExceeded: false,
+      });
+    }
+
+    emitEvent(onEvent, {
+      type: 'agent_end',
+      response: lastResponse ? redactEventText(lastResponse) : null,
+      toolResults: [],
+      sessionId: streamSessionId,
+      agent: agentName,
+      slaLevel: effectiveSlaLevel,
+      provider: effectiveProvider,
+      model: effectiveModel,
+      cost: null,
+      budgetExceeded: false,
+    });
+  } catch (error) {
+    persistStreamSession({
+      responseText: lastResponse,
+      error,
+      appendCompactionSummary: false,
+    });
+    emitEvent(onEvent, {
+      type: 'agent_end',
+      error: error?.message || String(error),
+    });
+    throw error;
+  }
+}
+
+/**
+ * Create a streaming agent session with queued inputs.
+ * Messages are queued and delivered in order once the model finishes a turn.
+ *
+ * @param {Object} options
+ * @returns {{ stream: () => AsyncGenerator, send: (text: string) => void, followUp: (text: string) => void, steer: (text: string) => void, close: () => void, abort: (reason?: any) => void, getSessionId: () => string|null, getLastPromptReport: () => object|null, getLastTurnResult: () => object|null }}
+ */
+export function createAgentStreamSession(options = {}) {
+  const {
+    dbPath = './store.db',
+    model,
+    allowApply = false,
+    maxTurns = 10,
+    agent,
+    slaLevel = null,
+    enableSync = null,
+    guardrails = null,
+    onConfirmRequired = null,
+    permissionGate = null,
+    settings = null,
+    privacy = null,
+    hookRunner = null,
+    enablePlugins = null,
+    sessionStore = null,
+    conversationHistory: initialConversationHistory = [],
+    sessionRefresh = null,
+    contextGuardOptions: _contextGuardOptions = null,
+    provider,
+    thinkLevel,
+    maxBudgetUsd = null,
+    enableX402 = false,
+    enableMemory = null,
+    useMarkdownMemory = null,
+    memoryStore: memoryStoreOverride = null,
+    markdownMemoryStore: markdownMemoryStoreOverride = null,
+    treasury = null,
+    treasuryRuntime = null,
+    apiKey = null,
+    getApiKey = null,
+    abortController = null,
+    signal = null,
+    policyEngine = null,
+    policyStorePath = null,
+    onEvent = null,
+  } = options;
+
+  const effectivePolicyStorePath = resolvePolicyStorePath(dbPath, policyStorePath);
+  const resolvedSettings = loadAgentSettings(settings || {});
+  const watchdogSettings = { ...resolvedSettings.watchdog };
+  const memorySettings = { ...resolvedSettings.memory };
+  const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
+  const eventRedact = privacySettings.redactLogs;
+  const redactEventText = (text) => (eventRedact ? redactSensitive(text, privacySettings) : text);
+  const redactEventValue = (value) => (eventRedact ? redactObject(value, privacySettings) : value);
+  const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
+  const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
+  const effectiveGuardrails = guardrails
+    ? { ...resolvedSettings.guardrails, ...guardrails }
+    : { ...resolvedSettings.guardrails };
+  const envTreasuryEnabled = process.env.TREASURY_BILLING === 'true';
+  const envTreasuryChain = process.env.TREASURY_CHAIN || null;
+  const envTreasuryToken = process.env.TREASURY_TOKEN || null;
+  const envTreasuryAgent = process.env.TREASURY_AGENT || 'default';
+  const envTreasuryDb = process.env.TREASURY_DB || null;
+  const envTreasuryLlm = process.env.TREASURY_LLM_BILLING === 'true';
+  const envTreasuryRegistry = process.env.TREASURY_ERC8004_REGISTRY || null;
+  const envTreasuryRegistryDb = process.env.TREASURY_ERC8004_DB || null;
+  const effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
+  const effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
+  const effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+  const effectiveSlaLevel = slaLevel ?? resolvedSettings.agent?.slaLevel ?? null;
+  const effectiveEnableMemory = enableMemory ?? memorySettings.enabled;
+  const effectiveUseMarkdownMemory = useMarkdownMemory ?? memorySettings.useMarkdown;
+  const configuredWatchdogTimeoutMs = Number(watchdogSettings.freshInactivityMs);
+  const watchdogTimeoutMs =
+    effectiveProvider === 'claude' &&
+    watchdogSettings.enabled !== false &&
+    Number.isFinite(configuredWatchdogTimeoutMs) &&
+    configuredWatchdogTimeoutMs > 0
+      ? configuredWatchdogTimeoutMs
+      : null;
+  const resolvedAbortController = normalizeAbortController({ abortController, signal });
+  const effectiveAbortController =
+    resolvedAbortController || (watchdogTimeoutMs ? new AbortController() : null);
+
+  const treasuryConfig = treasury
+    ? { ...treasury }
+    : envTreasuryEnabled
+      ? {
+          enabled: true,
+          chainId: envTreasuryChain || 'set_chain',
+          tokenSymbol: envTreasuryToken || 'USDC',
+          agentId: envTreasuryAgent,
+          dbPath: envTreasuryDb,
+          chargeLlm: envTreasuryLlm || envTreasuryEnabled,
         }
+      : null;
+
+  if (treasuryConfig) {
+    if (!treasuryConfig.chainId && envTreasuryChain) {
+      treasuryConfig.chainId = envTreasuryChain;
+    }
+    if (!treasuryConfig.tokenSymbol && envTreasuryToken) {
+      treasuryConfig.tokenSymbol = envTreasuryToken;
+    }
+    if (!treasuryConfig.agentId && envTreasuryAgent) {
+      treasuryConfig.agentId = envTreasuryAgent;
+    }
+    if (!treasuryConfig.dbPath && envTreasuryDb) {
+      treasuryConfig.dbPath = envTreasuryDb;
+    }
+    if (treasuryConfig.chargeLlm === undefined) {
+      treasuryConfig.chargeLlm = envTreasuryLlm || envTreasuryEnabled || true;
+    }
+    if (!treasuryConfig.erc8004Registry && envTreasuryRegistry) {
+      treasuryConfig.erc8004Registry = envTreasuryRegistry;
+    }
+    if (!treasuryConfig.erc8004DbPath && envTreasuryRegistryDb) {
+      treasuryConfig.erc8004DbPath = envTreasuryRegistryDb;
+    }
+  }
+
+  if (pluginsEnabled) {
+    ensureHarnessPluginsLoaded({ verbose: pluginsVerbose }).catch((err) => {
+      console.warn('[Harness] Plugin load failed:', err.message);
+    });
+  }
+
+  if (effectiveProvider !== 'claude') {
+    throw new Error(
+      `createAgentStreamSession supports only claude provider (requested: ${effectiveProvider})`,
+    );
+  }
+
+  const hooks = hookRunner || getHarnessHookRunner();
+  const useSessionStore = resolvedSettings.sessionStore?.enabled !== false;
+  let sessionStoreInstance = sessionStore || null;
+  if (!sessionStoreInstance && useSessionStore) {
+    try {
+      sessionStoreInstance = getAgentSessionStore({
+        dbPath: resolvedSettings.sessionStore?.dbPath || undefined,
+        maxSummaries:
+          resolvedSettings.sessionStore?.maxSummaries || resolvedSettings.memory?.maxSummaries || 5,
+      });
+    } catch (err) {
+      console.warn('[Harness] Session store unavailable:', err.message);
+      sessionStoreInstance = null;
+    }
+  }
+
+  let memoryStoreInstance = memoryStoreOverride || null;
+  let markdownMemoryStoreInstance = markdownMemoryStoreOverride || null;
+  if (effectiveEnableMemory) {
+    try {
+      if (!memoryStoreInstance) {
+        memoryStoreInstance = getMemoryStore();
+      }
+      if (effectiveUseMarkdownMemory && !markdownMemoryStoreInstance) {
+        markdownMemoryStoreInstance = getMarkdownMemoryStore();
+      }
+    } catch (err) {
+      console.warn('[Harness] Memory store unavailable:', err.message);
+      memoryStoreInstance = null;
+      markdownMemoryStoreInstance = null;
+    }
+  }
+
+  const routingResult = routeToAgentWithConfidence('', {
+    slaLevel: effectiveSlaLevel,
+  });
+  const agentName =
+    agent || resolvedSettings.agent?.default || routingResult.primary.agent || 'customer-service';
+  const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
+
+  const gate =
+    permissionGate ||
+    createPermissionGate({
+      apply: allowApply,
+      guardrails: effectiveGuardrails,
+      onConfirmRequired,
+    });
+
+  const Commerce = getCommerceCtor();
+  let commerce = new Commerce(dbPath);
+  let rawSyncConfig3 = null;
+  try {
+    rawSyncConfig3 = loadSyncConfig();
+  } catch (syncErr) {
+    console.debug('sync config not available (standalone mode):', syncErr.message);
+  }
+  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig3 !== null;
+  if (shouldEnableSync && rawSyncConfig3) {
+    const syncConfig = new SyncConfig(rawSyncConfig3);
+    commerce = wrapCommerceWithEvents(commerce, syncConfig);
+  }
+
+  const mcpServer = createStatesetMcpServer({
+    commerce,
+    dbPath,
+    allowApply,
+    permissionGate: gate,
+    hookRunner: hooks,
+    policyEngine,
+    policyStorePath: effectivePolicyStorePath,
+    treasury: treasuryConfig,
+  });
+
+  const mcpServers = {
+    'stateset-commerce': mcpServer,
+  };
+  const allowedTools = [...agentConfig.tools];
+  const shouldEnableX402 = Boolean(
+    enableX402 || process.env.X402_ENABLE === '1' || process.env.X402_SEQUENCER_URL,
+  );
+
+  if (shouldEnableX402) {
+    const configDir = process.env.STATESET_CONFIG_DIR || '.stateset';
+    const x402Server = createX402McpServer({
+      env: process.env,
+      configDir,
+      policyEngine,
+      policyStorePath: effectivePolicyStorePath,
+    });
+    mcpServers['stateset-x402'] = x402Server;
+    allowedTools.push(...X402_MCP_TOOL_NAMES.map((name) => `mcp__stateset-x402__${name}`));
+  }
+
+  const parsedMaxBudgetUsd = Number(maxBudgetUsd);
+  const configuredMaxBudgetUsd =
+    Number.isFinite(parsedMaxBudgetUsd) && parsedMaxBudgetUsd > 0 ? parsedMaxBudgetUsd : null;
+  let treasuryState = null;
+  let effectiveStreamMaxBudgetUsd = configuredMaxBudgetUsd;
+  const streamThinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
+
+  const resolveTreasuryRuntime = async () => {
+    if (treasuryRuntime) {
+      return treasuryRuntime;
+    }
+    const treasuryModule = await import('./treasury/index.js');
+    const chainsModule = await import('./chains/config.js');
+    const erc8004Module = await import('./erc8004/index.js');
+    return {
+      loadTreasuryContext: treasuryModule.loadTreasuryContext,
+      resolveToken: treasuryModule.resolveToken,
+      recordFee: treasuryModule.recordFee,
+      fromSmallestUnit: chainsModule.fromSmallestUnit,
+      getIdentity: erc8004Module.getIdentity,
+    };
+  };
+
+  const initializeTreasuryState = async () => {
+    if (!treasuryConfig?.enabled || treasuryState) return;
+
+    try {
+      const runtime = await resolveTreasuryRuntime();
+      const ctx = await runtime.loadTreasuryContext({
+        dbPath: treasuryConfig.dbPath || undefined,
+      });
+      const chainId = treasuryConfig.chainId || 'set_chain';
+      const tokenSymbol = treasuryConfig.tokenSymbol || 'USDC';
+      let agentId = treasuryConfig.agentId || 'default';
+      let erc8004Identity = null;
+      const erc8004Registry = treasuryConfig.erc8004Registry || null;
+      if (erc8004Registry) {
+        const identityDbPath = treasuryConfig.erc8004DbPath || dbPath;
+        erc8004Identity = runtime.getIdentity(identityDbPath, erc8004Registry, agentId);
+        if (!erc8004Identity) {
+          throw new Error(`ERC-8004 identity not found for ${erc8004Registry}:${agentId}`);
+        }
+        agentId = erc8004Identity.agent_id;
+      }
+      const token = runtime.resolveToken(chainId, tokenSymbol, ctx.registry);
+      if (!token) {
+        throw new Error(`Unknown treasury token ${tokenSymbol} on ${chainId}.`);
+      }
+      const balance = ctx.store.getBalance({
+        agentId,
+        chainId,
+        tokenSymbol: token.symbol,
+        tokenDecimals: token.decimals,
+      });
+      const balanceDisplay = runtime.fromSmallestUnit(balance.balanceSmallest, token.decimals);
+      const balanceUsd = Number.parseFloat(balanceDisplay);
+      if (!Number.isFinite(balanceUsd) || balanceUsd <= 0) {
+        throw new Error(`Treasury balance is empty for ${token.symbol} on ${chainId}.`);
+      }
+      const resolvedBudget = configuredMaxBudgetUsd
+        ? Math.min(configuredMaxBudgetUsd, balanceUsd)
+        : balanceUsd;
+      if (!Number.isFinite(resolvedBudget) || resolvedBudget <= 0) {
+        throw new Error(`Treasury budget unavailable for ${token.symbol} on ${chainId}.`);
+      }
+      effectiveStreamMaxBudgetUsd = resolvedBudget;
+      treasuryState = {
+        enabled: true,
+        chargeLlm: treasuryConfig.chargeLlm !== false,
+        ctx,
+        agentId,
+        chainId,
+        token,
+        balanceUsd,
+        erc8004Registry,
+        erc8004Identity,
+        runtime,
+      };
+    } catch (error) {
+      throw new Error(`Treasury billing failed: ${error.message}`);
+    }
+  };
+
+  const recordTreasuryLlmCharge = async ({
+    costUsd,
+    sessionId: chargeSessionId,
+    provider: chargeProvider,
+    model: chargeModel,
+    usage,
+  }) => {
+    if (!treasuryState?.enabled || !treasuryState.chargeLlm) return null;
+    const amount = Number(costUsd);
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    try {
+      const requestId = randomUUID();
+      const erc8004Meta = treasuryState.erc8004Identity
+        ? {
+            erc8004: {
+              registry: treasuryState.erc8004Registry,
+              agentId: treasuryState.erc8004Identity.agent_id,
+              wallet: treasuryState.erc8004Identity.agent_wallet,
+              owner: treasuryState.erc8004Identity.owner_address,
+            },
+          }
+        : {};
+      const entry = await treasuryState.runtime.recordFee(
+        {
+          agentId: treasuryState.agentId,
+          chainId: treasuryState.chainId,
+          tokenSymbol: treasuryState.token.symbol,
+          amount,
+          source: 'llm',
+          metadata: {
+            provider: chargeProvider,
+            model: chargeModel,
+            usage: usage || null,
+            costUsd: amount,
+            ...erc8004Meta,
+          },
+          taskId: requestId,
+          sessionId: chargeSessionId || null,
+          toolName: 'llm_inference',
+          requestId,
+        },
+        treasuryState.ctx,
+      );
+      return {
+        requestId,
+        charge: {
+          eventId: entry.event_id,
+          amount: entry.amount_display,
+          amountSmallest: entry.amount_smallest,
+          token: entry.token_symbol,
+          chainId: entry.chain_id,
+        },
+        identity: treasuryState.erc8004Identity,
+      };
+    } catch (err) {
+      console.warn('[Harness] Treasury charge failed:', err.message);
+      return null;
+    }
+  };
+
+  const emptyUsageCounters = () => ({
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+  });
+
+  const readUsageCounter = (source, keys) => {
+    if (!source || typeof source !== 'object') return null;
+    for (const key of keys) {
+      const value = source[key];
+      if (value === null || value === undefined || value === '') continue;
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        return Math.trunc(numeric);
+      }
+    }
+    return null;
+  };
+
+  const readAnyUsageCounter = (sources, keys) => {
+    for (const source of sources) {
+      const value = readUsageCounter(source, keys);
+      if (value !== null) return value;
+    }
+    return null;
+  };
+
+  const mergeUsageCounters = (currentUsage, message) => {
+    const nextUsage = currentUsage ? { ...currentUsage } : emptyUsageCounters();
+    const direct = message && typeof message === 'object' ? message : null;
+    const usageSources = [direct, direct?.usage, direct?.result_usage, direct?.resultUsage];
+
+    const inputTokens = readAnyUsageCounter(usageSources, ['input_tokens', 'inputTokens']);
+    const outputTokens = readAnyUsageCounter(usageSources, ['output_tokens', 'outputTokens']);
+    const totalTokens = readAnyUsageCounter(usageSources, ['total_tokens', 'totalTokens']);
+    const cacheReadTokens = readAnyUsageCounter(usageSources, [
+      'cache_read_tokens',
+      'cacheReadTokens',
+      'cache_read_input_tokens',
+      'cacheReadInputTokens',
+    ]);
+    const cacheWriteTokens = readAnyUsageCounter(usageSources, [
+      'cache_write_tokens',
+      'cacheWriteTokens',
+      'cache_creation_input_tokens',
+      'cacheCreationInputTokens',
+    ]);
+
+    if (inputTokens !== null) nextUsage.inputTokens = inputTokens;
+    if (outputTokens !== null) nextUsage.outputTokens = outputTokens;
+    if (totalTokens !== null) nextUsage.totalTokens = totalTokens;
+    if (cacheReadTokens !== null) nextUsage.cacheReadTokens = cacheReadTokens;
+    if (cacheWriteTokens !== null) nextUsage.cacheWriteTokens = cacheWriteTokens;
+    if (
+      nextUsage.totalTokens === null &&
+      nextUsage.inputTokens !== null &&
+      nextUsage.outputTokens !== null
+    ) {
+      nextUsage.totalTokens = nextUsage.inputTokens + nextUsage.outputTokens;
+    }
+    return nextUsage;
+  };
+
+  const cloneTurnResult = (result) => {
+    if (!result) return null;
+    return {
+      ...result,
+      usage: result.usage ? { ...result.usage } : null,
+      promptReport: result.promptReport ? { ...result.promptReport } : null,
+      sessionRefresh: result.sessionRefresh ? { ...result.sessionRefresh } : null,
+      treasury: result.treasury
+        ? {
+            ...result.treasury,
+            charge: result.treasury.charge ? { ...result.treasury.charge } : null,
+            identity: result.treasury.identity ? { ...result.treasury.identity } : null,
+          }
+        : result.treasury,
+      toolResults: Array.isArray(result.toolResults)
+        ? result.toolResults.map((entry) => ({
+            ...entry,
+            toolCall: entry.toolCall ? { ...entry.toolCall } : entry.toolCall,
+          }))
+        : [],
+    };
+  };
+
+  const summarizeToolResultsForEvent = (toolResults = []) =>
+    toolResults.map((entry) => ({
+      toolCall: entry.toolCall
+        ? {
+            id: entry.toolCall.id,
+            name: entry.toolCall.name,
+            input: entry.toolCall.input,
+          }
+        : null,
+      result: entry.result,
+      duration: entry.duration ?? null,
+    }));
+
+  const queue = [];
+  const followUpQueue = [];
+  const steerQueue = [];
+  let inTurn = false;
+  let closed = false;
+  let sessionId = null;
+  let wakeInput = null;
+  let agentStarted = false;
+  let assistantStarted = false;
+  let assistantText = '';
+  let lastRequest = null;
+  let lastResponse = null;
+  let lastPromptReport = null;
+  let lastTurnResult = null;
+  let activeWatchdog = null;
+  let conversationHistory = Array.isArray(initialConversationHistory)
+    ? initialConversationHistory.map((entry) => ({ ...entry }))
+    : [];
+  const seededConversationHistoryLength = conversationHistory.length;
+  let pendingSessionRefresh = sessionRefresh ? { ...sessionRefresh } : null;
+  let currentTurnStartedAt = null;
+  let pendingToolCalls = new Map();
+
+  const notify = () => {
+    if (wakeInput) {
+      wakeInput();
+      wakeInput = null;
+    }
+  };
+
+  const enqueue = (text, mode = 'followUp') => {
+    if (!text) return;
+    if (mode === 'steer') {
+      steerQueue.push(text);
+    } else if (mode === 'followUp') {
+      followUpQueue.push(text);
+    } else {
+      queue.push(text);
+    }
+    notify();
+  };
+
+  const nextMessage = async () => {
+    while (!closed) {
+      if (steerQueue.length > 0 && !inTurn) return steerQueue.shift();
+      if (!inTurn && followUpQueue.length > 0) return followUpQueue.shift();
+      if (!inTurn && queue.length > 0) return queue.shift();
+      await new Promise((resolve) => {
+        wakeInput = resolve;
+      });
+    }
+    return null;
+  };
+
+  const persistStreamSession = ({
+    responseText = lastTurnResult?.response ?? lastResponse,
+    error = null,
+    promptReport = lastPromptReport,
+    lastCostUsd = lastTurnResult?.cost ?? null,
+    usage = lastTurnResult?.usage ?? emptyUsageCounters(),
+    modelUsed = lastTurnResult?.model || effectiveModel,
+  } = {}) => {
+    if (!sessionStoreInstance || !sessionId) return;
+
+    const storedRequest =
+      privacySettings.redactMemory && lastRequest
+        ? redactSensitive(lastRequest, privacySettings)
+        : lastRequest;
+    const rawResponse =
+      responseText === null || responseText === undefined
+        ? null
+        : typeof responseText === 'string'
+          ? responseText
+          : String(responseText);
+    const storedResponse =
+      privacySettings.redactMemory && rawResponse
+        ? redactSensitive(rawResponse, privacySettings)
+        : rawResponse;
+    const usageCounters = usage || emptyUsageCounters();
+    const totalTokens =
+      usageCounters.totalTokens ??
+      (usageCounters.inputTokens !== null && usageCounters.outputTokens !== null
+        ? usageCounters.inputTokens + usageCounters.outputTokens
+        : null);
+    const normalizedLastCostUsd =
+      lastCostUsd === null || lastCostUsd === undefined || lastCostUsd === ''
+        ? null
+        : Number(lastCostUsd);
+    const payload = {
+      provider: effectiveProvider,
+      model: modelUsed || effectiveModel,
+      thinkLevel: effectiveThinkLevel,
+      slaLevel: effectiveSlaLevel,
+      agent: agentName,
+      lastRequest: storedRequest,
+      lastResponse: storedResponse,
+      lastError: error ? error?.message || String(error) : null,
+      lastErrorCode: error?.code || null,
+      lastErrorAt: error ? Date.now() : null,
+      abortedLastRun: error
+        ? error instanceof InactivityWatchdogError || isAbortLikeError(error)
+        : false,
+      lastRunMs: currentTurnStartedAt ? Date.now() - currentTurnStartedAt : null,
+      lastCostUsd: Number.isFinite(normalizedLastCostUsd) ? normalizedLastCostUsd : null,
+      inputTokens: usageCounters.inputTokens,
+      outputTokens: usageCounters.outputTokens,
+      totalTokens,
+      cacheReadTokens: usageCounters.cacheReadTokens,
+      cacheWriteTokens: usageCounters.cacheWriteTokens,
+      compactionCount: 0,
+      promptReport,
+      sessionRefresh: lastTurnResult?.sessionRefresh ?? null,
+    };
+
+    try {
+      if (typeof sessionStoreInstance.recordRun === 'function') {
+        sessionStoreInstance.recordRun(sessionId, payload);
+      } else if (typeof sessionStoreInstance.upsert === 'function') {
+        sessionStoreInstance.upsert(sessionId, payload);
+      }
+    } catch (err) {
+      console.warn('[Harness] Session store write failed:', err.message);
+    }
+  };
+
+  const stopActiveWatchdog = () => {
+    if (!activeWatchdog) return;
+    activeWatchdog.stop();
+    activeWatchdog = null;
+  };
+
+  const startTurnWatchdog = () => {
+    stopActiveWatchdog();
+    if (!watchdogTimeoutMs) return;
+
+    activeWatchdog = createInactivityWatchdog({
+      timeoutMs: watchdogTimeoutMs,
+      abortController: effectiveAbortController,
+      message: `No Claude SDK activity received after ${watchdogTimeoutMs}ms`,
+      onTimeout: (watchdogError) => {
+        emitEvent(onEvent, {
+          type: 'watchdog_timeout',
+          timeoutMs: watchdogTimeoutMs,
+          elapsedMs: watchdogError.elapsedMs,
+          provider: effectiveProvider,
+          model: effectiveModel,
+          sessionId,
+        });
+      },
+    });
+  };
+
+  const buildTurnPromptReport = (request) => {
+    const seededHistoryOnly =
+      seededConversationHistoryLength > 0 &&
+      conversationHistory.length === seededConversationHistoryLength;
+    const report = buildPromptReport({
+      request,
+      history: conversationHistory,
+      systemPrompt: agentConfig.systemPrompt,
+      includeHistory: conversationHistory.length > 0,
+      resumeSession: false,
+      historySource:
+        conversationHistory.length === 0
+          ? 'none'
+          : seededHistoryOnly
+            ? 'conversation_history'
+            : 'live_session',
+      redactOptions: privacySettings,
+      redactHistory: privacySettings.redactHistory,
+    });
+    lastPromptReport = report;
+    if (lastTurnResult) {
+      lastTurnResult.promptReport = report;
+    }
+    return report;
+  };
+
+  const saveTurnMemory = async ({ request, response, toolResults, sessionId: turnSessionId }) => {
+    if (!effectiveEnableMemory || !response) return;
+    try {
+      const facts = [];
+      for (const toolResult of toolResults || []) {
+        if (toolResult?.toolCall?.name) {
+          facts.push(`Used tool: ${toolResult.toolCall.name}`);
+        }
+      }
+
+      const summaryRequest = privacySettings.redactMemory
+        ? redactSensitive(request, privacySettings)
+        : request;
+      const summaryResponse = privacySettings.redactMemory
+        ? redactSensitive(response, privacySettings)
+        : response;
+      const memoryEntry = {
+        summary: `${summaryRequest.slice(0, 100)}${summaryRequest.length > 100 ? '...' : ''} → ${summaryResponse.slice(0, 150)}${summaryResponse.length > 150 ? '...' : ''}`,
+        facts,
+        agent: agentName,
+        sessionId: turnSessionId,
+        channel: 'cli',
+        senderId: 'local',
+      };
+
+      if (memoryStoreInstance) {
+        memoryStoreInstance.save(memoryEntry);
+      }
+      if (markdownMemoryStoreInstance) {
+        await markdownMemoryStoreInstance.save(memoryEntry);
+      }
+    } catch (err) {
+      console.warn('[Harness] Memory save failed:', err.message);
+    }
+  };
+
+  async function* inputStream() {
+    while (!closed) {
+      const next = await nextMessage();
+      if (!next) continue;
+      inTurn = true;
+      assistantStarted = false;
+      assistantText = '';
+      lastRequest = next;
+      lastResponse = null;
+      currentTurnStartedAt = Date.now();
+      pendingToolCalls = new Map();
+      lastTurnResult = {
+        request: next,
+        response: null,
+        toolResults: [],
+        sessionId,
+        provider: effectiveProvider,
+        model: effectiveModel,
+        cost: null,
+        budgetExceeded: false,
+        usage: emptyUsageCounters(),
+        promptReport: null,
+        sessionRefresh: pendingSessionRefresh ? { ...pendingSessionRefresh } : null,
+        treasury: treasuryState
+          ? {
+              requestId: null,
+              charge: null,
+              identity: treasuryState.erc8004Identity,
+            }
+          : undefined,
+        error: null,
+        errorCode: null,
+      };
+      pendingSessionRefresh = null;
+      startTurnWatchdog();
+      if (!agentStarted) {
+        agentStarted = true;
+        emitEvent(onEvent, { type: 'agent_start', slaLevel: effectiveSlaLevel });
+      }
+      const promptReport = buildTurnPromptReport(next);
+      const requestText =
+        conversationHistory.length > 0 && !sessionId
+          ? buildPromptWithHistory(next, conversationHistory, {
+              redactHistory: privacySettings.redactHistory,
+              redactOptions: privacySettings,
+            })
+          : next;
+      emitEvent(onEvent, { type: 'turn_start' });
+      emitEvent(onEvent, { type: 'prompt_report', report: promptReport });
+      const userEventMessage = { role: 'user', content: redactEventText(next) };
+      emitEvent(onEvent, { type: 'message_start', message: userEventMessage });
+      emitEvent(onEvent, { type: 'message_end', message: userEventMessage });
+      yield {
+        type: 'user',
+        session_id: sessionId || '',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: requestText }],
+        },
+        parent_tool_use_id: null,
+      };
+    }
+  }
+
+  async function* stream() {
+    await initializeTreasuryState();
+    let apiKeyOverride = apiKey;
+    if (!apiKeyOverride && typeof getApiKey === 'function') {
+      apiKeyOverride = await getApiKey(effectiveProvider);
+    }
+    const claudeEnv = buildClaudeEnv({ apiKey: apiKeyOverride });
+    const optionsForQuery = {
+      model: effectiveModel,
+      systemPrompt: agentConfig.systemPrompt,
+      mcpServers,
+      allowedTools,
+      maxTurns,
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
+      ...(streamThinkTokens > 0 ? { maxThinkingTokens: streamThinkTokens } : {}),
+      ...(effectiveStreamMaxBudgetUsd ? { maxBudgetUsd: effectiveStreamMaxBudgetUsd } : {}),
+      ...(claudeEnv ? { env: claudeEnv } : {}),
+      ...(effectiveAbortController ? { abortController: effectiveAbortController } : {}),
+    };
+
+    try {
+      try {
+        for await (const message of __runQueryWithCleanArgv(() =>
+          invokeClaudeQuery({ prompt: inputStream(), options: optionsForQuery }),
+        )) {
+          activeWatchdog?.touch();
+          if (lastTurnResult) {
+            lastTurnResult.usage = mergeUsageCounters(lastTurnResult.usage, message);
+          }
+
+          if (message.sessionId && !sessionId) {
+            sessionId = message.sessionId;
+          }
+          if (message.sessionId && lastTurnResult) {
+            lastTurnResult.sessionId = message.sessionId;
+          }
+          if (message.type === 'assistant') {
+            const content = message.message?.content || message.content;
+            if (content) {
+              if (!assistantStarted) {
+                assistantStarted = true;
+                emitEvent(onEvent, {
+                  type: 'message_start',
+                  message: { role: 'assistant', content: '' },
+                });
+              }
+              for (const block of content) {
+                if (block.type === 'tool_use') {
+                  const toolCall = {
+                    id: block.id,
+                    name: block.name,
+                    input: block.input,
+                    startTime: Date.now(),
+                  };
+                  const entry = { toolCall, result: null };
+                  if (lastTurnResult) {
+                    lastTurnResult.toolResults.push(entry);
+                  }
+                  if (toolCall.id) {
+                    pendingToolCalls.set(toolCall.id, entry);
+                  }
+                  emitEvent(onEvent, {
+                    type: 'tool_execution_start',
+                    toolCallId: toolCall.id,
+                    toolName: toolCall.name,
+                    args: redactEventValue(toolCall.input),
+                  });
+                } else if (block.type === 'text') {
+                  assistantText += block.text;
+                  if (lastTurnResult) {
+                    lastTurnResult.response = assistantText;
+                  }
+                  emitEvent(onEvent, {
+                    type: 'message_update',
+                    message: { role: 'assistant', content: redactEventText(assistantText) },
+                    delta: redactEventText(block.text),
+                  });
+                } else if (block.type === 'thinking') {
+                  emitEvent(onEvent, {
+                    type: 'thinking_block',
+                    block: redactEventValue(block),
+                  });
+                }
+              }
+            }
+          } else if (message.type === 'user' && message.tool_use_result) {
+            let toolResult = message.tool_use_result;
+            const toolUseId =
+              message.parent_tool_use_id ||
+              message.tool_use_id ||
+              message.tool_use_result?.tool_use_id ||
+              message.tool_use_result?.tool_use_id;
+            const pending = toolUseId
+              ? pendingToolCalls.get(toolUseId)
+              : lastTurnResult?.toolResults.find((entry) => entry.result === null) || null;
+            if (pending) {
+              pending.result = toolResult;
+              pending.endTime = Date.now();
+              pending.duration = pending.endTime - pending.toolCall.startTime;
+              if (hooks?.hasHooks?.('tool_result_persist')) {
+                const hookResult = await hooks.run('tool_result_persist', {
+                  tool: pending.toolCall.name,
+                  toolCall: pending.toolCall,
+                  result: pending.result,
+                });
+                if (hookResult?.result) {
+                  pending.result = hookResult.result;
+                  toolResult = hookResult.result;
+                }
+              }
+              emitEvent(onEvent, {
+                type: 'tool_execution_end',
+                toolCallId: pending.toolCall.id,
+                toolName: pending.toolCall.name,
+                result: redactEventValue(toolResult),
+                isError: Boolean(toolResult?.is_error || toolResult?.isError),
+              });
+              if (toolUseId) {
+                pendingToolCalls.delete(toolUseId);
+              }
+            }
+          }
+          if (message.type === 'result') {
+            inTurn = false;
+            if (lastTurnResult) {
+              lastTurnResult.usage = mergeUsageCounters(lastTurnResult.usage, message);
+              if (message.result !== null && message.result !== undefined) {
+                lastTurnResult.response = message.result;
+                assistantText = message.result;
+              }
+              if (lastTurnResult.response !== null && lastTurnResult.response !== undefined) {
+                lastResponse = lastTurnResult.response;
+              }
+              if (message.total_cost_usd !== null && message.total_cost_usd !== undefined) {
+                lastTurnResult.cost = Number(message.total_cost_usd);
+              }
+              if (message.subtype === 'error_max_budget_usd') {
+                lastTurnResult.budgetExceeded = true;
+              }
+              if (message.subtype && message.subtype.startsWith('error_')) {
+                lastTurnResult.errorCode = message.subtype;
+                lastTurnResult.error =
+                  message.errors && message.errors.length > 0
+                    ? message.errors.join('; ')
+                    : message.subtype;
+              }
+            }
+            stopActiveWatchdog();
+            if (lastTurnResult?.response && hooks?.hasHooks?.('before_send')) {
+              const hookResult = await hooks.run('before_send', {
+                request: lastRequest,
+                response: lastTurnResult.response,
+                agent: agentName,
+                model: lastTurnResult.model,
+                provider: effectiveProvider,
+                toolResults: lastTurnResult.toolResults,
+              });
+              if (hookResult?.response) {
+                lastTurnResult.response = hookResult.response;
+                lastResponse = hookResult.response;
+                assistantText = hookResult.response;
+              }
+            }
+            if (treasuryState) {
+              const treasuryCharge = await recordTreasuryLlmCharge({
+                costUsd: lastTurnResult?.cost ?? null,
+                sessionId,
+                provider: effectiveProvider,
+                model: lastTurnResult?.model || effectiveModel,
+                usage: lastTurnResult?.usage ?? emptyUsageCounters(),
+              });
+              lastTurnResult.treasury = treasuryCharge || {
+                requestId: null,
+                charge: null,
+                identity: treasuryState.erc8004Identity,
+              };
+            }
+            if (!assistantStarted) {
+              assistantStarted = true;
+              emitEvent(onEvent, {
+                type: 'message_start',
+                message: { role: 'assistant', content: '' },
+              });
+            }
+            if (lastTurnResult?.response !== null && lastTurnResult?.response !== undefined) {
+              emitEvent(onEvent, {
+                type: 'message_end',
+                message: { role: 'assistant', content: redactEventText(lastTurnResult.response) },
+              });
+            }
+            emitEvent(onEvent, {
+              type: 'turn_end',
+              response:
+                lastTurnResult?.response !== null && lastTurnResult?.response !== undefined
+                  ? redactEventText(lastTurnResult.response)
+                  : null,
+              toolResults: redactEventValue(
+                summarizeToolResultsForEvent(lastTurnResult?.toolResults || []),
+              ),
+              cost: lastTurnResult?.cost ?? null,
+              budgetExceeded: lastTurnResult?.budgetExceeded ?? false,
+              treasury: lastTurnResult?.treasury,
+              sessionRefresh: lastTurnResult?.sessionRefresh || null,
+            });
+            persistStreamSession({
+              responseText: lastTurnResult?.response ?? null,
+              promptReport: lastTurnResult?.promptReport ?? lastPromptReport,
+              lastCostUsd: lastTurnResult?.cost ?? null,
+              usage: lastTurnResult?.usage ?? emptyUsageCounters(),
+              modelUsed: lastTurnResult?.model || effectiveModel,
+            });
+            await saveTurnMemory({
+              request: lastRequest,
+              response: lastTurnResult?.response ?? null,
+              toolResults: lastTurnResult?.toolResults || [],
+              sessionId,
+            });
+            if (lastRequest !== null && lastRequest !== undefined) {
+              conversationHistory.push({ role: 'user', content: lastRequest });
+            }
+            if (lastTurnResult?.response !== null && lastTurnResult?.response !== undefined) {
+              conversationHistory.push({ role: 'assistant', content: lastTurnResult.response });
+            }
+            pendingToolCalls = new Map();
+            notify();
+          }
+          yield message;
+        }
+      } catch (error) {
+        if (activeWatchdog?.timedOut && isAbortLikeError(error)) {
+          throw activeWatchdog.error || error;
+        }
+        throw error;
+      } finally {
+        stopActiveWatchdog();
       }
 
       emitEvent(onEvent, {
         type: 'agent_end',
         response: lastResponse ? redactEventText(lastResponse) : null,
-        toolResults: [],
+        toolResults: redactEventValue(
+          summarizeToolResultsForEvent(lastTurnResult?.toolResults || []),
+        ),
         sessionId,
         agent: agentName,
         slaLevel: effectiveSlaLevel,
         provider: effectiveProvider,
-        model: effectiveModel,
-        cost: null,
-        budgetExceeded: false,
+        model: lastTurnResult?.model || effectiveModel,
+        cost: lastTurnResult?.cost ?? null,
+        budgetExceeded: lastTurnResult?.budgetExceeded ?? false,
+        treasury: lastTurnResult?.treasury,
+        sessionRefresh: lastTurnResult?.sessionRefresh || null,
       });
     } catch (error) {
+      inTurn = false;
+      if (lastTurnResult) {
+        lastTurnResult.error = error?.message || String(error);
+        lastTurnResult.errorCode = error?.code || null;
+        lastTurnResult.sessionId = sessionId;
+      }
+      persistStreamSession({
+        responseText: lastTurnResult?.response ?? null,
+        error,
+        promptReport: lastTurnResult?.promptReport ?? lastPromptReport,
+        lastCostUsd: lastTurnResult?.cost ?? null,
+        usage: lastTurnResult?.usage ?? emptyUsageCounters(),
+        modelUsed: lastTurnResult?.model || effectiveModel,
+      });
       emitEvent(onEvent, {
         type: 'agent_end',
         error: error?.message || String(error),
+        sessionId,
+        agent: agentName,
+        slaLevel: effectiveSlaLevel,
+        provider: effectiveProvider,
+        model: lastTurnResult?.model || effectiveModel,
+        cost: lastTurnResult?.cost ?? null,
+        budgetExceeded: lastTurnResult?.budgetExceeded ?? false,
+        treasury: lastTurnResult?.treasury,
+        sessionRefresh: lastTurnResult?.sessionRefresh || null,
       });
       throw error;
     }
@@ -2337,9 +3368,9 @@ export function createAgentStreamSession(options = {}) {
     },
     abort: (reason) => {
       closed = true;
-      if (resolvedAbortController) {
+      if (effectiveAbortController) {
         try {
-          resolvedAbortController.abort(reason);
+          effectiveAbortController.abort(reason);
         } catch (err) {
           console.warn('[harness] Abort controller error:', err.message);
         }
@@ -2347,6 +3378,8 @@ export function createAgentStreamSession(options = {}) {
       notify();
     },
     getSessionId: () => sessionId,
+    getLastPromptReport: () => (lastPromptReport ? { ...lastPromptReport } : null),
+    getLastTurnResult: () => cloneTurnResult(lastTurnResult),
   };
 }
 
@@ -2441,6 +3474,23 @@ export function listAgents() {
   }));
 }
 
+function getConfiguredCommandQueue(settingsOverrides = null) {
+  const resolvedSettings = loadAgentSettings(settingsOverrides || {});
+  const queueSettings = resolvedSettings.queue || {};
+  return getCommandQueue({
+    maxLanes: queueSettings.maxLanes,
+    laneTimeoutMs: queueSettings.laneTimeoutMs ?? queueSettings.laneTimeout,
+    maxQueueSize: queueSettings.maxQueueSize,
+    idleCleanupMs: queueSettings.idleCleanupMs,
+    parallelConcurrency: queueSettings.parallelConcurrency,
+    waitWarningMs: queueSettings.waitWarningMs,
+    runningWarningMs: queueSettings.runningWarningMs,
+    warningThrottleMs: queueSettings.warningThrottleMs,
+    monitorIntervalMs: queueSettings.monitorIntervalMs,
+    emitWarnings: queueSettings.emitWarnings,
+  });
+}
+
 // ============================================================================
 // v0.4.0: Queue-Wrapped Agent Execution
 // ============================================================================
@@ -2465,7 +3515,7 @@ export async function runAgentLoopQueued(options) {
   }
 
   // Get the command queue singleton
-  const queue = getCommandQueue();
+  const queue = getConfiguredCommandQueue(options.settings || null);
 
   // Enqueue the operation in the appropriate lane
   return queue.enqueue(
@@ -2509,7 +3559,9 @@ export function clearQueueLanes(options = {}) {
  * @returns {Promise<Object[]>} - Array of results
  */
 export async function runAgentLoopParallel(requests) {
-  const queue = getCommandQueue();
+  const queue = getConfiguredCommandQueue(
+    requests.find((options) => options?.settings)?.settings || null,
+  );
 
   return Promise.all(
     requests.map((options, index) => {

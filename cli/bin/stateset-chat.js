@@ -11,8 +11,15 @@
  *   stateset-chat --apply
  */
 
-import { runAgentLoop, RichOutput, ICONS } from '../src/claude-harness.js';
+import { RichOutput, ICONS } from '../src/claude-harness.js';
+import { createChatTransport } from '../src/utils/chat-transport.js';
 import { createConfirmHandler } from '../src/utils/confirm.js';
+import { printExecutionStats } from '../src/utils/execution-stats.js';
+import {
+  appendSessionRefresh,
+  formatSessionRefreshReason,
+  formatSessionRefreshTimestamp,
+} from '../src/utils/session-refresh.js';
 import { DEFAULT_MODEL, THINK_LEVELS } from '../src/config.js';
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
@@ -31,6 +38,7 @@ OPTIONS:
   --think <level>    Extended thinking: off, low, medium, high (default: off)
   --stream           Enable streaming output
   --budget <usd>     Maximum spend per query in USD
+  --stats            Show prompt budget and execution stats
   --memory           Enable conversation memory (overrides settings)
   --no-memory        Disable conversation memory (overrides settings)
   --x402             Enable x402 MCP tools
@@ -51,6 +59,9 @@ IN-CHAT COMMANDS:
   /apply on|off      Toggle apply mode
   /think <level>     Set thinking level (off|low|medium|high)
   /stream            Toggle streaming mode
+  /stats             Toggle live prompt budget and execution stats
+  /prompt            Show the latest prompt budget report
+  /refreshes         Show session refresh history
   /provider <name>   Switch AI provider
   /budget <usd>      Set budget per query ($)
   /memory            Toggle conversation memory (overrides settings)
@@ -70,6 +81,7 @@ async function main() {
       think: { type: 'string', default: 'off' },
       stream: { type: 'boolean', default: false },
       budget: { type: 'string' },
+      stats: { type: 'boolean', default: false },
       memory: { type: 'boolean', default: false },
       'no-memory': { type: 'boolean', default: false },
       x402: { type: 'boolean', default: false },
@@ -92,10 +104,8 @@ async function main() {
     process.exit(0);
   }
 
-  // Initialize output formatter
   const output = new RichOutput({ color: true });
 
-  // State
   let dbPath = values.db;
   let allowApply = values.apply;
   const model = values.model;
@@ -105,9 +115,13 @@ async function main() {
   let streaming = values.stream || false;
   let provider = values.provider || 'claude';
   let budget = values.budget || null;
+  let statsEnabled = values.stats || false;
   const noMemoryFlag = values['no-memory'] ?? values.noMemory ?? false;
   let memoryEnabled = noMemoryFlag ? false : values.memory ? true : null;
   const x402Enabled = values.x402 || false;
+  let lastPromptReport = null;
+  let lastSessionRefresh = null;
+  let sessionRefreshHistory = [];
   const treasuryEnabled = Boolean(
     values.treasury ||
     values.treasuryChain ||
@@ -129,7 +143,6 @@ async function main() {
       }
     : null;
 
-  // Create readline interface
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -148,14 +161,89 @@ async function main() {
     nonInteractive: false,
     confirmPrompt,
   });
+  const chatTransport = createChatTransport();
+  const MAX_SESSION_REFRESH_HISTORY = 10;
+
+  const resetChatSession = (reason = 'reset') => {
+    chatTransport.reset(reason);
+    sessionId = null;
+    lastPromptReport = null;
+    lastSessionRefresh = null;
+    sessionRefreshHistory = [];
+  };
+
+  const resetPersistentSessionIfActive = (reason) => {
+    if (chatTransport.isPersistentActive()) {
+      resetChatSession(reason);
+    }
+  };
 
   const prompt = () => {
     const modeIndicator = allowApply ? '✏️ ' : '👁️ ';
     rl.question(`${modeIndicator}stateset> `, handleInput);
   };
 
+  const recordSessionRefresh = (refresh) => {
+    sessionRefreshHistory = appendSessionRefresh(sessionRefreshHistory, refresh, {
+      maxEntries: MAX_SESSION_REFRESH_HISTORY,
+    });
+    lastSessionRefresh = sessionRefreshHistory[sessionRefreshHistory.length - 1] || null;
+    return lastSessionRefresh;
+  };
+
+  const printSessionRefreshNotice = (refresh) => {
+    if (!refresh) return;
+    console.log(
+      output.status(
+        'info',
+        `Started a fresh Claude session for ${formatSessionRefreshReason(refresh.reason)}`,
+      ),
+    );
+    if (refresh.previousSessionId || refresh.sessionId) {
+      console.log(
+        output.dim(
+          `   Session IDs: ${refresh.previousSessionId || 'none'} -> ${refresh.sessionId || 'pending'}`,
+        ),
+      );
+    }
+    if (refresh.replayedMessages > 0) {
+      console.log(
+        output.dim(`   Replayed ${refresh.replayedMessages} prior messages into the new session.`),
+      );
+    }
+  };
+
+  const printSessionRefreshHistory = () => {
+    if (sessionRefreshHistory.length === 0) {
+      console.log(output.dim('No session refreshes recorded in this chat.'));
+      return;
+    }
+
+    const rows = sessionRefreshHistory.map((entry) => ({
+      sequence: `#${entry.sequence}`,
+      reason: formatSessionRefreshReason(entry.reason),
+      sessions: `${entry.previousSessionId || 'none'} -> ${entry.sessionId || 'pending'}`,
+      replayed: entry.replayedMessages || 0,
+      recordedAt: formatSessionRefreshTimestamp(entry.recordedAt),
+    }));
+
+    console.log(`
+${ICONS.session} ${output.bold('Session Refresh History:')}`);
+    console.log(
+      output.table(rows, [
+        { key: 'sequence', header: '#' },
+        { key: 'reason', header: 'Reason', width: 24 },
+        { key: 'sessions', header: 'Sessions', width: 28 },
+        { key: 'replayed', header: 'Replayed', align: 'right' },
+        { key: 'recordedAt', header: 'At', width: 20 },
+      ]),
+    );
+    console.log();
+  };
+
   const showStatus = () => {
-    console.log(`\n${ICONS.analytics} ${output.bold('Current Settings:')}`);
+    console.log(`
+${ICONS.analytics} ${output.bold('Current Settings:')}`);
     console.log(`   ${output.dim('Database:')}  ${dbPath}`);
     console.log(
       `   ${output.dim('Mode:')}      ${allowApply ? output.green('Write enabled') : output.yellow('Preview only')}`,
@@ -169,6 +257,7 @@ async function main() {
     if (budget) {
       console.log(`   ${output.dim('Budget:')}    ${output.cyan('$' + budget)}/query`);
     }
+    console.log(`   ${output.dim('Stats:')}     ${statsEnabled ? output.cyan('On') : 'Off'}`);
     const memoryLabel =
       memoryEnabled === null ? output.dim('Default') : memoryEnabled ? output.cyan('On') : 'Off';
     console.log(`   ${output.dim('Memory:')}    ${memoryLabel}`);
@@ -176,6 +265,17 @@ async function main() {
     console.log(`   ${output.dim('Treasury:')}  ${treasuryConfig ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Verbose:')}   ${verbose ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Session:')}   ${sessionId || output.dim('(none)')}`);
+    console.log(`   ${output.dim('Refreshes:')} ${sessionRefreshHistory.length}`);
+    if (lastSessionRefresh) {
+      console.log(
+        `   ${output.dim('Last Refresh:')} ${formatSessionRefreshReason(lastSessionRefresh.reason)} (${lastSessionRefresh.previousSessionId || 'none'} -> ${lastSessionRefresh.sessionId || 'pending'}, ${formatSessionRefreshTimestamp(lastSessionRefresh.recordedAt)})`,
+      );
+    }
+    if (lastPromptReport) {
+      console.log(
+        `   ${output.dim('Last Prompt:')} ~${lastPromptReport.totalInputTokens || 0} tokens from ${lastPromptReport.historySource || 'none'}`,
+      );
+    }
     console.log();
   };
 
@@ -187,6 +287,9 @@ ${output.bold('Available Commands:')}
    /apply on|off            Toggle write mode
    /think off|low|med|high  Set extended thinking level
    /stream                  Toggle streaming output
+   /stats                   Toggle live prompt diagnostics
+   /prompt                  Show the latest prompt budget
+   /refreshes               Show session refresh history
    /provider <name>         Switch provider (claude|openai|gemini|ollama)
    /budget <usd>            Set max spend per query (e.g., /budget 1.00)
    /memory                  Toggle conversation memory
@@ -203,16 +306,24 @@ ${output.bold('Example Queries:')}
 `);
   };
 
+  const printLatestPromptReport = () => {
+    if (!lastPromptReport) {
+      console.log(output.dim('No prompt report available yet.'));
+      return;
+    }
+    console.log(`
+${output.promptReport(lastPromptReport)}
+`);
+  };
+
   const handleInput = async (input) => {
     const trimmed = input.trim();
 
-    // Handle empty input
     if (!trimmed) {
       prompt();
       return;
     }
 
-    // Handle commands
     if (trimmed.startsWith('/')) {
       const parts = trimmed.slice(1).split(/\s+/);
       const cmd = parts[0].toLowerCase();
@@ -230,9 +341,11 @@ ${output.bold('Example Queries:')}
         case 'apply':
           if (args[0] === 'on') {
             allowApply = true;
+            resetPersistentSessionIfActive('apply mode changed');
             console.log(output.status('success', 'Write mode enabled'));
           } else if (args[0] === 'off') {
             allowApply = false;
+            resetPersistentSessionIfActive('apply mode changed');
             console.log(output.status('info', 'Preview mode enabled'));
           } else {
             console.log(`Apply mode: ${allowApply ? 'on' : 'off'}`);
@@ -257,6 +370,7 @@ ${output.bold('Example Queries:')}
           const level = (args[0] || '').toLowerCase();
           if (['off', 'low', 'medium', 'med', 'high'].includes(level)) {
             thinkLevel = level === 'med' ? 'medium' : level;
+            resetPersistentSessionIfActive('thinking level changed');
             console.log(
               output.status(
                 'success',
@@ -275,12 +389,38 @@ ${output.bold('Example Queries:')}
           console.log(output.status('info', `Streaming: ${streaming ? 'on' : 'off'}`));
           break;
 
+        case 'stats':
+          if (args[0] === 'on') {
+            statsEnabled = true;
+          } else if (args[0] === 'off') {
+            statsEnabled = false;
+          } else {
+            statsEnabled = !statsEnabled;
+          }
+          console.log(output.status('info', `Stats: ${statsEnabled ? 'on' : 'off'}`));
+          break;
+
+        case 'prompt':
+          printLatestPromptReport();
+          break;
+
+        case 'refreshes':
+          printSessionRefreshHistory();
+          break;
+
         case 'provider':
           if (args[0]) {
             const p = args[0].toLowerCase();
             if (['claude', 'openai', 'gemini', 'ollama'].includes(p)) {
+              const providerChanged = provider !== p;
               provider = p;
+              if (providerChanged) {
+                resetChatSession('provider changed');
+              }
               console.log(output.status('success', `Provider: ${provider}`));
+              if (providerChanged) {
+                console.log(output.dim('   Started a new session for the provider change.'));
+              }
               if (provider !== 'claude') {
                 console.log(
                   output.dim('   Note: Non-Claude providers run in chat-only mode (no MCP tools)'),
@@ -297,8 +437,9 @@ ${output.bold('Example Queries:')}
         case 'budget':
           if (args[0]) {
             const val = parseFloat(args[0]);
-            if (!isNaN(val) && val > 0) {
+            if (!Number.isNaN(val) && val > 0) {
               budget = args[0];
+              resetPersistentSessionIfActive('budget changed');
               console.log(output.status('success', `Budget: $${budget}/query`));
             } else {
               console.log('Usage: /budget <amount> (e.g., /budget 1.00)');
@@ -314,13 +455,14 @@ ${output.bold('Example Queries:')}
           } else {
             memoryEnabled = !memoryEnabled;
           }
+          resetPersistentSessionIfActive('memory changed');
           console.log(output.status('info', `Memory: ${memoryEnabled ? 'on' : 'off'}`));
           break;
 
         case 'db':
           if (args[0]) {
             dbPath = args[0];
-            sessionId = null; // Reset session when switching DB
+            resetChatSession('database changed');
             console.log(`📂 Switched to database: ${dbPath}`);
           } else {
             console.log(`Current database: ${dbPath}`);
@@ -328,13 +470,14 @@ ${output.bold('Example Queries:')}
           break;
 
         case 'new':
-          sessionId = null;
+          resetChatSession('new chat requested');
           console.log('🆕 Started new session');
           break;
 
         case 'exit':
         case 'quit':
-          console.log('\n👋 Goodbye!');
+          resetChatSession('chat exit');
+          console.log(`\n👋 Goodbye!`);
           rl.close();
           process.exit(0);
           break;
@@ -348,11 +491,11 @@ ${output.bold('Example Queries:')}
       return;
     }
 
-    // Run agent query
     try {
-      console.log(); // Blank line before response
+      console.log();
 
-      const result = await runAgentLoop({
+      let livePromptReportPrinted = false;
+      const result = await chatTransport.query({
         request: trimmed,
         dbPath,
         model,
@@ -367,6 +510,17 @@ ${output.bold('Example Queries:')}
         provider,
         enableMemory: memoryEnabled === null ? null : memoryEnabled,
         enableX402: x402Enabled,
+        onEvent: (event) => {
+          if (event?.type === 'prompt_report' && event.report) {
+            lastPromptReport = event.report;
+            if (statsEnabled) {
+              console.log(`
+${output.promptReport(event.report)}
+`);
+              livePromptReportPrinted = true;
+            }
+          }
+        },
         onPartialMessage: streaming
           ? (event) => {
               if (event?.content) {
@@ -384,7 +538,9 @@ ${output.bold('Example Queries:')}
                 if (verbose) {
                   const preview = (block.thinking || block.text || '').slice(0, 200);
                   console.log(
-                    output.dim(`\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`),
+                    output.dim(`
+[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}
+`),
                   );
                 }
               }
@@ -396,41 +552,44 @@ ${output.bold('Example Queries:')}
         },
       });
 
-      // Update session ID
-      if (result.sessionId) {
-        sessionId = result.sessionId;
-      }
+      lastPromptReport = result.promptReport || lastPromptReport;
 
-      // If streaming was used, just add a newline; otherwise print full response
+      if (result.sessionId || chatTransport.getSessionId()) {
+        sessionId = result.sessionId || chatTransport.getSessionId();
+      }
+      const recordedSessionRefresh = result.sessionRefresh
+        ? recordSessionRefresh(result.sessionRefresh)
+        : null;
+
       if (streaming && result.response) {
-        console.log(); // newline after streamed output
+        console.log();
       } else {
-        console.log('\n' + result.response);
+        console.log(`\n${result.response}`);
       }
 
-      // Show stats in verbose mode
-      if (verbose && result.telemetry) {
-        const stats = result.telemetry;
-        console.log(`\n${output.dim('─'.repeat(40))}`);
-        console.log(
-          `${output.dim('Stats:')} ${stats.toolCalls?.total || 0} tools, ${stats.duration}ms${
-            result.cost !== null && result.cost !== undefined ? `, $${result.cost.toFixed(4)}` : ''
-          }`,
-        );
-        if (result.budgetExceeded) {
-          console.log(output.yellow('Budget exceeded'));
-        }
+      if (recordedSessionRefresh && !(statsEnabled || verbose)) {
+        printSessionRefreshNotice(recordedSessionRefresh);
+      }
+
+      if (statsEnabled || verbose) {
+        printExecutionStats({
+          output,
+          ioConsole: console,
+          result,
+          includePromptReport: statsEnabled && !livePromptReportPrinted,
+        });
       }
 
       console.log();
     } catch (error) {
-      console.error(`\n${output.status('error', error.message)}\n`);
+      console.error(`
+${output.status('error', error.message)}
+`);
     }
 
     prompt();
   };
 
-  // Welcome message
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║        ${ICONS.order} ${output.bold('StateSet iCommerce - Interactive Chat')}          ║
@@ -440,8 +599,6 @@ ${output.bold('Example Queries:')}
 ╚════════════════════════════════════════════════════════════╝
 `);
   showStatus();
-
-  // Start prompting
   prompt();
 }
 

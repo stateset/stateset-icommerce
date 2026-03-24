@@ -10,16 +10,9 @@
  *   stateset-promotions --apply "create a 20% off promotion called Summer Sale"
  */
 
-import { runAgentLoop, AGENTS } from '../src/claude-harness.js';
-import { createConfirmHandler } from '../src/utils/confirm.js';
-import {
-  buildAgentOutputData,
-  resolveOutputFormat,
-  writeAgentOutputFile,
-} from '../src/utils/agent-output.js';
-import { resolveAgentRuntimeOptions, createStreamingHandler } from '../src/utils/agent-runtime.js';
-import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
-import { parseArgs } from 'node:util';
+import { AGENTS } from '../src/claude-harness.js';
+import { runMain } from '../src/graceful-shutdown.js';
+import { createAgentCliMain } from '../src/utils/agent-cli.js';
 
 const agentConfig = AGENTS['promotions'];
 
@@ -45,6 +38,7 @@ OPTIONS:
   --json             Output as JSON
   --format <fmt>     Output format: table, json, csv, yaml (default: table)
   --output <file>    Write output to file
+  --stats            Show execution stats and prompt budget
   --yes, -y          Skip confirmation prompts
   --help, -h         Show this help message
 
@@ -95,155 +89,12 @@ SAFETY:
   Write operations require --apply. Preview mode shows what would happen.
 `;
 
-async function main() {
-  const { values, positionals } = parseArgs({
-    options: {
-      db: { type: 'string', default: './store.db' },
-      apply: { type: 'boolean', default: false },
-      model: { type: 'string', default: DEFAULT_MODEL },
-      provider: { type: 'string' },
-      think: { type: 'string', default: 'off' },
-      stream: { type: 'boolean', default: false },
-      budget: { type: 'string' },
-      memory: { type: 'boolean', default: false },
-      'no-memory': { type: 'boolean', default: false },
-      x402: { type: 'boolean', default: false },
-      resume: { type: 'string' },
-      json: { type: 'boolean', default: false },
-      format: { type: 'string', default: 'table' },
-      output: { type: 'string' },
-      yes: { type: 'boolean', short: 'y', default: false },
-      help: { type: 'boolean', short: 'h', default: false },
-      version: { type: 'boolean', short: 'v', default: false },
-    },
-    allowPositionals: true,
-  });
+const main = createAgentCliMain({
+  agent: 'promotions',
+  commandName: 'stateset-promotions',
+  title: 'StateSet Promotions Agent',
+  icon: '🏷️',
+  help: HELP,
+});
 
-  if (values.help) {
-    console.log(HELP);
-    process.exit(0);
-  }
-
-  if (values.version) {
-    console.log(`@stateset/cli promotions-agent v${CLI_VERSION}`);
-    process.exit(0);
-  }
-
-  const request = positionals.join(' ').trim();
-  if (!request) {
-    console.error('Error: No request provided');
-    console.error('Usage: stateset-promotions "<your request>"');
-    console.error('Run stateset-promotions --help for more information');
-    process.exit(1);
-  }
-
-  const outputFormat = resolveOutputFormat({
-    format: values.format,
-    json: values.json,
-    argv: process.argv,
-  });
-  const isJsonOutput = outputFormat === 'json';
-
-  if (values.stream && isJsonOutput) {
-    console.error(
-      'Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.',
-    );
-    process.exit(1);
-  }
-
-  let runtimeOptions;
-  try {
-    runtimeOptions = resolveAgentRuntimeOptions(values);
-  } catch (error) {
-    if (isJsonOutput) {
-      console.log(JSON.stringify({ error: error.message }));
-    } else {
-      console.error(`\n❌ Error: ${error.message}`);
-    }
-    process.exit(1);
-  }
-
-  const { thinkLevel, providerName, streaming, maxBudgetUsd, memoryOverride, enableX402 } =
-    runtimeOptions;
-
-  if (!isJsonOutput) {
-    console.log(`\n🏷️  StateSet Promotions Agent`);
-    console.log(`   Database: ${values.db}`);
-    console.log(`   Mode: ${values.apply ? '✏️  Write enabled' : '👁️  Preview only'}`);
-    if (values.resume) {
-      console.log(`   Session: ${values.resume}`);
-    }
-    console.log();
-  }
-
-  try {
-    const nonInteractive = !process.stdin.isTTY || isJsonOutput;
-    const onConfirmRequired = createConfirmHandler({
-      output: null,
-      assumeYes: values.yes,
-      nonInteractive,
-    });
-
-    const result = await runAgentLoop({
-      request,
-      dbPath: values.db,
-      model: values.model,
-      allowApply: values.apply,
-      resumeSessionId: values.resume,
-      agent: 'promotions',
-      onConfirmRequired,
-      thinkLevel,
-      streaming,
-      maxBudgetUsd,
-      provider: providerName,
-      enableMemory: memoryOverride === null ? null : memoryOverride,
-      enableX402,
-      onPartialMessage: createStreamingHandler(streaming),
-      onToolCall: (toolCall) => {
-        if (!isJsonOutput) {
-          const toolName = toolCall.name.replace('mcp__stateset-commerce__', '');
-          console.log(`🔧 ${toolName}(${JSON.stringify(toolCall.input)})`);
-        }
-      },
-    });
-
-    const outputData = buildAgentOutputData({
-      agent: 'promotions',
-      request,
-      allowApply: values.apply,
-      result,
-    });
-
-    if (values.output) {
-      await writeAgentOutputFile(values.output, outputData, outputFormat);
-      if (!isJsonOutput) {
-        console.log(`Output written to ${values.output}`);
-      }
-    } else if (isJsonOutput) {
-      console.log(JSON.stringify(outputData, null, 2));
-    } else {
-      if (streaming && result.response) {
-        console.log();
-      } else {
-        console.log('\n' + result.response);
-      }
-
-      if (result.sessionId) {
-        console.log(`\n💾 Session ID: ${result.sessionId}`);
-        console.log(`   Use --resume ${result.sessionId} to continue this conversation`);
-      }
-    }
-
-    process.exit(0);
-  } catch (error) {
-    if (isJsonOutput) {
-      console.log(JSON.stringify({ error: error.message }));
-    } else {
-      console.error(`\n❌ Error: ${error.message}`);
-    }
-    process.exit(1);
-  }
-}
-
-import { runMain } from '../src/graceful-shutdown.js';
 runMain('stateset-promotions', main);

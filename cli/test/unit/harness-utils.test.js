@@ -4,7 +4,18 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { buildClaudeEnv, emitEvent, normalizeAbortController } from '../../src/harness-utils.js';
+import {
+  buildClaudeEnv,
+  createInactivityWatchdog,
+  emitEvent,
+  InactivityWatchdogError,
+  isAbortLikeError,
+  normalizeAbortController,
+} from '../../src/harness-utils.js';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 describe('buildClaudeEnv', () => {
   it('applies explicit apiKey override', () => {
@@ -53,6 +64,63 @@ describe('normalizeAbortController', () => {
     parent.abort('stop');
     await new Promise((resolve) => setImmediate(resolve));
     assert.strictEqual(child.signal.aborted, true);
+  });
+});
+
+describe('createInactivityWatchdog', () => {
+  it('aborts the controller after inactivity', async () => {
+    const controller = new AbortController();
+    let timeoutError = null;
+    const watchdog = createInactivityWatchdog({
+      timeoutMs: 25,
+      abortController: controller,
+      onTimeout: (error) => {
+        timeoutError = error;
+      },
+    });
+
+    await sleep(60);
+
+    assert.ok(timeoutError instanceof InactivityWatchdogError);
+    assert.strictEqual(timeoutError.code, 'WATCHDOG_TIMEOUT');
+    assert.strictEqual(controller.signal.aborted, true);
+    assert.strictEqual(controller.signal.reason, timeoutError);
+    assert.strictEqual(watchdog.timedOut, true);
+    watchdog.stop();
+  });
+
+  it('resets the inactivity window when touched', async () => {
+    const watchdog = createInactivityWatchdog({ timeoutMs: 35 });
+
+    await sleep(20);
+    watchdog.touch();
+    await sleep(25);
+    assert.strictEqual(watchdog.timedOut, false);
+
+    await sleep(25);
+    assert.strictEqual(watchdog.timedOut, true);
+    watchdog.stop();
+  });
+
+  it('can be stopped before timeout', async () => {
+    const watchdog = createInactivityWatchdog({ timeoutMs: 20 });
+    watchdog.stop();
+    await sleep(40);
+    assert.strictEqual(watchdog.timedOut, false);
+    assert.strictEqual(watchdog.error, null);
+  });
+});
+
+describe('isAbortLikeError', () => {
+  it('recognizes abort errors directly and through causes', () => {
+    const abortError = new Error('The operation was aborted');
+    abortError.name = 'AbortError';
+    assert.strictEqual(isAbortLikeError(abortError), true);
+
+    const wrappedError = new Error('outer');
+    wrappedError.cause = abortError;
+    assert.strictEqual(isAbortLikeError(wrappedError), true);
+    assert.strictEqual(isAbortLikeError(new Error('timeout exceeded')), false);
   });
 });
 

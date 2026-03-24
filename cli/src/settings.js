@@ -67,6 +67,11 @@ export const DEFAULT_AGENT_SETTINGS = {
       'timeout',
     ],
   },
+  watchdog: {
+    enabled: true,
+    freshInactivityMs: 180_000,
+    resumeInactivityMs: 300_000,
+  },
   memory: {
     enabled: false,
     useMarkdown: true,
@@ -80,6 +85,18 @@ export const DEFAULT_AGENT_SETTINGS = {
     enabled: true,
     dbPath: null,
     maxSummaries: 5,
+  },
+  queue: {
+    maxLanes: 1000,
+    laneTimeoutMs: 300_000,
+    maxQueueSize: 100,
+    idleCleanupMs: 3_600_000,
+    parallelConcurrency: 5,
+    waitWarningMs: 30_000,
+    runningWarningMs: 120_000,
+    warningThrottleMs: 30_000,
+    monitorIntervalMs: 5_000,
+    emitWarnings: true,
   },
   privacy: {
     redactLogs: true,

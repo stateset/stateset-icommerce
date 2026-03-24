@@ -520,6 +520,49 @@ export class RichOutput {
   // --------------------------------------------------------------------------
 
   /**
+   * Format prompt budget diagnostics.
+   */
+  promptReport(report) {
+    if (!report || typeof report !== 'object') {
+      return this.dim('   Prompt budget unavailable');
+    }
+
+    const lines = [`${ICONS.info} ${this.bold('Prompt Budget')}`];
+    const totalTokens = report.totalInputTokens ?? 0;
+    const systemTokens = report.systemPromptTokens ?? 0;
+    const userTokens = report.userPromptTokens ?? 0;
+    lines.push(
+      `   ${this.dim('Input:')}       ~${this.number(totalTokens)} tokens (${this.number(systemTokens)} system + ${this.number(userTokens)} user)`,
+    );
+
+    const historySource = report.historySource || 'none';
+    if (report.historyInjected) {
+      lines.push(
+        `   ${this.dim('History:')}     injected from ${historySource} (${this.number(report.historyMessagesInjected || 0)} msg, ~${this.number(report.historyTokensInjected || 0)} tokens)`,
+      );
+    } else if ((report.historyMessagesAvailable || 0) > 0) {
+      const mode = report.resumeSession
+        ? 'reused by resumed session'
+        : 'available but not injected';
+      lines.push(
+        `   ${this.dim('History:')}     ${mode} (${this.number(report.historyMessagesAvailable || 0)} msg from ${historySource})`,
+      );
+    } else {
+      lines.push(`   ${this.dim('History:')}     none`);
+    }
+
+    if (report.compactionApplied) {
+      const saved = report.estimatedContextTokensSaved ?? 0;
+      lines.push(
+        `   ${this.dim('Compaction:')}  applied (${saved > 0 ? `saved ~${this.number(saved)} tokens` : 'tokens reduced'})`,
+      );
+    } else if (report.contextAction && report.contextAction !== 'none') {
+      lines.push(`   ${this.dim('Context:')}     ${report.contextAction}`);
+    }
+
+    return lines.join('\n');
+  }
+  /**
    * Format a tool call for display
    */
   toolCall(name, input, options = {}) {

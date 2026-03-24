@@ -39,6 +39,123 @@ export function normalizeAbortController({ abortController = null, signal = null
 }
 
 /**
+ * Error thrown when a harness run stops producing observable activity.
+ */
+export class InactivityWatchdogError extends Error {
+  constructor({ timeoutMs, elapsedMs = timeoutMs, message = null } = {}) {
+    super(message || `No harness activity received for ${timeoutMs}ms`);
+    this.name = 'InactivityWatchdogError';
+    this.code = 'WATCHDOG_TIMEOUT';
+    this.timeoutMs = timeoutMs;
+    this.elapsedMs = elapsedMs;
+  }
+}
+
+/**
+ * Detect abort-like errors emitted by AbortController-aware APIs.
+ */
+export function isAbortLikeError(error) {
+  if (!error) return false;
+  if (error.cause && error.cause !== error && isAbortLikeError(error.cause)) {
+    return true;
+  }
+  const name = String(error.name || '');
+  const code = String(error.code || '');
+  const message = String(error.message || '').toLowerCase();
+  return (
+    name === 'AbortError' ||
+    code === 'ABORT_ERR' ||
+    code === 'ERR_ABORTED' ||
+    message.includes('aborted') ||
+    message.includes('aborterror')
+  );
+}
+
+/**
+ * Create an inactivity watchdog that aborts the run if no activity is observed.
+ */
+export function createInactivityWatchdog({
+  timeoutMs = null,
+  abortController = null,
+  onTimeout = null,
+  message = null,
+} = {}) {
+  let timer = null;
+  let stopped = false;
+  let timedOut = false;
+  let timeoutError = null;
+  let lastActivityAt = Date.now();
+
+  const clearTimer = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+
+  const schedule = () => {
+    clearTimer();
+    if (stopped || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return;
+    }
+    timer = setTimeout(() => {
+      if (stopped || timedOut) return;
+      timedOut = true;
+      timeoutError = new InactivityWatchdogError({
+        timeoutMs,
+        elapsedMs: Date.now() - lastActivityAt,
+        message,
+      });
+
+      if (abortController && !abortController.signal?.aborted) {
+        try {
+          abortController.abort(timeoutError);
+        } catch {
+          // Ignore abort propagation failures.
+        }
+      }
+
+      if (typeof onTimeout === 'function') {
+        try {
+          onTimeout(timeoutError);
+        } catch (err) {
+          console.error('[Harness] watchdog onTimeout error:', err?.message || err);
+        }
+      }
+    }, timeoutMs);
+
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  };
+
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    schedule();
+  }
+
+  return {
+    touch() {
+      if (stopped || timedOut) return;
+      lastActivityAt = Date.now();
+      schedule();
+    },
+    stop() {
+      stopped = true;
+      clearTimer();
+    },
+    getElapsedMs() {
+      return Date.now() - lastActivityAt;
+    },
+    get timedOut() {
+      return timedOut;
+    },
+    get error() {
+      return timeoutError;
+    },
+  };
+}
+
+/**
  * Emit lifecycle event safely without failing the harness run.
  */
 export function emitEvent(onEvent, event) {

@@ -2,7 +2,7 @@
  * Unit tests for command-queue.js
  */
 
-import { describe, it, afterEach } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert';
 import { CommandQueue, resetCommandQueue } from '../../src/command-queue.js';
 
@@ -18,6 +18,10 @@ function delayTask(ms, value) {
 /** Create a task that rejects. */
 function failTask(ms, message) {
   return () => new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ===========================================================================
@@ -52,21 +56,20 @@ describe('CommandQueue - Serial Lanes', () => {
 
     const p1 = queue.enqueue('lane-a', async () => {
       order.push('start-1');
-      await new Promise((r) => setTimeout(r, 30));
+      await sleep(30);
       order.push('end-1');
       return 1;
     });
 
     const p2 = queue.enqueue('lane-a', async () => {
       order.push('start-2');
-      await new Promise((r) => setTimeout(r, 10));
+      await sleep(10);
       order.push('end-2');
       return 2;
     });
 
     await Promise.all([p1, p2]);
 
-    // Serial: task 1 must fully complete before task 2 starts
     assert.deepStrictEqual(order, ['start-1', 'end-1', 'start-2', 'end-2']);
   });
 
@@ -76,19 +79,18 @@ describe('CommandQueue - Serial Lanes', () => {
 
     const p1 = queue.enqueue('lane-a', async () => {
       order.push('a-start');
-      await new Promise((r) => setTimeout(r, 30));
+      await sleep(30);
       order.push('a-end');
     });
 
     const p2 = queue.enqueue('lane-b', async () => {
       order.push('b-start');
-      await new Promise((r) => setTimeout(r, 10));
+      await sleep(10);
       order.push('b-end');
     });
 
     await Promise.all([p1, p2]);
 
-    // Both should start before either ends (parallel across lanes)
     assert.ok(
       order.indexOf('b-start') < order.indexOf('a-end'),
       'Lane B should start before lane A ends',
@@ -104,13 +106,12 @@ describe('CommandQueue - Serial Lanes', () => {
 
   it('continues processing after a failed task', async () => {
     queue = new CommandQueue();
-    const errors = [];
-    // Suppress error console output
-    queue.lanes = queue.lanes;
 
     try {
       await queue.enqueue('lane-a', failTask(5, 'first fails'));
-    } catch {}
+    } catch {
+      // ignore expected failure
+    }
 
     const result = await queue.enqueue('lane-a', () => 'second succeeds');
     assert.strictEqual(result, 'second succeeds');
@@ -119,18 +120,12 @@ describe('CommandQueue - Serial Lanes', () => {
   it('rejects when lane queue is full', async () => {
     queue = new CommandQueue({ maxQueueSize: 2, laneTimeout: 5000 });
 
-    // First task blocks the lane
     const blocker = queue.enqueue('lane-a', delayTask(200, 'block'));
-    // These queue up
     const t1 = queue.enqueue('lane-a', () => 'ok');
-    // This should fail because queue is full (1 processing + 2 queued = 3 > maxQueueSize 2)
-    // Actually maxQueueSize limits the queue array, the processing task has already been shifted out
-    // So with maxQueueSize: 2, after t1, queue has 1 item. Need one more.
     const t2 = queue.enqueue('lane-a', () => 'ok2');
 
     await assert.rejects(() => queue.enqueue('lane-a', () => 'overflow'), /queue full/);
 
-    // Clean up
     await blocker;
     await t1;
     await t2;
@@ -158,7 +153,7 @@ describe('CommandQueue - Parallel Lanes', () => {
     const tasks = Array.from({ length: 3 }, (_, i) =>
       queue.enqueueParallel('bg', async () => {
         order.push(`start-${i}`);
-        await new Promise((r) => setTimeout(r, 20));
+        await sleep(20);
         order.push(`end-${i}`);
         return i;
       }),
@@ -167,9 +162,8 @@ describe('CommandQueue - Parallel Lanes', () => {
     const results = await Promise.all(tasks);
     assert.deepStrictEqual(results, [0, 1, 2]);
 
-    // All should start before any ends (concurrent)
-    const firstEnd = order.findIndex((e) => e.startsWith('end'));
-    const starts = order.filter((e) => e.startsWith('start'));
+    const firstEnd = order.findIndex((event) => event.startsWith('end'));
+    const starts = order.slice(0, firstEnd).filter((event) => event.startsWith('start'));
     assert.ok(starts.length >= 2, 'At least 2 tasks should start before first ends');
   });
 
@@ -182,7 +176,7 @@ describe('CommandQueue - Parallel Lanes', () => {
       queue.enqueueParallel('bg', async () => {
         concurrent++;
         maxConcurrent = Math.max(maxConcurrent, concurrent);
-        await new Promise((r) => setTimeout(r, 20));
+        await sleep(20);
         concurrent--;
       }),
     );
@@ -221,27 +215,198 @@ describe('CommandQueue - Stats', () => {
     queue = new CommandQueue();
     try {
       await queue.enqueue('lane-a', failTask(5, 'oops'));
-    } catch {}
+    } catch {
+      // ignore expected failure
+    }
 
     const stats = queue.getLaneStats('lane-a');
     assert.strictEqual(stats.totalProcessed, 1);
     assert.strictEqual(stats.totalErrors, 1);
   });
 
-  it('getStats returns all lanes summary', async () => {
+  it('reports waiting and active metrics for serial lanes', async () => {
     queue = new CommandQueue();
+    let release;
+    let markStarted;
+    const started = new Promise((resolve) => {
+      markStarted = resolve;
+    });
+
+    const blocker = queue.enqueue('lane-a', async () => {
+      markStarted();
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    await started;
+
+    const queued = queue.enqueue('lane-a', async () => 'next');
+    await sleep(20);
+
+    const stats = queue.getLaneStats('lane-a');
+    assert.strictEqual(stats.type, 'serial');
+    assert.strictEqual(stats.waitingTasks, 1);
+    assert.strictEqual(stats.activeTasks, 1);
+    assert.strictEqual(stats.currentQueueLength, 1);
+    assert.strictEqual(stats.busy, true);
+    assert.ok(stats.oldestPendingMs >= 0);
+    assert.ok(stats.activeTaskAgeMs >= 0);
+
+    release('done');
+    await Promise.all([blocker, queued]);
+  });
+
+  it('reports waiting and active metrics for parallel lanes', async () => {
+    queue = new CommandQueue({ parallelConcurrency: 1 });
+    let release;
+    let markStarted;
+    const started = new Promise((resolve) => {
+      markStarted = resolve;
+    });
+
+    const blocker = queue.enqueueParallel('bg', async () => {
+      markStarted();
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    await started;
+
+    const queued = queue.enqueueParallel('bg', async () => 'next');
+    await sleep(20);
+
+    const stats = queue.getLaneStats('bg');
+    assert.strictEqual(stats.type, 'parallel');
+    assert.strictEqual(stats.waitingTasks, 1);
+    assert.strictEqual(stats.activeTasks, 1);
+    assert.strictEqual(stats.currentQueueLength, 1);
+    assert.strictEqual(stats.busy, true);
+    assert.ok(stats.oldestPendingMs >= 0);
+    assert.ok(stats.activeTaskAgeMs >= 0);
+    assert.strictEqual(stats.maxConcurrency, 1);
+
+    release('done');
+    await Promise.all([blocker, queued]);
+  });
+
+  it('getStats returns all lanes summary and active totals', async () => {
+    queue = new CommandQueue({ parallelConcurrency: 1 });
+    let release;
+    let markStarted;
+    const started = new Promise((resolve) => {
+      markStarted = resolve;
+    });
+
+    const blocker = queue.enqueueParallel('bg', async () => {
+      markStarted();
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    await started;
+
     await queue.enqueue('lane-a', () => 1);
-    await queue.enqueue('lane-b', () => 2);
-    await queue.enqueueParallel('bg', () => 3);
+    const queued = queue.enqueueParallel('bg', () => 3);
+    await sleep(20);
 
     const stats = queue.getStats();
-    assert.strictEqual(stats.serialLanes.count, 2);
+    assert.strictEqual(stats.serialLanes.count, 1);
     assert.strictEqual(stats.parallelLanes.count, 1);
+    assert.strictEqual(stats.totalPending, 1);
+    assert.strictEqual(stats.totalActive, 1);
+    assert.strictEqual(stats.busyLanes, 1);
+
+    release('done');
+    await Promise.all([blocker, queued]);
   });
 
   it('getLaneStats returns null for unknown lane', () => {
     queue = new CommandQueue();
     assert.strictEqual(queue.getLaneStats('unknown'), null);
+  });
+});
+
+// ===========================================================================
+// CommandQueue - Warnings
+// ===========================================================================
+
+describe('CommandQueue - Warnings', () => {
+  let queue = null;
+
+  afterEach(() => {
+    if (queue) {
+      queue.shutdown();
+      queue = null;
+    }
+  });
+
+  it('emits a throttled pending-wait warning', async () => {
+    const warnings = [];
+    queue = new CommandQueue({
+      waitWarningMs: 20,
+      runningWarningMs: 1000,
+      warningThrottleMs: 1000,
+      monitorIntervalMs: 5,
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    let release;
+    let markStarted;
+    const started = new Promise((resolve) => {
+      markStarted = resolve;
+    });
+
+    const blocker = queue.enqueue('lane-a', async () => {
+      markStarted();
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    await started;
+
+    const queued = queue.enqueue('lane-a', async () => 'next');
+    await sleep(60);
+
+    const pendingWarnings = warnings.filter((warning) => warning.issue === 'pending_wait');
+    assert.strictEqual(pendingWarnings.length, 1);
+    assert.strictEqual(pendingWarnings[0].laneId, 'lane-a');
+    assert.strictEqual(pendingWarnings[0].laneType, 'serial');
+    assert.strictEqual(pendingWarnings[0].waitingTasks, 1);
+    assert.strictEqual(pendingWarnings[0].activeTasks, 1);
+    assert.ok(pendingWarnings[0].ageMs >= pendingWarnings[0].thresholdMs);
+
+    release('done');
+    await Promise.all([blocker, queued]);
+  });
+
+  it('emits a running-task warning for long parallel work', async () => {
+    const warnings = [];
+    queue = new CommandQueue({
+      parallelConcurrency: 1,
+      waitWarningMs: 1000,
+      runningWarningMs: 20,
+      warningThrottleMs: 1000,
+      monitorIntervalMs: 5,
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    let release;
+    const blocker = queue.enqueueParallel('bg', async () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    await sleep(60);
+
+    const runningWarnings = warnings.filter((warning) => warning.issue === 'running_task');
+    assert.strictEqual(runningWarnings.length, 1);
+    assert.strictEqual(runningWarnings[0].laneId, 'bg');
+    assert.strictEqual(runningWarnings[0].laneType, 'parallel');
+    assert.ok(runningWarnings[0].ageMs >= runningWarnings[0].thresholdMs);
+
+    release('done');
+    await blocker;
   });
 });
 
@@ -261,7 +426,6 @@ describe('CommandQueue - Lifecycle', () => {
   it('waitForLane resolves when lane is idle', async () => {
     const queue = new CommandQueue();
     await queue.enqueue('lane-a', delayTask(10, 'done'));
-    // Lane should be idle after task completes
     await queue.waitForLane('lane-a', 1000);
     queue.shutdown();
   });
@@ -269,6 +433,13 @@ describe('CommandQueue - Lifecycle', () => {
   it('waitForLane resolves immediately for unknown lane', async () => {
     const queue = new CommandQueue();
     await queue.waitForLane('nonexistent', 100);
+    queue.shutdown();
+  });
+
+  it('waitForLane also supports parallel lanes', async () => {
+    const queue = new CommandQueue({ parallelConcurrency: 1 });
+    await queue.enqueueParallel('bg', delayTask(10, 'done'));
+    await queue.waitForLane('bg', 1000);
     queue.shutdown();
   });
 

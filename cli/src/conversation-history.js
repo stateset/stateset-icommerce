@@ -79,16 +79,120 @@ export function formatConversationHistory(history) {
  * @param {Object}  [options.redactOptions] - Options forwarded to redactSensitive
  * @returns {string} The composed prompt
  */
-export function buildPromptWithHistory(request, history, options = {}) {
+function composePromptSections(request, history, options = {}) {
   const historyText = formatConversationHistory(history);
-  if (!historyText) return request;
-  const finalHistory = options.redactHistory
-    ? redactSensitive(historyText, options.redactOptions)
-    : historyText;
+  const finalHistory = historyText
+    ? options.redactHistory
+      ? redactSensitive(historyText, options.redactOptions)
+      : historyText
+    : '';
   const finalRequest = options.redactRequest
     ? redactSensitive(request, options.redactOptions)
     : request;
-  return `Conversation history:\n${finalHistory}\n\nCurrent request:\n${finalRequest}`;
+  const prompt = historyText
+    ? `Conversation history:
+${finalHistory}
+
+Current request:
+${finalRequest}`
+    : request;
+  return {
+    prompt,
+    rawHistoryText: historyText,
+    historyText: finalHistory,
+    requestText: finalRequest,
+    hasHistory: Boolean(historyText),
+  };
+}
+
+export function buildPromptWithHistory(request, history, options = {}) {
+  return composePromptSections(request, history, options).prompt;
+}
+
+/**
+ * Build a prompt composition report for diagnostics and session persistence.
+ *
+ * @param {Object} input
+ * @param {string} input.request - The current user request
+ * @param {Array} [input.history] - The normalized working history
+ * @param {string} [input.systemPrompt] - The active system prompt
+ * @param {boolean} [input.includeHistory] - Whether history is injected into the prompt
+ * @param {boolean} [input.resumeSession] - Whether the run is resuming an SDK session
+ * @param {string} [input.historySource] - conversation_history|session_summary|none
+ * @param {string|null} [input.compactionSummary] - Summary generated during compaction
+ * @param {Object|null} [input.contextGuardResult] - Context guard result object
+ * @param {Object} [input.redactOptions] - Redaction options
+ * @param {boolean} [input.redactHistory] - Whether history was redacted before injection
+ * @param {boolean} [input.redactRequest] - Whether request was redacted before injection
+ * @returns {Object} Prompt composition report
+ */
+export function buildPromptReport({
+  request,
+  history = [],
+  systemPrompt = '',
+  includeHistory = false,
+  resumeSession = false,
+  historySource = 'none',
+  compactionSummary = null,
+  contextGuardResult = null,
+  redactOptions = null,
+  redactHistory = false,
+  redactRequest = false,
+} = {}) {
+  const sections = composePromptSections(request, history, {
+    redactHistory,
+    redactRequest,
+    redactOptions,
+  });
+  const historyMessagesAvailable = sections.hasHistory
+    ? sections.rawHistoryText.split('\n').length
+    : 0;
+  const historyMessagesInjected = includeHistory ? historyMessagesAvailable : 0;
+  const historyCharsAvailable = sections.rawHistoryText.length;
+  const historyTokensAvailable = estimateTokensFromText(sections.rawHistoryText);
+  const historyCharsInjected = includeHistory ? sections.historyText.length : 0;
+  const historyTokensInjected = includeHistory ? estimateTokensFromText(sections.historyText) : 0;
+  const requestChars = typeof request === 'string' ? request.length : String(request || '').length;
+  const requestTokens = estimateTokensFromText(request);
+  const systemPromptChars =
+    typeof systemPrompt === 'string' ? systemPrompt.length : String(systemPrompt || '').length;
+  const systemPromptTokens = estimateTokensFromText(systemPrompt);
+  const userPromptText = includeHistory ? sections.prompt : request;
+  const userPromptChars =
+    typeof userPromptText === 'string'
+      ? userPromptText.length
+      : String(userPromptText || '').length;
+  const userPromptTokens = estimateTokensFromText(userPromptText);
+  const compactionSummaryChars = compactionSummary ? compactionSummary.length : 0;
+  const compactionSummaryTokens = estimateTokensFromText(compactionSummary || '');
+
+  return {
+    historySource,
+    resumeSession: Boolean(resumeSession),
+    historyInjected: Boolean(includeHistory && sections.hasHistory),
+    historyMessagesAvailable,
+    historyMessagesInjected,
+    historyCharsAvailable,
+    historyCharsInjected,
+    historyTokensAvailable,
+    historyTokensInjected,
+    requestChars,
+    requestTokens,
+    systemPromptChars,
+    systemPromptTokens,
+    userPromptChars,
+    userPromptTokens,
+    totalInputChars: systemPromptChars + userPromptChars,
+    totalInputTokens: systemPromptTokens + userPromptTokens,
+    compactionApplied: Boolean(compactionSummary),
+    compactionSummaryChars,
+    compactionSummaryTokens,
+    contextAction: contextGuardResult?.action || 'none',
+    estimatedContextTokensBeforeCompaction: contextGuardResult?.usage?.tokens ?? null,
+    estimatedContextTokensAfterCompaction:
+      contextGuardResult?.usage?.afterCompaction?.tokens ?? null,
+    estimatedContextTokensSaved: contextGuardResult?.usage?.afterCompaction?.tokensSaved ?? null,
+  };
 }
 
 /**

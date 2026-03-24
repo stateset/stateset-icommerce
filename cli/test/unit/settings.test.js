@@ -23,8 +23,11 @@ describe('DEFAULT_AGENT_SETTINGS', () => {
     assert.ok(keys.includes('guardrails'));
     assert.ok(keys.includes('contextGuard'));
     assert.ok(keys.includes('retry'));
+    assert.ok(keys.includes('watchdog'));
     assert.ok(keys.includes('memory'));
     assert.ok(keys.includes('plugins'));
+    assert.ok(keys.includes('sessionStore'));
+    assert.ok(keys.includes('queue'));
     assert.ok(keys.includes('privacy'));
   });
 
@@ -49,6 +52,27 @@ describe('DEFAULT_AGENT_SETTINGS', () => {
     assert.ok(Array.isArray(DEFAULT_AGENT_SETTINGS.retry.retryableErrors));
     assert.ok(DEFAULT_AGENT_SETTINGS.retry.retryableErrors.length > 0);
     assert.ok(DEFAULT_AGENT_SETTINGS.retry.retryableErrors.includes('429'));
+  });
+
+  it('watchdog defaults are positive durations', () => {
+    assert.strictEqual(DEFAULT_AGENT_SETTINGS.watchdog.enabled, true);
+    assert.ok(DEFAULT_AGENT_SETTINGS.watchdog.freshInactivityMs > 0);
+    assert.ok(
+      DEFAULT_AGENT_SETTINGS.watchdog.resumeInactivityMs >=
+        DEFAULT_AGENT_SETTINGS.watchdog.freshInactivityMs,
+    );
+  });
+
+  it('queue defaults expose positive limits and warning thresholds', () => {
+    assert.ok(DEFAULT_AGENT_SETTINGS.queue.maxLanes > 0);
+    assert.ok(DEFAULT_AGENT_SETTINGS.queue.laneTimeoutMs > 0);
+    assert.ok(DEFAULT_AGENT_SETTINGS.queue.maxQueueSize > 0);
+    assert.ok(DEFAULT_AGENT_SETTINGS.queue.parallelConcurrency > 0);
+    assert.ok(DEFAULT_AGENT_SETTINGS.queue.waitWarningMs >= 0);
+    assert.ok(DEFAULT_AGENT_SETTINGS.queue.runningWarningMs >= 0);
+    assert.ok(
+      DEFAULT_AGENT_SETTINGS.queue.runningWarningMs >= DEFAULT_AGENT_SETTINGS.queue.waitWarningMs,
+    );
   });
 
   it('privacy defaults redactLogs to true', () => {
