@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use stateset_core::{CommerceEvent, EventStore, Result};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
@@ -29,7 +30,7 @@ pub(super) struct StoredEvent {
 /// In-memory event store for testing
 pub struct InMemoryEventStore {
     events: Arc<RwLock<VecDeque<StoredEvent>>>,
-    sequence: Arc<RwLock<u64>>,
+    sequence: AtomicU64,
     max_events: usize,
 }
 
@@ -46,7 +47,7 @@ impl InMemoryEventStore {
     pub fn new(max_events: usize) -> Self {
         Self {
             events: Arc::new(RwLock::new(VecDeque::with_capacity(max_events))),
-            sequence: Arc::new(RwLock::new(0)),
+            sequence: AtomicU64::new(0),
             max_events,
         }
     }
@@ -146,13 +147,7 @@ impl EventStore for InMemoryEventStore {
             stateset_core::CommerceError::Internal(format!("Failed to serialize event: {}", e))
         })?;
 
-        let mut sequence = self.sequence.write().map_err(|_| {
-            stateset_core::CommerceError::Internal(
-                "InMemoryEventStore sequence lock poisoned".to_string(),
-            )
-        })?;
-        *sequence += 1;
-        let seq = *sequence;
+        let seq = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
 
         let stored = StoredEvent {
             sequence: seq,
@@ -228,11 +223,7 @@ impl EventStore for InMemoryEventStore {
     }
 
     fn latest_sequence(&self) -> Result<u64> {
-        Ok(*self.sequence.read().map_err(|_| {
-            stateset_core::CommerceError::Internal(
-                "InMemoryEventStore sequence lock poisoned".to_string(),
-            )
-        })?)
+        Ok(self.sequence.load(Ordering::Relaxed))
     }
 }
 
