@@ -154,13 +154,14 @@ impl CustomerRepository for SqliteCustomerRepository {
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
 
-            // Check email uniqueness
-            let exists: i32 =
-                tx.query_row("SELECT COUNT(*) FROM customers WHERE email = ?", [&email], |row| {
-                    row.get(0)
-                })?;
+            // Check email uniqueness (EXISTS is faster than COUNT(*))
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM customers WHERE email = ? LIMIT 1)",
+                [&email],
+                |row| row.get(0),
+            )?;
 
-            if exists > 0 {
+            if exists {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::EmailAlreadyExists(email.clone()),
                 )));

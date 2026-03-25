@@ -716,6 +716,9 @@ where
                 )
             })?;
 
+            // Defer FK checks until commit for better batch performance
+            conn.execute_batch("PRAGMA defer_foreign_keys = ON")?;
+
             // Use IMMEDIATE transaction to acquire write lock immediately
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 

@@ -74,6 +74,7 @@ impl Money {
     }
 
     /// Add two monetary values. Returns `None` if currencies don't match.
+    #[inline]
     #[must_use]
     pub fn checked_add(self, other: Self) -> Option<Self> {
         if self.currency != other.currency {
@@ -83,6 +84,7 @@ impl Money {
     }
 
     /// Subtract two monetary values. Returns `None` if currencies don't match.
+    #[inline]
     #[must_use]
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         if self.currency != other.currency {
@@ -99,6 +101,7 @@ impl Money {
     }
 
     /// Multiply by a scalar factor (e.g., quantity or tax rate). Currency is preserved.
+    #[inline]
     #[must_use = "returns a new Money with scaled amount"]
     pub fn checked_mul_scalar(self, factor: Decimal) -> Self {
         Self { amount: self.amount * factor, currency: self.currency }
