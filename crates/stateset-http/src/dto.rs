@@ -365,6 +365,20 @@ pub struct CustomerResponse {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Request body for `PATCH /api/v1/customers/:id`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+pub struct UpdateCustomerRequest {
+    pub email: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub phone: Option<String>,
+    pub status: Option<String>,
+    pub accepts_marketing: Option<bool>,
+    pub tags: Option<Vec<String>>,
+    #[schema(value_type = Option<Object>)]
+    pub metadata: Option<serde_json::Value>,
+}
+
 /// Response body for `GET /api/v1/customers` (list).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CustomerListResponse {
@@ -404,6 +418,15 @@ pub struct ProductResponse {
     pub product_type: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Request body for `PATCH /api/v1/products/:id`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
+pub struct UpdateProductRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub product_type: Option<String>,
 }
 
 /// Response body for `GET /api/v1/products` (list).

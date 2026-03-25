@@ -9,18 +9,23 @@ use axum::{
 
 use crate::dto::{
     CreateCustomerRequest, CustomerFilterParams, CustomerListResponse, CustomerResponse,
-    decode_cursor, encode_cursor, finalize_page, overfetch_limit,
+    UpdateCustomerRequest, decode_cursor, encode_cursor, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
-use stateset_core::{CreateCustomer, CustomerFilter, CustomerId, CustomerStatus};
+use stateset_core::{CreateCustomer, CustomerFilter, CustomerId, CustomerStatus, UpdateCustomer};
 use std::str::FromStr;
 
 /// Build the customers sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/customers", post(create_customer).get(list_customers))
-        .route("/customers/{id}", get(get_customer))
+        .route(
+            "/customers/{id}",
+            get(get_customer)
+                .patch(update_customer)
+                .delete(delete_customer),
+        )
 }
 
 /// `POST /api/v1/customers`
@@ -158,6 +163,73 @@ pub(crate) async fn list_customers(
         next_cursor,
         has_more,
     }))
+}
+
+/// `PATCH /api/v1/customers/:id`
+#[utoipa::path(
+    patch,
+    path = "/api/v1/customers/{id}",
+    tag = "customers",
+    params(("id" = String, Path, description = "Customer ID (UUID)")),
+    request_body = UpdateCustomerRequest,
+    responses(
+        (status = 200, description = "Customer updated", body = CustomerResponse),
+        (status = 404, description = "Customer not found", body = ErrorBody),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn update_customer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<CustomerId>,
+    Json(req): Json<UpdateCustomerRequest>,
+) -> Result<Json<CustomerResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
+    let status = req
+        .status
+        .as_deref()
+        .map(CustomerStatus::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+
+    let input = UpdateCustomer {
+        email: req.email,
+        first_name: req.first_name,
+        last_name: req.last_name,
+        phone: req.phone,
+        status,
+        accepts_marketing: req.accepts_marketing,
+        tags: req.tags,
+        metadata: req.metadata,
+    };
+    let customer = commerce.customers().update(id, input)?;
+    Ok(Json(CustomerResponse::from(customer)))
+}
+
+/// `DELETE /api/v1/customers/:id`
+#[utoipa::path(
+    delete,
+    path = "/api/v1/customers/{id}",
+    tag = "customers",
+    params(("id" = String, Path, description = "Customer ID (UUID)")),
+    responses(
+        (status = 204, description = "Customer deleted"),
+        (status = 404, description = "Customer not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn delete_customer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<CustomerId>,
+) -> Result<axum::http::StatusCode, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    commerce.customers().delete(id)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
