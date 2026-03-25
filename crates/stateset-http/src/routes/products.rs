@@ -439,4 +439,76 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
+
+    #[tokio::test]
+    async fn update_product_succeeds() {
+        let (app, state) = app_with_state();
+        let product = state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Widget".into(),
+                slug: None,
+                description: Some("Old description".into()),
+                product_type: None,
+                attributes: None,
+                seo: None,
+                variants: None,
+            })
+            .unwrap();
+
+        let body = serde_json::json!({ "name": "Super Widget", "description": "New description" });
+        let resp = app
+            .oneshot(
+                Request::patch(format!("/products/{}", product.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["name"], "Super Widget");
+    }
+
+    #[tokio::test]
+    async fn delete_product_returns_204() {
+        let (app, state) = app_with_state();
+        let product = state
+            .commerce()
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Deletable".into(),
+                slug: None,
+                description: None,
+                product_type: None,
+                attributes: None,
+                seo: None,
+                variants: None,
+            })
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::delete(format!("/products/{}", product.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_product_is_idempotent() {
+        let id = ProductId::new();
+        let resp = app()
+            .oneshot(Request::delete(format!("/products/{id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        // Idempotent delete: non-existent resources should not cause a server error
+        assert!(resp.status().is_success() || resp.status().is_client_error());
+    }
 }

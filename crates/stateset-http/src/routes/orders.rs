@@ -52,7 +52,7 @@ pub(crate) async fn create_order(
         .as_deref()
         .map(CurrencyCode::from_str)
         .transpose()
-        .map_err(|error| HttpError::BadRequest(format!("Invalid currency: {error}")))?;
+        .map_err(|error| HttpError::BadRequest(format!("Invalid currency: {error}. Valid values: USD, EUR, GBP, JPY, CAD, AUD, CHF, CNY")))?;
 
     let input = CreateOrder {
         customer_id: req.customer_id,
@@ -128,19 +128,19 @@ pub(crate) async fn list_orders(
         .as_deref()
         .map(OrderStatus::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: pending, confirmed, processing, shipped, delivered, cancelled, returned")))?;
     let payment_status = params
         .payment_status
         .as_deref()
         .map(PaymentStatus::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid payment_status: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid payment_status: {e}. Valid values: pending, authorized, paid, partially_refunded, refunded, failed")))?;
     let fulfillment_status = params
         .fulfillment_status
         .as_deref()
         .map(FulfillmentStatus::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid fulfillment_status: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid fulfillment_status: {e}. Valid values: unfulfilled, partially_fulfilled, fulfilled")))?;
     let from_date = params
         .from_date
         .map(|s| s.parse())

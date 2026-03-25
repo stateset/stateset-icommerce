@@ -116,7 +116,7 @@ pub(crate) async fn list_customers(
         .as_deref()
         .map(CustomerStatus::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: active, inactive, suspended")))?;
 
     // Decode cursor if provided
     let after_cursor = match &params.after {
@@ -193,7 +193,7 @@ pub(crate) async fn update_customer(
         .as_deref()
         .map(CustomerStatus::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: active, inactive, suspended")))?;
 
     let input = UpdateCustomer {
         email: req.email,
@@ -445,5 +445,94 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["total"], 1);
         assert_eq!(json["customers"][0]["email"], "opt-in@test.com");
+    }
+
+    #[tokio::test]
+    async fn update_customer_succeeds() {
+        let (app, state) = app_with_state();
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "update-me@test.com".into(),
+                first_name: "Old".into(),
+                last_name: "Name".into(),
+                phone: None,
+                accepts_marketing: None,
+                tags: None,
+                metadata: None,
+            })
+            .unwrap();
+
+        let body = serde_json::json!({ "first_name": "New", "last_name": "Updated" });
+        let resp = app
+            .oneshot(
+                Request::patch(format!("/customers/{}", customer.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["first_name"], "New");
+        assert_eq!(json["last_name"], "Updated");
+    }
+
+    #[tokio::test]
+    async fn update_nonexistent_customer_returns_error() {
+        let id = CustomerId::new();
+        let body = serde_json::json!({ "first_name": "Ghost" });
+        let resp = app()
+            .oneshot(
+                Request::patch(format!("/customers/{id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(resp.status().is_client_error());
+    }
+
+    #[tokio::test]
+    async fn delete_customer_returns_204() {
+        let (app, state) = app_with_state();
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "delete-me@test.com".into(),
+                first_name: "Delete".into(),
+                last_name: "Me".into(),
+                phone: None,
+                accepts_marketing: None,
+                tags: None,
+                metadata: None,
+            })
+            .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::delete(format!("/customers/{}", customer.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_customer_is_idempotent() {
+        let id = CustomerId::new();
+        let resp = app()
+            .oneshot(Request::delete(format!("/customers/{id}")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        // Idempotent delete: non-existent resources should not cause a server error
+        assert!(resp.status().is_success() || resp.status().is_client_error());
     }
 }
