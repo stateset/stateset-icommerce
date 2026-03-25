@@ -27,6 +27,7 @@ pub fn builtin_registry() -> crate::error::Result<MigrationRegistry> {
         .add(v2_commerce_extensions())
         .add(v3_a2a_tables())
         .add(v4_new_entities())
+        .add(v5_composite_indexes())
         .build()
 }
 
@@ -56,6 +57,12 @@ pub fn v3_a2a_tables() -> Migration {
 #[must_use]
 pub fn v4_new_entities() -> Migration {
     Migration::with_down(4, "new_entities", V4_UP, V4_DOWN)
+}
+
+/// V5 — Composite indexes for common query patterns (multi-column indexes).
+#[must_use]
+pub fn v5_composite_indexes() -> Migration {
+    Migration::with_down(5, "composite_indexes", V5_UP, V5_DOWN)
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,6 +1265,51 @@ DROP TABLE IF EXISTS fraud_rules;
 DROP TABLE IF EXISTS fraud_assessments;
 "#;
 
+// ---------------------------------------------------------------------------
+// V5 — Composite Indexes
+// ---------------------------------------------------------------------------
+
+const V5_UP: &str = r#"
+-- Orders: customer + status filtering, status + date range queries
+CREATE INDEX IF NOT EXISTS idx_orders_customer_status ON orders(customer_id, status);
+CREATE INDEX IF NOT EXISTS idx_orders_status_date ON orders(status, order_date);
+CREATE INDEX IF NOT EXISTS idx_orders_customer_date ON orders(customer_id, order_date);
+
+-- Payments: order + status, customer + status filtering
+CREATE INDEX IF NOT EXISTS idx_payments_order_status ON payments(order_id, status);
+CREATE INDEX IF NOT EXISTS idx_payments_status_date ON payments(status, created_at);
+
+-- Shipments: order + status, tracking lookups
+CREATE INDEX IF NOT EXISTS idx_shipments_order_status ON shipments(order_id, status);
+
+-- Returns: order + status, customer + status filtering
+CREATE INDEX IF NOT EXISTS idx_returns_order_status ON returns(order_id, status);
+CREATE INDEX IF NOT EXISTS idx_returns_customer_status ON returns(customer_id, status);
+
+-- Inventory: reservation lookups by item + status
+CREATE INDEX IF NOT EXISTS idx_inventory_reservations_item_status ON inventory_reservations(item_id, status);
+
+-- Invoices: customer + status, order + status
+CREATE INDEX IF NOT EXISTS idx_invoices_customer_status ON invoices(customer_id, status);
+
+-- Order items: order + product for join queries
+CREATE INDEX IF NOT EXISTS idx_order_items_order_product ON order_items(order_id, product_id);
+"#;
+
+const V5_DOWN: &str = r#"
+DROP INDEX IF EXISTS idx_order_items_order_product;
+DROP INDEX IF EXISTS idx_invoices_customer_status;
+DROP INDEX IF EXISTS idx_inventory_reservations_item_status;
+DROP INDEX IF EXISTS idx_returns_customer_status;
+DROP INDEX IF EXISTS idx_returns_order_status;
+DROP INDEX IF EXISTS idx_shipments_order_status;
+DROP INDEX IF EXISTS idx_payments_status_date;
+DROP INDEX IF EXISTS idx_payments_order_status;
+DROP INDEX IF EXISTS idx_orders_customer_date;
+DROP INDEX IF EXISTS idx_orders_status_date;
+DROP INDEX IF EXISTS idx_orders_customer_status;
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1265,14 +1317,14 @@ mod tests {
     #[test]
     fn builtin_registry_builds_successfully() {
         let reg = builtin_registry().unwrap();
-        assert_eq!(reg.len(), 4);
+        assert_eq!(reg.len(), 5);
     }
 
     #[test]
     fn builtin_versions_are_sequential() {
         let reg = builtin_registry().unwrap();
         let versions: Vec<u32> = reg.list().iter().map(|m| m.version).collect();
-        assert_eq!(versions, vec![1, 2, 3, 4]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5]);
     }
 
     #[test]
@@ -1346,8 +1398,8 @@ mod tests {
         for m in reg.list() {
             let down = m.down_sql.as_ref().unwrap();
             assert!(
-                down.contains("DROP TABLE"),
-                "v{} down SQL should contain DROP TABLE",
+                down.contains("DROP TABLE") || down.contains("DROP INDEX"),
+                "v{} down SQL should contain DROP TABLE or DROP INDEX",
                 m.version
             );
         }
