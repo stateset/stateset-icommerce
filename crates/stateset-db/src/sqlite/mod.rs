@@ -227,6 +227,12 @@ impl SqliteDatabase {
             if !is_memory {
                 conn.execute_batch("PRAGMA journal_mode = WAL;")?;
             }
+            // Performance tuning: reduce fsync overhead and increase cache
+            conn.execute_batch(
+                "PRAGMA synchronous = NORMAL;\
+                 PRAGMA cache_size = -16000;\
+                 PRAGMA temp_store = MEMORY;",
+            )?;
             Ok(())
         });
 

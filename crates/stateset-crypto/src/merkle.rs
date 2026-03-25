@@ -119,16 +119,20 @@ pub fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     // Pad to next power of 2
     let target = leaves.len().next_power_of_two();
     let pad = compute_pad_leaf();
-    let mut current: Vec<[u8; 32]> = leaves.to_vec();
-    current.resize(target, pad);
+    let mut buf_a: Vec<[u8; 32]> = Vec::with_capacity(target);
+    buf_a.extend_from_slice(leaves);
+    buf_a.resize(target, pad);
+    let mut buf_b: Vec<[u8; 32]> = Vec::with_capacity(target / 2);
 
-    // Build tree bottom-up
+    // Build tree bottom-up using double-buffer swap (O(2) allocations total)
+    let mut current = &mut buf_a;
+    let mut next = &mut buf_b;
     while current.len() > 1 {
-        let mut next = Vec::with_capacity(current.len() / 2);
+        next.clear();
         for chunk in current.chunks(2) {
             next.push(compute_node_hash(&chunk[0], &chunk[1]));
         }
-        current = next;
+        std::mem::swap(&mut current, &mut next);
     }
 
     current[0]
