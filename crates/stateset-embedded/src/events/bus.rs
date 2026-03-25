@@ -33,15 +33,16 @@ impl EventBus {
     }
 
     /// Publish an event to all subscribers
+    #[inline]
     pub fn publish(&self, event: CommerceEvent) -> usize {
         self.events_published.fetch_add(1, Ordering::Relaxed);
-        let receiver_count = self.sender.receiver_count();
         match self.sender.send(event) {
             Ok(receivers) => receivers,
             Err(error) => {
                 self.events_publish_failures.fetch_add(1, Ordering::Relaxed);
                 // Only allocate event_type string in the error path
                 let event_type = error.0.event_type().to_string();
+                let receiver_count = self.sender.receiver_count();
                 if receiver_count == 0 {
                     tracing::debug!(
                         event_type,
