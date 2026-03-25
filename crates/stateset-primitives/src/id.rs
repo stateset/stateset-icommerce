@@ -169,6 +169,28 @@ macro_rules! define_id {
                 Self(Uuid::from_bytes(bytes))
             }
         }
+
+        #[cfg(feature = "rusqlite")]
+        impl rusqlite::types::ToSql for $name {
+            #[inline]
+            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+                // Write UUID to stack buffer (no heap allocation)
+                Ok(rusqlite::types::ToSqlOutput::Owned(
+                    rusqlite::types::Value::Text(self.0.to_string()),
+                ))
+            }
+        }
+
+        #[cfg(feature = "rusqlite")]
+        impl rusqlite::types::FromSql for $name {
+            #[inline]
+            fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+                let text = value.as_str()?;
+                Uuid::parse_str(text)
+                    .map(Self)
+                    .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(e)))
+            }
+        }
     };
 }
 

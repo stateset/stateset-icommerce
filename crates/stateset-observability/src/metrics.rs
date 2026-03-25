@@ -338,9 +338,8 @@ impl RedAccumulator {
 
 #[derive(Debug, Default)]
 struct MetricTotals {
-    order_amount_total: f64,
-    payment_amount_total: f64,
-    inventory_delta_total: f64,
+    // f64 totals (order_amount, payment_amount, inventory_delta) moved to
+    // lock-free AtomicU64 fields on MetricsInner for contention-free hot paths.
     red_global: RedAccumulator,
     red_by_operation: HashMap<String, RedAccumulator>,
 }
@@ -371,6 +370,10 @@ struct MetricsInner {
     requests_total: AtomicU64,
     request_errors_total: AtomicU64,
     request_duration_micros_total: AtomicU64,
+    // Lock-free f64 accumulators (stored as u64 bits via to_bits/from_bits)
+    order_amount_total_bits: AtomicU64,
+    payment_amount_total_bits: AtomicU64,
+    inventory_delta_total_bits: AtomicU64,
     totals: Mutex<MetricTotals>,
 }
 
@@ -389,6 +392,24 @@ impl Default for Metrics {
 impl Metrics {
     const fn is_finite_metric_value(value: f64) -> bool {
         value.is_finite()
+    }
+
+    /// Lock-free f64 addition using CAS loop on AtomicU64 bit representation.
+    fn atomic_f64_add(target: &AtomicU64, value: f64) {
+        let mut current = target.load(Ordering::Relaxed);
+        loop {
+            let current_f64 = f64::from_bits(current);
+            let new_f64 = current_f64 + value;
+            match target.compare_exchange_weak(
+                current,
+                new_f64.to_bits(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
     }
 
     /// Whether this metrics instance currently records values.
@@ -438,9 +459,9 @@ impl Metrics {
             agent_registrations: self.inner.agent_registrations.load(Ordering::Relaxed),
             webhook_deliveries: self.inner.webhook_deliveries.load(Ordering::Relaxed),
             webhook_failures: self.inner.webhook_failures.load(Ordering::Relaxed),
-            order_amount_total: totals.order_amount_total,
-            payment_amount_total: totals.payment_amount_total,
-            inventory_delta_total: totals.inventory_delta_total,
+            order_amount_total: f64::from_bits(self.inner.order_amount_total_bits.load(Ordering::Relaxed)),
+            payment_amount_total: f64::from_bits(self.inner.payment_amount_total_bits.load(Ordering::Relaxed)),
+            inventory_delta_total: f64::from_bits(self.inner.inventory_delta_total_bits.load(Ordering::Relaxed)),
             red_global,
             red_by_operation,
         }
@@ -453,11 +474,7 @@ impl Metrics {
         }
         self.inner.orders_created.fetch_add(1, Ordering::Relaxed);
         if Self::is_finite_metric_value(amount) {
-            let mut totals = match self.inner.totals.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            totals.order_amount_total += amount;
+            Self::atomic_f64_add(&self.inner.order_amount_total_bits, amount);
         }
     }
 
@@ -532,11 +549,7 @@ impl Metrics {
         }
         self.inner.payments_completed.fetch_add(1, Ordering::Relaxed);
         if Self::is_finite_metric_value(amount) {
-            let mut totals = match self.inner.totals.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            totals.payment_amount_total += amount;
+            Self::atomic_f64_add(&self.inner.payment_amount_total_bits, amount);
         }
     }
 
@@ -547,11 +560,7 @@ impl Metrics {
         }
         self.inner.inventory_adjustments.fetch_add(1, Ordering::Relaxed);
         if Self::is_finite_metric_value(delta) {
-            let mut totals = match self.inner.totals.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            totals.inventory_delta_total += delta;
+            Self::atomic_f64_add(&self.inner.inventory_delta_total_bits, delta);
         }
     }
 
@@ -681,6 +690,9 @@ pub fn init_metrics(config: MetricsConfig) -> Metrics {
             requests_total: AtomicU64::new(0),
             request_errors_total: AtomicU64::new(0),
             request_duration_micros_total: AtomicU64::new(0),
+            order_amount_total_bits: AtomicU64::new(0u64),
+            payment_amount_total_bits: AtomicU64::new(0u64),
+            inventory_delta_total_bits: AtomicU64::new(0u64),
             totals: Mutex::new(MetricTotals::default()),
         }),
     }
