@@ -385,12 +385,13 @@ impl SqliteOrderRepository {
 
             rows_affected > 0
         } else {
-            tx.execute(
+            tx.prepare_cached(
                 "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
                                  currency, payment_status, fulfillment_status, payment_method,
                                  shipping_method, notes, shipping_address, billing_address,
                                  created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )?.execute(
                 rusqlite::params![
                     &id_str,
                     &order_number,

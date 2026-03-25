@@ -173,11 +173,12 @@ impl CustomerRepository for SqliteCustomerRepository {
             let id_str = id.to_string();
             let now_str = now.to_rfc3339();
 
-            tx.execute(
+            tx.prepare_cached(
                 "INSERT INTO customers (id, email, first_name, last_name, phone, status,
                                         accepts_marketing, email_verified, tags, metadata,
                                         created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )?.execute(
                 rusqlite::params![
                     &id_str,
                     &email,

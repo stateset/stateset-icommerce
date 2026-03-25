@@ -231,7 +231,9 @@ impl SqliteDatabase {
             conn.execute_batch(
                 "PRAGMA synchronous = NORMAL;\
                  PRAGMA cache_size = -16000;\
-                 PRAGMA temp_store = MEMORY;",
+                 PRAGMA temp_store = MEMORY;\
+                 PRAGMA mmap_size = 268435456;\
+                 PRAGMA wal_autocheckpoint = 10000;",
             )?;
             Ok(())
         });
