@@ -129,13 +129,17 @@ pub fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     buf_a.resize(target, pad);
     let mut buf_b: Vec<[u8; 32]> = Vec::with_capacity(target / 2);
 
-    // Build tree bottom-up using double-buffer swap (O(2) allocations total)
+    // Build tree bottom-up using double-buffer swap and reusable hasher
+    let mut hasher = Sha256::new();
     let mut current = &mut buf_a;
     let mut next = &mut buf_b;
     while current.len() > 1 {
         next.clear();
         for chunk in current.chunks(2) {
-            next.push(compute_node_hash(&chunk[0], &chunk[1]));
+            hasher.update(domain::NODE);
+            hasher.update(&chunk[0]);
+            hasher.update(&chunk[1]);
+            next.push(hasher.finalize_reset().into());
         }
         std::mem::swap(&mut current, &mut next);
     }
