@@ -1,7 +1,7 @@
 //! SQLite product repository implementation
 
 use super::{
-    build_in_clause, json1_available, map_db_error, params_refs, parse_datetime_row,
+    build_in_clause, escape_like, json1_available, map_db_error, params_refs, parse_datetime_row,
     parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row,
     parse_uuid, parse_uuid_row, uuid_params,
 };
@@ -355,9 +355,10 @@ impl ProductRepository for SqliteProductRepository {
             params.push(Box::new(product_type.to_string()));
         }
         if let Some(search) = search {
-            sql.push_str(" AND (name LIKE ? OR description LIKE ?)");
-            params.push(Box::new(format!("%{}%", search)));
-            params.push(Box::new(format!("%{}%", search)));
+            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
+            let escaped = format!("%{}%", escape_like(&search));
+            params.push(Box::new(escaped.clone()));
+            params.push(Box::new(escaped));
         }
         if let Some(category) = category {
             if use_json {
@@ -686,9 +687,10 @@ impl ProductRepository for SqliteProductRepository {
             params.push(Box::new(product_type.to_string()));
         }
         if let Some(search) = search {
-            sql.push_str(" AND (name LIKE ? OR description LIKE ?)");
-            params.push(Box::new(format!("%{}%", search)));
-            params.push(Box::new(format!("%{}%", search)));
+            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
+            let escaped = format!("%{}%", escape_like(&search));
+            params.push(Box::new(escaped.clone()));
+            params.push(Box::new(escaped));
         }
         if let Some(category) = category {
             if use_json {

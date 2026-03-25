@@ -252,16 +252,20 @@ impl SqliteInventoryRepository {
         let new_available = balance.quantity_on_hand - new_allocated;
         let current_version = balance.version;
 
+        // Atomically check version AND sufficient available quantity in the WHERE clause.
+        // This prevents a race where concurrent transactions both pass the availability
+        // check but one over-reserves because the balance changed between check and update.
         let rows_affected = tx.execute(
             "UPDATE inventory_balances SET quantity_allocated = ?, quantity_available = ?, version = version + 1, updated_at = ?
-             WHERE item_id = ? AND location_id = ? AND version = ?",
+             WHERE item_id = ? AND location_id = ? AND version = ? AND CAST(quantity_available AS REAL) >= CAST(? AS REAL)",
             rusqlite::params![
                 new_allocated.to_string(),
                 new_available.to_string(),
                 now.to_rfc3339(),
                 item.id,
                 location_id,
-                current_version
+                current_version,
+                quantity.to_string()
             ],
         )?;
 
