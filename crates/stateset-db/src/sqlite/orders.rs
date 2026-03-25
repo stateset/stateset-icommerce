@@ -36,12 +36,14 @@ impl SqliteOrderRepository {
     }
 
     fn generate_order_number() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let now = Utc::now();
         let timestamp = now.timestamp();
         let nanos = now.timestamp_subsec_nanos();
-        // Use 8 hex chars from UUID for better entropy (over 4 billion combinations)
-        let random: u32 = (Uuid::new_v4().as_u128() % 0xFFFFFFFF) as u32;
-        format!("ORD-{}-{:06}-{:08X}", timestamp, nanos / 1000, random)
+        // Monotonic counter is cheaper than Uuid::new_v4() and still unique per process
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("ORD-{}-{:06}-{:08X}", timestamp, nanos / 1000, seq as u32)
     }
 
     fn row_to_order(row: &rusqlite::Row<'_>) -> rusqlite::Result<Order> {
@@ -292,6 +294,11 @@ impl SqliteOrderRepository {
         let now = Utc::now();
         let currency = input.currency.unwrap_or_default();
 
+        // Pre-compute strings used multiple times to avoid repeated allocation
+        let id_str = id.to_string();
+        let customer_id_str = input.customer_id.to_string();
+        let now_str = now.to_rfc3339();
+
         let total: Decimal = input
             .items
             .iter()
@@ -302,6 +309,7 @@ impl SqliteOrderRepository {
                 subtotal - discount + tax
             })
             .sum();
+        let total_str = total.to_string();
 
         let shipping_address_json = input
             .shipping_address
@@ -355,12 +363,12 @@ impl SqliteOrderRepository {
                                  cart_id, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
-                    id.to_string(),
+                    &id_str,
                     &order_number,
-                    input.customer_id.to_string(),
+                    &customer_id_str,
                     "pending",
-                    now.to_rfc3339(),
-                    total.to_string(),
+                    &now_str,
+                    &total_str,
                     &currency,
                     "pending",
                     "unfulfilled",
@@ -370,8 +378,8 @@ impl SqliteOrderRepository {
                     &shipping_address_json,
                     &billing_address_json,
                     cart_id_str,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
+                    &now_str,
+                    &now_str,
                 ],
             )?;
 
@@ -384,12 +392,12 @@ impl SqliteOrderRepository {
                                  created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
-                    id.to_string(),
+                    &id_str,
                     &order_number,
-                    input.customer_id.to_string(),
+                    &customer_id_str,
                     "pending",
-                    now.to_rfc3339(),
-                    total.to_string(),
+                    &now_str,
+                    &total_str,
                     &currency,
                     "pending",
                     "unfulfilled",
@@ -398,8 +406,8 @@ impl SqliteOrderRepository {
                     &input.notes,
                     &shipping_address_json,
                     &billing_address_json,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
+                    &now_str,
+                    &now_str,
                 ],
             )?;
 
@@ -421,7 +429,6 @@ impl SqliteOrderRepository {
         }
 
         let mut items = Vec::with_capacity(input.items.len());
-        let order_id_str = id.to_string();
         {
             let mut stmt = tx.prepare_cached(
                 "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
@@ -439,7 +446,7 @@ impl SqliteOrderRepository {
 
                 stmt.execute(rusqlite::params![
                     item_id.to_string(),
-                    &order_id_str,
+                    &id_str,
                     item.product_id.to_string(),
                     item.variant_id.map(|variant_id| variant_id.to_string()),
                     &item.sku,
@@ -467,16 +474,14 @@ impl SqliteOrderRepository {
             }
         }
 
-        let reference_id = id.to_string();
+        let reference_id = &id_str;
+        let mut inv_lookup = tx.prepare_cached("SELECT id FROM inventory_items WHERE sku = ?")?;
         for item in &items {
             if item.quantity <= 0 {
                 continue;
             }
 
-            let item_row =
-                tx.query_row("SELECT id FROM inventory_items WHERE sku = ?", [&item.sku], |row| {
-                    row.get::<_, i64>(0)
-                });
+            let item_row = inv_lookup.query_row([&item.sku], |row| row.get::<_, i64>(0));
 
             let item_id = match item_row {
                 Ok(item_id) => item_id,
