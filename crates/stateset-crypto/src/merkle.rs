@@ -53,11 +53,16 @@ pub fn compute_node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
 }
 
 /// Compute padding leaf per VES v1.0 Section 10.3
+///
+/// The result is memoized since it is deterministic and called frequently.
 #[must_use]
 pub fn compute_pad_leaf() -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(domain::PAD_LEAF);
-    hasher.finalize().into()
+    static PAD_LEAF: once_cell::sync::Lazy<[u8; 32]> = once_cell::sync::Lazy::new(|| {
+        let mut hasher = Sha256::new();
+        hasher.update(domain::PAD_LEAF);
+        hasher.finalize().into()
+    });
+    *PAD_LEAF
 }
 
 /// Compute stream ID per VES v1.0 Section 12.2
@@ -119,16 +124,24 @@ pub fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     // Pad to next power of 2
     let target = leaves.len().next_power_of_two();
     let pad = compute_pad_leaf();
-    let mut current: Vec<[u8; 32]> = leaves.to_vec();
-    current.resize(target, pad);
+    let mut buf_a: Vec<[u8; 32]> = Vec::with_capacity(target);
+    buf_a.extend_from_slice(leaves);
+    buf_a.resize(target, pad);
+    let mut buf_b: Vec<[u8; 32]> = Vec::with_capacity(target / 2);
 
-    // Build tree bottom-up
+    // Build tree bottom-up using double-buffer swap and reusable hasher
+    let mut hasher = Sha256::new();
+    let mut current = &mut buf_a;
+    let mut next = &mut buf_b;
     while current.len() > 1 {
-        let mut next = Vec::with_capacity(current.len() / 2);
+        next.clear();
         for chunk in current.chunks(2) {
-            next.push(compute_node_hash(&chunk[0], &chunk[1]));
+            hasher.update(domain::NODE);
+            hasher.update(&chunk[0]);
+            hasher.update(&chunk[1]);
+            next.push(hasher.finalize_reset().into());
         }
-        current = next;
+        std::mem::swap(&mut current, &mut next);
     }
 
     current[0]

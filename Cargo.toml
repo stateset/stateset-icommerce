@@ -59,7 +59,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.8.1"
+version = "0.8.2"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -142,7 +142,7 @@ thiserror = "1.0"
 base64 = "0.22"
 hex = "0.4"
 serde_jcs = "0.1"
-sha2 = "0.10"
+sha2 = { version = "0.10", features = ["asm"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 once_cell = "1.19"
 prometheus = "0.14"

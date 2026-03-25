@@ -154,13 +154,14 @@ impl CustomerRepository for SqliteCustomerRepository {
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
 
-            // Check email uniqueness
-            let exists: i32 =
-                tx.query_row("SELECT COUNT(*) FROM customers WHERE email = ?", [&email], |row| {
-                    row.get(0)
-                })?;
+            // Check email uniqueness (EXISTS is faster than COUNT(*))
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM customers WHERE email = ? LIMIT 1)",
+                [&email],
+                |row| row.get(0),
+            )?;
 
-            if exists > 0 {
+            if exists {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::EmailAlreadyExists(email.clone()),
                 )));
@@ -169,6 +170,8 @@ impl CustomerRepository for SqliteCustomerRepository {
             let tags_json = serde_json::to_string(&tags).unwrap_or_default();
             let metadata_json =
                 metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
+            let id_str = id.to_string();
+            let now_str = now.to_rfc3339();
 
             tx.execute(
                 "INSERT INTO customers (id, email, first_name, last_name, phone, status,
@@ -176,7 +179,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                                         created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
-                    id.to_string(),
+                    &id_str,
                     &email,
                     &first_name,
                     &last_name,
@@ -186,8 +189,8 @@ impl CustomerRepository for SqliteCustomerRepository {
                     0,
                     tags_json,
                     metadata_json,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
+                    &now_str,
+                    &now_str,
                 ],
             )?;
 

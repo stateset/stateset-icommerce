@@ -227,6 +227,12 @@ impl SqliteDatabase {
             if !is_memory {
                 conn.execute_batch("PRAGMA journal_mode = WAL;")?;
             }
+            // Performance tuning: reduce fsync overhead and increase cache
+            conn.execute_batch(
+                "PRAGMA synchronous = NORMAL;\
+                 PRAGMA cache_size = -16000;\
+                 PRAGMA temp_store = MEMORY;",
+            )?;
             Ok(())
         });
 
@@ -709,6 +715,9 @@ where
                     Some(e.to_string()),
                 )
             })?;
+
+            // Defer FK checks until commit for better batch performance
+            conn.execute_batch("PRAGMA defer_foreign_keys = ON")?;
 
             // Use IMMEDIATE transaction to acquire write lock immediately
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
