@@ -94,13 +94,13 @@ pub(crate) async fn list_payments(
         .as_deref()
         .map(PaymentTransactionStatus::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: pending, processing, completed, failed, cancelled, refunded")))?;
     let payment_method = params
         .payment_method
         .as_deref()
         .map(PaymentMethodType::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid payment_method: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid payment_method: {e}. Valid values: credit_card, debit_card, bank_transfer, stablecoin, crypto, other")))?;
     let min_amount = params
         .min_amount
         .map(|s| s.parse::<Decimal>())
@@ -192,14 +192,14 @@ pub(crate) async fn create_payment(
         .as_deref()
         .map(CurrencyCode::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid currency: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid currency: {e}. Valid values: USD, EUR, GBP, JPY, CAD, AUD, CHF, CNY")))?;
 
     let payment_method = req
         .payment_method
         .as_deref()
         .map(PaymentMethodType::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid payment_method: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid payment_method: {e}. Valid values: credit_card, debit_card, bank_transfer, stablecoin, crypto, other")))?;
 
     let input = CreatePayment {
         order_id: Some(req.order_id),

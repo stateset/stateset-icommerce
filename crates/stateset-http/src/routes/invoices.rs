@@ -95,13 +95,13 @@ pub(crate) async fn list_invoices(
         .as_deref()
         .map(InvoiceStatus::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: draft, sent, viewed, paid, partially_paid, overdue, void, written_off")))?;
     let invoice_type = params
         .invoice_type
         .as_deref()
         .map(InvoiceType::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid invoice_type: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring")))?;
     let from_date = params
         .from_date
         .map(|s| s.parse())
@@ -187,7 +187,7 @@ pub(crate) async fn create_invoice(
         .as_deref()
         .map(InvoiceType::from_str)
         .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid invoice_type: {e}")))?;
+        .map_err(|e| HttpError::BadRequest(format!("Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring")))?;
 
     let input = CreateInvoice {
         customer_id: req.customer_id,
