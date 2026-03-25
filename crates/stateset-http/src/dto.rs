@@ -565,6 +565,18 @@ impl ShipmentFilterParams {
     }
 }
 
+/// Request body for `POST /api/v1/shipments`.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct CreateShipmentRequest {
+    #[schema(value_type = String, format = "uuid")]
+    pub order_id: stateset_primitives::OrderId,
+    pub carrier: Option<String>,
+    pub tracking_number: Option<String>,
+    pub shipping_method: Option<String>,
+    pub recipient_name: Option<String>,
+    pub notes: Option<String>,
+}
+
 /// Response body for a single shipment.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ShipmentResponse {
@@ -643,6 +655,28 @@ impl PaymentFilterParams {
     }
 }
 
+/// Request body for `POST /api/v1/payments`.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct CreatePaymentRequest {
+    #[schema(value_type = String, format = "uuid")]
+    pub order_id: stateset_primitives::OrderId,
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub customer_id: Option<stateset_primitives::CustomerId>,
+    pub payment_method: Option<String>,
+    pub amount: f64,
+    pub currency: Option<String>,
+    pub external_id: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Request body for `POST /api/v1/payments/:id/refund`.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct CreateRefundRequest {
+    pub amount: f64,
+    pub reason: Option<String>,
+    pub notes: Option<String>,
+}
+
 /// Response body for a single payment.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PaymentResponse {
@@ -714,6 +748,29 @@ impl InvoiceFilterParams {
     pub fn resolved_offset(&self) -> u32 {
         self.offset.unwrap_or(0)
     }
+}
+
+/// Request body for `POST /api/v1/invoices`.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct CreateInvoiceRequest {
+    #[schema(value_type = String, format = "uuid")]
+    pub customer_id: stateset_primitives::CustomerId,
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub order_id: Option<stateset_primitives::OrderId>,
+    pub invoice_type: Option<String>,
+    pub due_date: Option<String>,
+    pub payment_terms: Option<String>,
+    pub currency: Option<String>,
+    pub notes: Option<String>,
+}
+
+/// Request body for `POST /api/v1/invoices/:id/payments`.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct RecordInvoicePaymentRequest {
+    pub amount: f64,
+    pub payment_method: Option<String>,
+    pub reference: Option<String>,
+    pub notes: Option<String>,
 }
 
 /// Response body for a single invoice.

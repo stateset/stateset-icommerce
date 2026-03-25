@@ -3,22 +3,31 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::HeaderMap,
-    routing::get,
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
 };
 
 use crate::dto::{
-    InvoiceFilterParams, InvoiceListResponse, InvoiceResponse, finalize_page, overfetch_limit,
+    CreateInvoiceRequest, InvoiceFilterParams, InvoiceListResponse, InvoiceResponse,
+    RecordInvoicePaymentRequest, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
-use stateset_core::{CustomerId, InvoiceFilter, InvoiceStatus, InvoiceType, OrderId};
+use rust_decimal::Decimal;
+use stateset_core::{
+    CreateInvoice, CustomerId, InvoiceFilter, InvoiceStatus, InvoiceType, OrderId,
+    RecordInvoicePayment,
+};
 use std::str::FromStr;
 use uuid::Uuid;
 
 /// Build the invoices sub-router.
 pub fn router() -> Router<AppState> {
-    Router::new().route("/invoices", get(list_invoices)).route("/invoices/{id}", get(get_invoice))
+    Router::new()
+        .route("/invoices", post(create_invoice).get(list_invoices))
+        .route("/invoices/{id}", get(get_invoice))
+        .route("/invoices/{id}/send", post(send_invoice))
+        .route("/invoices/{id}/payments", post(record_invoice_payment))
 }
 
 /// `GET /api/v1/invoices/:id`
@@ -153,11 +162,109 @@ pub(crate) async fn list_invoices(
     }))
 }
 
+/// `POST /api/v1/invoices`
+#[utoipa::path(
+    post,
+    path = "/api/v1/invoices",
+    tag = "invoices",
+    request_body = CreateInvoiceRequest,
+    responses(
+        (status = 201, description = "Invoice created", body = InvoiceResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_invoice(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateInvoiceRequest>,
+) -> Result<(StatusCode, Json<InvoiceResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
+    let invoice_type = req
+        .invoice_type
+        .as_deref()
+        .map(InvoiceType::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid invoice_type: {e}")))?;
+
+    let input = CreateInvoice {
+        customer_id: req.customer_id,
+        order_id: req.order_id,
+        invoice_type,
+        payment_terms: req.payment_terms,
+        currency: req.currency.map(|c| {
+            c.parse().unwrap_or_default()
+        }),
+        notes: req.notes,
+        ..Default::default()
+    };
+    let invoice = commerce.invoices().create(input)?;
+    Ok((StatusCode::CREATED, Json(InvoiceResponse::from(invoice))))
+}
+
+/// `POST /api/v1/invoices/:id/send`
+#[utoipa::path(
+    post,
+    path = "/api/v1/invoices/{id}/send",
+    tag = "invoices",
+    params(("id" = String, Path, description = "Invoice ID (UUID)")),
+    responses(
+        (status = 200, description = "Invoice sent", body = InvoiceResponse),
+        (status = 404, description = "Invoice not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn send_invoice(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<InvoiceResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let invoice = commerce.invoices().send(id)?;
+    Ok(Json(InvoiceResponse::from(invoice)))
+}
+
+/// `POST /api/v1/invoices/:id/payments`
+#[utoipa::path(
+    post,
+    path = "/api/v1/invoices/{id}/payments",
+    tag = "invoices",
+    params(("id" = String, Path, description = "Invoice ID (UUID)")),
+    request_body = RecordInvoicePaymentRequest,
+    responses(
+        (status = 200, description = "Payment recorded on invoice", body = InvoiceResponse),
+        (status = 404, description = "Invoice not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn record_invoice_payment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<RecordInvoicePaymentRequest>,
+) -> Result<Json<InvoiceResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let input = RecordInvoicePayment {
+        amount: Decimal::try_from(req.amount)
+            .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?,
+        payment_id: None,
+        payment_method: req.payment_method,
+        reference: req.reference,
+        notes: req.notes,
+    };
+    let invoice = commerce.invoices().record_payment(id, input)?;
+    Ok(Json(InvoiceResponse::from(invoice)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::Request;
     use stateset_core::InvoiceId;
     use stateset_embedded::Commerce;
     use tower::ServiceExt;

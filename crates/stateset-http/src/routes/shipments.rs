@@ -3,23 +3,27 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::HeaderMap,
-    routing::get,
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
 };
 
 use crate::dto::{
-    ShipmentFilterParams, ShipmentListResponse, ShipmentResponse, finalize_page, overfetch_limit,
+    CreateShipmentRequest, ShipmentFilterParams, ShipmentListResponse, ShipmentResponse,
+    finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
-use stateset_core::{OrderId, ShipmentFilter, ShipmentId, ShipmentStatus, ShippingCarrier};
+use stateset_core::{
+    CreateShipment, OrderId, ShipmentFilter, ShipmentId, ShipmentStatus, ShippingCarrier,
+};
 use std::str::FromStr;
 
 /// Build the shipments sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/shipments", get(list_shipments))
+        .route("/shipments", post(create_shipment).get(list_shipments))
         .route("/shipments/{id}", get(get_shipment))
+        .route("/shipments/{id}/deliver", post(deliver_shipment))
 }
 
 /// `GET /api/v1/shipments/:id`
@@ -121,11 +125,73 @@ pub(crate) async fn list_shipments(
     }))
 }
 
+/// `POST /api/v1/shipments`
+#[utoipa::path(
+    post,
+    path = "/api/v1/shipments",
+    tag = "shipments",
+    request_body = CreateShipmentRequest,
+    responses(
+        (status = 201, description = "Shipment created", body = ShipmentResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_shipment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateShipmentRequest>,
+) -> Result<(StatusCode, Json<ShipmentResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
+    let carrier = req
+        .carrier
+        .as_deref()
+        .map(ShippingCarrier::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid carrier: {e}")))?;
+
+    let input = CreateShipment {
+        order_id: req.order_id,
+        carrier,
+        tracking_number: req.tracking_number,
+        recipient_name: req.recipient_name.unwrap_or_default(),
+        notes: req.notes,
+        ..Default::default()
+    };
+    let shipment = commerce.shipments().create(input)?;
+    Ok((StatusCode::CREATED, Json(ShipmentResponse::from(shipment))))
+}
+
+/// `POST /api/v1/shipments/:id/deliver`
+#[utoipa::path(
+    post,
+    path = "/api/v1/shipments/{id}/deliver",
+    tag = "shipments",
+    params(("id" = String, Path, description = "Shipment ID (UUID)")),
+    responses(
+        (status = 200, description = "Shipment marked as delivered", body = ShipmentResponse),
+        (status = 404, description = "Shipment not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn deliver_shipment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ShipmentId>,
+) -> Result<Json<ShipmentResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let shipment = commerce.shipments().mark_delivered(id)?;
+    Ok(Json(ShipmentResponse::from(shipment)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::Request;
     use stateset_embedded::Commerce;
     use tower::ServiceExt;
 
