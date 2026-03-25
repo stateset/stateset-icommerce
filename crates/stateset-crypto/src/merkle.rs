@@ -53,11 +53,16 @@ pub fn compute_node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
 }
 
 /// Compute padding leaf per VES v1.0 Section 10.3
+///
+/// The result is memoized since it is deterministic and called frequently.
 #[must_use]
 pub fn compute_pad_leaf() -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(domain::PAD_LEAF);
-    hasher.finalize().into()
+    static PAD_LEAF: once_cell::sync::Lazy<[u8; 32]> = once_cell::sync::Lazy::new(|| {
+        let mut hasher = Sha256::new();
+        hasher.update(domain::PAD_LEAF);
+        hasher.finalize().into()
+    });
+    *PAD_LEAF
 }
 
 /// Compute stream ID per VES v1.0 Section 12.2
