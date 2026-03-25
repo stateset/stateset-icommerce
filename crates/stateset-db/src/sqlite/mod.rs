@@ -537,6 +537,27 @@ pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
                 Err(other) => CommerceError::DatabaseError(other.to_string()),
             }
         }
+        rusqlite::Error::SqliteFailure(err, _) => {
+            match err.code {
+                // SQLITE_CONSTRAINT (19): unique/fk/check violation
+                rusqlite::ErrorCode::ConstraintViolation => {
+                    let msg = e.to_string();
+                    if msg.contains("UNIQUE") {
+                        CommerceError::Conflict(msg)
+                    } else {
+                        CommerceError::ValidationError(msg)
+                    }
+                }
+                _ => {
+                    // SQLITE_FULL = 13
+                    if err.extended_code == rusqlite::ffi::SQLITE_FULL {
+                        CommerceError::Internal("Storage full: database disk is full".into())
+                    } else {
+                        CommerceError::DatabaseError(e.to_string())
+                    }
+                }
+            }
+        }
         _ => CommerceError::DatabaseError(e.to_string()),
     }
 }
@@ -562,6 +583,25 @@ pub(crate) use parse_helpers::{
     parse_uuid_opt_row,
     parse_uuid_row,
 };
+
+/// Escape LIKE wildcard characters (%, _, \) in a search string.
+///
+/// Prevents user-supplied search terms from acting as LIKE metacharacters.
+/// Use with `LIKE ? ESCAPE '\'` in the SQL query.
+#[must_use]
+pub(crate) fn escape_like(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '%' | '_' | '\\' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
 
 // ============================================================================
 // Batch Operation Helpers

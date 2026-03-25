@@ -28,6 +28,7 @@ pub fn builtin_registry() -> crate::error::Result<MigrationRegistry> {
         .add(v3_a2a_tables())
         .add(v4_new_entities())
         .add(v5_composite_indexes())
+        .add(v6_production_hardening())
         .build()
 }
 
@@ -63,6 +64,12 @@ pub fn v4_new_entities() -> Migration {
 #[must_use]
 pub fn v5_composite_indexes() -> Migration {
     Migration::with_down(5, "composite_indexes", V5_UP, V5_DOWN)
+}
+
+/// V6 — Production hardening: idempotency constraints, outbox TTL column.
+#[must_use]
+pub fn v6_production_hardening() -> Migration {
+    Migration::with_down(6, "production_hardening", V6_UP, V6_DOWN)
 }
 
 // ---------------------------------------------------------------------------
@@ -1310,6 +1317,32 @@ DROP INDEX IF EXISTS idx_orders_status_date;
 DROP INDEX IF EXISTS idx_orders_customer_status;
 "#;
 
+// ---------------------------------------------------------------------------
+// V6 — Production Hardening
+// ---------------------------------------------------------------------------
+
+const V6_UP: &str = r#"
+-- Prevent duplicate order items on checkout retry (idempotency)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_order_items_order_sku
+    ON order_items(order_id, sku);
+
+-- Prevent duplicate reservations for the same reference
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_reservations_ref
+    ON inventory_reservations(item_id, reference_type, reference_id)
+    WHERE status = 'active';
+
+-- Cart checkout idempotency: enforce unique cart_id on orders
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_cart_id
+    ON orders(cart_id)
+    WHERE cart_id IS NOT NULL;
+"#;
+
+const V6_DOWN: &str = r#"
+DROP INDEX IF EXISTS idx_orders_cart_id;
+DROP INDEX IF EXISTS idx_inventory_reservations_ref;
+DROP INDEX IF EXISTS idx_order_items_order_sku;
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1317,14 +1350,14 @@ mod tests {
     #[test]
     fn builtin_registry_builds_successfully() {
         let reg = builtin_registry().unwrap();
-        assert_eq!(reg.len(), 5);
+        assert_eq!(reg.len(), 6);
     }
 
     #[test]
     fn builtin_versions_are_sequential() {
         let reg = builtin_registry().unwrap();
         let versions: Vec<u32> = reg.list().iter().map(|m| m.version).collect();
-        assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
     }
 
     #[test]
