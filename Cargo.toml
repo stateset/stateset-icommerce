@@ -119,7 +119,7 @@ opt-level = 3
 lto = "thin"
 strip = "symbols"
 panic = "abort"
-codegen-units = 16
+codegen-units = 1
 
 # Use `--profile profiling` to keep symbols for perf / flamegraph.
 [profile.profiling]
