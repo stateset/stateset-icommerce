@@ -8,20 +8,27 @@ use axum::{
 };
 
 use crate::dto::{
-    CreateProductRequest, ProductFilterParams, ProductListResponse, ProductResponse, decode_cursor,
-    encode_cursor, finalize_page, overfetch_limit,
+    CreateProductRequest, ProductFilterParams, ProductListResponse, ProductResponse,
+    UpdateProductRequest, decode_cursor, encode_cursor, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use rust_decimal::Decimal;
-use stateset_core::{CreateProduct, ProductFilter, ProductId, ProductStatus, ProductType};
+use stateset_core::{
+    CreateProduct, ProductFilter, ProductId, ProductStatus, ProductType, UpdateProduct,
+};
 use std::str::FromStr;
 
 /// Build the products sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/products", post(create_product).get(list_products))
-        .route("/products/{id}", get(get_product))
+        .route(
+            "/products/{id}",
+            get(get_product)
+                .patch(update_product)
+                .delete(delete_product),
+        )
 }
 
 /// `POST /api/v1/products`
@@ -186,6 +193,71 @@ pub(crate) async fn list_products(
         next_cursor,
         has_more,
     }))
+}
+
+/// `PATCH /api/v1/products/:id`
+#[utoipa::path(
+    patch,
+    path = "/api/v1/products/{id}",
+    tag = "products",
+    params(("id" = String, Path, description = "Product ID (UUID)")),
+    request_body = UpdateProductRequest,
+    responses(
+        (status = 200, description = "Product updated", body = ProductResponse),
+        (status = 404, description = "Product not found", body = ErrorBody),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn update_product(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ProductId>,
+    Json(req): Json<UpdateProductRequest>,
+) -> Result<Json<ProductResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
+    let status = req
+        .status
+        .as_deref()
+        .map(ProductStatus::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+
+    let input = UpdateProduct {
+        name: req.name,
+        slug: None,
+        description: req.description,
+        status,
+        attributes: None,
+        seo: None,
+    };
+    let product = commerce.products().update(id, input)?;
+    Ok(Json(ProductResponse::from(product)))
+}
+
+/// `DELETE /api/v1/products/:id`
+#[utoipa::path(
+    delete,
+    path = "/api/v1/products/{id}",
+    tag = "products",
+    params(("id" = String, Path, description = "Product ID (UUID)")),
+    responses(
+        (status = 204, description = "Product deleted"),
+        (status = 404, description = "Product not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn delete_product(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<ProductId>,
+) -> Result<axum::http::StatusCode, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    commerce.products().delete(id)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
