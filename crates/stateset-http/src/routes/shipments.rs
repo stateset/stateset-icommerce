@@ -199,6 +199,12 @@ mod tests {
         router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
     }
 
+    fn app_with_state() -> (Router, AppState) {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let router = router().with_state(state.clone());
+        (router, state)
+    }
+
     #[tokio::test]
     async fn get_shipment_not_found() {
         let id = ShipmentId::new();
@@ -259,5 +265,83 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["limit"], 10);
         assert_eq!(json["offset"], 5);
+    }
+
+    #[tokio::test]
+    async fn create_shipment_returns_201() {
+        let (app, state) = app_with_state();
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "shipper@test.com".into(),
+                first_name: "Ship".into(),
+                last_name: "Per".into(),
+                phone: None,
+                accepts_marketing: None,
+                tags: None,
+                metadata: None,
+            })
+            .unwrap();
+        let order = state
+            .commerce()
+            .orders()
+            .create(stateset_core::CreateOrder {
+                customer_id: customer.id,
+                items: vec![stateset_core::CreateOrderItem {
+                    product_id: stateset_core::ProductId::new(),
+                    variant_id: None,
+                    sku: "SHIP-TEST".into(),
+                    name: "Shippable Item".into(),
+                    quantity: 1,
+                    unit_price: rust_decimal_macros::dec!(25.00),
+                    discount: None,
+                    tax_amount: None,
+                }],
+                currency: None,
+                shipping_address: None,
+                billing_address: None,
+                notes: None,
+                payment_method: None,
+                shipping_method: None,
+            })
+            .unwrap();
+
+        let body = serde_json::json!({
+            "order_id": order.id.to_string(),
+            "carrier": "fedex",
+            "tracking_number": "TRACK123456"
+        });
+        let resp = app
+            .oneshot(
+                Request::post("/shipments")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["tracking_number"], "TRACK123456");
+    }
+
+    #[tokio::test]
+    async fn create_shipment_invalid_carrier_returns_400() {
+        let body = serde_json::json!({
+            "order_id": stateset_core::OrderId::new().to_string(),
+            "carrier": "teleportation"
+        });
+        let resp = app()
+            .oneshot(
+                Request::post("/shipments")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

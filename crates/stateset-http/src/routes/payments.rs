@@ -386,4 +386,86 @@ mod tests {
         assert_eq!(json["payments"].as_array().unwrap().len(), 2);
         assert_eq!(json["has_more"], false);
     }
+
+    #[tokio::test]
+    async fn create_payment_returns_201() {
+        let (app, state) = app_with_state();
+        // Create a customer and order first
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "payer@test.com".into(),
+                first_name: "Pay".into(),
+                last_name: "Er".into(),
+                phone: None,
+                accepts_marketing: None,
+                tags: None,
+                metadata: None,
+            })
+            .unwrap();
+        let order = state
+            .commerce()
+            .orders()
+            .create(stateset_core::CreateOrder {
+                customer_id: customer.id,
+                items: vec![stateset_core::CreateOrderItem {
+                    product_id: stateset_core::ProductId::new(),
+                    variant_id: None,
+                    sku: "PAY-TEST".into(),
+                    name: "Test Item".into(),
+                    quantity: 1,
+                    unit_price: dec!(50.00),
+                    discount: None,
+                    tax_amount: None,
+                }],
+                currency: None,
+                shipping_address: None,
+                billing_address: None,
+                notes: None,
+                payment_method: None,
+                shipping_method: None,
+            })
+            .unwrap();
+
+        let body = serde_json::json!({
+            "order_id": order.id.to_string(),
+            "amount": 50.00,
+            "payment_method": "credit_card"
+        });
+        let resp = app
+            .oneshot(
+                Request::post("/payments")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn create_payment_invalid_method_returns_400() {
+        let body = serde_json::json!({
+            "order_id": OrderId::new().to_string(),
+            "amount": 10.00,
+            "payment_method": "magic_beans"
+        });
+        let resp = app()
+            .oneshot(
+                Request::post("/payments")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // Verify error message includes valid values
+        let msg = json["error"]["message"].as_str().unwrap_or("");
+        assert!(msg.contains("Valid values"), "Error should list valid values, got: {msg}");
+    }
 }

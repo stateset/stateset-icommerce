@@ -273,6 +273,12 @@ mod tests {
         router().with_state(AppState::new(Commerce::new(":memory:").expect("in-memory Commerce")))
     }
 
+    fn app_with_state() -> (Router, AppState) {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let router = router().with_state(state.clone());
+        (router, state)
+    }
+
     #[tokio::test]
     async fn get_invoice_not_found() {
         let id = InvoiceId::new();
@@ -333,5 +339,61 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["limit"], 10);
         assert_eq!(json["offset"], 5);
+    }
+
+    #[tokio::test]
+    async fn create_invoice_returns_201() {
+        let (app, state) = app_with_state();
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "invoicee@test.com".into(),
+                first_name: "Bill".into(),
+                last_name: "Able".into(),
+                phone: None,
+                accepts_marketing: None,
+                tags: None,
+                metadata: None,
+            })
+            .unwrap();
+
+        let body = serde_json::json!({
+            "customer_id": customer.id.to_string(),
+            "payment_terms": "net_30",
+            "notes": "Test invoice"
+        });
+        let resp = app
+            .oneshot(
+                Request::post("/invoices")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn create_invoice_invalid_type_returns_400() {
+        let body = serde_json::json!({
+            "customer_id": stateset_core::CustomerId::new().to_string(),
+            "invoice_type": "fantasy"
+        });
+        let resp = app()
+            .oneshot(
+                Request::post("/invoices")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let msg = json["error"]["message"].as_str().unwrap_or("");
+        assert!(msg.contains("Valid values"), "Error should list valid values, got: {msg}");
     }
 }
