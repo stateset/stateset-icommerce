@@ -3,24 +3,30 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::HeaderMap,
-    routing::get,
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
 };
 
 use crate::dto::{
-    PaymentFilterParams, PaymentListResponse, PaymentResponse, finalize_page, overfetch_limit,
+    CreatePaymentRequest, CreateRefundRequest, PaymentFilterParams, PaymentListResponse,
+    PaymentResponse, finalize_page, overfetch_limit,
 };
 use crate::error::{ErrorBody, HttpError};
 use crate::state::{AppState, tenant_id_from_headers};
 use rust_decimal::Decimal;
 use stateset_core::{
-    CustomerId, OrderId, PaymentFilter, PaymentId, PaymentMethodType, PaymentTransactionStatus,
+    CreatePayment, CreateRefund, CurrencyCode, CustomerId, OrderId, PaymentFilter, PaymentId,
+    PaymentMethodType, PaymentTransactionStatus,
 };
 use std::str::FromStr;
 
 /// Build the payments sub-router.
 pub fn router() -> Router<AppState> {
-    Router::new().route("/payments", get(list_payments)).route("/payments/{id}", get(get_payment))
+    Router::new()
+        .route("/payments", post(create_payment).get(list_payments))
+        .route("/payments/{id}", get(get_payment))
+        .route("/payments/{id}/complete", post(complete_payment))
+        .route("/payments/{id}/refund", post(create_refund))
 }
 
 /// `GET /api/v1/payments/:id`
@@ -161,11 +167,121 @@ pub(crate) async fn list_payments(
     }))
 }
 
+/// `POST /api/v1/payments`
+#[utoipa::path(
+    post,
+    path = "/api/v1/payments",
+    tag = "payments",
+    request_body = CreatePaymentRequest,
+    responses(
+        (status = 201, description = "Payment created", body = PaymentResponse),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_payment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreatePaymentRequest>,
+) -> Result<(StatusCode, Json<PaymentResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+
+    let currency = req
+        .currency
+        .as_deref()
+        .map(CurrencyCode::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid currency: {e}")))?;
+
+    let payment_method = req
+        .payment_method
+        .as_deref()
+        .map(PaymentMethodType::from_str)
+        .transpose()
+        .map_err(|e| HttpError::BadRequest(format!("Invalid payment_method: {e}")))?;
+
+    let input = CreatePayment {
+        order_id: Some(req.order_id),
+        customer_id: req.customer_id,
+        payment_method: payment_method.unwrap_or_default(),
+        amount: Decimal::try_from(req.amount)
+            .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?,
+        currency,
+        external_id: req.external_id,
+        ..Default::default()
+    };
+    let payment = commerce.payments().create(input)?;
+    Ok((StatusCode::CREATED, Json(PaymentResponse::from(payment))))
+}
+
+/// `POST /api/v1/payments/:id/complete`
+#[utoipa::path(
+    post,
+    path = "/api/v1/payments/{id}/complete",
+    tag = "payments",
+    params(("id" = String, Path, description = "Payment ID (UUID)")),
+    responses(
+        (status = 200, description = "Payment marked as completed", body = PaymentResponse),
+        (status = 404, description = "Payment not found", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn complete_payment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<PaymentId>,
+) -> Result<Json<PaymentResponse>, HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let payment = commerce.payments().mark_completed(id)?;
+    Ok(Json(PaymentResponse::from(payment)))
+}
+
+/// `POST /api/v1/payments/:id/refund`
+#[utoipa::path(
+    post,
+    path = "/api/v1/payments/{id}/refund",
+    tag = "payments",
+    params(("id" = String, Path, description = "Payment ID (UUID)")),
+    request_body = CreateRefundRequest,
+    responses(
+        (status = 201, description = "Refund created", body = PaymentResponse),
+        (status = 404, description = "Payment not found", body = ErrorBody),
+        (status = 400, description = "Invalid request", body = ErrorBody),
+    )
+)]
+#[tracing::instrument(skip(state, headers, req))]
+pub(crate) async fn create_refund(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<PaymentId>,
+    Json(req): Json<CreateRefundRequest>,
+) -> Result<(StatusCode, Json<PaymentResponse>), HttpError> {
+    let tenant_id = tenant_id_from_headers(&headers);
+    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    let input = CreateRefund {
+        payment_id: id,
+        amount: Some(
+            Decimal::try_from(req.amount)
+                .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?,
+        ),
+        reason: req.reason,
+        ..Default::default()
+    };
+    let _refund = commerce.payments().create_refund(input)?;
+    let payment = commerce
+        .payments()
+        .get(id)?
+        .ok_or_else(|| HttpError::NotFound(format!("Payment {id} not found")))?;
+    Ok((StatusCode::CREATED, Json(PaymentResponse::from(payment))))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::Request;
     use rust_decimal_macros::dec;
     use stateset_embedded::Commerce;
     use tower::ServiceExt;
