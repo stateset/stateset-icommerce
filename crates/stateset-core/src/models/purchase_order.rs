@@ -53,7 +53,7 @@ impl std::str::FromStr for PurchaseOrderStatus {
             "completed" => Ok(Self::Completed),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
             "on_hold" => Ok(Self::OnHold),
-            _ => Err(format!("Unknown purchase order status: {}", s)),
+            _ => Err(format!("Unknown purchase order status: {s}")),
         }
     }
 }
@@ -476,6 +476,7 @@ pub struct PurchaseOrderFilter {
 }
 
 /// Generate a unique supplier code
+#[must_use] 
 pub fn generate_supplier_code() -> String {
     let now = chrono::Utc::now();
     let short_id = &uuid::Uuid::new_v4().simple().to_string()[..8];
@@ -483,6 +484,7 @@ pub fn generate_supplier_code() -> String {
 }
 
 /// Generate a unique purchase order number
+#[must_use] 
 pub fn generate_po_number() -> String {
     let now = chrono::Utc::now();
     let short_id = &uuid::Uuid::new_v4().to_string()[..8];

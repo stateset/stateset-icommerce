@@ -25,6 +25,7 @@ pub struct SqliteCostAccountingRepository {
 }
 
 impl SqliteCostAccountingRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -371,11 +372,11 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                         updated_at = ?
                      WHERE sku = ?",
                     rusqlite::params![
-                        cost_method.as_ref().map(|m| m.to_string()),
-                        standard_cost.as_ref().map(|c| c.to_string()),
-                        material_cost.as_ref().map(|c| c.to_string()),
-                        labor_cost.as_ref().map(|c| c.to_string()),
-                        overhead_cost.as_ref().map(|c| c.to_string()),
+                        cost_method.as_ref().map(std::string::ToString::to_string),
+                        standard_cost.as_ref().map(std::string::ToString::to_string),
+                        material_cost.as_ref().map(std::string::ToString::to_string),
+                        labor_cost.as_ref().map(std::string::ToString::to_string),
+                        overhead_cost.as_ref().map(std::string::ToString::to_string),
                         currency,
                         now.to_rfc3339(),
                         now.to_rfc3339(),
@@ -431,7 +432,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
         if let Some(ref sku) = filter.sku {
             sql.push_str(" AND sku LIKE ?");
-            params.push(Box::new(format!("%{}%", sku)));
+            params.push(Box::new(format!("%{sku}%")));
         }
         if let Some(ref method) = filter.cost_method {
             sql.push_str(" AND cost_method = ?");
@@ -441,13 +442,13 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         sql.push_str(" ORDER BY sku");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_item_cost(row))
@@ -609,10 +610,10 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         sql.push_str(" ORDER BY layer_date ASC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_cost_layer(row))
@@ -821,10 +822,10 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_cost_transaction(row))
@@ -843,10 +844,10 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let now = Utc::now();
 
         let variance_amount = input.actual_cost - input.standard_cost;
-        let variance_percent = if input.standard_cost != Decimal::ZERO {
-            (variance_amount / input.standard_cost) * Decimal::from(100)
-        } else {
+        let variance_percent = if input.standard_cost == Decimal::ZERO {
             Decimal::ZERO
+        } else {
+            (variance_amount / input.standard_cost) * Decimal::from(100)
         };
         let total_variance = variance_amount * input.quantity;
 
@@ -914,10 +915,10 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         sql.push_str(" ORDER BY variance_date DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_cost_variance(row))
@@ -1018,10 +1019,10 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_cost_adjustment(row))

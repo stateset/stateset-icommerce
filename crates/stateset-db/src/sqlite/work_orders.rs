@@ -25,6 +25,7 @@ pub struct SqliteWorkOrderRepository {
 }
 
 impl SqliteWorkOrderRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -485,8 +486,8 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         let ids = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let limit = filter.limit.unwrap_or(100) as i64;
-            let offset = filter.offset.unwrap_or(0) as i64;
+            let limit = i64::from(filter.limit.unwrap_or(100));
+            let offset = i64::from(filter.offset.unwrap_or(0));
 
             let mut sql = "SELECT id FROM manufacturing_work_orders WHERE 1=1".to_string();
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -532,7 +533,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             let mut stmt =
                 conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))
@@ -908,7 +909,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             params.push(Box::new(Utc::now().to_rfc3339()));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 = conn
             .query_row(&sql, param_refs.as_slice(), |row| row.get(0))
@@ -1167,8 +1168,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         let all_params_refs = params_refs(&all_params);
 
         let sql = format!(
-            "UPDATE manufacturing_work_orders SET status = 'cancelled', updated_at = ? WHERE id IN ({})",
-            placeholders
+            "UPDATE manufacturing_work_orders SET status = 'cancelled', updated_at = ? WHERE id IN ({placeholders})"
         );
         tx.execute(&sql, all_params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -1191,8 +1191,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 "SELECT id, work_order_number, product_id, bom_id, work_center_id, assigned_to,
                         status, priority, quantity_to_build, quantity_completed, scheduled_start,
                         scheduled_end, actual_start, actual_end, notes, created_at, updated_at
-                 FROM manufacturing_work_orders WHERE id IN ({})",
-                placeholders
+                 FROM manufacturing_work_orders WHERE id IN ({placeholders})"
             );
 
             let params = uuid_params(&ids);

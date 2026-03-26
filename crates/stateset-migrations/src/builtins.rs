@@ -83,7 +83,7 @@ pub fn v7_webhook_dead_letters() -> Migration {
 // V1 — Core Tables
 // ---------------------------------------------------------------------------
 
-const V1_UP: &str = r#"
+const V1_UP: &str = r"
 -- ============================================================================
 -- V1: Core Tables
 -- ============================================================================
@@ -534,9 +534,9 @@ CREATE TABLE IF NOT EXISTS invoice_items (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id);
-"#;
+";
 
-const V1_DOWN: &str = r#"
+const V1_DOWN: &str = r"
 DROP TABLE IF EXISTS invoice_items;
 DROP TABLE IF EXISTS invoices;
 DROP TABLE IF EXISTS warranty_claims;
@@ -560,13 +560,13 @@ DROP TABLE IF EXISTS product_variants;
 DROP TABLE IF EXISTS products;
 DROP TABLE IF EXISTS customer_addresses;
 DROP TABLE IF EXISTS customers;
-"#;
+";
 
 // ---------------------------------------------------------------------------
 // V2 — Commerce Extensions
 // ---------------------------------------------------------------------------
 
-const V2_UP: &str = r#"
+const V2_UP: &str = r"
 -- ============================================================================
 -- V2: Commerce Extensions
 -- ============================================================================
@@ -745,9 +745,9 @@ CREATE TABLE IF NOT EXISTS subscription_items (
     line_total TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_subscription_items_subscription ON subscription_items(subscription_id);
-"#;
+";
 
-const V2_DOWN: &str = r#"
+const V2_DOWN: &str = r"
 DROP TABLE IF EXISTS subscription_items;
 DROP TABLE IF EXISTS subscriptions;
 DROP TABLE IF EXISTS subscription_plans;
@@ -756,13 +756,13 @@ DROP TABLE IF EXISTS tax_rules;
 DROP TABLE IF EXISTS exchange_rates;
 DROP TABLE IF EXISTS cart_items;
 DROP TABLE IF EXISTS carts;
-"#;
+";
 
 // ---------------------------------------------------------------------------
 // V3 — A2A Commerce
 // ---------------------------------------------------------------------------
 
-const V3_UP: &str = r#"
+const V3_UP: &str = r"
 -- ============================================================================
 -- V3: A2A Commerce Tables
 -- ============================================================================
@@ -981,9 +981,9 @@ CREATE TABLE IF NOT EXISTS custom_object_records (
     version INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_custom_object_records_type_id ON custom_object_records(type_id);
-"#;
+";
 
-const V3_DOWN: &str = r#"
+const V3_DOWN: &str = r"
 DROP TABLE IF EXISTS custom_object_records;
 DROP TABLE IF EXISTS custom_object_types;
 DROP TABLE IF EXISTS agent_identities;
@@ -993,13 +993,13 @@ DROP TABLE IF EXISTS a2a_purchases;
 DROP TABLE IF EXISTS a2a_quotes;
 DROP TABLE IF EXISTS agent_cards;
 DROP TABLE IF EXISTS x402_payment_intents;
-"#;
+";
 
 // ---------------------------------------------------------------------------
 // V4 — New Entity Tables
 // ---------------------------------------------------------------------------
 
-const V4_UP: &str = r#"
+const V4_UP: &str = r"
 -- ============================================================================
 -- V4: New Entity Tables
 -- ============================================================================
@@ -1257,9 +1257,9 @@ CREATE TABLE IF NOT EXISTS wishlist_items (
 );
 CREATE INDEX IF NOT EXISTS idx_wishlist_items_wishlist ON wishlist_items(wishlist_id);
 CREATE INDEX IF NOT EXISTS idx_wishlist_items_product ON wishlist_items(product_id);
-"#;
+";
 
-const V4_DOWN: &str = r#"
+const V4_DOWN: &str = r"
 DROP TABLE IF EXISTS wishlist_items;
 DROP TABLE IF EXISTS wishlists;
 DROP TABLE IF EXISTS store_credit_transactions;
@@ -1277,13 +1277,13 @@ DROP TABLE IF EXISTS gift_card_transactions;
 DROP TABLE IF EXISTS gift_cards;
 DROP TABLE IF EXISTS fraud_rules;
 DROP TABLE IF EXISTS fraud_assessments;
-"#;
+";
 
 // ---------------------------------------------------------------------------
 // V5 — Composite Indexes
 // ---------------------------------------------------------------------------
 
-const V5_UP: &str = r#"
+const V5_UP: &str = r"
 -- Orders: customer + status filtering, status + date range queries
 CREATE INDEX IF NOT EXISTS idx_orders_customer_status ON orders(customer_id, status);
 CREATE INDEX IF NOT EXISTS idx_orders_status_date ON orders(status, order_date);
@@ -1308,9 +1308,9 @@ CREATE INDEX IF NOT EXISTS idx_invoices_customer_status ON invoices(customer_id,
 
 -- Order items: order + product for join queries
 CREATE INDEX IF NOT EXISTS idx_order_items_order_product ON order_items(order_id, product_id);
-"#;
+";
 
-const V5_DOWN: &str = r#"
+const V5_DOWN: &str = r"
 DROP INDEX IF EXISTS idx_order_items_order_product;
 DROP INDEX IF EXISTS idx_invoices_customer_status;
 DROP INDEX IF EXISTS idx_inventory_reservations_item_status;
@@ -1322,13 +1322,13 @@ DROP INDEX IF EXISTS idx_payments_order_status;
 DROP INDEX IF EXISTS idx_orders_customer_date;
 DROP INDEX IF EXISTS idx_orders_status_date;
 DROP INDEX IF EXISTS idx_orders_customer_status;
-"#;
+";
 
 // ---------------------------------------------------------------------------
 // V6 — Production Hardening
 // ---------------------------------------------------------------------------
 
-const V6_UP: &str = r#"
+const V6_UP: &str = r"
 -- Prevent duplicate order items on checkout retry (idempotency)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_order_items_order_sku
     ON order_items(order_id, sku);
@@ -1342,19 +1342,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_reservations_ref
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_cart_id
     ON orders(cart_id)
     WHERE cart_id IS NOT NULL;
-"#;
+";
 
-const V6_DOWN: &str = r#"
+const V6_DOWN: &str = r"
 DROP INDEX IF EXISTS idx_orders_cart_id;
 DROP INDEX IF EXISTS idx_inventory_reservations_ref;
 DROP INDEX IF EXISTS idx_order_items_order_sku;
-"#;
+";
 
 // ---------------------------------------------------------------------------
 // V7 — Webhook Dead Letter Queue
 // ---------------------------------------------------------------------------
 
-const V7_UP: &str = r#"
+const V7_UP: &str = r"
 CREATE TABLE IF NOT EXISTS webhook_dead_letters (
     id TEXT PRIMARY KEY,
     webhook_id TEXT NOT NULL,
@@ -1373,11 +1373,11 @@ CREATE TABLE IF NOT EXISTS webhook_dead_letters (
 CREATE INDEX IF NOT EXISTS idx_webhook_dead_letters_status ON webhook_dead_letters(status);
 CREATE INDEX IF NOT EXISTS idx_webhook_dead_letters_webhook ON webhook_dead_letters(webhook_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_dead_letters_created ON webhook_dead_letters(created_at);
-"#;
+";
 
-const V7_DOWN: &str = r#"
+const V7_DOWN: &str = r"
 DROP TABLE IF EXISTS webhook_dead_letters;
-"#;
+";
 
 #[cfg(test)]
 mod tests {

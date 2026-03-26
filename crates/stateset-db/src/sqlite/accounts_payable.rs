@@ -27,6 +27,7 @@ pub struct SqliteAccountsPayableRepository {
 }
 
 impl SqliteAccountsPayableRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -395,12 +396,12 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         sql.push_str(" ORDER BY due_date");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
         let mut bills = Vec::new();
@@ -486,7 +487,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
             let amount = item.quantity * item.unit_price;
             let tax_amount =
-                item.tax_rate.map(|r| amount * r / Decimal::from(100)).unwrap_or(Decimal::ZERO);
+                item.tax_rate.map_or(Decimal::ZERO, |r| amount * r / Decimal::from(100));
 
             conn.execute(
                 "INSERT INTO ap_bill_items (id, bill_id, line_number, description, account_code, quantity, unit_price, amount, tax_rate, tax_amount, po_line_id, created_at)
@@ -553,7 +554,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -631,8 +632,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
             let bill_status: BillStatus = status.parse().map_err(|e| {
                 CommerceError::DatabaseError(format!(
-                    "Invalid bill status '{}' while creating payment: {}",
-                    status, e
+                    "Invalid bill status '{status}' while creating payment: {e}"
                 ))
             })?;
             if !matches!(
@@ -763,12 +763,12 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         sql.push_str(" ORDER BY payment_date DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
         let mut payments = Vec::new();

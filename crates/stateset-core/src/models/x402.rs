@@ -105,6 +105,7 @@ pub enum X402Network {
 
 impl X402Network {
     /// Get the chain ID for this network
+    #[must_use] 
     pub const fn chain_id(&self) -> u64 {
         match self {
             Self::SetChain => 84532001,        // Set Chain mainnet
@@ -121,6 +122,7 @@ impl X402Network {
     }
 
     /// Check if this is a testnet
+    #[must_use] 
     pub const fn is_testnet(&self) -> bool {
         matches!(
             self,
@@ -162,6 +164,7 @@ pub enum X402Asset {
 
 impl X402Asset {
     /// Get the number of decimals for this asset
+    #[must_use] 
     pub const fn decimals(&self) -> u8 {
         match self {
             Self::Usdc | Self::Usdt | Self::SsUsd | Self::WssUsd => 6,
@@ -170,6 +173,7 @@ impl X402Asset {
     }
 
     /// Get the token contract address for a given network
+    #[must_use] 
     pub const fn contract_address(&self, network: X402Network) -> Option<&'static str> {
         match (self, network) {
             // Set Chain addresses
@@ -242,7 +246,7 @@ impl std::str::FromStr for X402IntentStatus {
             "expired" => Ok(Self::Expired),
             "failed" => Ok(Self::Failed),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown x402 intent status: {}", s)),
+            _ => Err(format!("Unknown x402 intent status: {s}")),
         }
     }
 }
@@ -414,7 +418,7 @@ impl X402PaymentIntent {
 
         // Calculate decimal amount
         let decimals = asset.decimals();
-        let divisor = 10u64.pow(decimals as u32);
+        let divisor = 10u64.pow(u32::from(decimals));
         let amount_decimal = Decimal::from(amount) / Decimal::from(divisor);
 
         Self {
@@ -459,12 +463,14 @@ impl X402PaymentIntent {
     }
 
     /// Set the validity window in seconds
+    #[must_use] 
     pub fn with_validity(mut self, seconds: u64) -> Self {
         self.valid_until = self.created_at_unix + seconds.min(X402_MAX_VALIDITY_SECONDS);
         self
     }
 
     /// Set the nonce for replay protection
+    #[must_use] 
     pub const fn with_nonce(mut self, nonce: u64) -> Self {
         self.nonce = nonce;
         self
@@ -484,6 +490,7 @@ impl X402PaymentIntent {
     }
 
     /// Set the associated order ID
+    #[must_use] 
     pub const fn with_order(mut self, order_id: Uuid) -> Self {
         self.order_id = Some(order_id);
         self
@@ -496,12 +503,14 @@ impl X402PaymentIntent {
     }
 
     /// Check if the intent has expired
+    #[must_use] 
     pub fn is_expired(&self) -> bool {
         let now = Utc::now().timestamp() as u64;
         now > self.valid_until
     }
 
     /// Check if the intent is signed
+    #[must_use] 
     pub fn is_signed(&self) -> bool {
         matches!(
             (
@@ -515,6 +524,7 @@ impl X402PaymentIntent {
     }
 
     /// Check if the intent is settled
+    #[must_use] 
     pub fn is_settled(&self) -> bool {
         self.status == X402IntentStatus::Settled && self.tx_hash.is_some()
     }
@@ -544,6 +554,7 @@ impl X402PaymentIntent {
     }
 
     /// Compute sequencer-compatible signing hash (`X402_PAYMENT_V1`)
+    #[must_use] 
     pub fn sequencer_signing_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
 
@@ -685,9 +696,9 @@ impl X402PaymentRequired {
         resource_method: impl Into<String>,
     ) -> Self {
         let decimals = asset.decimals();
-        let divisor = 10u64.pow(decimals as u32);
+        let divisor = 10u64.pow(u32::from(decimals));
         let decimal_amount = Decimal::from(amount) / Decimal::from(divisor);
-        let amount_display = format!("{:.6} {}", decimal_amount, asset);
+        let amount_display = format!("{decimal_amount:.6} {asset}");
 
         Self {
             version: X402_VERSION.to_string(),
@@ -708,6 +719,7 @@ impl X402PaymentRequired {
     }
 
     /// Set accepted networks
+    #[must_use] 
     pub fn with_networks(mut self, networks: Vec<X402Network>) -> Self {
         self.networks = networks;
         self
@@ -735,9 +747,9 @@ impl X402PaymentRequired {
     /// Decode from HTTP header value
     pub fn from_header_value(value: &str) -> Result<Self, String> {
         use base64::{Engine, engine::general_purpose::STANDARD};
-        let bytes = STANDARD.decode(value).map_err(|e| format!("Invalid base64: {}", e))?;
-        let json = String::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8: {}", e))?;
-        serde_json::from_str(&json).map_err(|e| format!("Invalid JSON: {}", e))
+        let bytes = STANDARD.decode(value).map_err(|e| format!("Invalid base64: {e}"))?;
+        let json = String::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8: {e}"))?;
+        serde_json::from_str(&json).map_err(|e| format!("Invalid JSON: {e}"))
     }
 }
 
@@ -802,6 +814,7 @@ pub struct X402PaymentReceipt {
 
 impl X402PaymentReceipt {
     /// Verify the inclusion proof against the merkle root
+    #[must_use] 
     pub fn verify_inclusion(&self) -> bool {
         if self.merkle_root.is_empty() {
             return false;
@@ -970,6 +983,7 @@ pub struct X402PaymentBatch {
 
 impl X402PaymentBatch {
     /// Create a new empty batch
+    #[must_use] 
     pub fn new(network: X402Network) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -1074,18 +1088,20 @@ pub struct X402PaymentIntentFilter {
 // =============================================================================
 
 /// Generate a unique x402 intent ID
+#[must_use] 
 pub fn generate_x402_intent_id() -> Uuid {
     Uuid::new_v4()
 }
 
 /// Calculate amount in smallest unit from decimal
+#[must_use] 
 pub fn to_smallest_unit(amount: Decimal, asset: X402Asset) -> u64 {
     if amount <= Decimal::ZERO {
         return 0;
     }
 
     let decimals = asset.decimals();
-    let multiplier = Decimal::from(10u64.pow(decimals as u32));
+    let multiplier = Decimal::from(10u64.pow(u32::from(decimals)));
     let scaled = amount * multiplier;
     if scaled.fract() != Decimal::ZERO {
         // Prevent positive sub-unit values from silently turning into zero.
@@ -1095,9 +1111,10 @@ pub fn to_smallest_unit(amount: Decimal, asset: X402Asset) -> u64 {
 }
 
 /// Calculate decimal amount from smallest unit
+#[must_use] 
 pub fn from_smallest_unit(amount: u64, asset: X402Asset) -> Decimal {
     let decimals = asset.decimals();
-    let divisor = Decimal::from(10u64.pow(decimals as u32));
+    let divisor = Decimal::from(10u64.pow(u32::from(decimals)));
     Decimal::from(amount) / divisor
 }
 

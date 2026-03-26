@@ -166,16 +166,19 @@ pub struct StoreCreditFilter {
 
 impl StoreCredit {
     /// Whether this credit is currently usable
+    #[must_use] 
     pub fn is_active(&self) -> bool {
         self.status == StoreCreditStatus::Active && self.current_balance > Decimal::ZERO
     }
 
     /// Whether this credit has expired
+    #[must_use] 
     pub fn is_expired(&self) -> bool {
-        self.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false)
+        self.expires_at.is_some_and(|exp| exp < Utc::now())
     }
 
     /// Whether the given amount can be applied from this credit
+    #[must_use] 
     pub fn can_apply(&self, amount: Decimal) -> bool {
         self.is_active()
             && !self.is_expired()

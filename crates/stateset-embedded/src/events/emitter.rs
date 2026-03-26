@@ -36,16 +36,19 @@ impl EventEmitter {
     }
 
     /// Get the number of active subscribers
+    #[must_use] 
     pub fn subscriber_count(&self) -> usize {
         self.bus.receiver_count()
     }
 
     /// Get total events published through this emitter's bus
+    #[must_use] 
     pub fn total_events(&self) -> u64 {
         self.bus.events_published()
     }
 
     /// Get total publish failures on this emitter's bus.
+    #[must_use] 
     pub fn total_publish_failures(&self) -> u64 {
         self.bus.events_publish_failures()
     }

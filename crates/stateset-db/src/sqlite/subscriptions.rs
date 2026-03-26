@@ -29,6 +29,7 @@ pub struct SqliteSubscriptionRepository {
 impl SqliteSubscriptionRepository {
     const MAX_SUBSCRIPTION_NUMBER_RETRIES: usize = 8;
 
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -37,10 +38,9 @@ impl SqliteSubscriptionRepository {
         match err {
             rusqlite::Error::SqliteFailure(_, message) => message
                 .as_deref()
-                .map(|msg| {
+                .is_some_and(|msg| {
                     msg.contains("UNIQUE constraint failed: subscriptions.subscription_number")
-                })
-                .unwrap_or(false),
+                }),
             _ => err
                 .to_string()
                 .contains("UNIQUE constraint failed: subscriptions.subscription_number"),
@@ -60,7 +60,7 @@ impl SqliteSubscriptionRepository {
         // Insert plan - connection is scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             conn.execute(
@@ -91,7 +91,7 @@ impl SqliteSubscriptionRepository {
                     input.setup_fee.map(|d| d.to_string()),
                     input.currency.unwrap_or_default(),
                     input.trial_days.unwrap_or(0),
-                    input.trial_requires_payment_method.unwrap_or(true) as i32,
+                    i32::from(input.trial_requires_payment_method.unwrap_or(true)),
                     input.min_cycles,
                     input.max_cycles,
                     input.discount_percent.map(|d| d.to_string()),
@@ -102,7 +102,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}"))
             })?;
         } // Connection is dropped here
 
@@ -122,7 +122,7 @@ impl SqliteSubscriptionRepository {
         // Get plan - connection scoped to this block
         let plan = {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let mut stmt = conn
@@ -146,7 +146,7 @@ impl SqliteSubscriptionRepository {
         // Get plan - connection scoped to this block
         let plan = {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let mut stmt = conn
@@ -170,7 +170,7 @@ impl SqliteSubscriptionRepository {
         // Query plans - connection scoped to this block
         let mut plans: Vec<SubscriptionPlan> = {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let mut sql = "SELECT * FROM subscription_plans WHERE 1=1".to_string();
@@ -183,12 +183,12 @@ impl SqliteSubscriptionRepository {
 
             if let Some(interval) = &filter.billing_interval {
                 sql.push_str(" AND billing_interval = ?");
-                params.push(Box::new(format!("{}", interval)));
+                params.push(Box::new(format!("{interval}")));
             }
 
             if let Some(search) = &filter.search {
                 sql.push_str(" AND (name LIKE ? OR code LIKE ? OR description LIKE ?)");
-                let pattern = format!("%{}%", search);
+                let pattern = format!("%{search}%");
                 params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern));
@@ -197,17 +197,17 @@ impl SqliteSubscriptionRepository {
             sql.push_str(" ORDER BY created_at DESC");
 
             if let Some(limit) = filter.limit {
-                sql.push_str(&format!(" LIMIT {}", limit));
+                sql.push_str(&format!(" LIMIT {limit}"));
             }
             if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {}", offset));
+                sql.push_str(&format!(" OFFSET {offset}"));
             }
 
             let mut stmt = conn
                 .prepare(&sql)
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| self.row_to_plan(row))
@@ -234,7 +234,7 @@ impl SqliteSubscriptionRepository {
         // Update plan - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
@@ -262,7 +262,7 @@ impl SqliteSubscriptionRepository {
                     input.price.map(|d| d.to_string()),
                     input.setup_fee.map(|d| d.to_string()),
                     input.trial_days,
-                    input.trial_requires_payment_method.map(|b| b as i32),
+                    input.trial_requires_payment_method.map(i32::from),
                     input.min_cycles,
                     input.max_cycles,
                     input.discount_percent.map(|d| d.to_string()),
@@ -273,7 +273,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         } // Connection dropped here
 
@@ -300,7 +300,7 @@ impl SqliteSubscriptionRepository {
         input: CreateSubscriptionPlanItem,
     ) -> Result<SubscriptionPlanItem> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let id = Uuid::new_v4();
@@ -318,10 +318,10 @@ impl SqliteSubscriptionRepository {
                 input.quantity,
                 input.min_quantity,
                 input.max_quantity,
-                input.is_required.unwrap_or(true) as i32,
+                i32::from(input.is_required.unwrap_or(true)),
                 input.unit_price.map(|d| d.to_string()),
             ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
 
         Ok(SubscriptionPlanItem {
             id,
@@ -340,7 +340,7 @@ impl SqliteSubscriptionRepository {
 
     fn get_plan_items(&self, plan_id: Uuid) -> Result<Vec<SubscriptionPlanItem>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut stmt = conn.prepare(
@@ -402,14 +402,14 @@ impl SqliteSubscriptionRepository {
 
         // Calculate period end and trial
         let interval_days = if plan.billing_interval == BillingInterval::Custom {
-            plan.custom_interval_days.unwrap_or(30) as i64
+            i64::from(plan.custom_interval_days.unwrap_or(30))
         } else {
             plan.billing_interval.days()
         };
 
         let skip_trial = input.skip_trial.unwrap_or(false);
         let trial_ends_at = if !skip_trial && plan.trial_days > 0 {
-            Some(now + Duration::days(plan.trial_days as i64))
+            Some(now + Duration::days(i64::from(plan.trial_days)))
         } else {
             None
         };
@@ -455,10 +455,10 @@ impl SqliteSubscriptionRepository {
             let subscription_number = generate_subscription_number();
 
             let mut conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
             let tx = conn.transaction().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Transaction error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Transaction error: {e}"))
             })?;
 
             let insert_result = tx.execute(
@@ -494,8 +494,8 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                     current_period_end.to_rfc3339(),
-                    next_billing_date.as_ref().map(|d| d.to_rfc3339()),
-                    trial_ends_at.as_ref().map(|d| d.to_rfc3339()),
+                    next_billing_date.as_ref().map(chrono::DateTime::to_rfc3339),
+                    trial_ends_at.as_ref().map(chrono::DateTime::to_rfc3339),
                     input.shipping_address
                         .as_ref()
                         .map(|a| serde_json::to_string(a).unwrap_or_default()),
@@ -520,8 +520,7 @@ impl SqliteSubscriptionRepository {
                     continue;
                 }
                 return Err(stateset_core::CommerceError::DatabaseError(format!(
-                    "Insert error: {}",
-                    err
+                    "Insert error: {err}"
                 )));
             }
 
@@ -559,7 +558,7 @@ impl SqliteSubscriptionRepository {
             }
 
             tx.commit().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Commit error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Commit error: {e}"))
             })?;
             created_subscription_id = Some(id);
             break;
@@ -590,7 +589,7 @@ impl SqliteSubscriptionRepository {
         // Get subscription - connection scoped to this block
         let subscription = {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let mut stmt = conn
@@ -614,7 +613,7 @@ impl SqliteSubscriptionRepository {
         // Get subscription - connection scoped to this block
         let subscription = {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let mut stmt = conn
@@ -638,7 +637,7 @@ impl SqliteSubscriptionRepository {
         // Query subscriptions - connection scoped to this block
         let mut subscriptions: Vec<Subscription> = {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let mut sql = "SELECT * FROM subscriptions WHERE 1=1".to_string();
@@ -656,7 +655,7 @@ impl SqliteSubscriptionRepository {
 
             if let Some(status) = &filter.status {
                 sql.push_str(" AND status = ?");
-                params.push(Box::new(format!("{}", status)));
+                params.push(Box::new(format!("{status}")));
             }
 
             if let Some(from) = &filter.from_date {
@@ -671,7 +670,7 @@ impl SqliteSubscriptionRepository {
 
             if let Some(search) = &filter.search {
                 sql.push_str(" AND (subscription_number LIKE ? OR plan_name LIKE ?)");
-                let pattern = format!("%{}%", search);
+                let pattern = format!("%{search}%");
                 params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern));
             }
@@ -679,17 +678,17 @@ impl SqliteSubscriptionRepository {
             sql.push_str(" ORDER BY created_at DESC");
 
             if let Some(limit) = filter.limit {
-                sql.push_str(&format!(" LIMIT {}", limit));
+                sql.push_str(&format!(" LIMIT {limit}"));
             }
             if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {}", offset));
+                sql.push_str(&format!(" OFFSET {offset}"));
             }
 
             let mut stmt = conn
                 .prepare(&sql)
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| self.row_to_subscription(row))
@@ -720,7 +719,7 @@ impl SqliteSubscriptionRepository {
         // Update subscription - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
@@ -740,7 +739,7 @@ impl SqliteSubscriptionRepository {
                     updated_at = ?11
                  WHERE id = ?12",
                 rusqlite::params![
-                    input.status.map(|s| format!("{}", s)),
+                    input.status.map(|s| format!("{s}")),
                     input.price.map(|d| d.to_string()),
                     input.payment_method_id,
                     input
@@ -761,7 +760,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         } // Connection dropped here
 
@@ -787,14 +786,14 @@ impl SqliteSubscriptionRepository {
         }
 
         let description = match input.reason.clone() {
-            Some(reason) => format!("Paused: {}", reason),
+            Some(reason) => format!("Paused: {reason}"),
             None => "Paused by customer".to_string(),
         };
 
         // Update subscription - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
@@ -814,7 +813,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         } // Connection dropped here
 
@@ -836,14 +835,14 @@ impl SqliteSubscriptionRepository {
         // Update subscription - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
 
             // Calculate new billing dates
             let interval_days = if sub.billing_interval == BillingInterval::Custom {
-                sub.custom_interval_days.unwrap_or(30) as i64
+                i64::from(sub.custom_interval_days.unwrap_or(30))
             } else {
                 sub.billing_interval.days()
             };
@@ -869,7 +868,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         } // Connection dropped here
 
@@ -898,7 +897,7 @@ impl SqliteSubscriptionRepository {
         // Update subscription - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
@@ -924,7 +923,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         } // Connection dropped here
 
@@ -949,7 +948,7 @@ impl SqliteSubscriptionRepository {
         let reason = input.reason.unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
         let interval_days = if sub.billing_interval == BillingInterval::Custom {
-            sub.custom_interval_days.unwrap_or(30) as i64
+            i64::from(sub.custom_interval_days.unwrap_or(30))
         } else {
             sub.billing_interval.days()
         };
@@ -959,7 +958,7 @@ impl SqliteSubscriptionRepository {
 
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
@@ -978,7 +977,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         } // Connection dropped here
 
@@ -1017,7 +1016,7 @@ impl SqliteSubscriptionRepository {
                 unit_price.to_string(),
                 line_total.to_string(),
             ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
 
         Ok(SubscriptionItem {
             id,
@@ -1037,7 +1036,7 @@ impl SqliteSubscriptionRepository {
         subscription_id: SubscriptionId,
     ) -> Result<Vec<SubscriptionItem>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut stmt = conn.prepare(
@@ -1106,7 +1105,7 @@ impl SqliteSubscriptionRepository {
         // Insert billing cycle - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
@@ -1138,7 +1137,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}"))
             })?;
         } // Connection dropped here
 
@@ -1151,7 +1150,7 @@ impl SqliteSubscriptionRepository {
 
     pub fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut stmt = conn
@@ -1165,7 +1164,7 @@ impl SqliteSubscriptionRepository {
 
     pub fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut sql = "SELECT * FROM billing_cycles WHERE 1=1".to_string();
@@ -1184,17 +1183,17 @@ impl SqliteSubscriptionRepository {
         sql.push_str(" ORDER BY cycle_number DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_billing_cycle(row))
@@ -1214,7 +1213,7 @@ impl SqliteSubscriptionRepository {
         // Update billing cycle - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
@@ -1244,7 +1243,7 @@ impl SqliteSubscriptionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         } // Connection dropped here
 
@@ -1264,7 +1263,7 @@ impl SqliteSubscriptionRepository {
         triggered_by: Option<&str>,
     ) -> Result<SubscriptionEvent> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         self.record_event_with_conn(
@@ -1301,7 +1300,7 @@ impl SqliteSubscriptionRepository {
                 triggered_by,
                 now.to_rfc3339(),
             ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
 
         Ok(SubscriptionEvent {
             id,
@@ -1320,14 +1319,14 @@ impl SqliteSubscriptionRepository {
         limit: Option<u32>,
     ) -> Result<Vec<SubscriptionEvent>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut sql = "SELECT id, subscription_id, event_type, description, data, triggered_by, created_at
                        FROM subscription_events WHERE subscription_id = ?1 ORDER BY created_at DESC".to_string();
 
         if let Some(l) = limit {
-            sql.push_str(&format!(" LIMIT {}", l));
+            sql.push_str(&format!(" LIMIT {l}"));
         }
 
         let mut stmt = conn

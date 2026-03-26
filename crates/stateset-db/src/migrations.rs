@@ -97,7 +97,7 @@ fn ensure_migration_checksum_column(conn: &Connection) -> Result<(), MigrationEr
 
 fn compute_migration_checksum(sql: &str) -> String {
     let digest = Sha256::digest(sql.as_bytes());
-    digest.iter().map(|b| format!("{:02x}", b)).collect()
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Get list of migrations in order

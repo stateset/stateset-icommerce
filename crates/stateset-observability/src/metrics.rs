@@ -394,7 +394,7 @@ impl Metrics {
         value.is_finite()
     }
 
-    /// Lock-free f64 addition using CAS loop on AtomicU64 bit representation.
+    /// Lock-free f64 addition using CAS loop on `AtomicU64` bit representation.
     fn atomic_f64_add(target: &AtomicU64, value: f64) {
         let mut current = target.load(Ordering::Relaxed);
         loop {
@@ -413,6 +413,7 @@ impl Metrics {
     }
 
     /// Whether this metrics instance currently records values.
+    #[must_use] 
     pub fn is_enabled(&self) -> bool {
         self.inner.enabled.load(Ordering::Relaxed)
     }
@@ -423,6 +424,7 @@ impl Metrics {
     }
 
     /// Return a point-in-time snapshot of current metrics values.
+    #[must_use] 
     pub fn snapshot(&self) -> MetricsSnapshot {
         let totals = match self.inner.totals.lock() {
             Ok(guard) => guard,
@@ -663,6 +665,7 @@ impl Metrics {
 }
 
 /// Initialize metrics and return a handle.
+#[must_use] 
 pub fn init_metrics(config: MetricsConfig) -> Metrics {
     Metrics {
         inner: Arc::new(MetricsInner {

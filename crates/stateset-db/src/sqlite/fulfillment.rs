@@ -26,6 +26,7 @@ pub struct SqliteFulfillmentRepository {
 }
 
 impl SqliteFulfillmentRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -324,12 +325,12 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         sql.push_str(" ORDER BY priority DESC, created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
         let mut waves = Vec::new();
@@ -410,7 +411,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -499,12 +500,12 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         sql.push_str(" ORDER BY priority DESC, pick_sequence");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
         let mut picks = Vec::new();
@@ -636,7 +637,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -700,12 +701,12 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         sql.push_str(" ORDER BY created_at");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
         let mut packs = Vec::new();
@@ -898,7 +899,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -965,12 +966,12 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         sql.push_str(" ORDER BY created_at");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
         let mut ships = Vec::new();
@@ -1053,7 +1054,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)

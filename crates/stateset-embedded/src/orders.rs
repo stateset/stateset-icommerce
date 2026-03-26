@@ -165,7 +165,7 @@ impl Orders {
         if status == OrderStatus::Shipped {
             if let Some(order) = self.get(id)? {
                 if order.tracking_number.is_none() {
-                    tracking_number = Some(format!("AUTO-{}", id));
+                    tracking_number = Some(format!("AUTO-{id}"));
                 }
             }
         }
@@ -256,7 +256,7 @@ impl Orders {
             id,
             UpdateOrder {
                 status: Some(OrderStatus::Shipped),
-                tracking_number: tracking_number.map(|s| s.to_string()),
+                tracking_number: tracking_number.map(std::string::ToString::to_string),
                 ..Default::default()
             },
         )

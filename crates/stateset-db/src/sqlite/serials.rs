@@ -27,6 +27,7 @@ pub struct SqliteSerialRepository {
 }
 
 impl SqliteSerialRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -228,11 +229,11 @@ impl SqliteSerialRepository {
     }
 
     fn generate_serial(&self, prefix: Option<&str>) -> String {
-        let unique_part = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+        let unique_part = Uuid::new_v4().to_string().replace('-', "").to_uppercase();
         let short = &unique_part[..12];
         match prefix {
-            Some(p) => format!("{}-{}", p, short),
-            None => format!("SN-{}", short),
+            Some(p) => format!("{p}-{short}"),
+            None => format!("SN-{short}"),
         }
     }
 }
@@ -422,7 +423,7 @@ impl SerialRepository for SqliteSerialRepository {
 
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))
+            conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)))
                 .map_err(map_db_error)?;
         }
 
@@ -441,7 +442,7 @@ impl SerialRepository for SqliteSerialRepository {
         }
         if let Some(prefix) = &filter.serial_prefix {
             conditions.push("serial LIKE ?".to_string());
-            params.push(Box::new(format!("{}%", prefix)));
+            params.push(Box::new(format!("{prefix}%")));
         }
         if let Some(sku) = &filter.sku {
             conditions.push("sku = ?".to_string());
@@ -453,7 +454,7 @@ impl SerialRepository for SqliteSerialRepository {
         }
         if let Some(statuses) = &filter.statuses {
             let placeholders = build_in_clause(statuses.len());
-            conditions.push(format!("status IN ({})", placeholders));
+            conditions.push(format!("status IN ({placeholders})"));
             for s in statuses {
                 params.push(Box::new(s.to_string()));
             }
@@ -516,17 +517,16 @@ impl SerialRepository for SqliteSerialRepository {
         let offset = filter.offset.unwrap_or(0);
 
         let sql = format!(
-            "SELECT * FROM serial_numbers {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            where_clause
+            "SELECT * FROM serial_numbers {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?"
         );
 
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)),
                 Self::map_serial_row,
             )
             .map_err(map_db_error)?;
@@ -1330,13 +1330,13 @@ impl SerialRepository for SqliteSerialRepository {
             conditions.join(" AND ")
         );
 
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)),
                 Self::map_history_row,
             )
             .map_err(map_db_error)?;
@@ -1486,10 +1486,10 @@ impl SerialRepository for SqliteSerialRepository {
             format!("WHERE {}", conditions.join(" AND "))
         };
 
-        let sql = format!("SELECT COUNT(*) FROM serial_numbers {}", where_clause);
+        let sql = format!("SELECT COUNT(*) FROM serial_numbers {where_clause}");
 
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |row| {
+            .query_row(&sql, rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)), |row| {
                 row.get(0)
             })
             .map_err(map_db_error)?;
@@ -1523,7 +1523,7 @@ impl SerialRepository for SqliteSerialRepository {
         let params = uuid_params(&ids);
         let params_ref = params_refs(&params);
 
-        let sql = format!("SELECT * FROM serial_numbers WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM serial_numbers WHERE id IN ({placeholders})");
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
@@ -1551,7 +1551,7 @@ impl SerialRepository for SqliteSerialRepository {
         let params = string_params(&serials);
         let params_ref = params_refs(&params);
 
-        let sql = format!("SELECT * FROM serial_numbers WHERE serial IN ({})", placeholders);
+        let sql = format!("SELECT * FROM serial_numbers WHERE serial IN ({placeholders})");
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt

@@ -24,6 +24,7 @@ pub struct SqliteQualityRepository {
 }
 
 impl SqliteQualityRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -432,7 +433,7 @@ impl QualityRepository for SqliteQualityRepository {
 
         let sql = format!("UPDATE inspections SET {} WHERE id = ?", updates.join(", "));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         self.get_inspection(id)?.ok_or(CommerceError::NotFound)
@@ -473,10 +474,10 @@ impl QualityRepository for SqliteQualityRepository {
             conditions.join(" AND ")
         );
 
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let inspections = stmt
@@ -604,7 +605,7 @@ impl QualityRepository for SqliteQualityRepository {
 
         let sql = format!("SELECT COUNT(*) FROM inspections WHERE {}", conditions.join(" AND "));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         conn.query_row(&sql, params_refs.as_slice(), |row| row.get::<_, i64>(0))
             .map(|c| c as u64)
@@ -739,7 +740,7 @@ impl QualityRepository for SqliteQualityRepository {
 
         let sql = format!("UPDATE non_conformances SET {} WHERE id = ?", updates.join(", "));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         self.get_ncr(id)?.ok_or(CommerceError::NotFound)
@@ -784,10 +785,10 @@ impl QualityRepository for SqliteQualityRepository {
             conditions.join(" AND ")
         );
 
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let ncrs = stmt
@@ -848,7 +849,7 @@ impl QualityRepository for SqliteQualityRepository {
         let sql =
             format!("SELECT COUNT(*) FROM non_conformances WHERE {}", conditions.join(" AND "));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         conn.query_row(&sql, params_refs.as_slice(), |row| row.get::<_, i64>(0))
             .map(|c| c as u64)
@@ -952,10 +953,10 @@ impl QualityRepository for SqliteQualityRepository {
             conditions.join(" AND ")
         );
 
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let holds = stmt
@@ -1070,7 +1071,7 @@ impl QualityRepository for SqliteQualityRepository {
             ("SELECT * FROM defect_codes WHERE is_active = 1 ORDER BY code".to_string(), vec![])
         };
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let codes = stmt

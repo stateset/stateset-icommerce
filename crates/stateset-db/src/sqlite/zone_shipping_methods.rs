@@ -15,6 +15,7 @@ pub struct SqliteZoneShippingMethodRepository {
 }
 
 impl SqliteZoneShippingMethodRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }

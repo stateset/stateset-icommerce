@@ -27,6 +27,7 @@ pub struct SqliteOrderRepository {
 }
 
 impl SqliteOrderRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -668,8 +669,7 @@ impl OrderRepository for SqliteOrderRepository {
             .map(|a| {
                 serde_json::to_string(a).map_err(|e| {
                     CommerceError::DatabaseError(format!(
-                        "Failed to serialize order.shipping_address: {}",
-                        e
+                        "Failed to serialize order.shipping_address: {e}"
                     ))
                 })
             })
@@ -680,8 +680,7 @@ impl OrderRepository for SqliteOrderRepository {
             .map(|a| {
                 serde_json::to_string(a).map_err(|e| {
                     CommerceError::DatabaseError(format!(
-                        "Failed to serialize order.billing_address: {}",
-                        e
+                        "Failed to serialize order.billing_address: {e}"
                     ))
                 })
             })
@@ -859,7 +858,7 @@ impl OrderRepository for SqliteOrderRepository {
                 format!("UPDATE orders SET {} WHERE id = ? AND version = ?", updates.join(", "));
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(|p| p.as_ref()).collect();
+                params.iter().map(std::convert::AsRef::as_ref).collect();
             let rows_affected = tx.execute(&sql, params_refs.as_slice())?;
             if rows_affected == 0 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -954,15 +953,15 @@ impl OrderRepository for SqliteOrderRepository {
         sql.push_str(" ORDER BY order_date DESC, id DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if filter.after_cursor.is_none() {
             if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {}", offset));
+                sql.push_str(&format!(" OFFSET {offset}"));
             }
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let orders = stmt
@@ -1089,7 +1088,7 @@ impl OrderRepository for SqliteOrderRepository {
             params.push(Box::new(to.to_rfc3339()));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
@@ -1170,8 +1169,7 @@ impl OrderRepository for SqliteOrderRepository {
                 .map(|a| {
                     serde_json::to_string(a).map_err(|e| {
                         CommerceError::DatabaseError(format!(
-                            "Failed to serialize order.shipping_address: {}",
-                            e
+                            "Failed to serialize order.shipping_address: {e}"
                         ))
                     })
                 })
@@ -1182,8 +1180,7 @@ impl OrderRepository for SqliteOrderRepository {
                 .map(|a| {
                     serde_json::to_string(a).map_err(|e| {
                         CommerceError::DatabaseError(format!(
-                            "Failed to serialize order.billing_address: {}",
-                            e
+                            "Failed to serialize order.billing_address: {e}"
                         ))
                     })
                 })
@@ -1393,8 +1390,7 @@ impl OrderRepository for SqliteOrderRepository {
                 update_parts.push("shipping_address = ?");
                 let address_json = serde_json::to_string(addr).map_err(|e| {
                     CommerceError::DatabaseError(format!(
-                        "Failed to serialize order.shipping_address: {}",
-                        e
+                        "Failed to serialize order.shipping_address: {e}"
                     ))
                 })?;
                 params.push(Box::new(address_json));
@@ -1404,8 +1400,7 @@ impl OrderRepository for SqliteOrderRepository {
                 update_parts.push("billing_address = ?");
                 let address_json = serde_json::to_string(addr).map_err(|e| {
                     CommerceError::DatabaseError(format!(
-                        "Failed to serialize order.billing_address: {}",
-                        e
+                        "Failed to serialize order.billing_address: {e}"
                     ))
                 })?;
                 params.push(Box::new(address_json));
@@ -1421,7 +1416,7 @@ impl OrderRepository for SqliteOrderRepository {
             );
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(|p| p.as_ref()).collect();
+                params.iter().map(std::convert::AsRef::as_ref).collect();
             let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
             if rows_affected == 0 {
                 return Err(CommerceError::VersionConflict {
@@ -1482,11 +1477,11 @@ impl OrderRepository for SqliteOrderRepository {
         let params_refs = params_refs(&params);
 
         // Delete order items first
-        let sql = format!("DELETE FROM order_items WHERE order_id IN ({})", placeholders);
+        let sql = format!("DELETE FROM order_items WHERE order_id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete orders
-        let sql = format!("DELETE FROM orders WHERE id IN ({})", placeholders);
+        let sql = format!("DELETE FROM orders WHERE id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
@@ -1501,7 +1496,7 @@ impl OrderRepository for SqliteOrderRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM orders WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM orders WHERE id IN ({placeholders})");
 
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let params = uuid_params(&raw_ids);

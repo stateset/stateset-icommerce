@@ -26,6 +26,7 @@ pub struct SqliteCreditRepository {
 }
 
 impl SqliteCreditRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -375,10 +376,10 @@ impl CreditRepository for SqliteCreditRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_credit_account(row))
@@ -471,17 +472,17 @@ impl CreditRepository for SqliteCreditRepository {
             Some(acc) => {
                 let approved = acc.status == CreditAccountStatus::Active
                     && acc.available_credit >= order_amount;
-                let reason = if !approved {
-                    if acc.status != CreditAccountStatus::Active {
-                        Some(format!("Account status: {}", acc.status))
-                    } else {
+                let reason = if approved {
+                    None
+                } else {
+                    if acc.status == CreditAccountStatus::Active {
                         Some(format!(
                             "Insufficient credit: available ${}, required ${}",
                             acc.available_credit, order_amount
                         ))
+                    } else {
+                        Some(format!("Account status: {}", acc.status))
                     }
-                } else {
-                    None
                 };
 
                 Ok(CreditCheckResult {
@@ -684,10 +685,10 @@ impl CreditRepository for SqliteCreditRepository {
         sql.push_str(" ORDER BY placed_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_credit_hold(row))
@@ -804,10 +805,10 @@ impl CreditRepository for SqliteCreditRepository {
         sql.push_str(" ORDER BY submitted_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_credit_application(row))
@@ -952,10 +953,10 @@ impl CreditRepository for SqliteCreditRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_credit_transaction(row))

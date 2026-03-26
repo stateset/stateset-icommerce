@@ -21,6 +21,7 @@ pub struct SqliteAgentIdentityRepository {
 }
 
 impl SqliteAgentIdentityRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -102,7 +103,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
                 input.wallet_proof,
                 input.wallet_proof_chain_id.map(|n| n as i64),
                 input.wallet_proof_deadline.map(|d| d.to_rfc3339()),
-                active as i32,
+                i32::from(active),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
@@ -171,7 +172,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
                 wallet_proof,
                 wallet_proof_chain_id.map(|n| n as i64),
                 wallet_proof_deadline.map(|d| d.to_rfc3339()),
-                active as i32,
+                i32::from(active),
                 Utc::now().to_rfc3339(),
                 agent_registry,
                 agent_id,
@@ -202,7 +203,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
             rusqlite::params![
                 agent_wallet,
                 proof_type.map(|t| t.to_string()),
-                proof.map(|p| p.to_string()),
+                proof.map(std::string::ToString::to_string),
                 proof_chain_id.map(|n| n as i64),
                 proof_deadline.map(|d| d.to_rfc3339()),
                 Utc::now().to_rfc3339(),
@@ -257,7 +258,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         }
         if let Some(active) = filter.active {
             conditions.push("active = ?".to_string());
-            params.push(Box::new(active as i32));
+            params.push(Box::new(i32::from(active)));
         }
 
         let limit = filter.limit.unwrap_or(100).min(1000);
@@ -267,8 +268,8 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
             "SELECT * FROM agent_identities WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             conditions.join(" AND ")
         );
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -310,7 +311,7 @@ impl AgentIdentityRepository for SqliteAgentIdentityRepository {
         }
         if let Some(active) = filter.active {
             conditions.push("active = ?".to_string());
-            params.push(Box::new(active as i32));
+            params.push(Box::new(i32::from(active)));
         }
 
         let sql =

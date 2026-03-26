@@ -210,7 +210,7 @@ impl IpCidr {
                 let mask = if self.prefix_len == 0 {
                     0
                 } else {
-                    u32::MAX << (32 - self.prefix_len as u32)
+                    u32::MAX << (32 - u32::from(self.prefix_len))
                 };
                 (u32::from(network) & mask) == (u32::from(ip) & mask)
             }
@@ -218,7 +218,7 @@ impl IpCidr {
                 let mask = if self.prefix_len == 0 {
                     0
                 } else {
-                    u128::MAX << (128 - self.prefix_len as u32)
+                    u128::MAX << (128 - u32::from(self.prefix_len))
                 };
                 (u128::from(network) & mask) == (u128::from(ip) & mask)
             }
@@ -268,7 +268,7 @@ impl FromStr for IpCidr {
             Self::new(network, prefix_len)
         } else {
             let ip = value.parse::<IpAddr>().map_err(|error| {
-                HttpError::BadRequest(format!("invalid IP address '{}': {error}", value))
+                HttpError::BadRequest(format!("invalid IP address '{value}': {error}"))
             })?;
             let prefix = match ip {
                 IpAddr::V4(_) => 32,
@@ -607,7 +607,7 @@ impl AppState {
     /// Returns the configured tenant DB directory when per-tenant routing is enabled.
     #[must_use]
     pub fn tenant_db_dir(&self) -> Option<&Path> {
-        self.tenant_db_dir.as_deref().map(|path| path.as_path())
+        self.tenant_db_dir.as_deref().map(std::path::PathBuf::as_path)
     }
 
     /// Access the underlying default [`Commerce`] engine.

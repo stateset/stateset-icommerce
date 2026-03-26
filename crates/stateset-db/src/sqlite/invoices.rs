@@ -24,6 +24,7 @@ pub struct SqliteInvoiceRepository {
 }
 
 impl SqliteInvoiceRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -304,7 +305,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let invoice_number = generate_invoice_number();
         let invoice_date = input.invoice_date.unwrap_or(now);
         let due_date = input.due_date.unwrap_or_else(|| {
-            invoice_date + chrono::Duration::days(input.days_until_due.unwrap_or(30) as i64)
+            invoice_date + chrono::Duration::days(i64::from(input.days_until_due.unwrap_or(30)))
         });
 
         tx.execute(
@@ -438,7 +439,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
              tax_rate = ?, shipping_amount = ?, po_number = ?, notes = ?, terms = ?, footer = ?,
              updated_at = ? WHERE id = ?",
             params![
-                input.due_date.map(|d| d.to_rfc3339()).unwrap_or_else(|| invoice.due_date.to_rfc3339()),
+                input.due_date.map_or_else(|| invoice.due_date.to_rfc3339(), |d| d.to_rfc3339()),
                 input.payment_terms.or(invoice.payment_terms),
                 input.billing_name.or(invoice.billing_name),
                 input.billing_email.or(invoice.billing_email),
@@ -492,15 +493,15 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         sql.push_str(" ORDER BY invoice_date DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::row_to_invoice).map_err(map_db_error)?;
 
@@ -777,7 +778,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -815,7 +816,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             let invoice_number = generate_invoice_number();
             let invoice_date = input.invoice_date.unwrap_or(now);
             let due_date = input.due_date.unwrap_or_else(|| {
-                invoice_date + chrono::Duration::days(input.days_until_due.unwrap_or(30) as i64)
+                invoice_date + chrono::Duration::days(i64::from(input.days_until_due.unwrap_or(30)))
             });
 
             tx.execute(
@@ -1022,7 +1023,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                  tax_rate = ?, shipping_amount = ?, po_number = ?, notes = ?, terms = ?, footer = ?,
                  updated_at = ? WHERE id = ?",
                 params![
-                    input.due_date.map(|d| d.to_rfc3339()).unwrap_or_else(|| invoice.due_date.to_rfc3339()),
+                    input.due_date.map_or_else(|| invoice.due_date.to_rfc3339(), |d| d.to_rfc3339()),
                     input.payment_terms.or(invoice.payment_terms.clone()),
                     input.billing_name.or(invoice.billing_name.clone()),
                     input.billing_email.or(invoice.billing_email.clone()),
@@ -1099,7 +1100,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let params_refs = params_refs(&params);
 
         {
-            let sql = format!("SELECT id, status FROM invoices WHERE id IN ({})", placeholders);
+            let sql = format!("SELECT id, status FROM invoices WHERE id IN ({placeholders})");
             let mut stmt = tx.prepare(&sql).map_err(map_db_error)?;
             let rows = stmt
                 .query_map(params_refs.as_slice(), |row| {
@@ -1113,19 +1114,18 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                     != InvoiceStatus::Draft
                 {
                     return Err(CommerceError::ValidationError(format!(
-                        "Can only delete draft invoices. Invoice {} has status {}",
-                        id_str, status
+                        "Can only delete draft invoices. Invoice {id_str} has status {status}"
                     )));
                 }
             }
         }
 
         // Delete invoice items first
-        let sql = format!("DELETE FROM invoice_items WHERE invoice_id IN ({})", placeholders);
+        let sql = format!("DELETE FROM invoice_items WHERE invoice_id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete invoices
-        let sql = format!("DELETE FROM invoices WHERE id IN ({})", placeholders);
+        let sql = format!("DELETE FROM invoices WHERE id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
@@ -1140,7 +1140,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM invoices WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM invoices WHERE id IN ({placeholders})");
 
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let params = uuid_params(&raw_ids);

@@ -22,6 +22,7 @@ pub struct SqlitePaymentRepository {
 }
 
 impl SqlitePaymentRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -376,15 +377,15 @@ impl PaymentRepository for SqlitePaymentRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::row_to_payment).map_err(map_db_error)?;
 
@@ -594,7 +595,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     id.to_string(),
                     input.customer_id.to_string(),
                     input.method_type.to_string(),
-                    input.is_default.unwrap_or(false) as i32,
+                    i32::from(input.is_default.unwrap_or(false)),
                     input.card_brand.map(|b| b.to_string()),
                     input.card_last4,
                     input.card_exp_month,
@@ -681,7 +682,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -884,7 +885,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             match conn.execute("DELETE FROM payments WHERE id = ?", [id.to_string()]) {
                 Ok(rows) if rows > 0 => result.record_success(raw_id),
                 Ok(_) => {
-                    result.record_failure(index, Some(id.to_string()), &CommerceError::NotFound)
+                    result.record_failure(index, Some(id.to_string()), &CommerceError::NotFound);
                 }
                 Err(e) => result.record_failure(index, Some(id.to_string()), &map_db_error(e)),
             }
@@ -908,11 +909,11 @@ impl PaymentRepository for SqlitePaymentRepository {
         let params_refs = params_refs(&params);
 
         // Delete refunds associated with these payments first
-        let sql = format!("DELETE FROM refunds WHERE payment_id IN ({})", placeholders);
+        let sql = format!("DELETE FROM refunds WHERE payment_id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete payments
-        let sql = format!("DELETE FROM payments WHERE id IN ({})", placeholders);
+        let sql = format!("DELETE FROM payments WHERE id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
@@ -928,7 +929,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         let conn = self.conn()?;
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM payments WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM payments WHERE id IN ({placeholders})");
 
         let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);

@@ -41,6 +41,7 @@ impl Wishlists {
     }
 
     /// Whether wishlists are supported by the active backend.
+    #[must_use] 
     pub fn is_supported(&self) -> bool {
         self.db.supports_capability(DatabaseCapability::Wishlists)
     }

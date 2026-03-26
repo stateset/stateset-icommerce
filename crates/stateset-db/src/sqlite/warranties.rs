@@ -21,6 +21,7 @@ pub struct SqliteWarrantyRepository {
 }
 
 impl SqliteWarrantyRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -243,8 +244,7 @@ impl SqliteWarrantyRepository {
             Ok(())
         } else {
             Err(CommerceError::ValidationError(format!(
-                "Invalid claim status transition from {} to {}",
-                current, next
+                "Invalid claim status transition from {current} to {next}"
             )))
         }
     }
@@ -419,7 +419,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let end_date = input.end_date.or_else(|| {
             input
                 .duration_months
-                .map(|months| start_date + chrono::Duration::days(months as i64 * 30))
+                .map(|months| start_date + chrono::Duration::days(i64::from(months) * 30))
         });
 
         {
@@ -552,15 +552,15 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::row_to_warranty).map_err(map_db_error)?;
 
@@ -725,7 +725,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
                     }
                 }
                 resolution = ClaimResolution::Denied;
-                if denial_reason.as_deref().map(|value| value.trim().is_empty()).unwrap_or(true) {
+                if denial_reason.as_deref().is_none_or(|value| value.trim().is_empty()) {
                     return Err(CommerceError::ValidationError(
                         "Denial reason is required".to_string(),
                     ));
@@ -814,15 +814,15 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::row_to_claim).map_err(map_db_error)?;
 
@@ -929,7 +929,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -951,7 +951,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -993,7 +993,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
             let end_date = input.end_date.or_else(|| {
                 input
                     .duration_months
-                    .map(|months| start_date + chrono::Duration::days(months as i64 * 30))
+                    .map(|months| start_date + chrono::Duration::days(i64::from(months) * 30))
             });
 
             tx.execute(
@@ -1170,8 +1170,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
         // Void warranties (set status to voided) rather than hard delete
         let sql = format!(
-            "UPDATE warranties SET status = ?, updated_at = ? WHERE id IN ({})",
-            placeholders
+            "UPDATE warranties SET status = ?, updated_at = ? WHERE id IN ({placeholders})"
         );
 
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1196,7 +1195,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM warranties WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM warranties WHERE id IN ({placeholders})");
 
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let params = uuid_params(&raw_ids);

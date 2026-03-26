@@ -236,7 +236,7 @@ impl CustomObjectType {
         for key in obj.keys() {
             if !self.fields.iter().any(|f| f.key == *key) {
                 return Err(CommerceError::InvalidInput {
-                    field: format!("custom_object.values.{}", key),
+                    field: format!("custom_object.values.{key}"),
                     message: "unknown field".into(),
                 });
             }

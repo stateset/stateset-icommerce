@@ -30,6 +30,7 @@ pub struct SqliteCartRepository {
 }
 
 impl SqliteCartRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -520,7 +521,7 @@ impl CartRepository for SqliteCartRepository {
         }
         if let Some(same) = &input.billing_same_as_shipping {
             updates.push("billing_same_as_shipping = ?");
-            params.push(Box::new(if *same { 1 } else { 0 }));
+            params.push(Box::new(i32::from(*same)));
         }
         if let Some(ft) = &input.fulfillment_type {
             updates.push("fulfillment_type = ?");
@@ -558,7 +559,7 @@ impl CartRepository for SqliteCartRepository {
         params.push(Box::new(id.to_string()));
 
         let sql = format!("UPDATE carts SET {} WHERE id = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         {
             let conn = self.conn()?;
             conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
@@ -606,13 +607,13 @@ impl CartRepository for SqliteCartRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let carts = stmt
@@ -704,7 +705,7 @@ impl CartRepository for SqliteCartRepository {
         params.push(Box::new(item_id.to_string()));
 
         let sql = format!("UPDATE cart_items SET {} WHERE id = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Recalculate item total
@@ -1023,7 +1024,7 @@ impl CartRepository for SqliteCartRepository {
 
         // Calculate amount in smallest unit
         let decimals = x402_payment.asset.decimals();
-        let multiplier = rust_decimal::Decimal::from(10u64.pow(decimals as u32));
+        let multiplier = rust_decimal::Decimal::from(10u64.pow(u32::from(decimals)));
         let amount_scaled = cart.grand_total * multiplier;
         let amount = amount_scaled.to_u64().unwrap_or(0);
         let amount_display = format!("{:.6} {}", cart.grand_total, x402_payment.asset);
@@ -1111,7 +1112,7 @@ impl CartRepository for SqliteCartRepository {
         // Look up the coupon and its promotion
         let promo_repo = SqlitePromotionRepository::new(self.pool.clone());
         let coupon = promo_repo.get_coupon_by_code(coupon_code)?.ok_or_else(|| {
-            CommerceError::ValidationError(format!("Invalid coupon code: {}", coupon_code))
+            CommerceError::ValidationError(format!("Invalid coupon code: {coupon_code}"))
         })?;
 
         let promotion = promo_repo
@@ -1338,7 +1339,7 @@ impl CartRepository for SqliteCartRepository {
             params.push(Box::new(status.to_string()));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
@@ -1534,7 +1535,7 @@ impl CartRepository for SqliteCartRepository {
             }
             if let Some(same) = &input.billing_same_as_shipping {
                 update_parts.push("billing_same_as_shipping = ?");
-                params.push(Box::new(if *same { 1 } else { 0 }));
+                params.push(Box::new(i32::from(*same)));
             }
             if let Some(ft) = &input.fulfillment_type {
                 update_parts.push("fulfillment_type = ?");
@@ -1565,7 +1566,7 @@ impl CartRepository for SqliteCartRepository {
 
             let sql = format!("UPDATE carts SET {} WHERE id = ?", update_parts.join(", "));
             let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(|p| p.as_ref()).collect();
+                params.iter().map(std::convert::AsRef::as_ref).collect();
             let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
             if rows_affected == 0 {
@@ -1620,11 +1621,11 @@ impl CartRepository for SqliteCartRepository {
         let params_refs = params_refs(&params);
 
         // Delete cart items first
-        let sql = format!("DELETE FROM cart_items WHERE cart_id IN ({})", placeholders);
+        let sql = format!("DELETE FROM cart_items WHERE cart_id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete carts
-        let sql = format!("DELETE FROM carts WHERE id IN ({})", placeholders);
+        let sql = format!("DELETE FROM carts WHERE id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
@@ -1640,7 +1641,7 @@ impl CartRepository for SqliteCartRepository {
         let conn = self.conn()?;
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM carts WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM carts WHERE id IN ({placeholders})");
 
         let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);
@@ -1703,7 +1704,7 @@ impl SqliteCartRepository {
                 "0",
                 total.to_string(),
                 item.weight.map(|w| w.to_string()),
-                if requires_shipping { 1 } else { 0 },
+                i32::from(requires_shipping),
                 metadata_json,
                 now.to_rfc3339(),
                 now.to_rfc3339(),

@@ -20,6 +20,7 @@ pub struct SqliteCustomObjectRepository {
 }
 
 impl SqliteCustomObjectRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -137,8 +138,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         let description = input.description.clone().unwrap_or_default();
         let fields_json = serde_json::to_string(&input.fields).map_err(|e| {
             CommerceError::DatabaseError(format!(
-                "Failed to serialize custom_object_type.fields: {}",
-                e
+                "Failed to serialize custom_object_type.fields: {e}"
             ))
         })?;
 
@@ -232,8 +232,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
             }
             serde_json::to_string(&fields).map_err(|e| {
                 CommerceError::DatabaseError(format!(
-                    "Failed to serialize custom_object_type.fields: {}",
-                    e
+                    "Failed to serialize custom_object_type.fields: {e}"
                 ))
             })?
         } else {
@@ -280,21 +279,21 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
 
         if let Some(search) = filter.search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             sql.push_str(" WHERE handle LIKE ? OR display_name LIKE ?");
-            let pat = format!("%{}%", search);
+            let pat = format!("%{search}%");
             params.push(Box::new(pat.clone()));
             params.push(Box::new(pat));
         }
 
         sql.push_str(" ORDER BY handle ASC");
 
-        let limit = filter.limit.unwrap_or(100).min(1000) as i64;
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let limit = i64::from(filter.limit.unwrap_or(100).min(1000));
+        let offset = i64::from(filter.offset.unwrap_or(0));
         sql.push_str(" LIMIT ? OFFSET ?");
         params.push(Box::new(limit));
         params.push(Box::new(offset));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let param_refs = params.iter().map(|p| p.as_ref());
+        let param_refs = params.iter().map(std::convert::AsRef::as_ref);
         let rows = stmt
             .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_type)
             .map_err(map_db_error)?;
@@ -360,7 +359,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let values_json = serde_json::to_string(&input.values).map_err(|e| {
-            CommerceError::DatabaseError(format!("Failed to serialize custom_object.values: {}", e))
+            CommerceError::DatabaseError(format!("Failed to serialize custom_object.values: {e}"))
         })?;
 
         tx.execute(
@@ -509,8 +508,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
                     .map_err(map_db_error)?;
                 if exists > 0 {
                     return Err(CommerceError::Conflict(format!(
-                        "custom_object.handle already exists for type {}: {}",
-                        type_handle, h
+                        "custom_object.handle already exists for type {type_handle}: {h}"
                     )));
                 }
             }
@@ -525,8 +523,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
             ty.validate_values(&values)?;
             serde_json::to_string(&values).map_err(|e| {
                 CommerceError::DatabaseError(format!(
-                    "Failed to serialize custom_object.values: {}",
-                    e
+                    "Failed to serialize custom_object.values: {e}"
                 ))
             })?
         } else {
@@ -605,14 +602,14 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
 
         sql.push_str(" ORDER BY r.created_at DESC");
 
-        let limit = filter.limit.unwrap_or(100).min(1000) as i64;
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let limit = i64::from(filter.limit.unwrap_or(100).min(1000));
+        let offset = i64::from(filter.offset.unwrap_or(0));
         sql.push_str(" LIMIT ? OFFSET ?");
         params.push(Box::new(limit));
         params.push(Box::new(offset));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let param_refs = params.iter().map(|p| p.as_ref());
+        let param_refs = params.iter().map(std::convert::AsRef::as_ref);
         let rows = stmt
             .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_object)
             .map_err(map_db_error)?;

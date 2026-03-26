@@ -14,6 +14,7 @@ pub struct SqliteSearchConfigRepository {
 }
 
 impl SqliteSearchConfigRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }

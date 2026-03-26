@@ -57,7 +57,7 @@ pub fn compute_node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
 /// The result is memoized since it is deterministic and called frequently.
 #[must_use]
 pub fn compute_pad_leaf() -> [u8; 32] {
-    static PAD_LEAF: once_cell::sync::Lazy<[u8; 32]> = once_cell::sync::Lazy::new(|| {
+    static PAD_LEAF: std::sync::LazyLock<[u8; 32]> = std::sync::LazyLock::new(|| {
         let mut hasher = Sha256::new();
         hasher.update(domain::PAD_LEAF);
         hasher.finalize().into()
@@ -137,8 +137,8 @@ pub fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
         next.clear();
         for chunk in current.chunks(2) {
             hasher.update(domain::NODE);
-            hasher.update(&chunk[0]);
-            hasher.update(&chunk[1]);
+            hasher.update(chunk[0]);
+            hasher.update(chunk[1]);
             next.push(hasher.finalize_reset().into());
         }
         std::mem::swap(&mut current, &mut next);

@@ -91,7 +91,7 @@ impl FromStr for BackorderStatus {
             "ready_to_ship" | "readytoship" => Ok(Self::ReadyToShip),
             "fulfilled" => Ok(Self::Fulfilled),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown backorder status: {}", s)),
+            _ => Err(format!("Unknown backorder status: {s}")),
         }
     }
 }
@@ -239,10 +239,11 @@ pub struct BackorderSummary {
 // ============================================================================
 
 /// Generate a backorder number.
+#[must_use] 
 pub fn generate_backorder_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
-    format!("BO-{}-{}", timestamp, random)
+    format!("BO-{timestamp}-{random}")
 }
 
 #[cfg(test)]

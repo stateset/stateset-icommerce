@@ -139,11 +139,13 @@ impl std::fmt::Debug for EventSystem {
 
 impl EventSystem {
     /// Create a new event system with default configuration
+    #[must_use] 
     pub fn new() -> Self {
         Self::with_config(EventConfig::default())
     }
 
     /// Create a new event system with custom configuration
+    #[must_use] 
     pub fn with_config(config: EventConfig) -> Self {
         let config = EventConfig {
             channel_capacity: config.channel_capacity.max(1),
@@ -238,12 +240,12 @@ impl EventSystem {
 
     /// Unregister a webhook
     pub fn unregister_webhook(&self, id: uuid::Uuid) -> bool {
-        self.webhook_manager.as_ref().map(|wm| wm.unregister(id)).unwrap_or(false)
+        self.webhook_manager.as_ref().is_some_and(|wm| wm.unregister(id))
     }
 
     /// List all registered webhooks
     pub fn list_webhooks(&self) -> Vec<Webhook> {
-        self.webhook_manager.as_ref().map(|wm| wm.list()).unwrap_or_default()
+        self.webhook_manager.as_ref().map(webhook::WebhookManager::list).unwrap_or_default()
     }
 
     /// Get delivery history for a webhook (newest-first).
@@ -380,6 +382,7 @@ pub mod filters {
     use stateset_core::CommerceEvent;
 
     /// Filter for order events only
+    #[must_use] 
     pub const fn orders_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -394,6 +397,7 @@ pub mod filters {
     }
 
     /// Filter for inventory events only
+    #[must_use] 
     pub const fn inventory_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -407,6 +411,7 @@ pub mod filters {
     }
 
     /// Filter for customer events only
+    #[must_use] 
     pub const fn customers_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -418,6 +423,7 @@ pub mod filters {
     }
 
     /// Filter for product events only
+    #[must_use] 
     pub const fn products_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -430,6 +436,7 @@ pub mod filters {
     }
 
     /// Filter for return events only
+    #[must_use] 
     pub const fn returns_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -443,6 +450,7 @@ pub mod filters {
     }
 
     /// Filter for low stock alerts
+    #[must_use] 
     pub const fn low_stock_alerts(event: &CommerceEvent) -> bool {
         matches!(event, CommerceEvent::LowStockAlert { .. })
     }

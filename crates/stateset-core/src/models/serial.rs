@@ -93,7 +93,7 @@ impl std::str::FromStr for SerialStatus {
             "recalled" => Ok(Self::Recalled),
             "lost" => Ok(Self::Lost),
             "transferred" => Ok(Self::Transferred),
-            _ => Err(format!("Unknown serial status: {}", s)),
+            _ => Err(format!("Unknown serial status: {s}")),
         }
     }
 }
@@ -385,46 +385,55 @@ pub type CreateSerial = CreateSerialNumber;
 
 impl SerialNumber {
     /// Check if serial is available for sale
+    #[must_use] 
     pub fn is_available(&self) -> bool {
         self.status == SerialStatus::Available
     }
 
     /// Check if serial is in customer's possession
+    #[must_use] 
     pub const fn is_with_customer(&self) -> bool {
         matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped)
     }
 
     /// Check if serial can be reserved
+    #[must_use] 
     pub fn can_reserve(&self) -> bool {
         self.status == SerialStatus::Available
     }
 
     /// Check if serial can be shipped
+    #[must_use] 
     pub const fn can_ship(&self) -> bool {
         matches!(self.status, SerialStatus::Available | SerialStatus::Reserved)
     }
 
     /// Check if serial can be returned
+    #[must_use] 
     pub const fn can_return(&self) -> bool {
         matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped)
     }
 
     /// Check if serial can be scrapped
+    #[must_use] 
     pub const fn can_scrap(&self) -> bool {
         !matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped)
     }
 
     /// Check if serial has been activated
+    #[must_use] 
     pub const fn is_activated(&self) -> bool {
         self.activated_at.is_some()
     }
 
     /// Get age in days since manufacture
+    #[must_use] 
     pub fn age_days(&self) -> Option<i64> {
         self.manufactured_at.map(|mfg| (Utc::now() - mfg).num_days())
     }
 
     /// Get days since sold
+    #[must_use] 
     pub fn days_since_sold(&self) -> Option<i64> {
         self.sold_at.map(|sold| (Utc::now() - sold).num_days())
     }
@@ -432,11 +441,13 @@ impl SerialNumber {
 
 impl SerialReservation {
     /// Check if reservation is active
+    #[must_use] 
     pub fn is_active(&self) -> bool {
         self.released_at.is_none() && self.confirmed_at.is_none() && !self.is_expired()
     }
 
     /// Check if reservation has expired
+    #[must_use] 
     pub fn is_expired(&self) -> bool {
         if let Some(expires) = self.expires_at {
             Utc::now() > expires && self.confirmed_at.is_none()
@@ -446,6 +457,7 @@ impl SerialReservation {
     }
 
     /// Check if reservation has been confirmed
+    #[must_use] 
     pub const fn is_confirmed(&self) -> bool {
         self.confirmed_at.is_some()
     }

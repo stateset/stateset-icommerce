@@ -31,6 +31,7 @@ pub(crate) enum ReservationConfirmOutcome {
 }
 
 impl SqliteInventoryRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -74,7 +75,7 @@ impl SqliteInventoryRepository {
         if rows_affected == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "inventory_balance".to_string(),
-                id: format!("{}:{}", item_id, location_id),
+                id: format!("{item_id}:{location_id}"),
                 expected_version: current_version,
             });
         }
@@ -344,7 +345,7 @@ impl SqliteInventoryRepository {
 
         let parsed_status: ReservationStatus = status.parse().map_err(|e| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
-                format!("Invalid inventory_reservation.status '{}': {}", status, e),
+                format!("Invalid inventory_reservation.status '{status}': {e}"),
             )))
         })?;
 
@@ -399,7 +400,7 @@ impl SqliteInventoryRepository {
             return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                 CommerceError::VersionConflict {
                     entity: "inventory_balance".to_string(),
-                    id: format!("{}:{}", item_id, location_id),
+                    id: format!("{item_id}:{location_id}"),
                     expected_version: current_version,
                 },
             )));
@@ -446,7 +447,7 @@ impl SqliteInventoryRepository {
 
         let parsed_status: ReservationStatus = status.parse().map_err(|e| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
-                format!("Invalid inventory_reservation.status '{}': {}", status, e),
+                format!("Invalid inventory_reservation.status '{status}': {e}"),
             )))
         })?;
 
@@ -514,7 +515,7 @@ impl SqliteInventoryRepository {
 
         let parsed_status: ReservationStatus = status.parse().map_err(|e| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
-                format!("Invalid inventory_reservation.status '{}': {}", status, e),
+                format!("Invalid inventory_reservation.status '{status}': {e}"),
             )))
         })?;
 
@@ -1160,23 +1161,23 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         if let Some(sku) = &filter.sku {
             sql.push_str(" AND sku LIKE ?");
-            params.push(Box::new(format!("%{}%", sku)));
+            params.push(Box::new(format!("%{sku}%")));
         }
         if let Some(is_active) = &filter.is_active {
             sql.push_str(" AND is_active = ?");
-            params.push(Box::new(*is_active as i32));
+            params.push(Box::new(i32::from(*is_active)));
         }
 
         sql.push_str(" ORDER BY sku");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let items = stmt
@@ -1269,8 +1270,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT * FROM inventory_transactions WHERE item_id = ? ORDER BY created_at DESC LIMIT {}",
-                limit
+                "SELECT * FROM inventory_transactions WHERE item_id = ? ORDER BY created_at DESC LIMIT {limit}"
             ))
             .map_err(map_db_error)?;
 
@@ -1693,7 +1693,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM inventory_items WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM inventory_items WHERE id IN ({placeholders})");
 
         let params = i64_params(&ids);
         let params_refs = params_refs(&params);
@@ -1735,7 +1735,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(skus.len());
-        let sql = format!("SELECT * FROM inventory_items WHERE sku IN ({})", placeholders);
+        let sql = format!("SELECT * FROM inventory_items WHERE sku IN ({placeholders})");
 
         let params = string_params(&skus);
         let params_refs = params_refs(&params);

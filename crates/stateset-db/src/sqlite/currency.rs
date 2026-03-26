@@ -24,6 +24,7 @@ pub struct SqliteCurrencyRepository {
 }
 
 impl SqliteCurrencyRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -344,7 +345,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                 params![
                     settings.base_currency.code(),
                     enabled_json,
-                    settings.auto_convert as i32,
+                    i32::from(settings.auto_convert),
                     rounding_str
                 ],
             )
@@ -452,7 +453,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let in_clause = build_in_clause(ids.len());
-        let query = format!("DELETE FROM exchange_rates WHERE id IN ({})", in_clause);
+        let query = format!("DELETE FROM exchange_rates WHERE id IN ({in_clause})");
 
         let params = uuid_params(&ids);
         let params_ref = params_refs(&params);

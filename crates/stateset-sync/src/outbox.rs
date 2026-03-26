@@ -92,8 +92,7 @@ impl Outbox {
                         .events
                         .back()
                         .and_then(SyncEvent::local_sequence)
-                        .map(|seq| seq.saturating_add(1))
-                        .unwrap_or(1),
+                        .map_or(1, |seq| seq.saturating_add(1)),
                 );
                 while outbox.events.len() > outbox.max_capacity {
                     let _ = outbox.events.pop_front();

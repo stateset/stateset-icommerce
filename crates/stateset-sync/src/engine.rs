@@ -664,13 +664,13 @@ impl SyncEngine {
             std::cmp::Ordering::Greater => {
                 self.state.remote_head = observed.remote_head;
                 self.state.remote_state_root = observed.state_root.clone();
-                self.state.last_commitment_id = observed.last_commitment_id.clone();
+                self.state.last_commitment_id = observed.last_commitment_id;
             }
             std::cmp::Ordering::Equal => {
                 if let Some(state_root) = observed.state_root.clone() {
                     self.state.remote_state_root = Some(state_root);
                 }
-                if let Some(commitment_id) = observed.last_commitment_id.clone() {
+                if let Some(commitment_id) = observed.last_commitment_id {
                     self.state.last_commitment_id = Some(commitment_id);
                 }
             }
@@ -893,7 +893,7 @@ impl SyncEngine {
         }
 
         let dead_letter = self.dead_letters[index].clone();
-        let sequence = self.outbox.append(dead_letter.event.clone())?;
+        let sequence = self.outbox.append(dead_letter.event)?;
         let removed = self.dead_letters.remove(index);
         self.state.local_head = self.state.local_head.max(sequence);
         self.state.pending_count = self.outbox.count();
@@ -926,7 +926,7 @@ impl SyncEngine {
 
         let dead_letter = self.dead_letters.remove(index);
         if let Err(err) = self.persist_runtime_state() {
-            self.dead_letters.insert(index, dead_letter.clone());
+            self.dead_letters.insert(index, dead_letter);
             return Err(err);
         }
         Ok(dead_letter)

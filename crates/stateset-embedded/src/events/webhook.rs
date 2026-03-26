@@ -83,6 +83,7 @@ impl Webhook {
     }
 
     /// Filter to specific event types
+    #[must_use] 
     pub fn with_events(mut self, events: Vec<String>) -> Self {
         self.event_types = events;
         self
@@ -95,6 +96,7 @@ impl Webhook {
     }
 
     /// Check if this webhook should receive an event
+    #[must_use] 
     pub fn should_receive(&self, event: &CommerceEvent) -> bool {
         if !self.active {
             return false;
@@ -172,8 +174,7 @@ impl WebhookRuntime {
                         Ok(runtime) => Self::Owned(runtime),
                         Err(fallback_err) => {
                             let message = format!(
-                                "Failed to create webhook runtime: {}; fallback failed: {}",
-                                err, fallback_err
+                                "Failed to create webhook runtime: {err}; fallback failed: {fallback_err}"
                             );
                             tracing::error!("{}", message);
                             Self::Disabled(message)
@@ -248,11 +249,13 @@ impl std::fmt::Debug for WebhookManager {
 
 impl WebhookManager {
     /// Create a new webhook manager
+    #[must_use] 
     pub fn new(max_retries: u32, timeout_secs: u64) -> Self {
         Self::with_config(WebhookConfig { max_retries, timeout_secs, ..Default::default() })
     }
 
     /// Create a new webhook manager with full configuration.
+    #[must_use] 
     pub fn with_config(config: WebhookConfig) -> Self {
         let mut config = WebhookConfig {
             max_in_flight: config.max_in_flight.max(1),
@@ -773,12 +776,9 @@ where
         return false;
     }
 
-    let host = match parsed.host_str() {
-        Some(host) => host,
-        None => {
-            tracing::warn!(webhook_url = %url, "Webhook URL host missing");
-            return false;
-        }
+    let host = if let Some(host) = parsed.host_str() { host } else {
+        tracing::warn!(webhook_url = %url, "Webhook URL host missing");
+        return false;
     };
 
     if is_localhostish_host(host) {

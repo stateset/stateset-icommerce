@@ -21,6 +21,7 @@ pub struct SqliteAgentReputationRepository {
 }
 
 impl SqliteAgentReputationRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -37,7 +38,7 @@ impl SqliteAgentReputationRepository {
             agent_id: row.get("agent_id")?,
             client_address: row.get("client_address")?,
             feedback_index: row.get::<_, i64>("feedback_index")? as u64,
-            value: value_i64 as i128,
+            value: i128::from(value_i64),
             value_decimals: row.get::<_, i64>("value_decimals")? as u8,
             tag1: row.get("tag1")?,
             tag2: row.get("tag2")?,
@@ -77,7 +78,7 @@ impl SqliteAgentReputationRepository {
     }
 
     fn value_to_i64(value: i128) -> Result<i64> {
-        if value > i64::MAX as i128 || value < i64::MIN as i128 {
+        if value > i128::from(i64::MAX) || value < i128::from(i64::MIN) {
             return Err(CommerceError::ValidationError(
                 "feedback value exceeds i64 range".to_string(),
             ));
@@ -90,9 +91,9 @@ impl SqliteAgentReputationRepository {
             return Ok(value);
         }
         let diff = if to_decimals > from_decimals {
-            (to_decimals - from_decimals) as u32
+            u32::from(to_decimals - from_decimals)
         } else {
-            (from_decimals - to_decimals) as u32
+            u32::from(from_decimals - to_decimals)
         };
         let factor = 10_i128.checked_pow(diff).ok_or_else(|| {
             CommerceError::ValidationError("decimal scaling overflow".to_string())
@@ -146,7 +147,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
                     input.client_address,
                     next_index,
                     value_i64,
-                    input.value_decimals as i64,
+                    i64::from(input.value_decimals),
                     input.tag1,
                     input.tag2,
                     input.endpoint,
@@ -232,7 +233,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
         if let Some(ref clients) = filter.client_addresses {
             if !clients.is_empty() {
                 let placeholders = build_in_clause(clients.len());
-                conditions.push(format!("client_address IN ({})", placeholders));
+                conditions.push(format!("client_address IN ({placeholders})"));
                 for client in clients {
                     params.push(Box::new(client.clone()));
                 }
@@ -259,8 +260,8 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
             "SELECT * FROM agent_feedback WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             conditions.join(" AND ")
         );
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -295,7 +296,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
             vec![Box::new(agent_registry.to_string()), Box::new(agent_id.to_string())];
 
         let placeholders = build_in_clause(client_addresses.len());
-        conditions.push(format!("client_address IN ({})", placeholders));
+        conditions.push(format!("client_address IN ({placeholders})"));
         for client in client_addresses {
             params.push(Box::new(client));
         }
@@ -324,7 +325,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
         while let Some(row) = rows.next().map_err(map_db_error)? {
             let value: i64 = row.get(0).map_err(map_db_error)?;
             let decimals: i64 = row.get(1).map_err(map_db_error)?;
-            values.push((value as i128, decimals as u8));
+            values.push((i128::from(value), decimals as u8));
         }
 
         if values.is_empty() {
@@ -423,7 +424,7 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
         if let Some(responders) = responders {
             if !responders.is_empty() {
                 let placeholders = build_in_clause(responders.len());
-                conditions.push(format!("responder_address IN ({})", placeholders));
+                conditions.push(format!("responder_address IN ({placeholders})"));
                 for responder in responders {
                     params.push(Box::new(responder));
                 }

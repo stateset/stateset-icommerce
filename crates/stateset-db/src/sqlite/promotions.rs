@@ -27,6 +27,7 @@ pub struct SqlitePromotionRepository {
 }
 
 impl SqlitePromotionRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -39,7 +40,7 @@ impl SqlitePromotionRepository {
         let conditions = input.conditions.clone();
 
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let id = PromotionId::new();
@@ -121,7 +122,7 @@ impl SqlitePromotionRepository {
                 now.to_rfc3339(),
             ],
         )
-        .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+        .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
 
         // Create conditions inline using the same connection
         if let Some(conditions) = conditions {
@@ -136,9 +137,9 @@ impl SqlitePromotionRepository {
                         cond.condition_type.to_string(),
                         cond.operator.to_string(),
                         cond.value,
-                        cond.is_required as i32,
+                        i32::from(cond.is_required),
                     ],
-                ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert condition error: {}", e)))?;
+                ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert condition error: {e}")))?;
             }
         }
 
@@ -154,7 +155,7 @@ impl SqlitePromotionRepository {
 
     pub fn get(&self, id: PromotionId) -> Result<Option<Promotion>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         // Scope the statement so we can safely reuse the same connection for follow-up queries
@@ -179,7 +180,7 @@ impl SqlitePromotionRepository {
 
     pub fn get_by_code(&self, code: &str) -> Result<Option<Promotion>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         // Scope the statement so we can safely reuse the same connection for follow-up queries
@@ -204,7 +205,7 @@ impl SqlitePromotionRepository {
 
     pub fn list(&self, filter: PromotionFilter) -> Result<Vec<Promotion>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut sql = "SELECT * FROM promotions WHERE 1=1".to_string();
@@ -235,7 +236,7 @@ impl SqlitePromotionRepository {
 
         if let Some(search) = &filter.search {
             sql.push_str(" AND (name LIKE ? OR code LIKE ? OR description LIKE ?)");
-            let pattern = format!("%{}%", search);
+            let pattern = format!("%{search}%");
             params.push(Box::new(pattern.clone()));
             params.push(Box::new(pattern.clone()));
             params.push(Box::new(pattern));
@@ -244,10 +245,10 @@ impl SqlitePromotionRepository {
         sql.push_str(" ORDER BY priority ASC, created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         // Load promotions first, then load conditions using the same connection. This avoids
@@ -257,7 +258,7 @@ impl SqlitePromotionRepository {
                 .prepare(&sql)
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| self.row_to_promotion(row))
@@ -278,7 +279,7 @@ impl SqlitePromotionRepository {
         // Scope the connection so we don't attempt to re-checkout from the pool while holding it.
         {
             let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
             })?;
 
             let now = Utc::now();
@@ -318,7 +319,7 @@ impl SqlitePromotionRepository {
                 ],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         }
 
@@ -327,11 +328,11 @@ impl SqlitePromotionRepository {
 
     pub fn delete(&self, id: PromotionId) -> Result<()> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         conn.execute("DELETE FROM promotions WHERE id = ?1", [id.to_string()]).map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Delete error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Delete error: {e}"))
         })?;
 
         Ok(())
@@ -362,7 +363,7 @@ impl SqlitePromotionRepository {
         input: CreatePromotionCondition,
     ) -> Result<PromotionCondition> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let id = Uuid::new_v4();
@@ -376,9 +377,9 @@ impl SqlitePromotionRepository {
                 input.condition_type.to_string(),
                 input.operator.to_string(),
                 input.value,
-                input.is_required as i32,
+                i32::from(input.is_required),
             ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
 
         Ok(PromotionCondition {
             id,
@@ -437,7 +438,7 @@ impl SqlitePromotionRepository {
 
     pub fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let id = Uuid::new_v4();
@@ -458,7 +459,7 @@ impl SqlitePromotionRepository {
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
 
         // Drop the connection before calling get_coupon to avoid nested pool checkouts
         // (important for max_connections=1).
@@ -471,7 +472,7 @@ impl SqlitePromotionRepository {
 
     pub fn get_coupon(&self, id: Uuid) -> Result<Option<CouponCode>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut stmt = conn
@@ -485,7 +486,7 @@ impl SqlitePromotionRepository {
 
     pub fn get_coupon_by_code(&self, code: &str) -> Result<Option<CouponCode>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut stmt = conn
@@ -499,7 +500,7 @@ impl SqlitePromotionRepository {
 
     pub fn list_coupons(&self, filter: CouponFilter) -> Result<Vec<CouponCode>> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let mut sql = "SELECT * FROM coupon_codes WHERE 1=1".to_string();
@@ -523,17 +524,17 @@ impl SqlitePromotionRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_coupon(row))
@@ -858,10 +859,10 @@ impl SqlitePromotionRepository {
                     let sets = total_qty / (buy + get);
                     if sets > 0 {
                         // Find average item price for simplicity
-                        let avg_price = if !request.line_items.is_empty() {
-                            request.subtotal / Decimal::from(total_qty)
-                        } else {
+                        let avg_price = if request.line_items.is_empty() {
                             Decimal::ZERO
+                        } else {
+                            request.subtotal / Decimal::from(total_qty)
                         };
                         avg_price * Decimal::from(sets * get) * discount_pct
                     } else {
@@ -932,7 +933,7 @@ impl SqlitePromotionRepository {
         currency: &str,
     ) -> Result<PromotionUsage> {
         let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {e}"))
         })?;
 
         let id = Uuid::new_v4();
@@ -952,14 +953,14 @@ impl SqlitePromotionRepository {
                 currency,
                 now.to_rfc3339(),
             ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+        ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {e}")))?;
 
         // Increment usage count on promotion
         conn.execute(
             "UPDATE promotions SET usage_count = usage_count + 1 WHERE id = ?1",
             [promotion_id.to_string()],
         )
-        .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
+        .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {e}")))?;
 
         // Increment coupon usage if applicable
         if let Some(coupon_id) = coupon_id {
@@ -968,7 +969,7 @@ impl SqlitePromotionRepository {
                 [coupon_id.to_string()],
             )
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {e}"))
             })?;
         }
 

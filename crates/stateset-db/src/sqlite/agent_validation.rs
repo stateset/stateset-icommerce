@@ -19,6 +19,7 @@ pub struct SqliteAgentValidationRepository {
 }
 
 impl SqliteAgentValidationRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -134,7 +135,7 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
                 request.agent_registry,
                 request.agent_id,
                 request.validator_address,
-                input.response as i64,
+                i64::from(input.response),
                 input.response_uri,
                 input.response_hash,
                 input.tag,
@@ -218,7 +219,7 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
         if let Some(validators) = validator_addresses {
             if !validators.is_empty() {
                 let placeholders = build_in_clause(validators.len());
-                conditions.push(format!("validator_address IN ({})", placeholders));
+                conditions.push(format!("validator_address IN ({placeholders})"));
                 for validator in validators {
                     params.push(Box::new(validator));
                 }

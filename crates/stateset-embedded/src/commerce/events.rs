@@ -32,6 +32,7 @@ impl Commerce {
     /// }
     /// ```
     #[cfg(feature = "events")]
+    #[must_use] 
     pub fn events(&self) -> &EventSystem {
         &self.event_system
     }
@@ -66,6 +67,7 @@ impl Commerce {
     /// }
     /// ```
     #[cfg(feature = "events")]
+    #[must_use] 
     pub fn subscribe_events(&self) -> EventSubscription {
         self.event_system.subscribe()
     }
@@ -92,6 +94,7 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     #[cfg(feature = "events")]
+    #[must_use] 
     pub fn register_webhook(&self, webhook: Webhook) -> uuid::Uuid {
         self.event_system.register_webhook(webhook)
     }
@@ -110,24 +113,28 @@ impl Commerce {
     /// This is the safer API when you need to distinguish between a successful
     /// registration ID and a blocked/invalid webhook definition.
     #[cfg(feature = "events")]
+    #[must_use] 
     pub fn try_register_webhook(&self, webhook: Webhook) -> Option<uuid::Uuid> {
         self.event_system.try_register_webhook(webhook)
     }
 
     /// Unregister a webhook endpoint.
     #[cfg(feature = "events")]
+    #[must_use] 
     pub fn unregister_webhook(&self, id: uuid::Uuid) -> bool {
         self.event_system.unregister_webhook(id)
     }
 
     /// List all registered webhooks.
     #[cfg(feature = "events")]
+    #[must_use] 
     pub fn list_webhooks(&self) -> Vec<Webhook> {
         self.event_system.list_webhooks()
     }
 
     /// Get delivery history for a webhook (newest-first).
     #[cfg(feature = "events")]
+    #[must_use] 
     pub fn webhook_deliveries(&self, id: uuid::Uuid) -> Vec<WebhookDelivery> {
         self.event_system.webhook_deliveries(id)
     }

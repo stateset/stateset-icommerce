@@ -27,6 +27,7 @@ pub struct SqliteReceivingRepository {
 }
 
 impl SqliteReceivingRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -410,16 +411,16 @@ impl ReceivingRepository for SqliteReceivingRepository {
         sql.push_str(" ORDER BY created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -610,7 +611,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
@@ -685,12 +686,12 @@ impl ReceivingRepository for SqliteReceivingRepository {
         sql.push_str(" ORDER BY created_at");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -808,7 +809,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
@@ -869,7 +870,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
             carrier: None,
             tracking_number: None,
             expected_date: None,
-            notes: Some(format!("Created from PO {}", po_id)),
+            notes: Some(format!("Created from PO {po_id}")),
             created_by: None,
             items,
         })

@@ -160,7 +160,7 @@ impl FromStr for WaveStatus {
             "in_progress" | "inprogress" => Ok(Self::InProgress),
             "completed" => Ok(Self::Completed),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown wave status: {}", s)),
+            _ => Err(format!("Unknown wave status: {s}")),
         }
     }
 }
@@ -198,7 +198,7 @@ impl FromStr for PickStatus {
             "completed" => Ok(Self::Completed),
             "short" => Ok(Self::Short),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown pick status: {}", s)),
+            _ => Err(format!("Unknown pick status: {s}")),
         }
     }
 }
@@ -236,7 +236,7 @@ impl FromStr for PackStatus {
             "in_progress" | "inprogress" => Ok(Self::InProgress),
             "completed" => Ok(Self::Completed),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown pack status: {}", s)),
+            _ => Err(format!("Unknown pack status: {s}")),
         }
     }
 }
@@ -280,7 +280,7 @@ impl FromStr for ShipStatus {
             "label_printed" | "labelprinted" => Ok(Self::LabelPrinted),
             "shipped" => Ok(Self::Shipped),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown ship status: {}", s)),
+            _ => Err(format!("Unknown ship status: {s}")),
         }
     }
 }
@@ -472,19 +472,21 @@ pub struct ShipTaskFilter {
 ///
 /// Format: `WV-YYYYMMDDHHmmSS-XXXXXXXX` (8 hex chars = 4 billion possible
 /// values per second, eliminating test-parallelism collisions).
+#[must_use] 
 pub fn generate_wave_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
     let random = &uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_uppercase();
-    format!("WV-{}-{}", timestamp, random)
+    format!("WV-{timestamp}-{random}")
 }
 
 /// Generate a unique carton number.
 ///
 /// Format: `CTN-HHmmSS-XXXXXXXX`
+#[must_use] 
 pub fn generate_carton_number() -> String {
     let timestamp = chrono::Utc::now().format("%H%M%S").to_string();
     let random = &uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_uppercase();
-    format!("CTN-{}-{}", timestamp, random)
+    format!("CTN-{timestamp}-{random}")
 }
 
 #[cfg(test)]

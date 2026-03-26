@@ -181,7 +181,7 @@ impl FromStr for BillStatus {
             "overdue" => Ok(Self::Overdue),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
             "disputed" => Ok(Self::Disputed),
-            _ => Err(format!("Unknown bill status: {}", s)),
+            _ => Err(format!("Unknown bill status: {s}")),
         }
     }
 }
@@ -238,7 +238,7 @@ impl FromStr for PaymentStatusAP {
             "cleared" => Ok(Self::Cleared),
             "voided" => Ok(Self::Voided),
             "failed" => Ok(Self::Failed),
-            _ => Err(format!("Unknown payment status: {}", s)),
+            _ => Err(format!("Unknown payment status: {s}")),
         }
     }
 }
@@ -274,7 +274,7 @@ impl FromStr for PaymentRunStatus {
             "processing" | "in_progress" | "inprogress" => Ok(Self::Processing),
             "completed" => Ok(Self::Completed),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown payment run status: {}", s)),
+            _ => Err(format!("Unknown payment run status: {s}")),
         }
     }
 }
@@ -479,22 +479,25 @@ pub struct SupplierApSummary {
 // ============================================================================
 
 /// Generate a bill number.
+#[must_use] 
 pub fn generate_bill_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
-    format!("BILL-{}-{}", timestamp, random)
+    format!("BILL-{timestamp}-{random}")
 }
 
 /// Generate a payment number.
+#[must_use] 
 pub fn generate_ap_payment_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
-    format!("APMT-{}-{}", timestamp, random)
+    format!("APMT-{timestamp}-{random}")
 }
 
 /// Generate a payment run number.
+#[must_use] 
 pub fn generate_payment_run_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..4].to_uppercase();
-    format!("RUN-{}-{}", timestamp, random)
+    format!("RUN-{timestamp}-{random}")
 }

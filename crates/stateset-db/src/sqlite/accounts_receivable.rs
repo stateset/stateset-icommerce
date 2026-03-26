@@ -31,6 +31,7 @@ pub struct SqliteAccountsReceivableRepository {
 }
 
 impl SqliteAccountsReceivableRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -420,7 +421,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
         Ok(Some(CustomerArAging {
             customer_id,
-            customer_name: Some(format!("{} {}", first_name, last_name)),
+            customer_name: Some(format!("{first_name} {last_name}")),
             customer_email: Some(email),
             current,
             days_1_30,
@@ -505,7 +506,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
             let entry = by_customer.entry(customer_id).or_insert_with(|| AgingAccum {
                 customer_id,
-                customer_name: format!("{} {}", first_name, last_name),
+                customer_name: format!("{first_name} {last_name}"),
                 customer_email: email,
                 ..Default::default()
             });
@@ -840,8 +841,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             invoice_id: invoice_id.into(),
             activity_type: CollectionActivityType::DunningLetterSent,
             dunning_letter_type: Some(letter_type),
-            notes: Some(format!("Sent {} dunning letter", letter_type)),
-            performed_by: sent_by.map(|s| s.to_string()),
+            notes: Some(format!("Sent {letter_type} dunning letter")),
+            performed_by: sent_by.map(std::string::ToString::to_string),
             ..Default::default()
         })
     }
@@ -1567,8 +1568,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         )?;
 
         let sales_sql = format!(
-            "SELECT total FROM invoices WHERE created_at >= datetime('now', '-{} days')",
-            days
+            "SELECT total FROM invoices WHERE created_at >= datetime('now', '-{days} days')"
         );
         let total_sales = sum_decimal_query(&conn, &sales_sql, &[], "invoices", "total")?;
 

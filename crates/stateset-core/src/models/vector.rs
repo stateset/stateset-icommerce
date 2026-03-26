@@ -36,6 +36,7 @@ pub enum EntityType {
 
 impl EntityType {
     /// Get the table name for this entity type's embeddings
+    #[must_use] 
     pub const fn embedding_table(&self) -> &'static str {
         match self {
             Self::Product => "product_embeddings",
@@ -46,6 +47,7 @@ impl EntityType {
     }
 
     /// Get the ID column name for this entity type
+    #[must_use] 
     pub const fn id_column(&self) -> &'static str {
         match self {
             Self::Product => "product_id",
@@ -56,6 +58,7 @@ impl EntityType {
     }
 
     /// Get the source table name for this entity type
+    #[must_use] 
     pub const fn source_table(&self) -> &'static str {
         match self {
             Self::Product => "products",
@@ -86,7 +89,7 @@ impl std::str::FromStr for EntityType {
             "customer" | "customers" => Ok(Self::Customer),
             "order" | "orders" => Ok(Self::Order),
             "inventory_item" | "inventory" | "inventory_items" => Ok(Self::InventoryItem),
-            _ => Err(format!("Unknown entity type: {}", s)),
+            _ => Err(format!("Unknown entity type: {s}")),
         }
     }
 }

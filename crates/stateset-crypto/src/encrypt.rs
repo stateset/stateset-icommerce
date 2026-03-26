@@ -132,8 +132,8 @@ pub fn encrypt_payload(
 
     // Sort by kid
     recipients.sort_by(|a, b| {
-        let a_kid = a.get("recipient_kid").and_then(|v| v.as_u64()).unwrap_or(0);
-        let b_kid = b.get("recipient_kid").and_then(|v| v.as_u64()).unwrap_or(0);
+        let a_kid = a.get("recipient_kid").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let b_kid = b.get("recipient_kid").and_then(serde_json::Value::as_u64).unwrap_or(0);
         a_kid.cmp(&b_kid)
     });
 
@@ -190,7 +190,7 @@ pub fn decrypt_payload(
 
     let recipient = recipients
         .iter()
-        .find(|r| r.get("recipient_kid").and_then(|v| v.as_u64()) == Some(u64::from(recipient_kid)))
+        .find(|r| r.get("recipient_kid").and_then(serde_json::Value::as_u64) == Some(u64::from(recipient_kid)))
         .ok_or(CryptoError::RecipientNotFound(recipient_kid))?;
 
     // Unwrap DEK
@@ -314,7 +314,7 @@ fn validate_encryption_envelope(
 ) -> Result<&Vec<serde_json::Value>, CryptoError> {
     let enc_version = payload_encrypted
         .get("enc_version")
-        .and_then(|value| value.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| CryptoError::DecryptionError("Missing enc_version".to_string()))?;
     if enc_version != ENC_VERSION {
         return Err(CryptoError::DecryptionError(format!(
@@ -348,7 +348,7 @@ fn validate_encryption_envelope(
 
     let mut seen = HashSet::new();
     for recipient in recipients {
-        let Some(recipient_kid) = recipient.get("recipient_kid").and_then(|value| value.as_u64())
+        let Some(recipient_kid) = recipient.get("recipient_kid").and_then(serde_json::Value::as_u64)
         else {
             return Err(CryptoError::DecryptionError("Missing recipient_kid".to_string()));
         };
@@ -465,6 +465,7 @@ fn unwrap_dek(
 /// Generate an X25519 keypair for key wrapping
 ///
 /// Returns (`private_key`, `public_key`) as 32-byte arrays.
+#[must_use] 
 pub fn generate_x25519_keypair() -> ([u8; 32], [u8; 32]) {
     let mut rng = rand::thread_rng();
     let secret = StaticSecret::random_from_rng(&mut rng);

@@ -22,6 +22,7 @@ pub struct SqliteAnalyticsRepository {
 }
 
 impl SqliteAnalyticsRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -120,7 +121,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Get current period metrics
         let mut stmt = conn
             .prepare(
-                r#"
+                r"
                 SELECT
                     CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
                     COUNT(*) as order_count,
@@ -129,7 +130,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 FROM orders
                 WHERE created_at >= ?1 AND created_at <= ?2
                   AND status NOT IN ('cancelled', 'refunded')
-                "#,
+                ",
             )
             .map_err(map_db_error)?;
 
@@ -142,13 +143,13 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Get items sold
         let items_sold: i64 = conn
             .query_row(
-                r#"
+                r"
                 SELECT COALESCE(SUM(oi.quantity), 0)
                 FROM order_items oi
                 JOIN orders o ON oi.order_id = o.id
                 WHERE o.created_at >= ?1 AND o.created_at <= ?2
                   AND o.status NOT IN ('cancelled', 'refunded')
-                "#,
+                ",
                 [&start_str, &end_str],
                 |row| row.get(0),
             )
@@ -164,14 +165,14 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Get previous period metrics
         let (prev_revenue, prev_order_count): (String, i64) = conn
             .query_row(
-                r#"
+                r"
                 SELECT
                     CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
                     COUNT(*) as order_count
                 FROM orders
                 WHERE created_at >= ?1 AND created_at < ?2
                   AND status NOT IN ('cancelled', 'refunded')
-                "#,
+                ",
                 [&prev_start_str, &prev_end_str],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -235,19 +236,18 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
 
         let mut stmt = conn
             .prepare(&format!(
-                r#"
+                r"
                 SELECT
-                    {} as period,
+                    {period_expr} as period,
                     CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
                     COUNT(*) as order_count,
                     MIN(created_at) as period_start
                 FROM orders
                 WHERE created_at >= ?1 AND created_at <= ?2
                   AND status NOT IN ('cancelled', 'refunded')
-                GROUP BY {}
+                GROUP BY {period_expr}
                 ORDER BY period
-                "#,
-                period_expr, period_expr
+                "
             ))
             .map_err(map_db_error)?;
 
@@ -283,11 +283,11 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let (start, end) = self.get_date_range(&query);
         let start_str = start.to_rfc3339();
         let end_str = end.to_rfc3339();
-        let limit = query.limit.unwrap_or(10) as i64;
+        let limit = i64::from(query.limit.unwrap_or(10));
 
         let mut stmt = conn
             .prepare(
-                r#"
+                r"
                 SELECT
                     oi.product_id,
                     oi.sku,
@@ -303,7 +303,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 GROUP BY oi.sku
                 ORDER BY revenue DESC
                 LIMIT ?3
-                "#,
+                ",
             )
             .map_err(map_db_error)?;
 
@@ -381,13 +381,13 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Returning customers (more than 1 order)
         let returning_customers: i64 = conn
             .query_row(
-                r#"
+                r"
                 SELECT COUNT(*) FROM (
                     SELECT customer_id FROM orders
                     GROUP BY customer_id
                     HAVING COUNT(*) > 1
                 )
-                "#,
+                ",
                 [],
                 |row| row.get(0),
             )
@@ -396,14 +396,14 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Average lifetime value
         let avg_ltv: String = conn
             .query_row(
-                r#"
+                r"
                 SELECT CAST(COALESCE(AVG(total), 0) AS TEXT) FROM (
                     SELECT customer_id, SUM(total_amount) as total
                     FROM orders
                     WHERE status NOT IN ('cancelled', 'refunded')
                     GROUP BY customer_id
                 )
-                "#,
+                ",
                 [],
                 |row| row.get(0),
             )
@@ -412,13 +412,13 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Average orders per customer
         let avg_orders: String = conn
             .query_row(
-                r#"
+                r"
                 SELECT CAST(COALESCE(AVG(cnt), 0) AS TEXT) FROM (
                     SELECT customer_id, COUNT(*) as cnt
                     FROM orders
                     GROUP BY customer_id
                 )
-                "#,
+                ",
                 [],
                 |row| row.get(0),
             )
@@ -443,11 +443,11 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let (start, end) = self.get_date_range(&query);
         let start_str = start.to_rfc3339();
         let end_str = end.to_rfc3339();
-        let limit = query.limit.unwrap_or(10) as i64;
+        let limit = i64::from(query.limit.unwrap_or(10));
 
         let mut stmt = conn
             .prepare(
-                r#"
+                r"
                 SELECT
                     c.id,
                     c.email,
@@ -464,7 +464,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 GROUP BY c.id
                 ORDER BY total_spent DESC
                 LIMIT ?3
-                "#,
+                ",
             )
             .map_err(map_db_error)?;
 
@@ -517,14 +517,14 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Get stock levels
         let (in_stock, low_stock, out_of_stock): (i64, i64, i64) = conn
             .query_row(
-                r#"
+                r"
                 SELECT
                     SUM(CASE WHEN ib.on_hand > COALESCE(ii.reorder_point, 10) THEN 1 ELSE 0 END),
                     SUM(CASE WHEN ib.on_hand <= COALESCE(ii.reorder_point, 10) AND ib.on_hand > 0 THEN 1 ELSE 0 END),
                     SUM(CASE WHEN ib.on_hand <= 0 THEN 1 ELSE 0 END)
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
-                "#,
+                ",
                 [],
                 |row| Ok((row.get(0).unwrap_or(0), row.get(1).unwrap_or(0), row.get(2).unwrap_or(0))),
             )
@@ -533,12 +533,12 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Total inventory value (rough estimate)
         let total_value: String = conn
             .query_row(
-                r#"
+                r"
                 SELECT CAST(COALESCE(SUM(ib.on_hand * COALESCE(pv.cost_price, pv.price, 0)), 0) AS TEXT)
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
                 LEFT JOIN product_variants pv ON ii.sku = pv.sku
-                "#,
+                ",
                 [],
                 |row| row.get(0),
             )
@@ -562,7 +562,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
 
         let mut stmt = conn
             .prepare(
-                r#"
+                r"
                 SELECT
                     ii.sku,
                     ii.name,
@@ -574,7 +574,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
                 WHERE COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0) <= ?1
                 ORDER BY available ASC
-                "#,
+                ",
             )
             .map_err(map_db_error)?;
 
@@ -622,7 +622,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
 
         let mut stmt = conn
             .prepare(
-                r#"
+                r"
                 SELECT
                     ii.sku,
                     ii.name,
@@ -638,7 +638,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 HAVING net_change != 0
                 ORDER BY ABS(net_change) DESC
                 LIMIT 50
-                "#,
+                ",
             )
             .map_err(map_db_error)?;
 
@@ -681,12 +681,12 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
 
         let mut stmt = conn
             .prepare(
-                r#"
+                r"
                 SELECT status, COUNT(*) as cnt
                 FROM orders
                 WHERE created_at >= ?1 AND created_at <= ?2
                 GROUP BY status
-                "#,
+                ",
             )
             .map_err(map_db_error)?;
 
@@ -795,13 +795,13 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Returns by reason
         let mut stmt = conn
             .prepare(
-                r#"
+                r"
                 SELECT reason, COUNT(*) as cnt
                 FROM returns
                 WHERE created_at >= ?1 AND created_at <= ?2
                 GROUP BY reason
                 ORDER BY cnt DESC
-                "#,
+                ",
             )
             .map_err(map_db_error)?;
 
@@ -827,7 +827,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Get top returned products
         let mut stmt = conn
             .prepare(
-                r#"
+                r"
                 SELECT
                     ri.sku,
                     ri.name,
@@ -842,7 +842,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 GROUP BY ri.sku
                 ORDER BY units_returned DESC
                 LIMIT 10
-                "#,
+                ",
             )
             .map_err(map_db_error)?;
 
@@ -901,33 +901,32 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 for sku in sku_list {
                     params.push(Box::new(sku.clone()));
                 }
-                format!("WHERE ii.sku IN ({})", placeholders)
+                format!("WHERE ii.sku IN ({placeholders})")
             }
             _ => String::new(),
         };
 
         let query = format!(
-            r#"
+            r"
             SELECT
                 ii.sku,
                 ii.name,
-                COALESCE(SUM(CASE WHEN it.transaction_type = 'sale' THEN ABS(it.quantity) ELSE 0 END), 0) / {} as avg_daily,
+                COALESCE(SUM(CASE WHEN it.transaction_type = 'sale' THEN ABS(it.quantity) ELSE 0 END), 0) / {days_back} as avg_daily,
                 COALESCE(ib.quantity_on_hand, 0) - COALESCE(ib.quantity_allocated, 0) as current_stock
             FROM inventory_items ii
             LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
             LEFT JOIN inventory_transactions it ON ii.id = it.item_id AND it.created_at >= ?
-            {}
+            {where_clause}
             GROUP BY ii.id
             HAVING avg_daily > 0 OR current_stock < 50
             ORDER BY avg_daily DESC
             LIMIT 50
-            "#,
-            days_back, where_clause
+            "
         );
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
 
-        let params_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let rows = stmt
             .query_map(params_refs.as_slice(), |row| {
                 let sku: String = row.get(0)?;
@@ -966,7 +965,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 confidence: Decimal::new(7, 1), // Simple confidence score: 0.7
                 current_stock: current_stock_dec,
                 days_until_stockout,
-                recommended_reorder_qty: if days_until_stockout.map(|d| d < 14).unwrap_or(false) {
+                recommended_reorder_qty: if days_until_stockout.is_some_and(|d| d < 14) {
                     Some(avg_daily_dec * Decimal::from(30)) // 30 days supply
                 } else {
                     None
@@ -1006,16 +1005,15 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let avg_revenue: f64 = conn
             .query_row(
                 &format!(
-                    r#"
+                    r"
                     SELECT AVG(period_revenue) FROM (
                         SELECT SUM(total_amount) as period_revenue
                         FROM orders
                         WHERE created_at >= ?1
                           AND status NOT IN ('cancelled', 'refunded')
-                        GROUP BY strftime('{}', created_at)
+                        GROUP BY strftime('{date_format}', created_at)
                     )
-                    "#,
-                    date_format
+                    "
                 ),
                 [&start],
                 |row| row.get(0),
@@ -1029,7 +1027,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let variance = Decimal::new(15, 2); // 0.15 = 15% variance
         let one = Decimal::ONE;
         for i in 1..=periods_ahead {
-            let period_label = format!("Period +{}", i);
+            let period_label = format!("Period +{i}");
             let lower = avg_revenue_dec * (one - variance);
             let upper = avg_revenue_dec * (one + variance);
 

@@ -52,6 +52,7 @@ fn parse_decimal_required(value: String, column: usize) -> rusqlite::Result<Deci
 }
 
 impl SqliteGeneralLedgerRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -215,8 +216,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     input.account_type.to_string(),
                     input.account_sub_type.map(|s| s.to_string()),
                     input.parent_account_id.map(|id| id.to_string()),
-                    input.is_header.unwrap_or(false) as i32,
-                    input.is_posting.unwrap_or(true) as i32,
+                    i32::from(input.is_header.unwrap_or(false)),
+                    i32::from(input.is_posting.unwrap_or(true)),
                     normal_balance.to_string(),
                     input.currency.unwrap_or_default(),
                     AccountStatus::Active.to_string(),
@@ -300,7 +301,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         if !updates.is_empty() {
             values.push(Box::new(id.to_string()));
             let sql = format!("UPDATE gl_accounts SET {} WHERE id = ?", updates.join(", "));
-            let params: Vec<&dyn rusqlite::ToSql> = values.iter().map(|v| v.as_ref()).collect();
+            let params: Vec<&dyn rusqlite::ToSql> = values.iter().map(std::convert::AsRef::as_ref).collect();
             conn.execute(&sql, params.as_slice()).map_err(map_db_error)?;
         }
 
@@ -339,15 +340,15 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         }
         if let Some(is_posting) = filter.is_posting {
             sql.push_str(" AND is_posting = ?");
-            params.push(Box::new(is_posting as i32));
+            params.push(Box::new(i32::from(is_posting)));
         }
         if let Some(is_header) = filter.is_header {
             sql.push_str(" AND is_header = ?");
-            params.push(Box::new(is_header as i32));
+            params.push(Box::new(i32::from(is_header)));
         }
         if let Some(search) = filter.search {
             sql.push_str(" AND (name LIKE ? OR account_number LIKE ?)");
-            let search_term = format!("%{}%", search);
+            let search_term = format!("%{search}%");
             params.push(Box::new(search_term.clone()));
             params.push(Box::new(search_term));
         }
@@ -355,13 +356,13 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         sql.push_str(" ORDER BY account_number");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::map_account_row).map_err(map_db_error)?;
@@ -533,13 +534,13 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         sql.push_str(" ORDER BY fiscal_year DESC, period_number DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::map_period_row).map_err(map_db_error)?;
@@ -678,7 +679,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 input.description,
                 total_debits.to_string(),
                 total_credits.to_string(),
-                is_balanced as i32,
+                i32::from(is_balanced),
                 JournalEntryStatus::Draft.to_string(),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
@@ -833,13 +834,13 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         sql.push_str(" ORDER BY entry_date DESC, entry_number DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(params_refs.as_slice(), Self::map_journal_entry_row)
@@ -1095,7 +1096,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
             entry_type: Some(JournalEntryType::Standard),
-            description: format!("Invoice {}", invoice_id),
+            description: format!("Invoice {invoice_id}"),
             lines: vec![
                 stateset_core::CreateJournalEntryLine::debit(
                     config.accounts_receivable_account_id,
@@ -1138,7 +1139,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
             entry_type: Some(JournalEntryType::Standard),
-            description: format!("Payment {}", payment_id),
+            description: format!("Payment {payment_id}"),
             lines: vec![
                 stateset_core::CreateJournalEntryLine::debit(
                     config.cash_account_id,
@@ -1181,7 +1182,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
             entry_type: Some(JournalEntryType::Standard),
-            description: format!("Bill {}", bill_id),
+            description: format!("Bill {bill_id}"),
             lines: vec![
                 stateset_core::CreateJournalEntryLine::debit(
                     config.inventory_account_id,
@@ -1224,7 +1225,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
             entry_type: Some(JournalEntryType::Standard),
-            description: format!("Bill Payment {}", payment_id),
+            description: format!("Bill Payment {payment_id}"),
             lines: vec![
                 stateset_core::CreateJournalEntryLine::debit(
                     config.accounts_payable_account_id,
@@ -1271,7 +1272,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
             entry_type: Some(JournalEntryType::Standard),
-            description: format!("Inventory Cost {}", cost_transaction_id),
+            description: format!("Inventory Cost {cost_transaction_id}"),
             lines: vec![
                 stateset_core::CreateJournalEntryLine::debit(
                     debit_account,
@@ -1320,7 +1321,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
             entry_type: Some(JournalEntryType::Standard),
-            description: format!("Write-off {}", write_off_id),
+            description: format!("Write-off {write_off_id}"),
             lines: vec![
                 stateset_core::CreateJournalEntryLine::debit(
                     bad_debt_account,
@@ -1639,10 +1640,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         sql.push_str(" ORDER BY je.entry_date DESC, l.line_number");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(params_refs.as_slice(), Self::map_journal_entry_line_row)

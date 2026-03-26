@@ -35,6 +35,7 @@ pub struct SqliteA2ARepository {
 }
 
 impl SqliteA2ARepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -68,7 +69,7 @@ impl SqliteA2ARepository {
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid {}.{} for quote_status: '{}'", entity, field, value),
+                    format!("Invalid {entity}.{field} for quote_status: '{value}'"),
                 )),
             )),
         }
@@ -94,7 +95,7 @@ impl SqliteA2ARepository {
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid {}.{} for purchase_status: '{}'", entity, field, value),
+                    format!("Invalid {entity}.{field} for purchase_status: '{value}'"),
                 )),
             )),
         }
@@ -107,7 +108,7 @@ impl SqliteA2ARepository {
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid {}.{} for x402_network: '{}' - {}", entity, field, value, e),
+                    format!("Invalid {entity}.{field} for x402_network: '{value}' - {e}"),
                 )),
             )
         })
@@ -120,7 +121,7 @@ impl SqliteA2ARepository {
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid {}.{} for x402_asset: '{}' - {}", entity, field, value, e),
+                    format!("Invalid {entity}.{field} for x402_asset: '{value}' - {e}"),
                 )),
             )
         })
@@ -139,7 +140,7 @@ impl SqliteA2ARepository {
                         rusqlite::types::Type::Integer,
                         Box::new(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
-                            format!("Invalid {}.{} '{}': expected 0-5", entity, field, rating),
+                            format!("Invalid {entity}.{field} '{rating}': expected 0-5"),
                         )),
                     ));
                 }
@@ -242,7 +243,7 @@ impl SqliteA2ARepository {
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid {}.{} JSON: {}", entity, field, e),
+                    format!("Invalid {entity}.{field} JSON: {e}"),
                 )),
             )
         })
@@ -659,7 +660,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
 
         let conn = self.conn()?;
         conn.execute(
-            r#"
+            r"
             INSERT INTO a2a_quotes (
                 id, quote_number, status, buyer_agent_id, seller_agent_id, items,
                 subtotal, tax_amount, shipping_amount, discount_amount, total, currency,
@@ -671,7 +672,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
                 ?13, ?14, ?15, ?16,
                 ?17, ?18, ?19, ?20
             )
-            "#,
+            ",
             rusqlite::params![
                 id.to_string(),
                 quote_number,
@@ -756,8 +757,8 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             conditions.join(" AND ")
         );
         sql.push_str(" LIMIT ? OFFSET ?");
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
@@ -833,7 +834,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let quote_id = input.quote_id;
         with_immediate_transaction(&self.pool, |tx| {
             tx.execute(
-                r#"
+                r"
             INSERT INTO a2a_purchases (
                 id, purchase_number, status, buyer_agent_id, seller_agent_id, quote_id,
                 cart_id, order_id, payment_intent_id, items, total, currency,
@@ -843,7 +844,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
                 ?7, ?8, ?9, ?10, ?11, ?12,
                 ?13, ?14, ?15, ?16, ?17
             )
-            "#,
+            ",
                 rusqlite::params![
                     id.to_string(),
                     purchase_number,
@@ -1018,8 +1019,8 @@ impl A2ACommerceRepository for SqliteA2ARepository {
             conditions.join(" AND ")
         );
         sql.push_str(" LIMIT ? OFFSET ?");
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt

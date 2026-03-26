@@ -517,7 +517,7 @@ impl ForecastingEngine {
                 };
 
                 anomalies.push(Anomaly {
-                    id: format!("anomaly-{}", i),
+                    id: format!("anomaly-{i}"),
                     timestamp: point.timestamp,
                     actual_value: point.value,
                     expected_value: mean,
@@ -615,6 +615,7 @@ impl ForecastingEngine {
     }
 
     /// Generate forecast using Holt's linear trend method
+    #[must_use] 
     pub fn holt_forecast(
         values: &[Decimal],
         alpha: Decimal,

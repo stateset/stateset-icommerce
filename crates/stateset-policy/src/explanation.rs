@@ -115,6 +115,7 @@ impl TransformAuditEntry {
     }
 
     /// Builder: set the policy set ID.
+    #[must_use] 
     pub const fn with_policy_set(mut self, policy_set_id: Uuid) -> Self {
         self.policy_set_id = Some(policy_set_id);
         self

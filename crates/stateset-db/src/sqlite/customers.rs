@@ -24,6 +24,7 @@ pub struct SqliteCustomerRepository {
 }
 
 impl SqliteCustomerRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -186,7 +187,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                     &last_name,
                     &phone,
                     "active",
-                    accepts_marketing as i32,
+                    i32::from(accepts_marketing),
                     0,
                     tags_json,
                     metadata_json,
@@ -297,7 +298,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
         if let Some(accepts_marketing) = &input.accepts_marketing {
             updates.push("accepts_marketing = ?");
-            params.push(Box::new(*accepts_marketing as i32));
+            params.push(Box::new(i32::from(*accepts_marketing)));
         }
         if let Some(tags) = &input.tags {
             updates.push("tags = ?");
@@ -314,7 +315,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         let sql =
             format!("UPDATE customers SET {} WHERE id = ? AND version = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
         if rows_affected == 0 {
@@ -336,7 +337,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         if let Some(email) = &filter.email {
             sql.push_str(" AND email LIKE ?");
-            params.push(Box::new(format!("%{}%", email)));
+            params.push(Box::new(format!("%{email}%")));
         }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
@@ -350,12 +351,12 @@ impl CustomerRepository for SqliteCustomerRepository {
                 params.push(Box::new(tag.clone()));
             } else {
                 sql.push_str(" AND tags LIKE ?");
-                params.push(Box::new(format!("%\"{}\"%", tag)));
+                params.push(Box::new(format!("%\"{tag}\"%")));
             }
         }
         if let Some(accepts_marketing) = &filter.accepts_marketing {
             sql.push_str(" AND accepts_marketing = ?");
-            params.push(Box::new(*accepts_marketing as i32));
+            params.push(Box::new(i32::from(*accepts_marketing)));
         }
 
         // Keyset cursor: (created_at, id) for stable DESC ordering
@@ -369,15 +370,15 @@ impl CustomerRepository for SqliteCustomerRepository {
         sql.push_str(" ORDER BY created_at DESC, id DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
         if filter.after_cursor.is_none() {
             if let Some(offset) = filter.offset {
-                sql.push_str(&format!(" OFFSET {}", offset));
+                sql.push_str(&format!(" OFFSET {offset}"));
             }
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let customers = stmt
@@ -429,7 +430,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                 input.postal_code,
                 input.country,
                 input.phone,
-                is_default as i32,
+                i32::from(is_default),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
@@ -709,7 +710,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         if let Some(email) = &filter.email {
             sql.push_str(" AND email LIKE ?");
-            params.push(Box::new(format!("%{}%", email)));
+            params.push(Box::new(format!("%{email}%")));
         }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
@@ -723,15 +724,15 @@ impl CustomerRepository for SqliteCustomerRepository {
                 params.push(Box::new(tag.clone()));
             } else {
                 sql.push_str(" AND tags LIKE ?");
-                params.push(Box::new(format!("%\"{}\"%", tag)));
+                params.push(Box::new(format!("%\"{tag}\"%")));
             }
         }
         if let Some(accepts_marketing) = &filter.accepts_marketing {
             sql.push_str(" AND accepts_marketing = ?");
-            params.push(Box::new(*accepts_marketing as i32));
+            params.push(Box::new(i32::from(*accepts_marketing)));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
@@ -804,7 +805,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                     &last_name,
                     &phone,
                     "active",
-                    accepts_marketing as i32,
+                    i32::from(accepts_marketing),
                     0,
                     tags_json,
                     metadata_json,
@@ -919,7 +920,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             }
             if let Some(accepts_marketing) = &input.accepts_marketing {
                 update_parts.push("accepts_marketing = ?");
-                params.push(Box::new(*accepts_marketing as i32));
+                params.push(Box::new(i32::from(*accepts_marketing)));
             }
             if let Some(tags) = &input.tags {
                 update_parts.push("tags = ?");
@@ -940,7 +941,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             );
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(|p| p.as_ref()).collect();
+                params.iter().map(std::convert::AsRef::as_ref).collect();
             let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
             if rows_affected == 0 {
                 return Err(CommerceError::VersionConflict {
@@ -993,8 +994,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         // Soft delete by setting status to 'deleted'
         let now = Utc::now();
         let sql = format!(
-            "UPDATE customers SET status = 'deleted', updated_at = ? WHERE id IN ({})",
-            placeholders
+            "UPDATE customers SET status = 'deleted', updated_at = ? WHERE id IN ({placeholders})"
         );
 
         let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -1002,7 +1002,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             all_params.push(Box::new(id.to_string()));
         }
         let all_params_refs: Vec<&dyn rusqlite::ToSql> =
-            all_params.iter().map(|p| p.as_ref()).collect();
+            all_params.iter().map(std::convert::AsRef::as_ref).collect();
 
         tx.execute(&sql, all_params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -1018,7 +1018,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM customers WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM customers WHERE id IN ({placeholders})");
 
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let params = uuid_params(&raw_ids);

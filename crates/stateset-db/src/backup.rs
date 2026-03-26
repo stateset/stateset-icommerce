@@ -123,8 +123,7 @@ impl BackupManager {
             || db_name.contains('\0')
         {
             return Err(CommerceError::DatabaseError(format!(
-                "Backup path escapes backup directory: database name '{}' contains path separators or traversal sequences",
-                db_name
+                "Backup path escapes backup directory: database name '{db_name}' contains path separators or traversal sequences"
             )));
         }
 
@@ -132,7 +131,7 @@ impl BackupManager {
             let mut attempt = 0usize;
             loop {
                 let suffix = if attempt == 0 { String::new() } else { format!("_{attempt}") };
-                let candidate = format!("{}_{}{}.db", db_name, timestamp_str, suffix);
+                let candidate = format!("{db_name}_{timestamp_str}{suffix}.db");
                 let path = self.backup_dir.join(&candidate);
                 if !path.exists() {
                     break (candidate, path);
@@ -205,11 +204,11 @@ impl BackupManager {
 
         // Copy backup to restore location
         fs::copy(backup_path, restore_path)
-            .map_err(|e| CommerceError::DatabaseError(format!("Restore copy failed: {}", e)))?;
+            .map_err(|e| CommerceError::DatabaseError(format!("Restore copy failed: {e}")))?;
 
         // Open restore connection and verify integrity
         let restore_conn = Connection::open(restore_path)
-            .map_err(|e| CommerceError::DatabaseError(format!("Restore open failed: {}", e)))?;
+            .map_err(|e| CommerceError::DatabaseError(format!("Restore open failed: {e}")))?;
 
         // Run integrity check
         let integrity_result: String = restore_conn
@@ -218,8 +217,7 @@ impl BackupManager {
 
         if integrity_result != "ok" {
             return Err(CommerceError::DatabaseError(format!(
-                "Backup integrity check failed: {}",
-                integrity_result
+                "Backup integrity check failed: {integrity_result}"
             )));
         }
 
@@ -236,10 +234,10 @@ impl BackupManager {
         let mut backups = Vec::new();
 
         for entry in fs::read_dir(&self.backup_dir).map_err(|e| {
-            CommerceError::DatabaseError(format!("Failed to read backup dir: {}", e))
+            CommerceError::DatabaseError(format!("Failed to read backup dir: {e}"))
         })? {
             let entry = entry.map_err(|e| {
-                CommerceError::DatabaseError(format!("Failed to read entry: {}", e))
+                CommerceError::DatabaseError(format!("Failed to read entry: {e}"))
             })?;
             let path = entry.path();
 
@@ -260,7 +258,7 @@ impl BackupManager {
     pub fn delete_backup<P: AsRef<Path>>(&self, backup_path: P) -> Result<(), CommerceError> {
         let backup_path = backup_path.as_ref();
         fs::remove_file(backup_path)
-            .map_err(|e| CommerceError::DatabaseError(format!("Failed to delete backup: {}", e)))?;
+            .map_err(|e| CommerceError::DatabaseError(format!("Failed to delete backup: {e}")))?;
 
         // Delete metadata file
         let metadata_path = backup_path.with_extension("meta");
@@ -277,12 +275,12 @@ impl BackupManager {
 
         let mut hash = Sha256::new();
         let mut file = fs::File::open(path)
-            .map_err(|e| CommerceError::DatabaseError(format!("Failed to open backup: {}", e)))?;
+            .map_err(|e| CommerceError::DatabaseError(format!("Failed to open backup: {e}")))?;
 
         let mut buffer = vec![0; 8192];
         loop {
             let n = file.read(&mut buffer).map_err(|e| {
-                CommerceError::DatabaseError(format!("Failed to read backup: {}", e))
+                CommerceError::DatabaseError(format!("Failed to read backup: {e}"))
             })?;
             if n == 0 {
                 break;
@@ -299,7 +297,7 @@ impl BackupManager {
 
         // Try to open backup file
         let conn = Connection::open(backup_path)
-            .map_err(|e| CommerceError::DatabaseError(format!("Backup file corrupt: {}", e)))?;
+            .map_err(|e| CommerceError::DatabaseError(format!("Backup file corrupt: {e}")))?;
 
         // Run integrity check
         let integrity_result: String = conn
@@ -308,8 +306,7 @@ impl BackupManager {
 
         if integrity_result != "ok" {
             return Err(CommerceError::DatabaseError(format!(
-                "Backup integrity check failed: {}",
-                integrity_result
+                "Backup integrity check failed: {integrity_result}"
             )));
         }
 
@@ -320,11 +317,11 @@ impl BackupManager {
     fn save_metadata(&self, metadata: &BackupMetadata) -> Result<(), CommerceError> {
         let metadata_path = self.backup_dir.join(&metadata.filename).with_extension("meta");
         let metadata_json = serde_json::to_string_pretty(metadata).map_err(|e| {
-            CommerceError::DatabaseError(format!("Failed to serialize metadata: {}", e))
+            CommerceError::DatabaseError(format!("Failed to serialize metadata: {e}"))
         })?;
 
         fs::write(&metadata_path, metadata_json)
-            .map_err(|e| CommerceError::DatabaseError(format!("Failed to save metadata: {}", e)))?;
+            .map_err(|e| CommerceError::DatabaseError(format!("Failed to save metadata: {e}")))?;
 
         Ok(())
     }

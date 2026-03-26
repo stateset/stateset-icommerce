@@ -40,8 +40,7 @@ async fn event_stream(
         .filter(move |event| {
             filter
                 .as_deref()
-                .map(|pattern| matches_filter(event.event_type(), pattern))
-                .unwrap_or(true)
+                .map_or(true, |pattern| matches_filter(event.event_type(), pattern))
         })
         .map(|event| {
             let event_type = event.event_type();
