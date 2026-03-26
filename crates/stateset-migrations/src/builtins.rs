@@ -29,6 +29,7 @@ pub fn builtin_registry() -> crate::error::Result<MigrationRegistry> {
         .add(v4_new_entities())
         .add(v5_composite_indexes())
         .add(v6_production_hardening())
+        .add(v7_webhook_dead_letters())
         .build()
 }
 
@@ -70,6 +71,12 @@ pub fn v5_composite_indexes() -> Migration {
 #[must_use]
 pub fn v6_production_hardening() -> Migration {
     Migration::with_down(6, "production_hardening", V6_UP, V6_DOWN)
+}
+
+/// V7 — Webhook dead letter queue table for failed delivery persistence.
+#[must_use]
+pub fn v7_webhook_dead_letters() -> Migration {
+    Migration::with_down(7, "webhook_dead_letters", V7_UP, V7_DOWN)
 }
 
 // ---------------------------------------------------------------------------
@@ -1343,6 +1350,35 @@ DROP INDEX IF EXISTS idx_inventory_reservations_ref;
 DROP INDEX IF EXISTS idx_order_items_order_sku;
 "#;
 
+// ---------------------------------------------------------------------------
+// V7 — Webhook Dead Letter Queue
+// ---------------------------------------------------------------------------
+
+const V7_UP: &str = r#"
+CREATE TABLE IF NOT EXISTS webhook_dead_letters (
+    id TEXT PRIMARY KEY,
+    webhook_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'failed',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    response_status INTEGER,
+    response_body TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_dead_letters_status ON webhook_dead_letters(status);
+CREATE INDEX IF NOT EXISTS idx_webhook_dead_letters_webhook ON webhook_dead_letters(webhook_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_dead_letters_created ON webhook_dead_letters(created_at);
+"#;
+
+const V7_DOWN: &str = r#"
+DROP TABLE IF EXISTS webhook_dead_letters;
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1350,14 +1386,14 @@ mod tests {
     #[test]
     fn builtin_registry_builds_successfully() {
         let reg = builtin_registry().unwrap();
-        assert_eq!(reg.len(), 6);
+        assert_eq!(reg.len(), 7);
     }
 
     #[test]
     fn builtin_versions_are_sequential() {
         let reg = builtin_registry().unwrap();
         let versions: Vec<u32> = reg.list().iter().map(|m| m.version).collect();
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]
