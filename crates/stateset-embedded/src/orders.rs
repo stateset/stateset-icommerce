@@ -142,14 +142,32 @@ impl Orders {
                 )
             },
         };
-        if let Ok(computed) = stateset_pricing::try_compute_order_total(&pricing_input) {
+        let pricing_total = stateset_pricing::try_compute_order_total(&pricing_input).ok();
+        if let Some(ref computed) = pricing_total {
             tracing::debug!(
                 computed_total = %computed.grand_total,
+                subtotal = %computed.subtotal,
+                discount = %computed.total_discount,
                 "Pricing engine computed order total"
             );
         }
 
         let order = self.db.orders().create(input)?;
+
+        // Detect pricing drift: warn if DB total diverges from pricing engine
+        if let Some(computed) = pricing_total {
+            let diff = (order.total_amount - computed.grand_total).abs();
+            if diff > rust_decimal::Decimal::new(1, 2) {
+                // Divergence > $0.01
+                tracing::warn!(
+                    order_id = %order.id,
+                    db_total = %order.total_amount,
+                    engine_total = %computed.grand_total,
+                    diff = %diff,
+                    "Pricing drift detected: DB total differs from pricing engine"
+                );
+            }
+        }
         self.metrics.record_order_created(
             &order.customer_id.to_string(),
             order.total_amount.to_f64().unwrap_or(0.0),
