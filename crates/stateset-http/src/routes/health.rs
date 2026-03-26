@@ -25,6 +25,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
         .route("/health/ready", get(readiness))
+        .route("/health/deep", get(deep_health))
         .route("/metrics", get(metrics))
 }
 
@@ -59,6 +60,37 @@ pub(crate) async fn readiness(State(state): State<AppState>) -> (StatusCode, Jso
     let tenant_cache = tenant_cache_response(&state);
     let (status, body) = readiness_response(database_connected, tenant_cache);
     (status, Json(body))
+}
+
+/// `GET /health/deep` — deep health check with DB connectivity and metrics.
+#[tracing::instrument(skip(state))]
+pub(crate) async fn deep_health(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, HttpError> {
+    // Verify DB connectivity by executing a trivial query
+    let start = std::time::Instant::now();
+    let db_ok = state.commerce().orders().count(Default::default()).is_ok();
+    let db_latency_ms = start.elapsed().as_millis() as u64;
+
+    let metrics = state.commerce().metrics_snapshot();
+
+    if !db_ok {
+        return Err(HttpError::InternalError("Database connectivity check failed".into()));
+    }
+
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "database": {
+            "connected": true,
+            "latency_ms": db_latency_ms,
+        },
+        "metrics": {
+            "orders_created": metrics.orders_created,
+            "customers_created": metrics.customers_created,
+            "products_created": metrics.products_created,
+            "payments_completed": metrics.payments_completed,
+        }
+    })))
 }
 
 /// `GET /metrics` — Prometheus-compatible operational metrics.
