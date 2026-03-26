@@ -7,6 +7,10 @@ use axum::{Json, Router, routing::get};
 use utoipa::OpenApi;
 
 use crate::dto::{CreateOrderRequest, CreateOrderItemRequest, AddressDto, CreateCustomerRequest, CreateProductRequest, InventoryAdjustRequest, CreateReturnRequest, CreateReturnItemRequest, UpdateCustomerRequest, UpdateProductRequest, CreateShipmentRequest, CreatePaymentRequest, CreateRefundRequest, CreateInvoiceRequest, RecordInvoicePaymentRequest, OrderResponse, OrderItemResponse, OrderListResponse, CustomerResponse, CustomerListResponse, ProductResponse, ProductListResponse, InventoryResponse, InventoryItemResponse, InventoryListResponse, ShipmentResponse, ShipmentListResponse, PaymentResponse, PaymentListResponse, InvoiceResponse, InvoiceListResponse, ReturnResponse, ReturnListResponse, HealthResponse, ReadyResponse, TenantCacheResponse};
+use crate::routes::reviews::{CreateReviewRequest, ReviewResponse, ReviewListResponse};
+use crate::routes::wishlists::{CreateWishlistRequest, AddWishlistItemRequest, WishlistResponse, WishlistItemResponse, WishlistListResponse};
+use crate::routes::gift_cards::{CreateGiftCardRequest, GiftCardResponse, GiftCardListResponse};
+use crate::routes::loyalty::{CreateLoyaltyProgramRequest, EnrollCustomerRequest, LoyaltyProgramResponse, LoyaltyProgramListResponse, LoyaltyAccountResponse};
 use crate::error::ErrorBody;
 use crate::state::AppState;
 
@@ -69,6 +73,28 @@ use crate::state::AppState;
         crate::routes::invoices::get_invoice,
         crate::routes::invoices::send_invoice,
         crate::routes::invoices::record_invoice_payment,
+        // Reviews
+        crate::routes::reviews::create_review,
+        crate::routes::reviews::get_review,
+        crate::routes::reviews::list_reviews,
+        crate::routes::reviews::delete_review,
+        // Wishlists
+        crate::routes::wishlists::create_wishlist,
+        crate::routes::wishlists::get_wishlist,
+        crate::routes::wishlists::list_wishlists,
+        crate::routes::wishlists::delete_wishlist,
+        crate::routes::wishlists::add_item,
+        crate::routes::wishlists::remove_item,
+        // Gift Cards
+        crate::routes::gift_cards::create_gift_card,
+        crate::routes::gift_cards::get_gift_card,
+        crate::routes::gift_cards::list_gift_cards,
+        crate::routes::gift_cards::disable_gift_card,
+        // Loyalty
+        crate::routes::loyalty::create_program,
+        crate::routes::loyalty::list_programs,
+        crate::routes::loyalty::enroll_customer,
+        crate::routes::loyalty::get_account,
     ),
     components(schemas(
         // Request DTOs
@@ -109,6 +135,26 @@ use crate::state::AppState;
         HealthResponse,
         ReadyResponse,
         TenantCacheResponse,
+        // Reviews
+        CreateReviewRequest,
+        ReviewResponse,
+        ReviewListResponse,
+        // Wishlists
+        CreateWishlistRequest,
+        AddWishlistItemRequest,
+        WishlistResponse,
+        WishlistItemResponse,
+        WishlistListResponse,
+        // Gift Cards
+        CreateGiftCardRequest,
+        GiftCardResponse,
+        GiftCardListResponse,
+        // Loyalty
+        CreateLoyaltyProgramRequest,
+        EnrollCustomerRequest,
+        LoyaltyProgramResponse,
+        LoyaltyProgramListResponse,
+        LoyaltyAccountResponse,
         // Error
         ErrorBody,
     )),
@@ -122,6 +168,10 @@ use crate::state::AppState;
         (name = "shipments", description = "Shipment tracking and management"),
         (name = "payments", description = "Payment transaction management"),
         (name = "invoices", description = "Invoice management"),
+        (name = "reviews", description = "Product review management"),
+        (name = "wishlists", description = "Customer wishlist management"),
+        (name = "gift_cards", description = "Gift card management"),
+        (name = "loyalty", description = "Loyalty program management"),
     )
 )]
 pub(crate) struct ApiDoc;
