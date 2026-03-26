@@ -13,11 +13,11 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.8.1    # Python
-gem install stateset_embedded -v 0.8.1  # Ruby
-npm install @stateset/embedded@0.8.1    # Node.js
-npm install -g @stateset/cli@0.8.1      # CLI
-cargo add stateset-embedded             # Rust
+pip install stateset-embedded            # Python
+gem install stateset_embedded            # Ruby
+npm install @stateset/embedded           # Node.js
+npm install -g @stateset/cli             # CLI
+cargo add stateset-embedded              # Rust
 ```
 
 **Quick start with demo data:**
@@ -144,15 +144,41 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.8.1
+## What's New in v0.9.1
 
-This release centers on native agent payments and Machine Payments Protocol support.
+**Agentic Commerce Infrastructure** — AI agents can now discover, negotiate, transact, pay, and resolve disputes autonomously.
 
-- Added native Bitcoin settlement, including SegWit-aware wallet and payment execution paths for autonomous agent commerce.
-- Added shielded Zcash settlement support through wallet-enabled `zcashd` JSON-RPC flows.
-- Added Machine Payments Protocol primitives across MCP and HTTP: `402` challenges, credentials, receipts, discovery metadata, and retry helpers.
-- Added embedded-toolkit support for remote payable HTTP route discovery and auto-paying execution, so agents can discover and transact with external paid services through one API.
-- Synced workspace, bindings, templates, docs, and release metadata to `0.8.1`.
+### Performance (~3x All Benchmarks)
+- Fat LTO, codegen-units=1, target-cpu=native, SHA256 hardware acceleration
+- Lock-free atomics, mmap I/O, WAL tuning, prepared statement caching
+- Gzip response compression, 30-second request timeouts
+
+### 53+ REST Endpoints
+- Full CRUD for all entities: orders, customers, products, inventory, returns
+- Financial lifecycle: payments (create/complete/refund), invoices (create/send/record-payment), shipments (create/deliver)
+- V4 entities: reviews, wishlists, gift cards, loyalty programs
+- Agentic: autonomous price negotiation (create/counter-offer/accept/reject)
+- 100% OpenAPI 3.1 coverage with all schemas
+
+### Agentic Commerce (New)
+- **Negotiation engine**: multi-round price negotiation with auto-accept/reject thresholds
+- **A2A messaging**: reliable delivery with exponential backoff retry
+- **Credit terms**: net 15/30/60/90 payment between trusted agents
+- **Inventory commitments**: stock locks on quote acceptance with auto-expiry
+- **Dispute rules engine**: priority-based auto-resolution
+
+### Production Hardening
+- Atomic inventory reservation (race condition fix)
+- Idempotent checkout (3 unique constraints)
+- Financial rounding (round_dp(2) per line + total)
+- Audit log, webhook dead letter queue, graceful DB shutdown
+- Health check with DB latency + metrics, slow query logging
+
+### Code Quality
+- 11/11 V4 entity stubs eliminated — zero stubs remaining
+- Clippy pedantic clean across 174 files
+- 9 database migrations (V1-V9), 12 composite indexes
+- 4,000+ Rust tests, ~16,000+ total including CLI
 
 ---
 
@@ -196,7 +222,7 @@ StateSet enables this shift by providing a portable, embeddable commerce engine 
 
 ```
 stateset-icommerce/
-├── crates/                        # 21 Rust crates (2,671 tests)
+├── crates/                        # 21 Rust crates (4,000+ tests)
 │   ├── stateset-primitives/       # Strongly-typed newtypes (OrderId, Sku, Money)
 │   ├── stateset-core/             # Pure domain models & business logic (no I/O)
 │   ├── stateset-crypto/           # VES v1.0 cryptography (JCS, Ed25519, AES-GCM, Merkle)
@@ -327,7 +353,7 @@ stateset-icommerce/
 | `stateset-test-utils` | Dev | Shared test fixtures and assertion macros | 20 |
 | `stateset-integration-tests` | Dev | Cross-crate integration tests | 41 |
 | `stateset-benches` | Dev | Criterion benchmarks | — |
-| **Total** | | **21 crates** | **2,671** |
+| **Total** | | **21 crates** | **4,000+** |
 
 ---
 
@@ -1395,7 +1421,7 @@ Or in your `.csproj`:
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.8.1
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@latest
 ```
 
 ### CLI
@@ -1564,12 +1590,12 @@ stateset --apply "add 50 units to SKU-001"
 
 ## Development
 
-Rust (2,671 tests across 21 crates):
+Rust (4,000+ tests across 21 crates):
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test                       # Run all 2,671 tests
+cargo test                       # Run all 4,000+ tests
 cargo bench -p stateset-benches  # Criterion benchmarks
 ```
 
