@@ -7,6 +7,7 @@ pub mod health;
 pub mod inventory;
 pub mod invoices;
 pub mod loyalty;
+pub mod negotiations;
 pub mod orders;
 pub mod payments;
 pub mod products;
@@ -52,6 +53,7 @@ fn v1_router() -> Router<AppState> {
         .merge(wishlists::router())
         .merge(gift_cards::router())
         .merge(loyalty::router())
+        .merge(negotiations::router())
         .merge(events::router())
         .merge(crate::openapi::router())
 }
