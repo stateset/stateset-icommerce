@@ -60,10 +60,12 @@
 pub mod agent_cards;
 pub mod circuit_breaker;
 pub mod credit;
+pub mod dispute_rules;
 pub mod disputes;
 pub mod error;
 pub mod escrow;
 pub mod events;
+pub mod inventory_commitment;
 pub mod marketplace;
 pub mod messaging;
 pub mod negotiation;

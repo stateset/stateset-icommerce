@@ -12,8 +12,8 @@ name = "stateset_kotlin"
 crate-type = ["cdylib"]
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", version = "0.8.0" }
-stateset-core = { path = "../../crates/stateset-core", version = "0.8.0" }
+stateset-embedded = { path = "../../crates/stateset-embedded", version = "0.9.0" }
+stateset-core = { path = "../../crates/stateset-core", version = "0.9.0" }
 
 # JNI bindings
 jni = "0.21"
