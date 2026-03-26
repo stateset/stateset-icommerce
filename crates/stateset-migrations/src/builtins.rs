@@ -30,6 +30,7 @@ pub fn builtin_registry() -> crate::error::Result<MigrationRegistry> {
         .add(v5_composite_indexes())
         .add(v6_production_hardening())
         .add(v7_webhook_dead_letters())
+        .add(v8_audit_log())
         .build()
 }
 
@@ -77,6 +78,12 @@ pub fn v6_production_hardening() -> Migration {
 #[must_use]
 pub fn v7_webhook_dead_letters() -> Migration {
     Migration::with_down(7, "webhook_dead_letters", V7_UP, V7_DOWN)
+}
+
+/// V8 — Audit log table for tracking all critical mutations.
+#[must_use]
+pub fn v8_audit_log() -> Migration {
+    Migration::with_down(8, "audit_log", V8_UP, V8_DOWN)
 }
 
 // ---------------------------------------------------------------------------
@@ -1379,6 +1386,31 @@ const V7_DOWN: &str = r"
 DROP TABLE IF EXISTS webhook_dead_letters;
 ";
 
+// ---------------------------------------------------------------------------
+// V8 — Audit Log
+// ---------------------------------------------------------------------------
+
+const V8_UP: &str = r#"
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    actor TEXT,
+    details TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor);
+"#;
+
+const V8_DOWN: &str = r#"
+DROP TABLE IF EXISTS audit_log;
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1386,14 +1418,14 @@ mod tests {
     #[test]
     fn builtin_registry_builds_successfully() {
         let reg = builtin_registry().unwrap();
-        assert_eq!(reg.len(), 7);
+        assert_eq!(reg.len(), 8);
     }
 
     #[test]
     fn builtin_versions_are_sequential() {
         let reg = builtin_registry().unwrap();
         let versions: Vec<u32> = reg.list().iter().map(|m| m.version).collect();
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
