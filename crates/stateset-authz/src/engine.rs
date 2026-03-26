@@ -79,14 +79,11 @@ impl AuthzEngine {
         action: &Action,
     ) -> AccessDecision {
         // 1. Look up role
-        let role = match self.resolve_role(actor_id) {
-            Some(r) => r,
-            None => {
-                let decision =
-                    AccessDecision::denied(format!("actor '{actor_id}' has no assigned role"));
-                self.record_audit(actor_id, action, resource, &decision);
-                return decision;
-            }
+        let role = if let Some(r) = self.resolve_role(actor_id) { r } else {
+            let decision =
+                AccessDecision::denied(format!("actor '{actor_id}' has no assigned role"));
+            self.record_audit(actor_id, action, resource, &decision);
+            return decision;
         };
 
         // 2. Check permission level

@@ -86,6 +86,7 @@ pub struct SlaDefinition {
 
 impl SlaDefinition {
     /// Create a new SLA definition with default penalty settings.
+    #[must_use] 
     pub fn new(service_id: Uuid) -> Self {
         Self {
             service_id,
@@ -100,36 +101,42 @@ impl SlaDefinition {
     }
 
     /// Set the response time threshold.
+    #[must_use] 
     pub const fn with_response_time(mut self, ms: Decimal) -> Self {
         self.response_time_ms = Some(ms);
         self
     }
 
     /// Set the uptime percentage threshold.
+    #[must_use] 
     pub const fn with_uptime(mut self, percent: Decimal) -> Self {
         self.uptime_percent = Some(percent);
         self
     }
 
     /// Set the quality score threshold.
+    #[must_use] 
     pub const fn with_quality(mut self, min_score: Decimal) -> Self {
         self.quality_min_score = Some(min_score);
         self
     }
 
     /// Set the throughput threshold.
+    #[must_use] 
     pub const fn with_throughput(mut self, rps: Decimal) -> Self {
         self.throughput_rps = Some(rps);
         self
     }
 
     /// Set the penalty percentage.
+    #[must_use] 
     pub const fn with_penalty_percent(mut self, percent: Decimal) -> Self {
         self.penalty_percent = percent;
         self
     }
 
     /// Set the penalty type.
+    #[must_use] 
     pub const fn with_penalty_type(mut self, penalty_type: PenaltyType) -> Self {
         self.penalty_type = penalty_type;
         self

@@ -100,6 +100,7 @@ impl AgentCard {
 
     /// Set supported networks.
     #[allow(clippy::missing_const_for_fn)] // Vec destructor cannot be evaluated at compile-time
+    #[must_use] 
     pub fn with_networks(mut self, networks: Vec<String>) -> Self {
         self.supported_networks = networks;
         self
@@ -107,6 +108,7 @@ impl AgentCard {
 
     /// Set supported assets.
     #[allow(clippy::missing_const_for_fn)] // Vec destructor cannot be evaluated at compile-time
+    #[must_use] 
     pub fn with_assets(mut self, assets: Vec<String>) -> Self {
         self.supported_assets = assets;
         self
@@ -114,12 +116,14 @@ impl AgentCard {
 
     /// Set skills.
     #[allow(clippy::missing_const_for_fn)] // Vec destructor cannot be evaluated at compile-time
+    #[must_use] 
     pub fn with_skills(mut self, skills: Vec<AgentSkill>) -> Self {
         self.skills = skills;
         self
     }
 
     /// Set trust tier.
+    #[must_use] 
     pub const fn with_trust_tier(mut self, tier: TrustTier) -> Self {
         self.trust_tier = tier;
         self
