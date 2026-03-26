@@ -53,6 +53,7 @@
 //! ```
 
 mod dto;
+pub mod etag;
 mod error;
 mod middleware;
 mod openapi;
