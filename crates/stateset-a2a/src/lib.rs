@@ -22,6 +22,7 @@
 //! - [`splits`] — Multi-party payment splitting with rounding drift prevention.
 //! - [`subscriptions`] — Recurring billing with trial periods and state machine.
 //! - [`escrow`] — Conditional fund holding with four condition types.
+//! - [`credit`] — Agent credit terms (Net15/30/60/90) with balance tracking and overdue detection.
 //! - [`notifications`] — HMAC-SHA256 webhook signing and SSRF URL validation.
 //! - [`events`] — Event type filtering with wildcard/prefix matching.
 //! - [`disputes`] — Dispute resolution with evidence hashing and deadline management.
@@ -58,11 +59,14 @@
 
 pub mod agent_cards;
 pub mod circuit_breaker;
+pub mod credit;
 pub mod disputes;
 pub mod error;
 pub mod escrow;
 pub mod events;
 pub mod marketplace;
+pub mod messaging;
+pub mod negotiation;
 pub mod notifications;
 pub mod reputation;
 pub mod sla;

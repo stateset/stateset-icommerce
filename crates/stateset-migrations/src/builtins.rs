@@ -31,6 +31,7 @@ pub fn builtin_registry() -> crate::error::Result<MigrationRegistry> {
         .add(v6_production_hardening())
         .add(v7_webhook_dead_letters())
         .add(v8_audit_log())
+        .add(v9_agentic_commerce())
         .build()
 }
 
@@ -84,6 +85,12 @@ pub fn v7_webhook_dead_letters() -> Migration {
 #[must_use]
 pub fn v8_audit_log() -> Migration {
     Migration::with_down(8, "audit_log", V8_UP, V8_DOWN)
+}
+
+/// V9 — Agentic commerce infrastructure: messaging, negotiation, inventory binding, credit terms.
+#[must_use]
+pub fn v9_agentic_commerce() -> Migration {
+    Migration::with_down(9, "agentic_commerce", V9_UP, V9_DOWN)
 }
 
 // ---------------------------------------------------------------------------
@@ -1411,6 +1418,183 @@ const V8_DOWN: &str = r#"
 DROP TABLE IF EXISTS audit_log;
 "#;
 
+// ---------------------------------------------------------------------------
+// V9 — Agentic Commerce Infrastructure
+// ---------------------------------------------------------------------------
+
+const V9_UP: &str = r#"
+-- =========================================================================
+-- Agent-to-Agent Messaging
+-- Reliable message delivery with retry, acknowledgment, and ordering.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS a2a_messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    from_agent_id TEXT NOT NULL,
+    to_agent_id TEXT NOT NULL,
+    message_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    sequence_number INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    next_retry_at TEXT,
+    acknowledged_at TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_messages_conversation ON a2a_messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_a2a_messages_to_agent ON a2a_messages(to_agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_a2a_messages_retry ON a2a_messages(status, next_retry_at);
+
+-- =========================================================================
+-- Negotiation State Machine
+-- Offer → counter-offer → accept/reject with conditional logic.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS a2a_negotiations (
+    id TEXT PRIMARY KEY,
+    buyer_agent_id TEXT NOT NULL,
+    seller_agent_id TEXT NOT NULL,
+    quote_id TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    current_offer_amount TEXT,
+    current_offer_currency TEXT DEFAULT 'USD',
+    buyer_max_price TEXT,
+    seller_min_price TEXT,
+    auto_accept_below TEXT,
+    auto_reject_above TEXT,
+    rounds INTEGER NOT NULL DEFAULT 0,
+    max_rounds INTEGER NOT NULL DEFAULT 10,
+    expires_at TEXT,
+    accepted_at TEXT,
+    rejected_at TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_negotiations_buyer ON a2a_negotiations(buyer_agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_a2a_negotiations_seller ON a2a_negotiations(seller_agent_id, status);
+
+CREATE TABLE IF NOT EXISTS a2a_negotiation_offers (
+    id TEXT PRIMARY KEY,
+    negotiation_id TEXT NOT NULL,
+    from_agent_id TEXT NOT NULL,
+    offer_type TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    conditions TEXT,
+    message TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(negotiation_id) REFERENCES a2a_negotiations(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_offers_negotiation ON a2a_negotiation_offers(negotiation_id);
+
+-- =========================================================================
+-- Inventory Commitments
+-- Stock locks when quotes are accepted, with expiry and auto-release.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS inventory_commitments (
+    id TEXT PRIMARY KEY,
+    quote_id TEXT NOT NULL,
+    purchase_id TEXT,
+    sku TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'reserved',
+    reserved_by_agent TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    released_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_inv_commitments_sku ON inventory_commitments(sku, status);
+CREATE INDEX IF NOT EXISTS idx_inv_commitments_quote ON inventory_commitments(quote_id);
+CREATE INDEX IF NOT EXISTS idx_inv_commitments_expires ON inventory_commitments(status, expires_at);
+
+-- =========================================================================
+-- Credit Terms
+-- Net 30/60/90 payment terms between trusted agents.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS a2a_credit_terms (
+    id TEXT PRIMARY KEY,
+    creditor_agent_id TEXT NOT NULL,
+    debtor_agent_id TEXT NOT NULL,
+    credit_limit TEXT NOT NULL,
+    outstanding_balance TEXT NOT NULL DEFAULT '0',
+    currency TEXT NOT NULL DEFAULT 'USD',
+    payment_terms TEXT NOT NULL DEFAULT 'net_30',
+    status TEXT NOT NULL DEFAULT 'active',
+    min_trust_tier TEXT NOT NULL DEFAULT 'verified',
+    approved_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_credit_debtor ON a2a_credit_terms(debtor_agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_a2a_credit_creditor ON a2a_credit_terms(creditor_agent_id);
+
+CREATE TABLE IF NOT EXISTS a2a_credit_transactions (
+    id TEXT PRIMARY KEY,
+    credit_terms_id TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    type TEXT NOT NULL,
+    reference_id TEXT,
+    due_date TEXT,
+    paid_at TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(credit_terms_id) REFERENCES a2a_credit_terms(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_credit_tx_terms ON a2a_credit_transactions(credit_terms_id);
+CREATE INDEX IF NOT EXISTS idx_a2a_credit_tx_due ON a2a_credit_transactions(due_date, paid_at);
+
+-- =========================================================================
+-- Tax Jurisdiction for A2A Transactions
+-- Tracks tax obligations for cross-border agent commerce.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS a2a_tax_obligations (
+    id TEXT PRIMARY KEY,
+    purchase_id TEXT NOT NULL,
+    buyer_jurisdiction TEXT NOT NULL,
+    seller_jurisdiction TEXT NOT NULL,
+    tax_type TEXT NOT NULL,
+    taxable_amount TEXT NOT NULL,
+    tax_rate TEXT NOT NULL,
+    tax_amount TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'calculated',
+    remitted_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_tax_purchase ON a2a_tax_obligations(purchase_id);
+CREATE INDEX IF NOT EXISTS idx_a2a_tax_status ON a2a_tax_obligations(status);
+
+-- =========================================================================
+-- Dispute Automation Rules
+-- Configurable rules for auto-resolving disputes.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS a2a_dispute_rules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    condition_type TEXT NOT NULL,
+    condition_value TEXT NOT NULL,
+    action TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_a2a_dispute_rules_active ON a2a_dispute_rules(is_active, priority);
+"#;
+
+const V9_DOWN: &str = r#"
+DROP TABLE IF EXISTS a2a_dispute_rules;
+DROP TABLE IF EXISTS a2a_tax_obligations;
+DROP TABLE IF EXISTS a2a_credit_transactions;
+DROP TABLE IF EXISTS a2a_credit_terms;
+DROP TABLE IF EXISTS inventory_commitments;
+DROP TABLE IF EXISTS a2a_negotiation_offers;
+DROP TABLE IF EXISTS a2a_negotiations;
+DROP TABLE IF EXISTS a2a_messages;
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1418,14 +1602,14 @@ mod tests {
     #[test]
     fn builtin_registry_builds_successfully() {
         let reg = builtin_registry().unwrap();
-        assert_eq!(reg.len(), 8);
+        assert_eq!(reg.len(), 9);
     }
 
     #[test]
     fn builtin_versions_are_sequential() {
         let reg = builtin_registry().unwrap();
         let versions: Vec<u32> = reg.list().iter().map(|m| m.version).collect();
-        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 
     #[test]
