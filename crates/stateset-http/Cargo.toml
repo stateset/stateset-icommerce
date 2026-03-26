@@ -17,7 +17,8 @@ stateset-embedded = { workspace = true }
 stateset-primitives = { workspace = true }
 
 axum = { version = "0.8", features = ["json", "query"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "util"] }
+tower = { version = "0.5", features = ["timeout"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "timeout", "util"] }
 tokio = { workspace = true }
 tokio-stream = { version = "0.1", features = ["time"] }
 serde = { workspace = true }

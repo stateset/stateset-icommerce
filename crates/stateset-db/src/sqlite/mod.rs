@@ -123,6 +123,21 @@ pub struct SqliteDatabase {
     pool: Pool<SqliteConnectionManager>,
 }
 
+/// Database health status returned by [`SqliteDatabase::health_check`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DbHealthStatus {
+    /// Round-trip latency to DB in milliseconds
+    pub latency_ms: u64,
+    /// Total connections in pool
+    pub pool_size: u32,
+    /// Idle connections available
+    pub pool_idle: u32,
+    /// Total database file size in bytes
+    pub db_size_bytes: u64,
+    /// Free pages available for reuse
+    pub freelist_pages: u64,
+}
+
 #[derive(Debug)]
 struct PragmaScope {
     conn: PooledConnection<SqliteConnectionManager>,
@@ -262,6 +277,34 @@ impl SqliteDatabase {
     /// Get a connection from the pool
     pub fn conn(&self) -> Result<PooledConnection<SqliteConnectionManager>, CommerceError> {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
+    }
+
+    /// Run a health check: verify DB connectivity, return pool and storage stats.
+    pub fn health_check(&self) -> Result<DbHealthStatus, CommerceError> {
+        let start = std::time::Instant::now();
+        let conn = self.conn()?;
+        // Verify DB is responsive with a trivial query
+        let _: i64 = conn
+            .query_row("SELECT 1", [], |row| row.get(0))
+            .map_err(|e| CommerceError::DatabaseError(format!("Health check query failed: {e}")))?;
+
+        // Get storage stats (page_count * page_size = total DB size)
+        let page_count: i64 =
+            conn.query_row("PRAGMA page_count", [], |row| row.get(0)).unwrap_or(0);
+        let page_size: i64 =
+            conn.query_row("PRAGMA page_size", [], |row| row.get(0)).unwrap_or(4096);
+        let freelist_count: i64 =
+            conn.query_row("PRAGMA freelist_count", [], |row| row.get(0)).unwrap_or(0);
+
+        let pool_state = self.pool.state();
+
+        Ok(DbHealthStatus {
+            latency_ms: start.elapsed().as_millis() as u64,
+            pool_size: pool_state.connections,
+            pool_idle: pool_state.idle_connections,
+            db_size_bytes: (page_count * page_size) as u64,
+            freelist_pages: freelist_count as u64,
+        })
     }
 
     /// Get order repository
@@ -739,6 +782,9 @@ where
     }
 }
 
+/// Threshold above which transactions are logged as slow (milliseconds).
+const SLOW_QUERY_THRESHOLD_MS: u128 = 500;
+
 /// Execute a transactional database operation with IMMEDIATE transaction mode
 /// and retry logic. IMMEDIATE transactions acquire write locks immediately,
 /// avoiding deadlocks caused by lock upgrade failures in DEFERRED mode.
@@ -749,7 +795,8 @@ pub(crate) fn with_immediate_transaction<T, F>(
 where
     F: Fn(&rusqlite::Transaction<'_>) -> Result<T, rusqlite::Error>,
 {
-    with_retry(
+    let start = std::time::Instant::now();
+    let result = with_retry(
         || {
             let mut conn = pool.get().map_err(|e| {
                 rusqlite::Error::SqliteFailure(
@@ -770,7 +817,17 @@ where
         },
         MAX_RETRIES,
     )
-    .map_err(map_db_error)
+    .map_err(map_db_error);
+
+    let elapsed = start.elapsed();
+    if elapsed.as_millis() > SLOW_QUERY_THRESHOLD_MS {
+        tracing::warn!(
+            duration_ms = elapsed.as_millis() as u64,
+            "Slow transaction detected (>{SLOW_QUERY_THRESHOLD_MS}ms)"
+        );
+    }
+
+    result
 }
 
 // Transaction support implementation
