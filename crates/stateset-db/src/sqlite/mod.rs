@@ -307,8 +307,24 @@ impl SqliteDatabase {
         })
     }
 
+    /// Graceful shutdown: checkpoint WAL and optimize before closing.
+    ///
+    /// Call this before dropping the database to ensure all WAL data is
+    /// flushed to the main database file. Safe to call multiple times.
+    pub fn shutdown(&self) -> Result<(), CommerceError> {
+        let conn = self.conn()?;
+        // Checkpoint WAL to main database file
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .map_err(|e| CommerceError::DatabaseError(format!("WAL checkpoint failed: {e}")))?;
+        // Run optimize to update query planner statistics
+        conn.execute_batch("PRAGMA optimize")
+            .map_err(|e| CommerceError::DatabaseError(format!("PRAGMA optimize failed: {e}")))?;
+        tracing::info!("Database shutdown: WAL checkpointed and optimized");
+        Ok(())
+    }
+
     /// Get order repository
-    #[must_use] 
+    #[must_use]
     pub fn orders(&self) -> SqliteOrderRepository {
         SqliteOrderRepository::new(self.pool.clone())
     }
