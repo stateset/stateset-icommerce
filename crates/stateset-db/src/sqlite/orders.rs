@@ -299,6 +299,9 @@ impl SqliteOrderRepository {
         let customer_id_str = input.customer_id.to_string();
         let now_str = now.to_rfc3339();
 
+        // Compute order total with proper financial rounding.
+        // Each line item: (unit_price × quantity) - discount + tax, rounded to 2dp.
+        // This matches the pricing engine's line_item computation.
         let total: Decimal = input
             .items
             .iter()
@@ -306,9 +309,10 @@ impl SqliteOrderRepository {
                 let subtotal = item.unit_price * Decimal::from(item.quantity);
                 let discount = item.discount.unwrap_or_default();
                 let tax = item.tax_amount.unwrap_or_default();
-                subtotal - discount + tax
+                (subtotal - discount + tax).round_dp(2)
             })
-            .sum();
+            .sum::<Decimal>()
+            .round_dp(2);
         let total_str = total.to_string();
 
         let shipping_address_json = input
@@ -1098,10 +1102,33 @@ impl OrderRepository for SqliteOrderRepository {
         validate_batch_size(&inputs)?;
         let mut result = BatchResult::with_capacity(inputs.len());
 
+        // Use a single connection for the entire batch to avoid pool churn.
+        // Each order still gets its own transaction for partial-success semantics.
+        let mut conn =
+            self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
         for (index, input) in inputs.into_iter().enumerate() {
-            match self.create(input) {
-                Ok(order) => result.record_success(order),
-                Err(e) => result.record_failure(index, None, &e),
+            Self::validate_order_input(&input)?;
+            let tx_result = conn.transaction_with_behavior(
+                rusqlite::TransactionBehavior::Immediate,
+            );
+            match tx_result {
+                Ok(tx) => {
+                    match Self::create_internal_in_tx(&tx, None, false, &input) {
+                        Ok(order) => {
+                            if let Err(e) = tx.commit() {
+                                result.record_failure(index, None, &map_db_error(e));
+                            } else {
+                                result.record_success(order);
+                            }
+                        }
+                        Err(e) => {
+                            // Transaction auto-rolls back on drop
+                            result.record_failure(index, None, &map_db_error(e));
+                        }
+                    }
+                }
+                Err(e) => result.record_failure(index, None, &map_db_error(e)),
             }
         }
 
