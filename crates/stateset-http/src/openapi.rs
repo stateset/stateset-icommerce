@@ -35,10 +35,14 @@ use crate::state::AppState;
         crate::routes::customers::create_customer,
         crate::routes::customers::get_customer,
         crate::routes::customers::list_customers,
+        crate::routes::customers::update_customer,
+        crate::routes::customers::delete_customer,
         // Products
         crate::routes::products::create_product,
         crate::routes::products::get_product,
         crate::routes::products::list_products,
+        crate::routes::products::update_product,
+        crate::routes::products::delete_product,
         // Inventory
         crate::routes::inventory::list_inventory,
         crate::routes::inventory::get_stock,
@@ -49,14 +53,22 @@ use crate::state::AppState;
         crate::routes::returns::list_returns,
         crate::routes::returns::approve_return,
         // Shipments
+        crate::routes::shipments::create_shipment,
         crate::routes::shipments::list_shipments,
         crate::routes::shipments::get_shipment,
+        crate::routes::shipments::deliver_shipment,
         // Payments
+        crate::routes::payments::create_payment,
         crate::routes::payments::list_payments,
         crate::routes::payments::get_payment,
+        crate::routes::payments::complete_payment,
+        crate::routes::payments::create_refund,
         // Invoices
+        crate::routes::invoices::create_invoice,
         crate::routes::invoices::list_invoices,
         crate::routes::invoices::get_invoice,
+        crate::routes::invoices::send_invoice,
+        crate::routes::invoices::record_invoice_payment,
     ),
     components(schemas(
         // Request DTOs
@@ -68,6 +80,13 @@ use crate::state::AppState;
         InventoryAdjustRequest,
         CreateReturnRequest,
         CreateReturnItemRequest,
+        UpdateCustomerRequest,
+        UpdateProductRequest,
+        CreateShipmentRequest,
+        CreatePaymentRequest,
+        CreateRefundRequest,
+        CreateInvoiceRequest,
+        RecordInvoicePaymentRequest,
         // Response DTOs
         OrderResponse,
         OrderItemResponse,
