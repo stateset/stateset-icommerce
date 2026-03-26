@@ -6,6 +6,66 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-03-26
+
+### Added
+- **Agentic Commerce**: Negotiation engine with auto-accept/reject thresholds, A2A messaging with retry, credit terms (net 15/30/60/90), inventory commitments, dispute rules engine
+- **V9 Migration**: 8 new tables for agent commerce (a2a_messages, a2a_negotiations, inventory_commitments, a2a_credit_terms, a2a_tax_obligations, a2a_dispute_rules)
+- **5 Negotiation REST endpoints**: create, get, counter-offer, accept, reject
+- **497 A2A tests** across 17 modules
+
+## [0.9.0] - 2026-03-26
+
+### Added
+- **11 V4 entity implementations**: reviews, wishlists, gift cards, loyalty, fraud, segments, store credits, shipping zones, rewards, search configs, zone shipping methods (was 11 stubs)
+- **18 V4 HTTP endpoints**: reviews, wishlists, gift cards, loyalty CRUD + actions
+- **Clippy pedantic fixes** across 174 files (1,377 insertions)
+- **12 new HTTP integration tests** (81 total)
+
+## [0.8.8] - 2026-03-25
+
+### Added
+- **Pricing engine** wired into order creation with currency-aware rounding
+- **Audit log** (V8 migration) with record_audit() function
+- **Graceful DB shutdown** (WAL checkpoint + PRAGMA optimize)
+- **ETag utility module** for HTTP conditional requests
+- **Fat LTO + target-cpu=native** for maximum compiled performance
+- **Gzip response compression** on all API endpoints
+
+## [0.8.5] - 2026-03-25
+
+### Fixed
+- **Inventory reservation race condition**: atomic quantity+version check in UPDATE WHERE clause
+- **SQLITE_FULL detection**: maps to StorageFull error instead of generic 500
+- **UNIQUE constraint violations**: return 409 Conflict instead of 500
+- **LIKE wildcard escaping** in product search
+
+### Added
+- **V6 Migration**: 3 idempotency constraints (order_items, reservations, cart checkout)
+- **Health check**: GET /health/deep with DB latency + metrics
+- **Slow query logging**: transactions >500ms emit tracing::warn
+- **Request timeout**: 30-second TimeoutLayer on all API endpoints
+
+## [0.8.4] - 2026-03-25
+
+### Added
+- **13 new REST endpoints**: PATCH/DELETE for customers and products, POST for shipments, payments, invoices with action endpoints (deliver, complete, refund, send, record-payment)
+- **V5 Migration**: 12 composite database indexes for common query patterns
+- **29 error messages** now include valid enum values
+- **13 new integration tests** for all new endpoints
+
+## [0.8.2] - 2026-03-25
+
+### Changed
+- **Performance**: 8 rounds of autoresearch-driven optimization (~3x all 20 Criterion benchmarks)
+  - SQLite: PRAGMA tuning, prepare_cached, mmap, WAL autocheckpoint, deferred FK
+  - EventBus: lazy event_type allocation, deferred receiver_count, inline publish
+  - Merkle tree: double-buffer swap, SHA256 asm, hasher reuse, pad memoization
+  - Money: #[inline] on hot arithmetic paths
+  - Compiler: codegen-units=1
+  - Metrics: lock-free CAS for f64 accumulators
+  - Event store: AtomicU64 sequence counter
+
 ## [0.8.1] - 2026-03-18
 
 ### Added

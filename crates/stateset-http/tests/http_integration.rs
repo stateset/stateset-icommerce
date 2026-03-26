@@ -2071,3 +2071,148 @@ async fn create_invoice_returns_201() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 }
+
+// ============================================================================
+// End-to-End Commerce Flow
+// ============================================================================
+
+/// Full commerce lifecycle: customer → product → order → payment → shipment.
+/// This is the critical happy-path test for v1.0.0 readiness.
+#[tokio::test]
+async fn e2e_full_commerce_lifecycle() {
+    let (router, state) = app_with_state();
+
+    // Step 1: Create customer
+    let body = json!({
+        "email": "e2e-buyer@test.com",
+        "first_name": "E2E",
+        "last_name": "Buyer"
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let customer = body_json(resp).await;
+    let customer_id = customer["id"].as_str().unwrap().to_string();
+
+    // Step 2: Create product
+    let body = json!({
+        "name": "E2E Widget",
+        "description": "A widget for end-to-end testing"
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/products")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let product = body_json(resp).await;
+    let product_id = product["id"].as_str().unwrap().to_string();
+
+    // Step 3: Create order
+    let body = json!({
+        "customer_id": customer_id,
+        "items": [{
+            "product_id": product_id,
+            "sku": "E2E-WIDGET-001",
+            "name": "E2E Widget",
+            "quantity": 2,
+            "unit_price": 49.99
+        }]
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let order = body_json(resp).await;
+    let order_id = order["id"].as_str().unwrap().to_string();
+    assert_eq!(order["status"], "pending");
+    assert_eq!(order["items"].as_array().unwrap().len(), 1);
+
+    // Step 4: Create payment for order
+    let body = json!({
+        "order_id": order_id,
+        "amount": 99.98,
+        "payment_method": "credit_card"
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/payments")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let payment = body_json(resp).await;
+    assert!(payment["id"].is_string());
+
+    // Step 5: Create shipment
+    let body = json!({
+        "order_id": order_id,
+        "carrier": "ups",
+        "tracking_number": "1Z999AA10123456784"
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/shipments")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let shipment = body_json(resp).await;
+    assert_eq!(shipment["tracking_number"], "1Z999AA10123456784");
+
+    // Step 6: Verify order is retrievable with all data
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/orders/{order_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let final_order = body_json(resp).await;
+    assert_eq!(final_order["id"], order_id);
+    assert_eq!(final_order["customer_id"], customer_id);
+
+    // Step 7: Verify customer is retrievable
+    let resp = router
+        .oneshot(
+            Request::get(format!("/api/v1/customers/{customer_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let final_customer = body_json(resp).await;
+    assert_eq!(final_customer["email"], "e2e-buyer@test.com");
+}
