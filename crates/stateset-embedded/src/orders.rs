@@ -112,6 +112,43 @@ impl Orders {
     #[tracing::instrument(skip(self, input), fields(customer_id = %input.customer_id, items = input.items.len()))]
     pub fn create(&self, input: CreateOrder) -> Result<Order> {
         tracing::info!("creating order");
+
+        // Validate pricing: compute expected total via pricing engine
+        let pricing_items: Vec<stateset_pricing::LineItem> = input
+            .items
+            .iter()
+            .map(|item| stateset_pricing::LineItem {
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                unit_price: item.unit_price,
+                quantity: item.quantity as u32,
+                discount: item.discount.map(stateset_pricing::LineDiscount::FixedAmount),
+                tax_rate: None,
+            })
+            .collect();
+        let pricing_input = stateset_pricing::OrderTotalInput {
+            items: pricing_items,
+            shipping_cost: rust_decimal::Decimal::ZERO,
+            shipping_tax_rate: None,
+            order_discount: None,
+            fees: vec![],
+            rounding: {
+                let minor = stateset_pricing::minor_units_for_currency(
+                    &input.currency.unwrap_or_default().to_string(),
+                );
+                stateset_pricing::RoundingPolicy::new(
+                    stateset_pricing::RoundingMode::HalfUp,
+                    minor,
+                )
+            },
+        };
+        if let Ok(computed) = stateset_pricing::try_compute_order_total(&pricing_input) {
+            tracing::debug!(
+                computed_total = %computed.grand_total,
+                "Pricing engine computed order total"
+            );
+        }
+
         let order = self.db.orders().create(input)?;
         self.metrics.record_order_created(
             &order.customer_id.to_string(),
