@@ -2,14 +2,18 @@
 
 pub mod customers;
 pub mod events;
+pub mod gift_cards;
 pub mod health;
 pub mod inventory;
 pub mod invoices;
+pub mod loyalty;
 pub mod orders;
 pub mod payments;
 pub mod products;
 pub mod returns;
+pub mod reviews;
 pub mod shipments;
+pub mod wishlists;
 
 use axum::Router;
 use std::time::Duration;
@@ -44,6 +48,10 @@ fn v1_router() -> Router<AppState> {
         .merge(shipments::router())
         .merge(payments::router())
         .merge(invoices::router())
+        .merge(reviews::router())
+        .merge(wishlists::router())
+        .merge(gift_cards::router())
+        .merge(loyalty::router())
         .merge(events::router())
         .merge(crate::openapi::router())
 }
