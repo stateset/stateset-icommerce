@@ -13,6 +13,7 @@ pub mod shipments;
 
 use axum::Router;
 use std::time::Duration;
+use tower_http::compression::CompressionLayer;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::state::AppState;
@@ -23,11 +24,12 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Build the full API router with all route groups mounted.
 ///
 /// This is the main entry point for route assembly. The returned [`Router`]
-/// includes a 30-second request timeout on all API endpoints.
+/// includes gzip response compression and a 30-second request timeout.
 pub fn api_router() -> Router<AppState> {
     Router::new()
         .merge(health::router())
         .nest("/api/v1", v1_router())
+        .layer(CompressionLayer::new())
         .layer(TimeoutLayer::new(REQUEST_TIMEOUT))
 }
 

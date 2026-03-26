@@ -116,9 +116,15 @@ rand_chacha.opt-level = 3
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 strip = "symbols"
 panic = "abort"
+codegen-units = 1
+
+# Benchmark profile: full LTO + native CPU for maximum benchmark accuracy.
+[profile.bench]
+opt-level = 3
+lto = "fat"
 codegen-units = 1
 
 # Use `--profile profiling` to keep symbols for perf / flamegraph.
