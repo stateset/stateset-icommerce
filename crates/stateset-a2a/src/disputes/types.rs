@@ -168,6 +168,7 @@ impl DisputeRecord {
     }
 
     /// Set the escrow amount on this dispute.
+    #[must_use] 
     pub const fn with_amount(mut self, amount: Decimal) -> Self {
         self.amount = Some(amount);
         self

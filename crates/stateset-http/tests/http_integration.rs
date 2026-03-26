@@ -1818,3 +1818,256 @@ async fn e2e_create_inventory_items_then_list_inventory() {
     assert_eq!(list["items"].as_array().unwrap().len(), 2);
     assert_eq!(list["has_more"], false);
 }
+
+// ============================================================================
+// Deep Health Check
+// ============================================================================
+
+#[tokio::test]
+async fn deep_health_returns_database_latency_and_metrics() {
+    let resp = app()
+        .oneshot(Request::get("/health/deep").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["status"], "ok");
+    assert!(json["database"]["connected"].as_bool().unwrap());
+    assert!(json["database"]["latency_ms"].is_number());
+}
+
+// ============================================================================
+// Customer PATCH / DELETE
+// ============================================================================
+
+#[tokio::test]
+async fn update_customer_returns_updated_fields() {
+    let (router, state) = app_with_state();
+
+    let customer = state
+        .commerce()
+        .customers()
+        .create(stateset_core::CreateCustomer {
+            email: "patch-me@test.com".into(),
+            first_name: "Old".into(),
+            last_name: "Name".into(),
+            phone: None,
+            accepts_marketing: None,
+            tags: None,
+            metadata: None,
+        })
+        .unwrap();
+
+    let body = json!({ "first_name": "New", "last_name": "Updated" });
+    let resp = router
+        .oneshot(
+            Request::patch(format!("/api/v1/customers/{}", customer.id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["first_name"], "New");
+    assert_eq!(json["last_name"], "Updated");
+    assert_eq!(json["email"], "patch-me@test.com");
+}
+
+#[tokio::test]
+async fn delete_customer_returns_204() {
+    let (router, state) = app_with_state();
+
+    let customer = state
+        .commerce()
+        .customers()
+        .create(stateset_core::CreateCustomer {
+            email: "delete-int@test.com".into(),
+            first_name: "Del".into(),
+            last_name: "Ete".into(),
+            phone: None,
+            accepts_marketing: None,
+            tags: None,
+            metadata: None,
+        })
+        .unwrap();
+
+    let resp = router
+        .oneshot(
+            Request::delete(format!("/api/v1/customers/{}", customer.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+// ============================================================================
+// Product PATCH / DELETE
+// ============================================================================
+
+#[tokio::test]
+async fn update_product_returns_updated_fields() {
+    let (router, state) = app_with_state();
+
+    let product = state
+        .commerce()
+        .products()
+        .create(stateset_core::CreateProduct {
+            name: "Widget".into(),
+            slug: None,
+            description: Some("Old desc".into()),
+            product_type: None,
+            attributes: None,
+            seo: None,
+            variants: None,
+        })
+        .unwrap();
+
+    let body = json!({ "name": "Super Widget", "description": "New desc" });
+    let resp = router
+        .oneshot(
+            Request::patch(format!("/api/v1/products/{}", product.id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["name"], "Super Widget");
+}
+
+#[tokio::test]
+async fn delete_product_returns_204() {
+    let (router, state) = app_with_state();
+
+    let product = state
+        .commerce()
+        .products()
+        .create(stateset_core::CreateProduct {
+            name: "Deletable".into(),
+            slug: None,
+            description: None,
+            product_type: None,
+            attributes: None,
+            seo: None,
+            variants: None,
+        })
+        .unwrap();
+
+    let resp = router
+        .oneshot(
+            Request::delete(format!("/api/v1/products/{}", product.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+// ============================================================================
+// Shipment Create
+// ============================================================================
+
+#[tokio::test]
+async fn create_shipment_returns_201() {
+    let (router, state) = app_with_state();
+
+    let customer = state
+        .commerce()
+        .customers()
+        .create(stateset_core::CreateCustomer {
+            email: "shipper-int@test.com".into(),
+            first_name: "Ship".into(),
+            last_name: "Per".into(),
+            phone: None,
+            accepts_marketing: None,
+            tags: None,
+            metadata: None,
+        })
+        .unwrap();
+    let order = state
+        .commerce()
+        .orders()
+        .create(stateset_core::CreateOrder {
+            customer_id: customer.id,
+            items: vec![stateset_core::CreateOrderItem {
+                product_id: ProductId::new(),
+                variant_id: None,
+                sku: "SHIP-INT".into(),
+                name: "Shippable".into(),
+                quantity: 1,
+                unit_price: dec!(15.00),
+                discount: None,
+                tax_amount: None,
+            }],
+            currency: None,
+            shipping_address: None,
+            billing_address: None,
+            notes: None,
+            payment_method: None,
+            shipping_method: None,
+        })
+        .unwrap();
+
+    let body = json!({
+        "order_id": order.id.to_string(),
+        "carrier": "ups",
+        "tracking_number": "1Z999AA10123456784"
+    });
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/shipments")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp).await;
+    assert_eq!(json["tracking_number"], "1Z999AA10123456784");
+}
+
+// ============================================================================
+// Invoice Create
+// ============================================================================
+
+#[tokio::test]
+async fn create_invoice_returns_201() {
+    let (router, state) = app_with_state();
+
+    let customer = state
+        .commerce()
+        .customers()
+        .create(stateset_core::CreateCustomer {
+            email: "invoice-int@test.com".into(),
+            first_name: "Bill".into(),
+            last_name: "Able".into(),
+            phone: None,
+            accepts_marketing: None,
+            tags: None,
+            metadata: None,
+        })
+        .unwrap();
+
+    let body = json!({
+        "customer_id": customer.id.to_string(),
+        "payment_terms": "net_30"
+    });
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/invoices")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}

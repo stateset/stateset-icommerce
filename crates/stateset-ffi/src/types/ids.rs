@@ -28,12 +28,14 @@ impl FfiUuid {
 
     /// Create from raw bytes.
     #[inline]
+    #[must_use] 
     pub const fn from_bytes(bytes: [u8; 16]) -> Self {
         Self { bytes }
     }
 
     /// Returns `true` if this is the nil UUID.
     #[inline]
+    #[must_use] 
     pub fn is_nil(&self) -> bool {
         self.bytes == [0u8; 16]
     }

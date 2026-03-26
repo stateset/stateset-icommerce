@@ -29,6 +29,7 @@ pub struct FfiMoney {
 impl FfiMoney {
     /// Create a zero amount in the given currency.
     #[inline]
+    #[must_use] 
     pub const fn zero(currency: [u8; 3]) -> Self {
         Self { amount_cents: 0, currency }
     }

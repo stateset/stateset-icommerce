@@ -21,12 +21,9 @@ use crate::error::{FfiErrorCode, catch_ffi_void, set_last_error};
 /// Returns `null` if the string contains interior null bytes (which would
 /// be a bug in our domain types).
 pub(crate) fn rust_to_c_string(s: &str) -> *mut c_char {
-    match CString::new(s) {
-        Ok(c) => c.into_raw(),
-        Err(_) => {
-            set_last_error("string contains interior null byte");
-            std::ptr::null_mut()
-        }
+    if let Ok(c) = CString::new(s) { c.into_raw() } else {
+        set_last_error("string contains interior null byte");
+        std::ptr::null_mut()
     }
 }
 

@@ -310,7 +310,7 @@ pub(crate) fn discard_sync_runtime_dead_letter_json_safe(
 
 fn healthcheck_sync_runtime_safe(lease: SyncRuntimeLease) -> Result<u8, FfiErrorCode> {
     run_sync_runtime_async(lease, |runtime, executor| {
-        executor.block_on(runtime.healthcheck()).map(|_| 1)
+        executor.block_on(runtime.healthcheck()).map(|()| 1)
     })
 }
 
