@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
