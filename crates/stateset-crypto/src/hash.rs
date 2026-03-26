@@ -196,8 +196,8 @@ pub fn compute_recipients_hash(recipients: &[serde_json::Value]) -> Result<[u8; 
     // Sort by recipient_kid
     let mut sorted: Vec<serde_json::Value> = recipients.to_vec();
     sorted.sort_by(|a, b| {
-        let a_kid = a.get("recipient_kid").and_then(|v| v.as_u64()).unwrap_or(0);
-        let b_kid = b.get("recipient_kid").and_then(|v| v.as_u64()).unwrap_or(0);
+        let a_kid = a.get("recipient_kid").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let b_kid = b.get("recipient_kid").and_then(serde_json::Value::as_u64).unwrap_or(0);
         a_kid.cmp(&b_kid)
     });
 

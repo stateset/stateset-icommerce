@@ -122,9 +122,7 @@ impl ValidationBuilder {
                 false
             } else {
                 let parts: Vec<&str> = value.split('@').collect();
-                if parts.len() != 2 {
-                    false
-                } else {
+                if parts.len() == 2 {
                     let domain = parts[1];
                     if parts[0].is_empty() || domain.is_empty() {
                         false
@@ -134,6 +132,8 @@ impl ValidationBuilder {
                             && !domain.ends_with('.')
                             && !domain.contains("..")
                     }
+                } else {
+                    false
                 }
             }
         };
@@ -153,7 +153,7 @@ impl ValidationBuilder {
         self.check(
             field,
             value.trim().chars().count() <= max,
-            &format!("cannot exceed {} characters", max),
+            &format!("cannot exceed {max} characters"),
         )
     }
 
@@ -162,7 +162,7 @@ impl ValidationBuilder {
         self.check(
             field,
             value.trim().chars().count() >= min,
-            &format!("must be at least {} characters", min),
+            &format!("must be at least {min} characters"),
         )
     }
 
@@ -186,7 +186,7 @@ impl ValidationBuilder {
         self.check(
             field,
             value >= min && value <= max,
-            &format!("must be between {} and {}", min, max),
+            &format!("must be between {min} and {max}"),
         )
     }
 
@@ -217,7 +217,7 @@ impl ValidationBuilder {
 
     /// Validate a list has at most N items
     pub fn max_items<T>(self, field: &str, value: &[T], max: usize) -> Self {
-        self.check(field, value.len() <= max, &format!("cannot have more than {} items", max))
+        self.check(field, value.len() <= max, &format!("cannot have more than {max} items"))
     }
 
     /// Validate a SKU format (alphanumeric, hyphens, underscores)
@@ -248,7 +248,7 @@ impl ValidationBuilder {
                     || ch.is_ascii_whitespace()
                     || matches!(ch, '+' | '-' | '(' | ')' | '.'))
             });
-            let digit_count = value.chars().filter(|c| c.is_ascii_digit()).count();
+            let digit_count = value.chars().filter(char::is_ascii_digit).count();
             self.check(
                 field,
                 !invalid_char && (7..=15).contains(&digit_count),
@@ -293,7 +293,7 @@ impl ValidationBuilder {
             Ok(())
         } else {
             let messages: Vec<String> =
-                self.errors.iter().map(|(field, msg)| format!("{}: {}", field, msg)).collect();
+                self.errors.iter().map(|(field, msg)| format!("{field}: {msg}")).collect();
             Err(CommerceError::ValidationError(messages.join("; ")))
         }
     }

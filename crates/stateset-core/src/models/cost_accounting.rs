@@ -400,10 +400,11 @@ pub struct SkuCostSummary {
 // ============================================================================
 
 /// Generate a cost adjustment number.
+#[must_use] 
 pub fn generate_cost_adjustment_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..4].to_uppercase();
-    format!("CADJ-{}-{}", timestamp, random)
+    format!("CADJ-{timestamp}-{random}")
 }
 
 #[cfg(test)]

@@ -44,6 +44,7 @@ impl std::fmt::Debug for InMemoryEventStore {
 
 impl InMemoryEventStore {
     /// Create a new in-memory event store
+    #[must_use] 
     pub fn new(max_events: usize) -> Self {
         Self {
             events: Arc::new(RwLock::new(VecDeque::with_capacity(max_events))),
@@ -144,7 +145,7 @@ impl EventStore for InMemoryEventStore {
     fn append(&self, event: &CommerceEvent) -> Result<u64> {
         let (aggregate_type, aggregate_id) = Self::extract_aggregate(event);
         let data = event.to_json().map_err(|e| {
-            stateset_core::CommerceError::Internal(format!("Failed to serialize event: {}", e))
+            stateset_core::CommerceError::Internal(format!("Failed to serialize event: {e}"))
         })?;
 
         let seq = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;

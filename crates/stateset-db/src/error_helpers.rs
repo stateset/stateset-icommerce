@@ -11,10 +11,11 @@ use stateset_core::{CommerceError, DbError};
 
 #[cfg(feature = "sqlite")]
 pub mod sqlite {
-    use super::*;
+    use super::{CommerceError, DbError};
     use rusqlite::Error as SqliteError;
 
     /// Convert a rusqlite error to `CommerceError` with context
+    #[must_use] 
     pub fn map_error(
         table: &'static str,
         operation: &'static str,
@@ -25,7 +26,7 @@ pub mod sqlite {
                 // Check for constraint violations
                 match ffi_err.code {
                     rusqlite::ErrorCode::ConstraintViolation => {
-                        let constraint = msg.as_ref().map(|s| s.as_str()).unwrap_or("unknown");
+                        let constraint = msg.as_ref().map_or("unknown", std::string::String::as_str);
                         CommerceError::Database(DbError::ConstraintViolation {
                             table,
                             constraint: extract_constraint_name(constraint).to_string(),
@@ -34,7 +35,7 @@ pub mod sqlite {
                     }
                     rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked => {
                         CommerceError::Database(DbError::TransactionFailed {
-                            message: format!("Database busy/locked during {}: {}", operation, err),
+                            message: format!("Database busy/locked during {operation}: {err}"),
                         })
                     }
                     rusqlite::ErrorCode::CannotOpen => {
@@ -58,19 +59,18 @@ pub mod sqlite {
                 CommerceError::Database(DbError::SerializationError {
                     field: col_name.clone(),
                     message: format!(
-                        "Column {} has invalid type at index {}, expected {:?}",
-                        col_name, col, expected
+                        "Column {col_name} has invalid type at index {col}, expected {expected:?}"
                     ),
                 })
             }
             SqliteError::InvalidColumnName(name) => CommerceError::Database(DbError::QueryFailed {
                 table,
                 operation,
-                message: format!("Invalid column name: {}", name),
+                message: format!("Invalid column name: {name}"),
             }),
             SqliteError::FromSqlConversionFailure(col, _, err) => {
                 CommerceError::Database(DbError::SerializationError {
-                    field: format!("column_{}", col),
+                    field: format!("column_{col}"),
                     message: err.to_string(),
                 })
             }
@@ -83,6 +83,7 @@ pub mod sqlite {
     }
 
     /// Convert an r2d2 pool error to `CommerceError`
+    #[must_use] 
     pub fn map_pool_error(_err: r2d2::Error) -> CommerceError {
         CommerceError::Database(DbError::PoolExhausted {
             timeout_ms: 30000, // Default timeout

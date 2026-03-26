@@ -200,21 +200,25 @@ pub struct ReturnFilter {
 
 impl Return {
     /// Calculate total refund amount from items
+    #[must_use] 
     pub fn calculate_refund_total(&self) -> Decimal {
         self.items.iter().map(|item| item.refund_amount).sum()
     }
 
     /// Check if return can be approved
+    #[must_use] 
     pub fn can_approve(&self) -> bool {
         self.status == ReturnStatus::Requested
     }
 
     /// Check if return can be completed
+    #[must_use] 
     pub const fn can_complete(&self) -> bool {
         matches!(self.status, ReturnStatus::Received | ReturnStatus::Inspecting)
     }
 
     /// Check if refund is eligible based on reason
+    #[must_use] 
     pub const fn is_refund_eligible(&self) -> bool {
         matches!(
             self.reason,

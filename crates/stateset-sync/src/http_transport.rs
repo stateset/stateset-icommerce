@@ -164,13 +164,13 @@ impl SequencerHttpTransport {
 
     /// Return whether an API key is configured for outbound requests.
     #[must_use]
-    pub fn has_api_key(&self) -> bool {
+    pub const fn has_api_key(&self) -> bool {
         self.api_key.is_some()
     }
 
     /// Return whether a bearer token is configured for outbound requests.
     #[must_use]
-    pub fn has_bearer_token(&self) -> bool {
+    pub const fn has_bearer_token(&self) -> bool {
         self.bearer_token.is_some()
     }
 

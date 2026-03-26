@@ -21,6 +21,7 @@ pub struct SqliteBomRepository {
 }
 
 impl SqliteBomRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -31,7 +32,7 @@ impl SqliteBomRepository {
 
     fn parse_bom_status(s: &str) -> Result<BomStatus> {
         s.parse()
-            .map_err(|e| CommerceError::DatabaseError(format!("Invalid bom.status '{}': {}", s, e)))
+            .map_err(|e| CommerceError::DatabaseError(format!("Invalid bom.status '{s}': {e}")))
     }
 
     fn load_components(&self, bom_id: Uuid) -> Result<Vec<BomComponent>> {
@@ -279,8 +280,8 @@ impl BomRepository for SqliteBomRepository {
         let ids = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let limit = filter.limit.unwrap_or(100) as i64;
-            let offset = filter.offset.unwrap_or(0) as i64;
+            let limit = i64::from(filter.limit.unwrap_or(100));
+            let offset = i64::from(filter.offset.unwrap_or(0));
 
             let mut sql = "SELECT id FROM manufacturing_boms WHERE 1=1".to_string();
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -297,7 +298,7 @@ impl BomRepository for SqliteBomRepository {
 
             if let Some(search) = filter.search {
                 sql.push_str(" AND (name LIKE ? OR bom_number LIKE ?)");
-                let search_pattern = format!("%{}%", search);
+                let search_pattern = format!("%{search}%");
                 params.push(Box::new(search_pattern.clone()));
                 params.push(Box::new(search_pattern));
             }
@@ -309,7 +310,7 @@ impl BomRepository for SqliteBomRepository {
             let mut stmt =
                 conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))
@@ -474,7 +475,7 @@ impl BomRepository for SqliteBomRepository {
             params.push(Box::new(status.to_string()));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 = conn
             .query_row(&sql, param_refs.as_slice(), |row| row.get(0))
@@ -742,8 +743,7 @@ impl BomRepository for SqliteBomRepository {
 
         // Mark BOMs as obsolete (soft delete) using IN clause
         let sql = format!(
-            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = ? WHERE id IN ({})",
-            placeholders
+            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = ? WHERE id IN ({placeholders})"
         );
 
         // Build params with timestamp first, then IDs
@@ -751,7 +751,7 @@ impl BomRepository for SqliteBomRepository {
         let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
         all_params.extend(uuid_params(&ids));
         let all_params_refs: Vec<&dyn rusqlite::ToSql> =
-            all_params.iter().map(|p| p.as_ref()).collect();
+            all_params.iter().map(std::convert::AsRef::as_ref).collect();
 
         tx.execute(&sql, all_params_refs.as_slice())
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -771,8 +771,7 @@ impl BomRepository for SqliteBomRepository {
         let sql = format!(
             "SELECT id, bom_number, product_id, name, description, revision, status,
                     created_by, updated_by, created_at, updated_at
-             FROM manufacturing_boms WHERE id IN ({})",
-            placeholders
+             FROM manufacturing_boms WHERE id IN ({placeholders})"
         );
 
         let params = uuid_params(&ids);

@@ -77,7 +77,7 @@ impl std::str::FromStr for LotStatus {
             "on_hold" => Ok(Self::OnHold),
             "recalled" => Ok(Self::Recalled),
             "scrapped" => Ok(Self::Scrapped),
-            _ => Err(format!("Unknown lot status: {}", s)),
+            _ => Err(format!("Unknown lot status: {s}")),
         }
     }
 }
@@ -484,21 +484,25 @@ impl Default for AddLotCertificate {
 
 impl Lot {
     /// Check if lot has available quantity
+    #[must_use] 
     pub fn has_available(&self) -> bool {
         self.quantity_available() > Decimal::ZERO
     }
 
     /// Get available quantity (not reserved or quarantined)
+    #[must_use] 
     pub fn quantity_available(&self) -> Decimal {
         self.quantity_remaining - self.quantity_reserved - self.quantity_quarantined
     }
 
     /// Check if lot is expired
+    #[must_use] 
     pub fn is_expired(&self) -> bool {
         if let Some(exp) = self.expiration_date { Utc::now() > exp } else { false }
     }
 
     /// Check if lot is expiring soon (within days)
+    #[must_use] 
     pub fn is_expiring_soon(&self, days: i64) -> bool {
         if let Some(exp) = self.expiration_date {
             let threshold = Utc::now() + chrono::Duration::days(days);
@@ -509,21 +513,25 @@ impl Lot {
     }
 
     /// Check if lot can be consumed
+    #[must_use] 
     pub fn can_consume(&self, quantity: Decimal) -> bool {
         self.status == LotStatus::Active && self.quantity_available() >= quantity
     }
 
     /// Check if lot can be reserved
+    #[must_use] 
     pub fn can_reserve(&self, quantity: Decimal) -> bool {
         self.status == LotStatus::Active && self.quantity_available() >= quantity
     }
 
     /// Get days until expiration
+    #[must_use] 
     pub fn days_until_expiration(&self) -> Option<i64> {
         self.expiration_date.map(|exp| (exp - Utc::now()).num_days())
     }
 
     /// Get shelf life percentage remaining
+    #[must_use] 
     pub fn shelf_life_remaining(&self) -> Option<Decimal> {
         if let Some(exp) = self.expiration_date {
             let total_days = (exp - self.production_date).num_days();

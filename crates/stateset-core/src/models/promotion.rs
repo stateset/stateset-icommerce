@@ -398,7 +398,7 @@ impl std::str::FromStr for CouponStatus {
             "disabled" => Ok(Self::Disabled),
             "exhausted" => Ok(Self::Exhausted),
             "expired" => Ok(Self::Expired),
-            _ => Err(format!("Unknown coupon status: {}", s)),
+            _ => Err(format!("Unknown coupon status: {s}")),
         }
     }
 }
@@ -663,6 +663,7 @@ pub struct CouponFilter {
 // ============================================================================
 
 /// Generate a unique promotion code
+#[must_use] 
 pub fn generate_promotion_code() -> String {
     let id = Uuid::new_v4();
     let bytes = id.as_bytes();
@@ -672,6 +673,7 @@ pub fn generate_promotion_code() -> String {
 }
 
 /// Generate a unique coupon code (human-friendly)
+#[must_use] 
 pub fn generate_coupon_code(prefix: Option<&str>) -> String {
     let chars: Vec<char> = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".chars().collect();
     let id = Uuid::new_v4();
@@ -693,6 +695,7 @@ pub fn generate_coupon_code(prefix: Option<&str>) -> String {
 
 impl Promotion {
     /// Check if promotion is currently active
+    #[must_use] 
     pub fn is_active(&self) -> bool {
         if self.status != PromotionStatus::Active {
             return false;
@@ -720,6 +723,7 @@ impl Promotion {
     }
 
     /// Get human-readable discount description
+    #[must_use] 
     pub fn discount_description(&self) -> String {
         match self.promotion_type {
             PromotionType::PercentageOff => {
@@ -731,7 +735,7 @@ impl Promotion {
             }
             PromotionType::FixedAmountOff => {
                 if let Some(amt) = self.fixed_amount_off {
-                    format!("${} off", amt)
+                    format!("${amt} off")
                 } else {
                     "Fixed discount".to_string()
                 }
@@ -741,7 +745,7 @@ impl Promotion {
                 let get = self.get_quantity.unwrap_or(1);
                 let discount = self.get_discount_percent.unwrap_or(Decimal::ONE);
                 if discount == Decimal::ONE {
-                    format!("Buy {} get {} free", buy, get)
+                    format!("Buy {buy} get {get} free")
                 } else {
                     format!(
                         "Buy {} get {} at {}% off",
@@ -758,7 +762,7 @@ impl Promotion {
                 if let Some(pct) = self.percentage_off {
                     format!("{}% off first order", (pct * Decimal::from(100)).round())
                 } else if let Some(amt) = self.fixed_amount_off {
-                    format!("${} off first order", amt)
+                    format!("${amt} off first order")
                 } else {
                     "First order discount".to_string()
                 }

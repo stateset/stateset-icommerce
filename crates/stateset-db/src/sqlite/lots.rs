@@ -24,6 +24,7 @@ pub struct SqliteLotRepository {
 }
 
 impl SqliteLotRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -230,8 +231,8 @@ impl SqliteLotRepository {
             reference_id,
             from_location_id,
             to_location_id,
-            reason: reason.map(|s| s.to_string()),
-            performed_by: performed_by.map(|s| s.to_string()),
+            reason: reason.map(std::string::ToString::to_string),
+            performed_by: performed_by.map(std::string::ToString::to_string),
             created_at: now,
         })
     }
@@ -417,7 +418,7 @@ impl LotRepository for SqliteLotRepository {
         params.push(Box::new(id.to_string()));
 
         let sql = format!("UPDATE lots SET {} WHERE id = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         self.get(id)?.ok_or(CommerceError::NotFound)
@@ -457,10 +458,10 @@ impl LotRepository for SqliteLotRepository {
             conditions.join(" AND ")
         );
 
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let lots = stmt
@@ -964,7 +965,7 @@ impl LotRepository for SqliteLotRepository {
                 )
                 .map_err(|e| match e {
                     rusqlite::Error::QueryReturnedNoRows => {
-                        CommerceError::ValidationError(format!("Lot {} not found", lot_id))
+                        CommerceError::ValidationError(format!("Lot {lot_id} not found"))
                     }
                     e => map_db_error(e),
                 })?;
@@ -1017,7 +1018,7 @@ impl LotRepository for SqliteLotRepository {
                 template.expiration_date.map(|d| d.to_rfc3339()),
                 template.best_before_date.map(|d| d.to_rfc3339()),
                 template.cost_per_unit.map(|c| c.to_string()),
-                input.reason.as_ref().map(|r| format!("Merged lots: {}", r)),
+                input.reason.as_ref().map(|r| format!("Merged lots: {r}")),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
@@ -1041,7 +1042,7 @@ impl LotRepository for SqliteLotRepository {
                 new_lot_id,
                 None,
                 None,
-                Some(&format!("Merged into lot {}", new_lot_number)),
+                Some(&format!("Merged into lot {new_lot_number}")),
                 None,
             )?;
         }
@@ -1164,7 +1165,7 @@ impl LotRepository for SqliteLotRepository {
 
         let transactions = stmt
             .query_map(
-                rusqlite::params![lot_id.to_string(), limit as i64],
+                rusqlite::params![lot_id.to_string(), i64::from(limit)],
                 Self::row_to_transaction,
             )
             .map_err(map_db_error)?
@@ -1285,7 +1286,7 @@ impl LotRepository for SqliteLotRepository {
 
     fn get_expiring_lots(&self, days: i32) -> Result<Vec<Lot>> {
         let conn = self.conn()?;
-        let threshold = Utc::now() + chrono::Duration::days(days as i64);
+        let threshold = Utc::now() + chrono::Duration::days(i64::from(days));
 
         let mut stmt = conn
             .prepare(
@@ -1429,7 +1430,7 @@ impl LotRepository for SqliteLotRepository {
 
         let sql = format!("SELECT COUNT(*) FROM lots WHERE {}", conditions.join(" AND "));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         conn.query_row(&sql, params_refs.as_slice(), |row| row.get::<_, i64>(0))
             .map(|c| c as u64)

@@ -322,6 +322,7 @@ impl fmt::Debug for NotificationService {
 
 impl NotificationService {
     /// Create a new notification service.
+    #[must_use] 
     pub fn new(config: NotificationConfig, backend: Box<dyn EmailBackend>) -> Self {
         Self { config, backend, recipient_resolver: None }
     }
@@ -337,6 +338,7 @@ impl NotificationService {
     }
 
     /// Get the service configuration.
+    #[must_use] 
     pub const fn config(&self) -> &NotificationConfig {
         &self.config
     }

@@ -24,6 +24,7 @@ pub struct SqliteX402PaymentIntentRepository {
 }
 
 impl SqliteX402PaymentIntentRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -50,7 +51,7 @@ impl SqliteX402PaymentIntentRepository {
                         rusqlite::types::Type::Text,
                         Box::new(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
-                            format!("Invalid JSON for x402_intent.inclusion_proof: {}", e),
+                            format!("Invalid JSON for x402_intent.inclusion_proof: {e}"),
                         )),
                     )
                 })
@@ -155,7 +156,7 @@ impl SqliteX402PaymentIntentRepository {
             )
             .map_err(map_db_error)?;
 
-        Ok(max_nonce.map(|n| n as u64 + 1).unwrap_or(0))
+        Ok(max_nonce.map_or(0, |n| n as u64 + 1))
     }
 }
 
@@ -182,7 +183,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
 
         // Calculate decimal amount
         let decimals = asset.decimals();
-        let divisor = 10u64.pow(decimals as u32);
+        let divisor = 10u64.pow(u32::from(decimals));
         let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
 
         tx.execute(
@@ -271,7 +272,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         // Compute signing hash and store signature
         let hash_bytes = intent.sequencer_signing_hash();
         let signing_hash =
-            format!("0x{}", hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+            format!("0x{}", hash_bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
 
         // Validate signature/public key pair against the intent hash before persisting.
         let mut signed_intent = intent;
@@ -467,7 +468,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             )
             .map_err(map_db_error)?;
 
-        Ok(max_nonce.map(|n| n as u64 + 1).unwrap_or(0))
+        Ok(max_nonce.map_or(0, |n| n as u64 + 1))
     }
 
     fn list(&self, filter: X402PaymentIntentFilter) -> Result<Vec<X402PaymentIntent>> {
@@ -519,8 +520,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             "SELECT * FROM x402_payment_intents WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             conditions.join(" AND ")
         );
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -638,7 +639,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             let chain_id = network.chain_id();
             let token_address = asset.contract_address(network).map(String::from);
             let decimals = asset.decimals();
-            let divisor = 10u64.pow(decimals as u32);
+            let divisor = 10u64.pow(u32::from(decimals));
             let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
             let payer_address = input.payer_address;
             let nonce = match input.nonce {
@@ -708,7 +709,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM x402_payment_intents WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM x402_payment_intents WHERE id IN ({placeholders})");
 
         let params = uuid_params(&ids);
         let param_refs = params_refs(&params);

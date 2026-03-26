@@ -30,6 +30,7 @@ pub enum ShippingCarrier {
 
 impl ShippingCarrier {
     /// Get the tracking URL base for this carrier
+    #[must_use] 
     pub const fn tracking_url_base(&self) -> Option<&'static str> {
         match self {
             Self::Ups => Some("https://www.ups.com/track?tracknum="),
@@ -45,8 +46,9 @@ impl ShippingCarrier {
     }
 
     /// Generate a full tracking URL for a tracking number
+    #[must_use] 
     pub fn tracking_url(&self, tracking_number: &str) -> Option<String> {
-        self.tracking_url_base().map(|base| format!("{}{}", base, tracking_number))
+        self.tracking_url_base().map(|base| format!("{base}{tracking_number}"))
     }
 }
 
@@ -111,35 +113,23 @@ pub enum ShipmentStatus {
 
 impl ShipmentStatus {
     /// Check if this status can transition to the target status
+    #[must_use] 
     pub const fn can_transition_to(&self, target: Self) -> bool {
-        use ShipmentStatus::*;
+        use ShipmentStatus::{Pending, Processing, Cancelled, ReadyToShip, Shipped, InTransit, OutForDelivery, Failed, Delivered, Returned, OnHold};
         matches!(
             (self, target),
             // Forward flow
-            (Pending, Processing) |
-            (Pending, Cancelled) |
-            (Processing, ReadyToShip) |
-            (Processing, Cancelled) |
-            (ReadyToShip, Shipped) |
-            (ReadyToShip, Cancelled) |
-            (Shipped, InTransit) |
-            (InTransit, OutForDelivery) |
-            (InTransit, Failed) |
-            (OutForDelivery, Delivered) |
-            (OutForDelivery, Failed) |
-            // Recovery paths
-            (Failed, InTransit) |
-            (Failed, Returned) |
-            (Delivered, Returned) |
-            // Hold operations
-            (Pending, OnHold) |
-            (Processing, OnHold) |
-            (OnHold, Processing) |
-            (OnHold, Cancelled)
+            (Pending | OnHold, Processing) |
+(Pending | Processing | ReadyToShip | OnHold, Cancelled) |
+(Processing, ReadyToShip | OnHold) | (ReadyToShip, Shipped) |
+(Shipped | Failed, InTransit) | (InTransit, OutForDelivery | Failed) |
+(OutForDelivery, Delivered | Failed) | (Failed | Delivered, Returned) |
+(Pending, OnHold)
         )
     }
 
     /// Check if this is a terminal status
+    #[must_use] 
     pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Delivered | Self::Cancelled | Self::Returned)
     }
@@ -210,12 +200,14 @@ pub struct Shipment {
 
 impl Shipment {
     /// Generate a unique shipment number based on timestamp
+    #[must_use] 
     pub fn generate_shipment_number() -> String {
         let now = chrono::Utc::now();
         format!("SHP-{}", now.format("%Y%m%d%H%M%S"))
     }
 
     /// Calculate transit time in days (if delivered)
+    #[must_use] 
     pub fn transit_days(&self) -> Option<f64> {
         match (self.shipped_at, self.delivered_at) {
             (Some(shipped), Some(delivered)) => {
@@ -227,6 +219,7 @@ impl Shipment {
     }
 
     /// Check if delivery is late
+    #[must_use] 
     pub fn is_late(&self) -> bool {
         match (self.estimated_delivery, self.delivered_at) {
             (Some(estimated), Some(delivered)) => delivered > estimated,

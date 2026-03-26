@@ -170,6 +170,7 @@ pub struct InventoryFilter {
 
 impl InventoryBalance {
     /// Check if stock is below reorder point
+    #[must_use] 
     pub fn needs_reorder(&self) -> bool {
         if let Some(reorder_point) = self.reorder_point {
             self.quantity_available < reorder_point
@@ -179,11 +180,13 @@ impl InventoryBalance {
     }
 
     /// Calculate available quantity
+    #[must_use] 
     pub fn calculate_available(&self) -> Decimal {
         self.quantity_on_hand - self.quantity_allocated
     }
 
     /// Check if requested quantity can be allocated
+    #[must_use] 
     pub fn can_allocate(&self, quantity: Decimal) -> bool {
         self.quantity_available >= quantity
     }

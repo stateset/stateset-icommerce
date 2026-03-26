@@ -372,6 +372,7 @@ pub enum CommerceEvent {
 
 impl CommerceEvent {
     /// Get event type as string
+    #[must_use] 
     pub const fn event_type(&self) -> &'static str {
         match self {
             Self::OrderCreated { .. } => "order_created",
@@ -431,6 +432,7 @@ impl CommerceEvent {
     }
 
     /// Get timestamp from event
+    #[must_use] 
     pub const fn timestamp(&self) -> DateTime<Utc> {
         match self {
             Self::OrderCreated { timestamp, .. }

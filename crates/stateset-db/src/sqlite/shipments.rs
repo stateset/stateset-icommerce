@@ -21,6 +21,7 @@ pub struct SqliteShipmentRepository {
 }
 
 impl SqliteShipmentRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -176,7 +177,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
                     input.dimensions,
                     input.shipping_cost.map(|c| c.to_string()),
                     input.insurance_amount.map(|a| a.to_string()),
-                    input.signature_required.unwrap_or(false) as i32,
+                    i32::from(input.signature_required.unwrap_or(false)),
                     input.estimated_delivery.map(|dt| dt.to_rfc3339()),
                     input.notes,
                     now.to_rfc3339(),
@@ -472,8 +473,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
         let ids = {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let limit = filter.limit.unwrap_or(100) as i64;
-            let offset = filter.offset.unwrap_or(0) as i64;
+            let limit = i64::from(filter.limit.unwrap_or(100));
+            let offset = i64::from(filter.offset.unwrap_or(0));
 
             let mut sql = "SELECT id FROM shipments WHERE 1=1".to_string();
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -505,7 +506,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let mut stmt =
                 conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))
@@ -723,7 +724,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             params.push(Box::new(carrier.to_string()));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 = conn
             .query_row(&sql, param_refs.as_slice(), |row| row.get(0))
@@ -789,7 +790,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
                     input.dimensions,
                     input.shipping_cost.map(|c| c.to_string()),
                     input.insurance_amount.map(|a| a.to_string()),
-                    input.signature_required.unwrap_or(false) as i32,
+                    i32::from(input.signature_required.unwrap_or(false)),
                     input.estimated_delivery.map(|dt| dt.to_rfc3339()),
                     input.notes,
                     now.to_rfc3339(),
@@ -997,7 +998,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let sql = format!("UPDATE shipments SET {} WHERE id = ?", update_parts.join(", "));
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(|p| p.as_ref()).collect();
+                params.iter().map(std::convert::AsRef::as_ref).collect();
             tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
             updated_ids.push(id);
@@ -1046,11 +1047,11 @@ impl ShipmentRepository for SqliteShipmentRepository {
         let params_refs = params_refs(&params);
 
         // Delete shipment events first
-        let sql = format!("DELETE FROM shipment_events WHERE shipment_id IN ({})", placeholders);
+        let sql = format!("DELETE FROM shipment_events WHERE shipment_id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete shipment items
-        let sql = format!("DELETE FROM shipment_items WHERE shipment_id IN ({})", placeholders);
+        let sql = format!("DELETE FROM shipment_items WHERE shipment_id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete shipments (mark as cancelled)
@@ -1082,8 +1083,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
                     shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
                     signature_required, shipped_at, estimated_delivery, delivered_at, notes,
                     created_at, updated_at
-             FROM shipments WHERE id IN ({})",
-            placeholders
+             FROM shipments WHERE id IN ({placeholders})"
         );
 
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| (*id).into()).collect();

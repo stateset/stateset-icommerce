@@ -21,6 +21,7 @@ pub struct SqliteX402CreditRepository {
 }
 
 impl SqliteX402CreditRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -106,7 +107,7 @@ impl SqliteX402CreditRepository {
         if let Some((id, balance)) = existing {
             let account_id = Uuid::parse_str(&id).map_err(|e| {
                 rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
-                    format!("Invalid UUID: {}", e),
+                    format!("Invalid UUID: {e}"),
                 )))
             })?;
             return Ok((account_id, balance));
@@ -325,11 +326,11 @@ impl X402CreditRepository for SqliteX402CreditRepository {
 
         if let Some(limit) = filter.limit {
             sql.push_str(" LIMIT ?");
-            params.push(Box::new(limit as i64));
+            params.push(Box::new(i64::from(limit)));
         }
         if let Some(offset) = filter.offset {
             sql.push_str(" OFFSET ?");
-            params.push(Box::new(offset as i64));
+            params.push(Box::new(i64::from(offset)));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;

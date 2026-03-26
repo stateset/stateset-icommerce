@@ -85,6 +85,7 @@ const UNARY_OPERATORS: &[Operator] = &[
 
 impl Operator {
     /// Returns `true` if this operator does not need a comparison value.
+    #[must_use] 
     pub fn is_unary(self) -> bool {
         UNARY_OPERATORS.contains(&self)
     }

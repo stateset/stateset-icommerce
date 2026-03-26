@@ -35,6 +35,7 @@ impl Commerce {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn orders(&self) -> Orders {
         #[cfg(feature = "events")]
         {
@@ -71,6 +72,7 @@ impl Commerce {
     /// commerce.inventory().adjust("SKU-001", dec!(-5), "Sold")?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn inventory(&self) -> Inventory {
         #[cfg(feature = "events")]
         {
@@ -99,6 +101,7 @@ impl Commerce {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn customers(&self) -> Customers {
         #[cfg(feature = "events")]
         {
@@ -132,6 +135,7 @@ impl Commerce {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn products(&self) -> Products {
         #[cfg(feature = "events")]
         {
@@ -144,6 +148,7 @@ impl Commerce {
     }
 
     /// Access custom objects (custom states / metaobjects) operations.
+    #[must_use] 
     pub fn custom_objects(&self) -> CustomObjects {
         #[cfg(feature = "events")]
         {
@@ -156,6 +161,7 @@ impl Commerce {
     }
 
     /// Alias for `custom_objects()` (for users who prefer the "custom states" name).
+    #[must_use] 
     pub fn custom_states(&self) -> CustomObjects {
         self.custom_objects()
     }
@@ -182,6 +188,7 @@ impl Commerce {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn returns(&self) -> Returns {
         #[cfg(feature = "events")]
         {
@@ -218,6 +225,7 @@ impl Commerce {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn bom(&self) -> Bom {
         Bom::new(self.db.clone())
     }
@@ -243,6 +251,7 @@ impl Commerce {
     /// let wo = commerce.work_orders().start(wo.id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn work_orders(&self) -> WorkOrders {
         WorkOrders::new(self.db.clone())
     }
@@ -278,6 +287,7 @@ impl Commerce {
     /// let shipment = commerce.shipments().mark_delivered(shipment.id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn shipments(&self) -> Shipments {
         Shipments::new(self.db.clone(), self.metrics.clone())
     }
@@ -306,6 +316,7 @@ impl Commerce {
     /// let payment = commerce.payments().mark_completed(payment.id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn payments(&self) -> Payments {
         Payments::new(self.db.clone(), self.metrics.clone())
     }
@@ -332,6 +343,7 @@ impl Commerce {
     /// assert!(commerce.warranties().is_valid(warranty.id)?);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn warranties(&self) -> Warranties {
         Warranties::new(self.db.clone())
     }
@@ -372,6 +384,7 @@ impl Commerce {
     /// let po = commerce.purchase_orders().send(po.id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn purchase_orders(&self) -> PurchaseOrders {
         PurchaseOrders::new(self.db.clone())
     }
@@ -408,6 +421,7 @@ impl Commerce {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn invoices(&self) -> Invoices {
         Invoices::new(self.db.clone())
     }
@@ -455,6 +469,7 @@ impl Commerce {
     /// println!("Order created: {}", result.order_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn carts(&self) -> Carts {
         Carts::new(self.db.clone(), self.metrics.clone())
     }
@@ -491,6 +506,7 @@ impl Commerce {
     /// }
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn analytics(&self) -> Analytics {
         Analytics::new(self.db.clone())
     }
@@ -531,6 +547,7 @@ impl Commerce {
     /// println!("Base currency: {}", settings.base_currency);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn currency(&self) -> CurrencyOps {
         CurrencyOps::new(self.db.clone())
     }
@@ -579,6 +596,7 @@ impl Commerce {
     /// println!("Texas tax rate: {}%", rate * dec!(100));
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn tax(&self) -> Tax {
         Tax::new(self.db.clone())
     }
@@ -638,6 +656,7 @@ impl Commerce {
     /// println!("Final total: ${}", result.grand_total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn promotions(&self) -> Promotions {
         Promotions::new(self.db.clone())
     }
@@ -675,6 +694,7 @@ impl Commerce {
     /// println!("Subscription #{} created", subscription.subscription_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn subscriptions(&self) -> Subscriptions {
         Subscriptions::new(self.db.clone(), self.metrics.clone())
     }
@@ -699,6 +719,7 @@ impl Commerce {
     /// println!("Created inspection #{}", inspection.inspection_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn quality(&self) -> Quality {
         Quality::new(self.db.clone())
     }
@@ -725,6 +746,7 @@ impl Commerce {
     /// println!("Created lot {}", lot.lot_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn lots(&self) -> Lots {
         Lots::new(self.db.clone())
     }
@@ -747,6 +769,7 @@ impl Commerce {
     /// println!("Created serial {}", serial.serial);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn serials(&self) -> Serials {
         Serials::new(self.db.clone())
     }
@@ -780,6 +803,7 @@ impl Commerce {
     /// println!("Created location {} in {}", location.code, warehouse.name);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn warehouse(&self) -> WarehouseOps {
         WarehouseOps::new(self.db.clone())
     }
@@ -809,6 +833,7 @@ impl Commerce {
     /// println!("Created receipt {}", receipt.receipt_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn receiving(&self) -> Receiving {
         Receiving::new(self.db.clone())
     }
@@ -834,6 +859,7 @@ impl Commerce {
     /// let picks = commerce.fulfillment().get_picks_for_wave(wave.id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn fulfillment(&self) -> Fulfillment {
         Fulfillment::new(self.db.clone())
     }
@@ -868,6 +894,7 @@ impl Commerce {
     /// println!("Total AP: ${}", aging.total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn accounts_payable(&self) -> AccountsPayable {
         AccountsPayable::new(self.db.clone())
     }
@@ -895,6 +922,7 @@ impl Commerce {
     /// println!("Total inventory value: ${}", valuation.total_value);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn cost_accounting(&self) -> CostAccounting {
         CostAccounting::new(self.db.clone())
     }
@@ -923,6 +951,7 @@ impl Commerce {
     /// println!("Credit approved: {}", result.approved);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn credit(&self) -> Credit {
         Credit::new(self.db.clone())
     }
@@ -953,6 +982,7 @@ impl Commerce {
     /// println!("Overdue backorders: {}", overdue.len());
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn backorder(&self) -> Backorders {
         Backorders::new(self.db.clone())
     }
@@ -982,6 +1012,7 @@ impl Commerce {
     /// println!("DSO (30 day): {}", dso);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn accounts_receivable(&self) -> AccountsReceivable {
         AccountsReceivable::new(self.db.clone())
     }
@@ -1020,6 +1051,7 @@ impl Commerce {
     /// println!("Net Income: ${}", income.net_income);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn general_ledger(&self) -> GeneralLedger {
         GeneralLedger::new(self.db.clone())
     }
@@ -1070,6 +1102,7 @@ impl Commerce {
     /// )?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[must_use] 
     pub fn x402(&self) -> X402 {
         X402::new(self.db.clone())
     }
@@ -1078,6 +1111,7 @@ impl Commerce {
     ///
     /// Provides identity, reputation, and validation registry operations
     /// for trustless agent discovery across organizational boundaries.
+    #[must_use] 
     pub fn erc8004(&self) -> Erc8004 {
         Erc8004::new(self.db.clone())
     }
@@ -1085,6 +1119,7 @@ impl Commerce {
     /// Access gift card operations.
     ///
     /// Provides gift card issuance, charging, refunding, and transaction history.
+    #[must_use] 
     pub fn gift_cards(&self) -> GiftCards {
         GiftCards::new(self.db.clone())
     }
@@ -1092,6 +1127,7 @@ impl Commerce {
     /// Access store credit operations.
     ///
     /// Provides store credit management including balance adjustments and application to orders.
+    #[must_use] 
     pub fn store_credits(&self) -> StoreCredits {
         StoreCredits::new(self.db.clone())
     }
@@ -1099,6 +1135,7 @@ impl Commerce {
     /// Access customer segment operations.
     ///
     /// Provides customer grouping, membership management, and segment targeting.
+    #[must_use] 
     pub fn segments(&self) -> Segments {
         Segments::new(self.db.clone())
     }
@@ -1106,6 +1143,7 @@ impl Commerce {
     /// Access shipping zone and method operations.
     ///
     /// Provides shipping zone management, method configuration, and rate calculation.
+    #[must_use] 
     pub fn shipping_zones(&self) -> ShippingZones {
         ShippingZones::new(self.db.clone())
     }
@@ -1113,6 +1151,7 @@ impl Commerce {
     /// Access product review operations.
     ///
     /// Provides review creation, moderation, summaries, and helpful/reported tracking.
+    #[must_use] 
     pub fn reviews(&self) -> Reviews {
         Reviews::new(self.db.clone())
     }
@@ -1120,6 +1159,7 @@ impl Commerce {
     /// Access wishlist operations.
     ///
     /// Provides wishlist creation, item management, and customer wish tracking.
+    #[must_use] 
     pub fn wishlists(&self) -> Wishlists {
         Wishlists::new(self.db.clone())
     }
@@ -1128,6 +1168,7 @@ impl Commerce {
     ///
     /// Provides loyalty program management, customer enrollment, points tracking,
     /// and reward catalog operations.
+    #[must_use] 
     pub fn loyalty(&self) -> Loyalty {
         Loyalty::new(self.db.clone())
     }
@@ -1135,6 +1176,7 @@ impl Commerce {
     /// Access fraud detection operations.
     ///
     /// Provides fraud risk assessment, rule management, and manual review workflows.
+    #[must_use] 
     pub fn fraud(&self) -> Fraud {
         Fraud::new(self.db.clone())
     }
@@ -1142,6 +1184,7 @@ impl Commerce {
     /// Access search configuration operations.
     ///
     /// Provides search configuration management including active config selection.
+    #[must_use] 
     pub fn search_config(&self) -> SearchConfigs {
         SearchConfigs::new(self.db.clone())
     }

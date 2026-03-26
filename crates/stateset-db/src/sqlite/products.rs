@@ -23,6 +23,7 @@ pub struct SqliteProductRepository {
 }
 
 impl SqliteProductRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -190,7 +191,7 @@ impl ProductRepository for SqliteProductRepository {
                         variant.weight.map(|d| d.to_string()),
                         &variant.weight_unit,
                         options_json,
-                        (i == 0) as i32,  // First variant is default
+                        i32::from(i == 0),  // First variant is default
                         now.to_rfc3339(),
                         now.to_rfc3339(),
                     ],
@@ -299,7 +300,7 @@ impl ProductRepository for SqliteProductRepository {
 
         let sql =
             format!("UPDATE products SET {} WHERE id = ? AND version = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
         if rows_affected == 0 {
@@ -372,21 +373,20 @@ impl ProductRepository for SqliteProductRepository {
             } else {
                 sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
                 params
-                    .push(Box::new(format!("%\"name\":\"category\",\"value\":\"{}\"%", category)));
+                    .push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
                 params
-                    .push(Box::new(format!("%\"value\":\"{}\",\"group\":\"category\"%", category)));
+                    .push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
             }
         }
         if let Some(in_stock) = in_stock {
             let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
             sql.push_str(&format!(
-                " AND {} (SELECT 1 FROM product_variants pv_stock \
+                " AND {stock_clause} (SELECT 1 FROM product_variants pv_stock \
                  JOIN inventory_items ii ON ii.sku = pv_stock.sku \
                  JOIN inventory_balances ib ON ib.item_id = ii.id \
                  WHERE pv_stock.product_id = products.id \
                    AND pv_stock.is_active = 1 \
-                   AND CAST(ib.quantity_available AS REAL) > 0)",
-                stock_clause
+                   AND CAST(ib.quantity_available AS REAL) > 0)"
             ));
         }
 
@@ -403,16 +403,16 @@ impl ProductRepository for SqliteProductRepository {
         let apply_price_filter = min_price.is_some() || max_price.is_some();
         if !apply_price_filter {
             if let Some(limit) = limit {
-                sql.push_str(&format!(" LIMIT {}", limit));
+                sql.push_str(&format!(" LIMIT {limit}"));
             }
             if after_cursor.is_none() {
                 if let Some(offset) = offset {
-                    sql.push_str(&format!(" OFFSET {}", offset));
+                    sql.push_str(&format!(" OFFSET {offset}"));
                 }
             }
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let products = stmt
@@ -516,7 +516,7 @@ impl ProductRepository for SqliteProductRepository {
                 variant.weight.map(|d| d.to_string()),
                 &variant.weight_unit,
                 options_json,
-                variant.is_default.unwrap_or(false) as i32,
+                i32::from(variant.is_default.unwrap_or(false)),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
@@ -704,25 +704,24 @@ impl ProductRepository for SqliteProductRepository {
             } else {
                 sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
                 params
-                    .push(Box::new(format!("%\"name\":\"category\",\"value\":\"{}\"%", category)));
+                    .push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
                 params
-                    .push(Box::new(format!("%\"value\":\"{}\",\"group\":\"category\"%", category)));
+                    .push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
             }
         }
         if let Some(in_stock) = in_stock {
             let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
             sql.push_str(&format!(
-                " AND {} (SELECT 1 FROM product_variants pv_stock \
+                " AND {stock_clause} (SELECT 1 FROM product_variants pv_stock \
                  JOIN inventory_items ii ON ii.sku = pv_stock.sku \
                  JOIN inventory_balances ib ON ib.item_id = ii.id \
                  WHERE pv_stock.product_id = products.id \
                    AND pv_stock.is_active = 1 \
-                   AND CAST(ib.quantity_available AS REAL) > 0)",
-                stock_clause
+                   AND CAST(ib.quantity_available AS REAL) > 0)"
             ));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let ids = stmt
             .query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))
@@ -874,7 +873,7 @@ impl ProductRepository for SqliteProductRepository {
                             variant.weight.map(|d| d.to_string()),
                             &variant.weight_unit,
                             options_json,
-                            (i == 0) as i32,  // First variant is default
+                            i32::from(i == 0),  // First variant is default
                             now.to_rfc3339(),
                             now.to_rfc3339(),
                         ],
@@ -991,7 +990,7 @@ impl ProductRepository for SqliteProductRepository {
             );
 
             let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(|p| p.as_ref()).collect();
+                params.iter().map(std::convert::AsRef::as_ref).collect();
             let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
             if rows_affected == 0 {
                 return Err(CommerceError::VersionConflict {
@@ -1043,8 +1042,7 @@ impl ProductRepository for SqliteProductRepository {
 
         // Archive products (soft delete) with IN clause
         let sql = format!(
-            "UPDATE products SET status = 'archived', updated_at = ? WHERE id IN ({})",
-            placeholders
+            "UPDATE products SET status = 'archived', updated_at = ? WHERE id IN ({placeholders})"
         );
 
         // Build params with timestamp first, then IDs
@@ -1054,7 +1052,7 @@ impl ProductRepository for SqliteProductRepository {
             all_params.push(Box::new(id.to_string()));
         }
         let all_params_refs: Vec<&dyn rusqlite::ToSql> =
-            all_params.iter().map(|p| p.as_ref()).collect();
+            all_params.iter().map(std::convert::AsRef::as_ref).collect();
 
         tx.execute(&sql, all_params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -1070,7 +1068,7 @@ impl ProductRepository for SqliteProductRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM products WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM products WHERE id IN ({placeholders})");
 
         let uuid_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let params = uuid_params(&uuid_ids);

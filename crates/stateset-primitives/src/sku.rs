@@ -42,12 +42,14 @@ impl Sku {
 
     /// Get the SKU as a string slice.
     #[inline]
+    #[must_use] 
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Consume and return the inner string.
     #[inline]
+    #[must_use] 
     pub fn into_string(self) -> String {
         self.0
     }

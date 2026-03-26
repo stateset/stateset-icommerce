@@ -45,30 +45,35 @@ impl Money {
 
     /// Get the amount.
     #[inline]
+    #[must_use] 
     pub const fn amount(&self) -> Decimal {
         self.amount
     }
 
     /// Get the currency code.
     #[inline]
+    #[must_use] 
     pub const fn currency(&self) -> CurrencyCode {
         self.currency
     }
 
     /// Returns `true` if the amount is zero.
     #[inline]
+    #[must_use] 
     pub const fn is_zero(&self) -> bool {
         self.amount.is_zero()
     }
 
     /// Returns `true` if the amount is positive.
     #[inline]
+    #[must_use] 
     pub const fn is_positive(&self) -> bool {
         self.amount.is_sign_positive() && !self.amount.is_zero()
     }
 
     /// Returns `true` if the amount is negative.
     #[inline]
+    #[must_use] 
     pub const fn is_negative(&self) -> bool {
         self.amount.is_sign_negative() && !self.amount.is_zero()
     }

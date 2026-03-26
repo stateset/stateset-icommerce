@@ -341,7 +341,7 @@ impl std::str::FromStr for MovementType {
             "shipment" => Ok(Self::Shipment),
             "return" => Ok(Self::Return),
             _ => {
-                Err(crate::CommerceError::ValidationError(format!("Invalid movement type: {}", s)))
+                Err(crate::CommerceError::ValidationError(format!("Invalid movement type: {s}")))
             }
         }
     }

@@ -65,7 +65,7 @@ impl JobHandler for BillingTickJob {
         Box::pin(async { Ok(JobOutput::new("billing tick completed")) })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "billing_tick"
     }
 }
@@ -123,7 +123,7 @@ impl JobHandler for WebhookRetryJob {
         Box::pin(async { Ok(JobOutput::new("webhook retry sweep completed")) })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "webhook_retry"
     }
 }
@@ -183,7 +183,7 @@ impl JobHandler for EventRetentionJob {
         })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "event_retention"
     }
 }
@@ -243,7 +243,7 @@ impl JobHandler for LowStockAlertJob {
         })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "low_stock_alert"
     }
 }
@@ -302,7 +302,7 @@ impl JobHandler for SubscriptionRenewalJob {
         })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "subscription_renewal"
     }
 }

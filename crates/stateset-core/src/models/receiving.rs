@@ -148,7 +148,7 @@ impl FromStr for ReceiptStatus {
             "putting_away" | "puttingaway" => Ok(Self::PuttingAway),
             "completed" => Ok(Self::Completed),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
-            _ => Err(format!("Unknown receipt status: {}", s)),
+            _ => Err(format!("Unknown receipt status: {s}")),
         }
     }
 }
@@ -319,10 +319,11 @@ pub type CreateReceiptLine = CreateReceiptItem;
 // ============================================================================
 
 /// Generate a receipt number.
+#[must_use] 
 pub fn generate_receipt_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
-    format!("RCV-{}-{}", timestamp, random)
+    format!("RCV-{timestamp}-{random}")
 }
 
 #[cfg(test)]

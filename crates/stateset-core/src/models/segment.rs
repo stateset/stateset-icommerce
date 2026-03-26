@@ -135,11 +135,13 @@ pub struct SegmentFilter {
 
 impl Segment {
     /// Whether this is a dynamic (rule-based) segment
+    #[must_use] 
     pub fn is_dynamic(&self) -> bool {
         self.segment_type == SegmentType::Dynamic
     }
 
     /// Whether this segment has any rules defined
+    #[must_use] 
     pub fn has_rules(&self) -> bool {
         !self.rules.is_empty()
     }

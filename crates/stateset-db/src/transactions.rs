@@ -82,6 +82,7 @@ impl std::fmt::Debug for TransactionHandle {
 
 impl TransactionHandle {
     /// Create a new transaction handle
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -92,11 +93,13 @@ impl TransactionHandle {
     }
 
     /// Get the transaction ID
+    #[must_use] 
     pub fn id(&self) -> &str {
         &self.id
     }
 
     /// Get the current state
+    #[must_use] 
     pub const fn state(&self) -> TransactionState {
         self.state
     }
@@ -117,7 +120,7 @@ impl TransactionHandle {
         // Execute all operations
         for op in &self.operations {
             match op.execute() {
-                Ok(_) => {
+                Ok(()) => {
                     self.completed_operations += 1;
                 }
                 Err(e) => {
@@ -176,6 +179,7 @@ pub struct Saga {
 
 impl Saga {
     /// Create a new saga
+    #[must_use] 
     pub fn new() -> Self {
         Self { handle: TransactionHandle::new() }
     }

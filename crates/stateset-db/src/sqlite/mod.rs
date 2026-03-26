@@ -216,7 +216,7 @@ impl SqliteDatabase {
         let (manager, max_connections) = if is_memory {
             // Generate unique database name for this instance
             let db_id = MEMORY_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let uri = format!("file:memdb_{}?mode=memory&cache=shared", db_id);
+            let uri = format!("file:memdb_{db_id}?mode=memory&cache=shared");
             let manager = SqliteConnectionManager::file(&uri).with_flags(
                 OpenFlags::SQLITE_OPEN_READ_WRITE
                     | OpenFlags::SQLITE_OPEN_CREATE
@@ -308,156 +308,187 @@ impl SqliteDatabase {
     }
 
     /// Get order repository
+    #[must_use] 
     pub fn orders(&self) -> SqliteOrderRepository {
         SqliteOrderRepository::new(self.pool.clone())
     }
 
     /// Get inventory repository
+    #[must_use] 
     pub fn inventory(&self) -> SqliteInventoryRepository {
         SqliteInventoryRepository::new(self.pool.clone())
     }
 
     /// Get customer repository
+    #[must_use] 
     pub fn customers(&self) -> SqliteCustomerRepository {
         SqliteCustomerRepository::new(self.pool.clone())
     }
 
     /// Get product repository
+    #[must_use] 
     pub fn products(&self) -> SqliteProductRepository {
         SqliteProductRepository::new(self.pool.clone())
     }
 
     /// Get custom objects repository (custom states / metaobjects)
+    #[must_use] 
     pub fn custom_objects(&self) -> SqliteCustomObjectRepository {
         SqliteCustomObjectRepository::new(self.pool.clone())
     }
 
     /// Get return repository
+    #[must_use] 
     pub fn returns(&self) -> SqliteReturnRepository {
         SqliteReturnRepository::new(self.pool.clone())
     }
 
     /// Get BOM (Bill of Materials) repository
+    #[must_use] 
     pub fn bom(&self) -> SqliteBomRepository {
         SqliteBomRepository::new(self.pool.clone())
     }
 
     /// Get work order repository
+    #[must_use] 
     pub fn work_orders(&self) -> SqliteWorkOrderRepository {
         SqliteWorkOrderRepository::new(self.pool.clone())
     }
 
     /// Get shipment repository
+    #[must_use] 
     pub fn shipments(&self) -> SqliteShipmentRepository {
         SqliteShipmentRepository::new(self.pool.clone())
     }
 
     /// Get payment repository
+    #[must_use] 
     pub fn payments(&self) -> SqlitePaymentRepository {
         SqlitePaymentRepository::new(self.pool.clone())
     }
 
     /// Get warranty repository
+    #[must_use] 
     pub fn warranties(&self) -> SqliteWarrantyRepository {
         SqliteWarrantyRepository::new(self.pool.clone())
     }
 
     /// Get purchase order repository
+    #[must_use] 
     pub fn purchase_orders(&self) -> SqlitePurchaseOrderRepository {
         SqlitePurchaseOrderRepository::new(self.pool.clone())
     }
 
     /// Get invoice repository
+    #[must_use] 
     pub fn invoices(&self) -> SqliteInvoiceRepository {
         SqliteInvoiceRepository::new(self.pool.clone())
     }
 
     /// Get cart repository
+    #[must_use] 
     pub fn carts(&self) -> SqliteCartRepository {
         SqliteCartRepository::new(self.pool.clone())
     }
 
     /// Get analytics repository
+    #[must_use] 
     pub fn analytics(&self) -> SqliteAnalyticsRepository {
         SqliteAnalyticsRepository::new(self.pool.clone())
     }
 
     /// Get currency repository
+    #[must_use] 
     pub fn currency(&self) -> SqliteCurrencyRepository {
         SqliteCurrencyRepository::new(self.pool.clone())
     }
 
     /// Get tax repository
+    #[must_use] 
     pub fn tax(&self) -> SqliteTaxRepository {
         SqliteTaxRepository::new(self.pool.clone())
     }
 
     /// Get promotions repository
+    #[must_use] 
     pub fn promotions(&self) -> SqlitePromotionRepository {
         SqlitePromotionRepository::new(self.pool.clone())
     }
 
     /// Get subscriptions repository
+    #[must_use] 
     pub fn subscriptions(&self) -> SqliteSubscriptionRepository {
         SqliteSubscriptionRepository::new(self.pool.clone())
     }
 
     /// Get quality repository
+    #[must_use] 
     pub fn quality(&self) -> SqliteQualityRepository {
         SqliteQualityRepository::new(self.pool.clone())
     }
 
     /// Get lots repository
+    #[must_use] 
     pub fn lots(&self) -> SqliteLotRepository {
         SqliteLotRepository::new(self.pool.clone())
     }
 
     /// Get serials repository
+    #[must_use] 
     pub fn serials(&self) -> SqliteSerialRepository {
         SqliteSerialRepository::new(self.pool.clone())
     }
 
     /// Get warehouse repository
+    #[must_use] 
     pub fn warehouse(&self) -> SqliteWarehouseRepository {
         SqliteWarehouseRepository::new(self.pool.clone())
     }
 
     /// Get receiving repository
+    #[must_use] 
     pub fn receiving(&self) -> SqliteReceivingRepository {
         SqliteReceivingRepository::new(self.pool.clone())
     }
 
     /// Get fulfillment repository
+    #[must_use] 
     pub fn fulfillment(&self) -> SqliteFulfillmentRepository {
         SqliteFulfillmentRepository::new(self.pool.clone())
     }
 
     /// Get accounts payable repository
+    #[must_use] 
     pub fn accounts_payable(&self) -> SqliteAccountsPayableRepository {
         SqliteAccountsPayableRepository::new(self.pool.clone())
     }
 
     /// Get cost accounting repository
+    #[must_use] 
     pub fn cost_accounting(&self) -> SqliteCostAccountingRepository {
         SqliteCostAccountingRepository::new(self.pool.clone())
     }
 
     /// Get credit repository
+    #[must_use] 
     pub fn credit(&self) -> SqliteCreditRepository {
         SqliteCreditRepository::new(self.pool.clone())
     }
 
     /// Get backorder repository
+    #[must_use] 
     pub fn backorder(&self) -> SqliteBackorderRepository {
         SqliteBackorderRepository::new(self.pool.clone())
     }
 
     /// Get accounts receivable repository
+    #[must_use] 
     pub fn accounts_receivable(&self) -> SqliteAccountsReceivableRepository {
         SqliteAccountsReceivableRepository::new(self.pool.clone())
     }
 
     /// Get general ledger repository
+    #[must_use] 
     pub fn general_ledger(&self) -> SqliteGeneralLedgerRepository {
         SqliteGeneralLedgerRepository::new(self.pool.clone())
     }
@@ -469,101 +500,121 @@ impl SqliteDatabase {
     }
 
     /// Get x402 payment intent repository
+    #[must_use] 
     pub fn x402_payment_intents(&self) -> SqliteX402PaymentIntentRepository {
         SqliteX402PaymentIntentRepository::new(self.pool.clone())
     }
 
     /// Get x402 credit ledger repository
+    #[must_use] 
     pub fn x402_credits(&self) -> SqliteX402CreditRepository {
         SqliteX402CreditRepository::new(self.pool.clone())
     }
 
     /// Get A2A quote/purchase repository
+    #[must_use] 
     pub fn a2a_quotes(&self) -> SqliteA2ARepository {
         SqliteA2ARepository::new(self.pool.clone())
     }
 
     /// Get A2A quote/purchase repository
+    #[must_use] 
     pub fn a2a_purchases(&self) -> SqliteA2ARepository {
         SqliteA2ARepository::new(self.pool.clone())
     }
 
     /// Get agent card repository
+    #[must_use] 
     pub fn agent_cards(&self) -> SqliteAgentCardRepository {
         SqliteAgentCardRepository::new(self.pool.clone())
     }
 
     /// Get agent identity repository (ERC-8004)
+    #[must_use] 
     pub fn agent_identities(&self) -> SqliteAgentIdentityRepository {
         SqliteAgentIdentityRepository::new(self.pool.clone())
     }
 
     /// Get agent reputation repository (ERC-8004)
+    #[must_use] 
     pub fn agent_reputation(&self) -> SqliteAgentReputationRepository {
         SqliteAgentReputationRepository::new(self.pool.clone())
     }
 
     /// Get agent validation repository (ERC-8004)
+    #[must_use] 
     pub fn agent_validation(&self) -> SqliteAgentValidationRepository {
         SqliteAgentValidationRepository::new(self.pool.clone())
     }
 
     /// Get gift card repository
+    #[must_use] 
     pub fn gift_cards(&self) -> SqliteGiftCardRepository {
         SqliteGiftCardRepository::new(self.pool.clone())
     }
 
     /// Get store credit repository
+    #[must_use] 
     pub fn store_credits(&self) -> SqliteStoreCreditRepository {
         SqliteStoreCreditRepository::new(self.pool.clone())
     }
 
     /// Get customer segment repository
+    #[must_use] 
     pub fn segments(&self) -> SqliteSegmentRepository {
         SqliteSegmentRepository::new(self.pool.clone())
     }
 
     /// Get shipping zone repository
+    #[must_use] 
     pub fn shipping_zones(&self) -> SqliteShippingZoneRepository {
         SqliteShippingZoneRepository::new(self.pool.clone())
     }
 
     /// Get zone shipping method repository
+    #[must_use] 
     pub fn zone_shipping_methods(&self) -> SqliteZoneShippingMethodRepository {
         SqliteZoneShippingMethodRepository::new(self.pool.clone())
     }
 
     /// Get product review repository
+    #[must_use] 
     pub fn reviews(&self) -> SqliteReviewRepository {
         SqliteReviewRepository::new(self.pool.clone())
     }
 
     /// Get wishlist repository
+    #[must_use] 
     pub fn wishlists(&self) -> SqliteWishlistRepository {
         SqliteWishlistRepository::new(self.pool.clone())
     }
 
     /// Get loyalty program repository
+    #[must_use] 
     pub fn loyalty_programs(&self) -> SqliteLoyaltyProgramRepository {
         SqliteLoyaltyProgramRepository::new(self.pool.clone())
     }
 
     /// Get reward catalog repository
+    #[must_use] 
     pub fn rewards(&self) -> SqliteRewardRepository {
         SqliteRewardRepository::new(self.pool.clone())
     }
 
     /// Get fraud detection repository
+    #[must_use] 
     pub fn fraud(&self) -> SqliteFraudRepository {
         SqliteFraudRepository::new(self.pool.clone())
     }
 
     /// Get search configuration repository
+    #[must_use] 
     pub fn search_configs(&self) -> SqliteSearchConfigRepository {
         SqliteSearchConfigRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)
+    #[must_use] 
     pub const fn pool(&self) -> &Pool<SqliteConnectionManager> {
         &self.pool
     }
@@ -698,7 +749,7 @@ pub(crate) fn uuid_params(ids: &[uuid::Uuid]) -> Vec<Box<dyn rusqlite::ToSql>> {
 
 /// Convert boxed params to references for rusqlite execution
 pub(crate) fn params_refs(params: &[Box<dyn rusqlite::ToSql>]) -> Vec<&dyn rusqlite::ToSql> {
-    params.iter().map(|p| p.as_ref()).collect()
+    params.iter().map(std::convert::AsRef::as_ref).collect()
 }
 
 /// Convert a slice of i64 IDs to boxed parameter vector for rusqlite
@@ -765,7 +816,7 @@ where
                 retries += 1;
                 // Simple xorshift for pseudo-random jitter
                 let jitter = SEED.with(|seed| {
-                    let mut s = seed.get().wrapping_add(retries as u64);
+                    let mut s = seed.get().wrapping_add(u64::from(retries));
                     s ^= s << 13;
                     s ^= s >> 7;
                     s ^= s << 17;

@@ -203,6 +203,7 @@ impl FraudAssessment {
     }
 
     /// Determine the decision based on risk score and rules
+    #[must_use] 
     pub fn decide(risk_score: f64, rules: &[FraudRule], signals: &[FraudSignal]) -> FraudDecision {
         let mut decision = FraudDecision::Accept;
 
@@ -231,6 +232,7 @@ impl FraudAssessment {
     }
 
     /// Whether this assessment needs human review
+    #[must_use] 
     pub fn needs_review(&self) -> bool {
         self.decision == FraudDecision::Review && self.reviewed_by.is_none()
     }

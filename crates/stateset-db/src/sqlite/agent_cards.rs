@@ -22,6 +22,7 @@ pub struct SqliteAgentCardRepository {
 }
 
 impl SqliteAgentCardRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -161,7 +162,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
                 input.business_category,
                 input.max_transaction_amount.map(|n| n as i64),
                 input.daily_volume_limit.map(|n| n as i64),
-                input.requires_kyc.unwrap_or(false) as i32,
+                i32::from(input.requires_kyc.unwrap_or(false)),
                 1, // active by default
                 input.metadata,
                 now.to_rfc3339(),
@@ -248,8 +249,8 @@ impl AgentCardRepository for SqliteAgentCardRepository {
                 business_category,
                 max_transaction_amount.map(|n| n as i64),
                 daily_volume_limit.map(|n| n as i64),
-                requires_kyc as i32,
-                active as i32,
+                i32::from(requires_kyc),
+                i32::from(active),
                 metadata,
                 Utc::now().to_rfc3339(),
                 id.to_string(),
@@ -288,7 +289,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         if let Some(min_trust) = filter.min_trust_level {
             let levels = Self::trust_levels_at_or_above(min_trust);
             let placeholders = build_in_clause(levels.len());
-            conditions.push(format!("trust_level IN ({})", placeholders));
+            conditions.push(format!("trust_level IN ({placeholders})"));
             for level in levels {
                 params.push(Box::new(level.to_string()));
             }
@@ -296,27 +297,27 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         if let Some(ref network) = filter.network {
             // Search in JSON array
             conditions.push("supported_networks LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", network)));
+            params.push(Box::new(format!("%\"{network}%")));
         }
         if let Some(ref asset) = filter.asset {
             let asset_value = serde_json::to_value(asset)
                 .ok()
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .and_then(|v| v.as_str().map(std::string::ToString::to_string))
                 .unwrap_or_else(|| asset.to_string().to_lowercase());
             conditions.push("supported_assets LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", asset_value)));
+            params.push(Box::new(format!("%\"{asset_value}%")));
         }
         if let Some(ref skill) = filter.skill {
             let skill_value = serde_json::to_value(skill)
                 .ok()
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .and_then(|v| v.as_str().map(std::string::ToString::to_string))
                 .unwrap_or_else(|| skill.to_string());
             conditions.push("a2a_skills LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", skill_value)));
+            params.push(Box::new(format!("%\"{skill_value}%")));
         }
         if let Some(active) = filter.active {
             conditions.push("active = ?".to_string());
-            params.push(Box::new(active as i32));
+            params.push(Box::new(i32::from(active)));
         }
         if let Some(ref merchant) = filter.merchant_id {
             conditions.push("merchant_id = ?".to_string());
@@ -330,8 +331,8 @@ impl AgentCardRepository for SqliteAgentCardRepository {
             "SELECT * FROM agent_cards WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             conditions.join(" AND ")
         );
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(offset as i64));
+        params.push(Box::new(i64::from(limit)));
+        params.push(Box::new(i64::from(offset)));
 
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -362,34 +363,34 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         if let Some(min_trust) = filter.min_trust_level {
             let levels = Self::trust_levels_at_or_above(min_trust);
             let placeholders = build_in_clause(levels.len());
-            conditions.push(format!("trust_level IN ({})", placeholders));
+            conditions.push(format!("trust_level IN ({placeholders})"));
             for level in levels {
                 params.push(Box::new(level.to_string()));
             }
         }
         if let Some(ref network) = filter.network {
             conditions.push("supported_networks LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", network)));
+            params.push(Box::new(format!("%\"{network}%")));
         }
         if let Some(ref asset) = filter.asset {
             let asset_value = serde_json::to_value(asset)
                 .ok()
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .and_then(|v| v.as_str().map(std::string::ToString::to_string))
                 .unwrap_or_else(|| asset.to_string().to_lowercase());
             conditions.push("supported_assets LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", asset_value)));
+            params.push(Box::new(format!("%\"{asset_value}%")));
         }
         if let Some(ref skill) = filter.skill {
             let skill_value = serde_json::to_value(skill)
                 .ok()
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .and_then(|v| v.as_str().map(std::string::ToString::to_string))
                 .unwrap_or_else(|| skill.to_string());
             conditions.push("a2a_skills LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", skill_value)));
+            params.push(Box::new(format!("%\"{skill_value}%")));
         }
         if let Some(active) = filter.active {
             conditions.push("active = ?".to_string());
-            params.push(Box::new(active as i32));
+            params.push(Box::new(i32::from(active)));
         }
         if let Some(ref merchant) = filter.merchant_id {
             conditions.push("merchant_id = ?".to_string());
@@ -538,7 +539,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
                     input.business_category,
                     input.max_transaction_amount.map(|n| n as i64),
                     input.daily_volume_limit.map(|n| n as i64),
-                    input.requires_kyc.unwrap_or(false) as i32,
+                    i32::from(input.requires_kyc.unwrap_or(false)),
                     1,
                     input.metadata,
                     now.to_rfc3339(),
@@ -563,7 +564,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM agent_cards WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM agent_cards WHERE id IN ({placeholders})");
 
         let params = uuid_params(&ids);
         let param_refs = params_refs(&params);

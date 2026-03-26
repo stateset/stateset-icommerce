@@ -39,8 +39,7 @@ use uuid::Uuid;
 pub(crate) fn parse_uuid(s: &str, entity: &str, field: &str) -> Result<Uuid> {
     Uuid::parse_str(s).map_err(|e| {
         CommerceError::DatabaseError(format!(
-            "Invalid UUID for {}.{}: '{}' - {}",
-            entity, field, s, e
+            "Invalid UUID for {entity}.{field}: '{s}' - {e}"
         ))
     })
 }
@@ -65,8 +64,7 @@ pub(crate) fn parse_uuid_opt(s: Option<String>, entity: &str, field: &str) -> Re
 pub(crate) fn parse_datetime(s: &str, entity: &str, field: &str) -> Result<DateTime<Utc>> {
     parse_datetime_any(s).ok_or_else(|| {
         CommerceError::DatabaseError(format!(
-            "Invalid datetime for {}.{}: '{}' - expected RFC3339 or SQLite datetime",
-            entity, field, s
+            "Invalid datetime for {entity}.{field}: '{s}' - expected RFC3339 or SQLite datetime"
         ))
     })
 }
@@ -90,8 +88,7 @@ pub(crate) fn parse_datetime_opt(
 pub(crate) fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
         CommerceError::DatabaseError(format!(
-            "Invalid date for {}.{}: '{}' - {}",
-            entity, field, s, e
+            "Invalid date for {entity}.{field}: '{s}' - {e}"
         ))
     })
 }
@@ -120,8 +117,7 @@ pub(crate) fn parse_date_opt(
 pub(crate) fn parse_decimal(s: &str, entity: &str, field: &str) -> Result<Decimal> {
     s.parse::<Decimal>().map_err(|e| {
         CommerceError::DatabaseError(format!(
-            "Invalid decimal for {}.{}: '{}' - {}",
-            entity, field, s, e
+            "Invalid decimal for {entity}.{field}: '{s}' - {e}"
         ))
     })
 }
@@ -153,8 +149,7 @@ pub(crate) fn parse_json<T: DeserializeOwned>(s: &str, entity: &str, field: &str
         // Truncate long JSON strings in error messages
         let preview = if s.len() > 50 { &s[..50] } else { s };
         CommerceError::DatabaseError(format!(
-            "Invalid JSON for {}.{}: '{}...' - {}",
-            entity, field, preview, e
+            "Invalid JSON for {entity}.{field}: '{preview}...' - {e}"
         ))
     })
 }
@@ -261,8 +256,7 @@ where
 pub(crate) fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
     s.parse::<i32>().map_err(|e| {
         CommerceError::DatabaseError(format!(
-            "Invalid i32 for {}.{}: '{}' - {}",
-            entity, field, s, e
+            "Invalid i32 for {entity}.{field}: '{s}' - {e}"
         ))
     })
 }
@@ -272,8 +266,7 @@ pub(crate) fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
 pub(crate) fn parse_i64(s: &str, entity: &str, field: &str) -> Result<i64> {
     s.parse::<i64>().map_err(|e| {
         CommerceError::DatabaseError(format!(
-            "Invalid i64 for {}.{}: '{}' - {}",
-            entity, field, s, e
+            "Invalid i64 for {entity}.{field}: '{s}' - {e}"
         ))
     })
 }
@@ -309,7 +302,7 @@ pub(crate) fn parse_uuid_row(
             rusqlite::types::Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid UUID for {}.{}: '{}' - {}", entity, field, s, e),
+                format!("Invalid UUID for {entity}.{field}: '{s}' - {e}"),
             )),
         )
     })
@@ -340,8 +333,7 @@ pub(crate) fn parse_datetime_row(
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "Invalid datetime for {}.{}: '{}' - expected RFC3339 or SQLite datetime",
-                    entity, field, s
+                    "Invalid datetime for {entity}.{field}: '{s}' - expected RFC3339 or SQLite datetime"
                 ),
             )),
         )
@@ -372,7 +364,7 @@ pub(crate) fn parse_decimal_row(
             rusqlite::types::Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid decimal for {}.{}: '{}' - {}", entity, field, s, e),
+                format!("Invalid decimal for {entity}.{field}: '{s}' - {e}"),
             )),
         )
     })
@@ -403,7 +395,7 @@ pub(crate) fn parse_json_row<T: DeserializeOwned>(
             rusqlite::types::Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid JSON for {}.{}: '{}...' - {}", entity, field, preview, e),
+                format!("Invalid JSON for {entity}.{field}: '{preview}...' - {e}"),
             )),
         )
     })
@@ -433,7 +425,7 @@ pub(crate) fn parse_date_row(
             rusqlite::types::Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid date for {}.{}: '{}' - {}", entity, field, s, e),
+                format!("Invalid date for {entity}.{field}: '{s}' - {e}"),
             )),
         )
     })

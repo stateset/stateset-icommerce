@@ -807,11 +807,13 @@ impl Default for DatabaseConfig {
 
 impl DatabaseConfig {
     /// Create config for SQLite with path
+    #[must_use] 
     pub fn sqlite(path: &str) -> Self {
         Self { url: path.to_string(), max_connections: 5 }
     }
 
     /// Create config for in-memory SQLite (useful for testing)
+    #[must_use] 
     pub fn in_memory() -> Self {
         Self {
             url: ":memory:".to_string(),
@@ -827,6 +829,7 @@ impl DatabaseConfig {
     /// ```ignore
     /// let config = DatabaseConfig::postgres("postgres://user:pass@localhost/stateset");
     /// ```
+    #[must_use] 
     pub fn postgres(connection_string: &str) -> Self {
         Self { url: connection_string.to_string(), max_connections: 10 }
     }

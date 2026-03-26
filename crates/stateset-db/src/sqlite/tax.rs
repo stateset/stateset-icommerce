@@ -26,6 +26,7 @@ pub struct SqliteTaxRepository {
 }
 
 impl SqliteTaxRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -499,7 +500,7 @@ impl SqliteTaxRepository {
                 input.rate.to_string(),
                 input.name,
                 input.description,
-                input.is_compound as i32,
+                i32::from(input.is_compound),
                 input.priority,
                 input.threshold_min.map(|d| d.to_string()),
                 input.threshold_max.map(|d| d.to_string()),
@@ -691,12 +692,12 @@ impl SqliteTaxRepository {
         let now = Utc::now();
 
         let jurisdiction_ids_json = serde_json::to_string(
-            &input.jurisdiction_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+            &input.jurisdiction_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
         )
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let categories_json = serde_json::to_string(
-            &input.exempt_categories.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+            &input.exempt_categories.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
         )
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -833,17 +834,17 @@ impl SqliteTaxRepository {
                 provider_credentials = excluded.provider_credentials,
                 updated_at = excluded.updated_at",
             params![
-                settings.enabled as i32,
+                i32::from(settings.enabled),
                 calc_method,
                 compound_method,
-                settings.tax_shipping as i32,
-                settings.tax_handling as i32,
-                settings.tax_gift_wrap as i32,
+                i32::from(settings.tax_shipping),
+                i32::from(settings.tax_handling),
+                i32::from(settings.tax_gift_wrap),
                 origin_address_json,
                 settings.default_product_category.to_string(),
                 settings.rounding_mode,
                 settings.decimal_places,
-                settings.validate_addresses as i32,
+                i32::from(settings.validate_addresses),
                 settings.tax_provider,
                 settings.provider_credentials
             ],
@@ -1165,9 +1166,9 @@ impl SqliteTaxRepository {
                 address_json,
                 line_items_json,
                 breakdown_json,
-                result.exemptions_applied as i32,
+                i32::from(result.exemptions_applied),
                 exemption_json,
-                result.is_estimate as i32,
+                i32::from(result.is_estimate),
                 result.calculated_at.to_rfc3339()
             ],
         ).map_err(map_db_error)?;

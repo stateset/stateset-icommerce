@@ -249,8 +249,7 @@ impl Scheduler {
             let timeout = self
                 .definitions
                 .get(&def_name)
-                .map(|d| d.timeout)
-                .unwrap_or(std::time::Duration::from_secs(300));
+                .map_or(std::time::Duration::from_secs(300), |d| d.timeout);
 
             if instance.mark_running().is_err() {
                 continue;

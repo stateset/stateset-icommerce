@@ -69,11 +69,12 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 /// Encode a keyset cursor from `(sort_key, id)`.
 #[must_use]
 pub fn encode_cursor(sort_key: &str, id: &str) -> String {
-    let payload = format!("{}\x00{}", sort_key, id);
+    let payload = format!("{sort_key}\x00{id}");
     URL_SAFE_NO_PAD.encode(payload.as_bytes())
 }
 
 /// Decode a keyset cursor into `(sort_key, id)`.
+#[must_use] 
 pub fn decode_cursor(cursor: &str) -> Option<(String, String)> {
     let bytes = URL_SAFE_NO_PAD.decode(cursor).ok()?;
     let s = String::from_utf8(bytes).ok()?;

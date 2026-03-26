@@ -88,6 +88,7 @@ pub struct PolicyAction {
 
 impl PolicyAction {
     /// Create an `Allow` action.
+    #[must_use] 
     pub const fn allow() -> Self {
         Self {
             action_type: ActionType::Allow,
@@ -178,6 +179,7 @@ impl PolicyAction {
     }
 
     /// Create a `Notify` action.
+    #[must_use] 
     pub const fn notify(notification: Value) -> Self {
         Self {
             action_type: ActionType::Notify,
@@ -193,6 +195,7 @@ impl PolicyAction {
     }
 
     /// Create a `Transform` action.
+    #[must_use] 
     pub const fn transform(transform: Value) -> Self {
         Self {
             action_type: ActionType::Transform,
@@ -220,6 +223,7 @@ impl PolicyAction {
     }
 
     /// Builder: set metadata.
+    #[must_use] 
     pub fn with_metadata(mut self, metadata: Value) -> Self {
         self.metadata = Some(metadata);
         self

@@ -25,11 +25,12 @@ pub struct Counter {
 
 impl Counter {
     /// Create a new counter metric
+    #[must_use] 
     pub fn new(name: &str, help: &str, labels: Vec<&str>) -> Self {
         Self {
             name: name.to_string(),
             help: help.to_string(),
-            labels: labels.into_iter().map(|s| s.to_string()).collect(),
+            labels: labels.into_iter().map(std::string::ToString::to_string).collect(),
             values: RwLock::new(HashMap::new()),
         }
     }
@@ -41,16 +42,16 @@ impl Counter {
 
     /// Add a value to the counter for the given label values
     pub fn add(&self, label_values: &[&str], value: u64) {
-        let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut values = self.values.write().unwrap_or_else(|e| e.into_inner());
+        let key: Vec<String> = label_values.iter().map(|s| (*s).to_string()).collect();
+        let mut values = self.values.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         values.entry(key).or_insert_with(|| AtomicU64::new(0)).fetch_add(value, Ordering::SeqCst);
     }
 
     /// Get the current counter value for the given label values
     pub fn get(&self, label_values: &[&str]) -> u64 {
-        let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let values = self.values.read().unwrap_or_else(|e| e.into_inner());
-        values.get(&key).map(|v| v.load(Ordering::SeqCst)).unwrap_or(0)
+        let key: Vec<String> = label_values.iter().map(|s| (*s).to_string()).collect();
+        let values = self.values.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        values.get(&key).map_or(0, |v| v.load(Ordering::SeqCst))
     }
 
     /// Render the counter in Prometheus exposition format
@@ -58,14 +59,14 @@ impl Counter {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} counter\n", self.name));
 
-        let values = self.values.read().unwrap_or_else(|e| e.into_inner());
+        let values = self.values.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         for (labels, value) in values.iter() {
             let label_str = if !labels.is_empty() && !self.labels.is_empty() {
                 let pairs: Vec<String> = self
                     .labels
                     .iter()
                     .zip(labels.iter())
-                    .map(|(k, v)| format!("{}=\"{}\"", k, v))
+                    .map(|(k, v)| format!("{k}=\"{v}\""))
                     .collect();
                 format!("{{{}}}", pairs.join(","))
             } else {
@@ -94,19 +95,20 @@ pub struct Gauge {
 
 impl Gauge {
     /// Create a new gauge metric
+    #[must_use] 
     pub fn new(name: &str, help: &str, labels: Vec<&str>) -> Self {
         Self {
             name: name.to_string(),
             help: help.to_string(),
-            labels: labels.into_iter().map(|s| s.to_string()).collect(),
+            labels: labels.into_iter().map(std::string::ToString::to_string).collect(),
             values: RwLock::new(HashMap::new()),
         }
     }
 
     /// Set the gauge to an absolute value
     pub fn set(&self, label_values: &[&str], value: f64) {
-        let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut values = self.values.write().unwrap_or_else(|e| e.into_inner());
+        let key: Vec<String> = label_values.iter().map(|s| (*s).to_string()).collect();
+        let mut values = self.values.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         values.insert(key, value);
     }
 
@@ -122,16 +124,16 @@ impl Gauge {
 
     /// Add a delta to the gauge
     pub fn add(&self, label_values: &[&str], delta: f64) {
-        let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut values = self.values.write().unwrap_or_else(|e| e.into_inner());
+        let key: Vec<String> = label_values.iter().map(|s| (*s).to_string()).collect();
+        let mut values = self.values.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let current = values.get(&key).copied().unwrap_or(0.0);
         values.insert(key, current + delta);
     }
 
     /// Get the current gauge value for the given labels
     pub fn get(&self, label_values: &[&str]) -> f64 {
-        let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let values = self.values.read().unwrap_or_else(|e| e.into_inner());
+        let key: Vec<String> = label_values.iter().map(|s| (*s).to_string()).collect();
+        let values = self.values.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         values.get(&key).copied().unwrap_or(0.0)
     }
 
@@ -140,14 +142,14 @@ impl Gauge {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} gauge\n", self.name));
 
-        let values = self.values.read().unwrap_or_else(|e| e.into_inner());
+        let values = self.values.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         for (labels, value) in values.iter() {
             let label_str = if !labels.is_empty() && !self.labels.is_empty() {
                 let pairs: Vec<String> = self
                     .labels
                     .iter()
                     .zip(labels.iter())
-                    .map(|(k, v)| format!("{}=\"{}\"", k, v))
+                    .map(|(k, v)| format!("{k}=\"{v}\""))
                     .collect();
                 format!("{{{}}}", pairs.join(","))
             } else {
@@ -179,25 +181,27 @@ struct HistogramData {
 
 impl Histogram {
     /// Create a new histogram metric
+    #[must_use] 
     pub fn new(name: &str, help: &str, labels: Vec<&str>, buckets: Vec<f64>) -> Self {
         Self {
             name: name.to_string(),
             help: help.to_string(),
-            labels: labels.into_iter().map(|s| s.to_string()).collect(),
+            labels: labels.into_iter().map(std::string::ToString::to_string).collect(),
             buckets,
             observations: RwLock::new(HashMap::new()),
         }
     }
 
     /// Default buckets for request durations (in seconds)
+    #[must_use] 
     pub fn default_buckets() -> Vec<f64> {
         vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
     }
 
     /// Record an observation value for the histogram
     pub fn observe(&self, label_values: &[&str], value: f64) {
-        let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut observations = self.observations.write().unwrap_or_else(|e| e.into_inner());
+        let key: Vec<String> = label_values.iter().map(|s| (*s).to_string()).collect();
+        let mut observations = self.observations.write().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let data = observations.entry(key).or_insert_with(|| {
             let mut bucket_counts = Vec::with_capacity(self.buckets.len());
@@ -231,14 +235,14 @@ impl Histogram {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} histogram\n", self.name));
 
-        let observations = self.observations.read().unwrap_or_else(|e| e.into_inner());
+        let observations = self.observations.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         for (labels, data) in observations.iter() {
             let base_label_str = if !labels.is_empty() && !self.labels.is_empty() {
                 let pairs: Vec<String> = self
                     .labels
                     .iter()
                     .zip(labels.iter())
-                    .map(|(k, v)| format!("{}=\"{}\"", k, v))
+                    .map(|(k, v)| format!("{k}=\"{v}\""))
                     .collect();
                 pairs.join(",")
             } else {
@@ -251,9 +255,9 @@ impl Histogram {
             for (i, bucket) in self.buckets.iter().enumerate() {
                 let cumulative = data.bucket_counts[i].load(Ordering::SeqCst);
                 let label_str = if base_label_str.is_empty() {
-                    format!("{{le=\"{}\"}}", bucket)
+                    format!("{{le=\"{bucket}\"}}")
                 } else {
-                    format!("{{{},le=\"{}\"}}", base_label_str, bucket)
+                    format!("{{{base_label_str},le=\"{bucket}\"}}")
                 };
                 output.push_str(&format!("{}_bucket{} {}\n", self.name, label_str, cumulative));
             }
@@ -263,7 +267,7 @@ impl Histogram {
             let inf_label = if base_label_str.is_empty() {
                 "{le=\"+Inf\"}".to_string()
             } else {
-                format!("{{{},le=\"+Inf\"}}", base_label_str)
+                format!("{{{base_label_str},le=\"+Inf\"}}")
             };
             output.push_str(&format!("{}_bucket{} {}\n", self.name, inf_label, total));
 
@@ -272,7 +276,7 @@ impl Histogram {
             let label_str = if base_label_str.is_empty() {
                 String::new()
             } else {
-                format!("{{{}}}", base_label_str)
+                format!("{{{base_label_str}}}")
             };
             output.push_str(&format!("{}_sum{} {}\n", self.name, label_str, sum));
             output.push_str(&format!("{}_count{} {}\n", self.name, label_str, total));
@@ -320,6 +324,7 @@ impl std::fmt::Debug for CommerceMetrics {
 
 impl CommerceMetrics {
     /// Create a registry of commerce-specific metrics
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             orders_created: Counter::new(
@@ -457,6 +462,7 @@ pub struct LogEntry {
 
 impl LogEntry {
     /// Create a new log entry with level and message
+    #[must_use] 
     pub fn new(level: LogLevel, message: &str) -> Self {
         Self {
             timestamp: Utc::now(),
@@ -507,6 +513,7 @@ impl LogEntry {
     }
 
     /// Render as human-readable string
+    #[must_use] 
     pub fn to_human(&self) -> String {
         let mut parts = vec![
             format!("{}", self.timestamp.format("%Y-%m-%d %H:%M:%S%.3f")),
@@ -514,14 +521,14 @@ impl LogEntry {
         ];
 
         if let Some(ref target) = self.target {
-            parts.push(format!("({})", target));
+            parts.push(format!("({target})"));
         }
 
         parts.push(self.message.clone());
 
         if !self.fields.is_empty() {
             let fields_str: Vec<String> =
-                self.fields.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+                self.fields.iter().map(|(k, v)| format!("{k}={v}")).collect();
             parts.push(format!("{{{}}}", fields_str.join(", ")));
         }
 
@@ -535,6 +542,7 @@ pub struct CommerceLogger;
 
 impl CommerceLogger {
     /// Build a log entry for order creation
+    #[must_use] 
     pub fn order_created(order_id: &str, customer_id: &str, total: Decimal) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Order created")
             .with_target("stateset::orders")
@@ -544,6 +552,7 @@ impl CommerceLogger {
     }
 
     /// Build a log entry for inventory adjustments
+    #[must_use] 
     pub fn inventory_adjusted(sku: &str, quantity: Decimal, reason: &str) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Inventory adjusted")
             .with_target("stateset::inventory")
@@ -553,6 +562,7 @@ impl CommerceLogger {
     }
 
     /// Build a log entry for payment processing
+    #[must_use] 
     pub fn payment_processed(payment_id: &str, amount: Decimal, status: &str) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Payment processed")
             .with_target("stateset::payments")
@@ -562,14 +572,16 @@ impl CommerceLogger {
     }
 
     /// Build a log entry for an operation error
+    #[must_use] 
     pub fn error(operation: &str, error: &str) -> LogEntry {
-        LogEntry::new(LogLevel::Error, &format!("Operation failed: {}", error))
+        LogEntry::new(LogLevel::Error, &format!("Operation failed: {error}"))
             .with_target("stateset::error")
             .with_field("operation", operation)
             .with_field("error", error)
     }
 
     /// Build a log entry for database queries
+    #[must_use] 
     pub fn database_query(query_type: &str, table: &str, duration_ms: u64) -> LogEntry {
         LogEntry::new(LogLevel::Debug, "Database query executed")
             .with_target("stateset::database")

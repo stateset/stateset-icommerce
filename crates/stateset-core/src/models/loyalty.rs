@@ -257,11 +257,13 @@ pub struct RewardFilter {
 
 impl LoyaltyProgram {
     /// Get the tier for a given lifetime points value
+    #[must_use] 
     pub fn tier_for_points(&self, lifetime_points: u64) -> Option<&LoyaltyTier> {
         self.tiers.iter().rev().find(|tier| lifetime_points >= tier.min_points)
     }
 
     /// Whether the program is accepting new enrollments
+    #[must_use] 
     pub fn is_active(&self) -> bool {
         self.status == LoyaltyProgramStatus::Active
     }
@@ -269,6 +271,7 @@ impl LoyaltyProgram {
 
 impl LoyaltyAccount {
     /// Whether the account has enough points to redeem a reward
+    #[must_use] 
     pub const fn can_redeem(&self, points_cost: u64) -> bool {
         self.points_balance >= 0 && (self.points_balance as u64) >= points_cost
     }

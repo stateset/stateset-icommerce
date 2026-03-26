@@ -216,7 +216,7 @@ async fn rate_limit(
     next: Next,
 ) -> Response {
     let allowed = {
-        let mut guard = bucket.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = bucket.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.try_acquire()
     };
     if allowed {

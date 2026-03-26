@@ -75,16 +75,19 @@ pub struct GiftCard {
 
 impl GiftCard {
     /// Check if the gift card is active
+    #[must_use] 
     pub fn is_active(&self) -> bool {
         self.status == GiftCardStatus::Active
     }
 
     /// Check if the gift card has expired
+    #[must_use] 
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at { Utc::now() > expires_at } else { false }
     }
 
     /// Check if a charge of the given amount can be applied
+    #[must_use] 
     pub fn can_charge(&self, amount: Decimal) -> bool {
         self.is_active() && self.current_balance >= amount
     }

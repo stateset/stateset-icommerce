@@ -36,6 +36,7 @@ pub struct SqlitePurchaseOrderRepository {
 }
 
 impl SqlitePurchaseOrderRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -446,7 +447,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                     .minimum_order
                     .map(|d| d.to_string())
                     .or(supplier.minimum_order.map(|d| d.to_string())),
-                input.is_active.unwrap_or(supplier.is_active) as i32,
+                i32::from(input.is_active.unwrap_or(supplier.is_active)),
                 input.notes.or(supplier.notes),
                 now.to_rfc3339(),
                 id.to_string(),
@@ -471,7 +472,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         sql.push_str(" ORDER BY name ASC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -671,12 +672,12 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         sql.push_str(" ORDER BY order_date DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let rows = stmt.query_map(params_refs.as_slice(), Self::row_to_po).map_err(map_db_error)?;
 
         let mut orders = Vec::new();
@@ -704,8 +705,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         let parsed_status: PurchaseOrderStatus = status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
-                "Invalid purchase_order.status '{}': {}",
-                status, e
+                "Invalid purchase_order.status '{status}': {e}"
             ))
         })?;
         if parsed_status != PurchaseOrderStatus::Draft {
@@ -822,8 +822,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             .map_err(map_db_error)?;
         let current_status: PurchaseOrderStatus = status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
-                "Invalid purchase_order.status '{}': {}",
-                status, e
+                "Invalid purchase_order.status '{status}': {e}"
             ))
         })?;
 
@@ -1101,7 +1100,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
@@ -1351,8 +1350,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
             let parsed_status: PurchaseOrderStatus = status.parse().map_err(|e| {
                 CommerceError::DatabaseError(format!(
-                    "Invalid purchase_order.status '{}': {}",
-                    status, e
+                    "Invalid purchase_order.status '{status}': {e}"
                 ))
             })?;
             if parsed_status != PurchaseOrderStatus::Draft {
@@ -1368,13 +1366,12 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         // Delete purchase order items first
         let sql = format!(
-            "DELETE FROM purchase_order_items WHERE purchase_order_id IN ({})",
-            placeholders
+            "DELETE FROM purchase_order_items WHERE purchase_order_id IN ({placeholders})"
         );
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete purchase orders
-        let sql = format!("DELETE FROM purchase_orders WHERE id IN ({})", placeholders);
+        let sql = format!("DELETE FROM purchase_orders WHERE id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
@@ -1390,7 +1387,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let conn = self.conn()?;
         let raw_ids: Vec<Uuid> = ids.iter().map(|id| id.into_uuid()).collect();
         let placeholders = build_in_clause(ids.len());
-        let sql = format!("SELECT * FROM purchase_orders WHERE id IN ({})", placeholders);
+        let sql = format!("SELECT * FROM purchase_orders WHERE id IN ({placeholders})");
 
         let params = uuid_params(&raw_ids);
         let params_refs = params_refs(&params);

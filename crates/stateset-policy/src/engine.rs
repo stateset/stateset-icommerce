@@ -81,6 +81,7 @@ pub struct PolicyEngine {
 
 impl PolicyEngine {
     /// Create a new, empty policy engine.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             policy_sets: HashMap::new(),
@@ -91,6 +92,7 @@ impl PolicyEngine {
     }
 
     /// Builder: set unknown-domain behavior.
+    #[must_use] 
     pub const fn with_unknown_domain_mode(mut self, mode: UnknownDomainMode) -> Self {
         self.unknown_domain_mode = mode;
         self
@@ -102,6 +104,7 @@ impl PolicyEngine {
     }
 
     /// Get the currently configured unknown-domain behavior.
+    #[must_use] 
     pub const fn unknown_domain_mode(&self) -> UnknownDomainMode {
         self.unknown_domain_mode
     }
@@ -143,11 +146,13 @@ impl PolicyEngine {
     }
 
     /// Get a policy set by its UUID.
+    #[must_use] 
     pub fn get_policy_set(&self, id: &Uuid) -> Option<&PolicySet> {
         self.policy_sets.get(id)
     }
 
     /// Get all policy sets for a domain.
+    #[must_use] 
     pub fn get_policies_for_domain(&self, domain: &str) -> Vec<&PolicySet> {
         self.domain_index
             .get(domain)
@@ -156,16 +161,19 @@ impl PolicyEngine {
     }
 
     /// List all registered policy sets.
+    #[must_use] 
     pub fn list_policy_sets(&self) -> Vec<&PolicySet> {
         self.policy_sets.values().collect()
     }
 
     /// Total number of registered policy sets.
+    #[must_use] 
     pub fn policy_set_count(&self) -> usize {
         self.policy_sets.len()
     }
 
     /// Total number of rules across all policy sets.
+    #[must_use] 
     pub fn total_rule_count(&self) -> usize {
         self.policy_sets.values().map(|ps| ps.rules.len()).sum()
     }
@@ -204,6 +212,7 @@ impl PolicyEngine {
     }
 
     /// Evaluate without recording history (dry-run mode).
+    #[must_use] 
     pub fn evaluate_dry_run(&self, domain: &str, context: &Value) -> PolicyEvaluation {
         self.evaluate_inner(domain, context, true)
     }
@@ -292,16 +301,19 @@ impl PolicyEngine {
     }
 
     /// Get the evaluation history.
+    #[must_use] 
     pub const fn get_history(&self) -> &VecDeque<EvaluationRecord> {
         &self.history
     }
 
     /// Get the last `n` history entries.
+    #[must_use] 
     pub fn get_recent_history(&self, n: usize) -> Vec<&EvaluationRecord> {
         self.history.iter().rev().take(n).collect()
     }
 
     /// Get history entries filtered by domain.
+    #[must_use] 
     pub fn get_history_for_domain(&self, domain: &str) -> Vec<&EvaluationRecord> {
         self.history.iter().filter(|r| r.domain == domain).collect()
     }
@@ -312,6 +324,7 @@ impl PolicyEngine {
     }
 
     /// Get a summary of the engine status.
+    #[must_use] 
     pub fn get_status(&self) -> EngineStatus {
         let mut by_domain: HashMap<String, usize> = HashMap::new();
         for ps in self.policy_sets.values() {

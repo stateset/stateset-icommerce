@@ -375,10 +375,11 @@ pub struct CustomerCreditSummary {
 // ============================================================================
 
 /// Generate a credit application number.
+#[must_use] 
 pub fn generate_credit_application_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
-    format!("CAPP-{}-{}", timestamp, random)
+    format!("CAPP-{timestamp}-{random}")
 }
 
 #[cfg(test)]

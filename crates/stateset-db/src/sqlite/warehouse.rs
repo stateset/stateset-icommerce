@@ -27,6 +27,7 @@ pub struct SqliteWarehouseRepository {
 }
 
 impl SqliteWarehouseRepository {
+    #[must_use] 
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -327,7 +328,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 warehouse_type.to_string(),
                 address_json,
                 timezone,
-                is_active as i32,
+                i32::from(is_active),
                 now.to_rfc3339(),
                 id,
             ],
@@ -360,22 +361,22 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         if let Some(active) = filter.is_active {
             sql.push_str(" AND is_active = ?");
-            params_vec.push(Box::new(active as i32));
+            params_vec.push(Box::new(i32::from(active)));
         }
 
         sql.push_str(" ORDER BY name");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -422,11 +423,11 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         if let Some(active) = filter.is_active {
             sql.push_str(" AND is_active = ?");
-            params_vec.push(Box::new(active as i32));
+            params_vec.push(Box::new(i32::from(active)));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
@@ -502,7 +503,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             let conn = self.conn()?;
             conn.execute(
                 "UPDATE warehouse_zones SET name = ?1, description = ?2, is_active = ?3 WHERE id = ?4",
-                params![name, description, is_active as i32, id],
+                params![name, description, i32::from(is_active), id],
             )
             .map_err(map_db_error)?;
         }
@@ -542,8 +543,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 input.bin,
                 input.max_weight_kg.map(|d| d.to_string()),
                 input.max_volume_m3.map(|d| d.to_string()),
-                input.is_pickable.unwrap_or(true) as i32,
-                input.is_receivable.unwrap_or(true) as i32,
+                i32::from(input.is_pickable.unwrap_or(true)),
+                i32::from(input.is_receivable.unwrap_or(true)),
                 now,
             ],
         )
@@ -614,9 +615,9 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 bin,
                 max_weight.map(|d| d.to_string()),
                 max_volume.map(|d| d.to_string()),
-                is_pickable as i32,
-                is_receivable as i32,
-                is_active as i32,
+                i32::from(is_pickable),
+                i32::from(is_receivable),
+                i32::from(is_active),
                 id,
             ],
         )
@@ -654,32 +655,32 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         if let Some(pickable) = filter.is_pickable {
             sql.push_str(" AND is_pickable = ?");
-            params_vec.push(Box::new(pickable as i32));
+            params_vec.push(Box::new(i32::from(pickable)));
         }
 
         if let Some(receivable) = filter.is_receivable {
             sql.push_str(" AND is_receivable = ?");
-            params_vec.push(Box::new(receivable as i32));
+            params_vec.push(Box::new(i32::from(receivable)));
         }
 
         if let Some(active) = filter.is_active {
             sql.push_str(" AND is_active = ?");
-            params_vec.push(Box::new(active as i32));
+            params_vec.push(Box::new(i32::from(active)));
         }
 
         sql.push_str(" ORDER BY code");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -731,11 +732,11 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         if let Some(active) = filter.is_active {
             sql.push_str(" AND is_active = ?");
-            params_vec.push(Box::new(active as i32));
+            params_vec.push(Box::new(i32::from(active)));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
@@ -1079,16 +1080,16 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         }
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -1158,16 +1159,16 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         sql.push_str(" ORDER BY m.created_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            sql.push_str(&format!(" OFFSET {offset}"));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -1205,7 +1206,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;

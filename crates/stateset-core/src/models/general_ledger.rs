@@ -40,6 +40,7 @@ pub enum AccountType {
 
 impl AccountType {
     /// Returns the normal balance side for this account type
+    #[must_use] 
     pub const fn normal_balance(&self) -> BalanceSide {
         match self {
             Self::Asset | Self::Expense => BalanceSide::Debit,
@@ -48,11 +49,13 @@ impl AccountType {
     }
 
     /// Returns true if this account type appears on the Balance Sheet
+    #[must_use] 
     pub const fn is_balance_sheet(&self) -> bool {
         matches!(self, Self::Asset | Self::Liability | Self::Equity)
     }
 
     /// Returns true if this account type appears on the Income Statement
+    #[must_use] 
     pub const fn is_income_statement(&self) -> bool {
         matches!(self, Self::Revenue | Self::Expense)
     }
@@ -177,7 +180,7 @@ impl FromStr for AccountStatus {
             "active" => Ok(Self::Active),
             "inactive" => Ok(Self::Inactive),
             "archived" => Ok(Self::Archived),
-            _ => Err(format!("Unknown account status: {}", s)),
+            _ => Err(format!("Unknown account status: {s}")),
         }
     }
 }
@@ -221,7 +224,7 @@ impl FromStr for PeriodStatus {
             "open" => Ok(Self::Open),
             "closed" => Ok(Self::Closed),
             "locked" => Ok(Self::Locked),
-            _ => Err(format!("Unknown period status: {}", s)),
+            _ => Err(format!("Unknown period status: {s}")),
         }
     }
 }
@@ -265,7 +268,7 @@ impl FromStr for JournalEntryType {
             "closing" => Ok(Self::Closing),
             "reversing" => Ok(Self::Reversing),
             "opening" => Ok(Self::Opening),
-            _ => Err(format!("Unknown journal entry type: {}", s)),
+            _ => Err(format!("Unknown journal entry type: {s}")),
         }
     }
 }
@@ -325,7 +328,7 @@ impl FromStr for JournalEntrySource {
             "auto_write_off" => Ok(Self::AutoWriteOff),
             "system_closing" => Ok(Self::SystemClosing),
             "import" => Ok(Self::Import),
-            _ => Err(format!("Unknown journal entry source: {}", s)),
+            _ => Err(format!("Unknown journal entry source: {s}")),
         }
     }
 }
@@ -369,7 +372,7 @@ impl FromStr for JournalEntryStatus {
             "posted" => Ok(Self::Posted),
             "voided" => Ok(Self::Voided),
             "reversed" => Ok(Self::Reversed),
-            _ => Err(format!("Unknown journal entry status: {}", s)),
+            _ => Err(format!("Unknown journal entry status: {s}")),
         }
     }
 }
@@ -415,11 +418,13 @@ pub struct GlAccount {
 
 impl GlAccount {
     /// Returns true if this account can accept postings
+    #[must_use] 
     pub fn can_post(&self) -> bool {
         self.is_posting && self.status == AccountStatus::Active
     }
 
     /// Calculates the balance effect of a debit/credit
+    #[must_use] 
     pub fn balance_effect(&self, debit: Decimal, credit: Decimal) -> Decimal {
         // Keep behavior consistent with account type, even if persisted normal_balance drifts.
         match self.account_type.normal_balance() {
@@ -462,11 +467,13 @@ pub struct GlPeriod {
 
 impl GlPeriod {
     /// Returns true if the period allows posting
+    #[must_use] 
     pub fn can_post(&self) -> bool {
         self.status == PeriodStatus::Open
     }
 
     /// Returns true if a date falls within this period
+    #[must_use] 
     pub fn contains_date(&self, date: NaiveDate) -> bool {
         date >= self.start_date && date <= self.end_date
     }
@@ -519,6 +526,7 @@ pub struct JournalEntry {
 
 impl JournalEntry {
     /// Returns true if debits equal credits
+    #[must_use] 
     pub fn is_balanced(&self) -> bool {
         self.total_debits == self.total_credits
     }
@@ -548,6 +556,7 @@ impl JournalEntry {
     }
 
     /// Returns true if entry can be voided
+    #[must_use] 
     pub fn can_void(&self) -> bool {
         self.status == JournalEntryStatus::Posted
     }
@@ -586,12 +595,14 @@ pub struct JournalEntryLine {
 
 impl JournalEntryLine {
     /// Returns true if line has only debit or only credit
+    #[must_use] 
     pub fn is_valid(&self) -> bool {
         (self.debit_amount > Decimal::ZERO && self.credit_amount == Decimal::ZERO)
             || (self.debit_amount == Decimal::ZERO && self.credit_amount > Decimal::ZERO)
     }
 
     /// Returns the net amount (positive for debit, negative for credit)
+    #[must_use] 
     pub fn net_amount(&self) -> Decimal {
         self.debit_amount - self.credit_amount
     }
@@ -658,6 +669,7 @@ pub struct TrialBalance {
 
 impl TrialBalance {
     /// Returns true if debits equal credits
+    #[must_use] 
     pub fn is_balanced(&self) -> bool {
         self.total_debits == self.total_credits
     }
@@ -689,6 +701,7 @@ pub struct BalanceSheet {
 
 impl BalanceSheet {
     /// Returns true if assets equal liabilities plus equity
+    #[must_use] 
     pub fn is_balanced(&self) -> bool {
         self.total_assets == self.total_liabilities + self.total_equity
     }
@@ -780,6 +793,7 @@ pub struct CreateJournalEntryLine {
 
 impl CreateJournalEntryLine {
     /// Create a debit line for an account
+    #[must_use] 
     pub const fn debit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
         Self {
             account_id,
@@ -792,6 +806,7 @@ impl CreateJournalEntryLine {
     }
 
     /// Create a credit line for an account
+    #[must_use] 
     pub const fn credit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
         Self {
             account_id,
@@ -868,6 +883,7 @@ pub struct JournalEntryFilter {
 // ============================================================================
 
 /// Generate a journal entry number using a timestamp
+#[must_use] 
 pub fn generate_journal_entry_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S%3f").to_string();
     let suffix = Uuid::new_v4().simple().to_string();
@@ -875,11 +891,13 @@ pub fn generate_journal_entry_number() -> String {
 }
 
 /// Generate a period name in YYYY-MM format
+#[must_use] 
 pub fn generate_period_name(year: i32, month: i32) -> String {
-    format!("{}-{:02}", year, month)
+    format!("{year}-{month:02}")
 }
 
 /// Create a default Chart of Accounts
+#[must_use] 
 pub fn create_default_chart_of_accounts() -> Vec<CreateGlAccount> {
     vec![
         // Assets (1xxx)

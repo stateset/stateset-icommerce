@@ -91,6 +91,7 @@ impl PolicySet {
     }
 
     /// Builder: add a rule (maintains priority sort order).
+    #[must_use] 
     pub fn with_rule(mut self, rule: PolicyRule) -> Self {
         self.rules.push(rule);
         self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
@@ -98,6 +99,7 @@ impl PolicySet {
     }
 
     /// Builder: set the default action.
+    #[must_use] 
     pub fn with_default_action(mut self, action: PolicyAction) -> Self {
         self.default_action = action;
         self
@@ -110,12 +112,14 @@ impl PolicySet {
     }
 
     /// Builder: set a specific ID (useful for testing).
+    #[must_use] 
     pub const fn with_id(mut self, id: Uuid) -> Self {
         self.id = id;
         self
     }
 
     /// Builder: set metadata.
+    #[must_use] 
     pub fn with_metadata(mut self, metadata: Value) -> Self {
         self.metadata = metadata;
         self
@@ -126,6 +130,7 @@ impl PolicySet {
     /// Returns a [`PolicySetEvaluation`] containing all matched rules,
     /// their actions, and per-condition explanations. Rules are evaluated
     /// in priority order; if a matched rule has `stop_on_match`, evaluation stops.
+    #[must_use] 
     pub fn evaluate(&self, context: &Value) -> PolicySetEvaluation {
         let mut matched_rules: Vec<MatchedRule> = Vec::new();
         let mut actions: Vec<PolicyAction> = Vec::new();
