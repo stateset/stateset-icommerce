@@ -441,6 +441,53 @@ impl WebhookManager {
         }
     }
 
+    /// Get all failed deliveries across all webhooks.
+    #[must_use]
+    pub fn failed_deliveries(&self) -> Vec<WebhookDelivery> {
+        let history = match self.delivery_history.read() {
+            Ok(guard) => guard,
+            Err(poison) => poison.into_inner(),
+        };
+        history
+            .values()
+            .flat_map(|entries| {
+                entries
+                    .iter()
+                    .filter(|d| d.status == DeliveryStatus::Failed)
+                    .cloned()
+            })
+            .collect()
+    }
+
+    /// Count of failed deliveries (for monitoring dashboards).
+    #[must_use]
+    pub fn failed_delivery_count(&self) -> usize {
+        let history = match self.delivery_history.read() {
+            Ok(guard) => guard,
+            Err(poison) => poison.into_inner(),
+        };
+        history
+            .values()
+            .flat_map(|entries| entries.iter())
+            .filter(|d| d.status == DeliveryStatus::Failed)
+            .count()
+    }
+
+    /// Clear failed deliveries for a specific webhook (after manual review).
+    pub fn clear_failed_deliveries(&self, webhook_id: Uuid) -> usize {
+        let mut history = match self.delivery_history.write() {
+            Ok(guard) => guard,
+            Err(poison) => poison.into_inner(),
+        };
+        if let Some(entries) = history.get_mut(&webhook_id) {
+            let before = entries.len();
+            entries.retain(|d| d.status != DeliveryStatus::Failed);
+            before - entries.len()
+        } else {
+            0
+        }
+    }
+
     /// Deliver an event to all matching webhooks (spawns async tasks)
     pub fn deliver(&self, event: CommerceEvent) {
         use futures::stream::{self, StreamExt};
