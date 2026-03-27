@@ -1,5 +1,7 @@
 //! Route modules and router assembly.
 
+pub mod a2a_credit;
+pub mod a2a_messaging;
 pub mod customers;
 pub mod events;
 pub mod gift_cards;
@@ -54,6 +56,8 @@ fn v1_router() -> Router<AppState> {
         .merge(gift_cards::router())
         .merge(loyalty::router())
         .merge(negotiations::router())
+        .merge(a2a_messaging::router())
+        .merge(a2a_credit::router())
         .merge(events::router())
         .merge(crate::openapi::router())
 }
