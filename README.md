@@ -13,21 +13,41 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
+cargo add stateset-sdk --features full   # Rust (recommended)
 pip install stateset-embedded            # Python
-gem install stateset_embedded            # Ruby
 npm install @stateset/embedded           # Node.js
 npm install -g @stateset/cli             # CLI
-cargo add stateset-embedded              # Rust
+gem install stateset_embedded            # Ruby
 ```
 
-**Quick start with demo data:**
-```bash
-npm install -g @stateset/cli
-stateset init --demo
-stateset "show me all customers"
-stateset "what products are low on stock?"
-stateset "what is my revenue this month?"
+**Zero to commerce in 5 lines:**
+```rust
+use stateset_sdk::prelude::*;
+
+let commerce = Commerce::new("store.db")?;
+let customer = commerce.customers().create(CreateCustomer {
+    email: "alice@example.com".into(),
+    first_name: "Alice".into(),
+    last_name: "Smith".into(),
+    ..Default::default()
+})?;
+let order = commerce.orders().create(CreateOrder {
+    customer_id: customer.id,
+    items: vec![CreateOrderItem {
+        sku: "WIDGET-001".into(),
+        name: "Widget".into(),
+        quantity: 2,
+        unit_price: rust_decimal_macros::dec!(29.99),
+        ..Default::default()
+    }],
+    ..Default::default()
+})?;
+println!("Order {} — ${}", order.order_number, order.total_amount);
 ```
+
+No database setup. No config files. No migrations to run. It just works.
+
+**[10-Minute Quickstart →](./QUICKSTART.md)** | **[API Reference](https://docs.rs/stateset-sdk)** | **[OpenAPI Spec](http://localhost:3000/api/v1/docs)**
 
 ---
 

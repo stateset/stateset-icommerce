@@ -17,7 +17,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "0.8.1"
+//! stateset-sdk = "1.0"
 //! ```
 //!
 //! ```rust,ignore
@@ -163,8 +163,8 @@ pub mod prelude {
     // Events
     pub use stateset_core::CommerceEvent;
 
-    // Errors
-    pub use stateset_core::CommerceError;
+    // Errors and Result
+    pub use stateset_core::{CommerceError, Result};
 
     // Database
     pub use stateset_db::Database;
