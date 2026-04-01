@@ -1739,10 +1739,37 @@ export interface X402CreateIntentInput {
   idempotencyKey?: string
   metadata?: string
 }
+export interface X402SigningHashInput {
+  payerAddress: string
+  payeeAddress: string
+  amount: number
+  asset: string
+  network: string
+  chainId: number
+  validUntil: number
+  nonce: number
+  resourceUri?: string
+  resourceMethod?: string
+}
+export interface X402SignatureBundleInput {
+  mlDsa65Signature: Buffer
+}
+export interface X402PublicKeyBundleInput {
+  mlDsa65PublicKey: Buffer
+}
+export interface X402SignatureBundleOutput {
+  mlDsa65Signature: Buffer
+}
+export interface X402PublicKeyBundleOutput {
+  mlDsa65PublicKey: Buffer
+}
 export interface X402SignIntentInput {
   intentId?: string
+  signatureScheme?: string
   signature: string
   publicKey: string
+  signatureBundle?: X402SignatureBundleInput
+  publicKeyBundle?: X402PublicKeyBundleInput
 }
 export interface X402IntentFilterInput {
   payerAddress?: string
@@ -1778,8 +1805,11 @@ export interface X402IntentOutput {
   invoiceId?: string
   merchantId?: string
   signingHash?: string
+  payerSignatureScheme?: string
   payerSignature?: string
   payerPublicKey?: string
+  payerSignatureBundle?: X402SignatureBundleOutput
+  payerPublicKeyBundle?: X402PublicKeyBundleOutput
   sequenceNumber?: number
   sequencedAt?: string
   batchId?: string
@@ -1896,6 +1926,8 @@ export interface X402CreditTransactionOutput {
   metadata?: string
   createdAt: string
 }
+/** Compute the sequencer-compatible x402 signing hash for a payment intent shape. */
+export declare function vesX402ComputeSigningHash(input: X402SigningHashInput): Buffer
 export interface VectorSearchResultOutput {
   id: string
   name: string
@@ -2003,8 +2035,12 @@ export declare function vesHybridGenerateSigningKeypair(): HybridSigningKeypairO
 export declare function vesHybridSignEventHash(hash: Buffer, ed25519PrivateKey: Buffer, mlDsa65Seed: Buffer): HybridSignatureBundleOutput
 /** Verify a 32-byte hash with the hybrid `Ed25519 + ML-DSA-65` profile. */
 export declare function vesHybridVerifyEventSignature(hash: Buffer, ed25519Signature: Buffer, mlDsa65Signature: Buffer, ed25519PublicKey: Buffer, mlDsa65PublicKey: Buffer): boolean
+/** Return the fixed-seed ML-DSA-65 public key used by cross-language test vectors. */
+export declare function vesTestVectorMlDsaPublicKey(): Buffer
 /** Generate a hybrid `X25519 + ML-KEM-768` recipient keypair. */
 export declare function vesHybridGenerateRecipientKeypair(kid: number): HybridRecipientKeypairOutput
+/** Return the fixed-seed ML-KEM-768 public key used by cross-language test vectors. */
+export declare function vesTestVectorMlKemPublicKey(): Buffer
 /** Encrypt a JSON payload using hybrid `X25519 + ML-KEM-768` recipient wrapping. */
 export declare function vesHybridEncryptPayload(payloadJson: string, aadParams: HybridPayloadAadParamsInput, recipients: Array<HybridRecipientPublicKeyInput>): HybridEncryptionResultOutput
 /** Decrypt a JSON payload using hybrid `X25519 + ML-KEM-768` recipient wrapping. */
@@ -2018,12 +2054,12 @@ export interface StrictRecipientKeypairOutput {
   mlKem768PublicKey: Buffer
   mlKem768Seed: Buffer
 }
+export interface StrictRecipientPrivateKeyInput {
+  mlKem768Seed: Buffer
+}
 export interface StrictRecipientPublicKeyInput {
   kid: number
   mlKem768PublicKey: Buffer
-}
-export interface StrictRecipientPrivateKeyInput {
-  mlKem768Seed: Buffer
 }
 export interface StrictEncryptionResultOutput {
   payloadEncryptedJson: string

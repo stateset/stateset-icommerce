@@ -11025,11 +11025,53 @@ pub struct X402CreateIntentInput {
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone)]
+pub struct X402SigningHashInput {
+    pub payer_address: String,
+    pub payee_address: String,
+    pub amount: i64,
+    pub asset: String,
+    pub network: String,
+    pub chain_id: i64,
+    pub valid_until: i64,
+    pub nonce: i64,
+    pub resource_uri: Option<String>,
+    pub resource_method: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct X402SignatureBundleInput {
+    pub ml_dsa_65_signature: Buffer,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct X402PublicKeyBundleInput {
+    pub ml_dsa_65_public_key: Buffer,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct X402SignatureBundleOutput {
+    pub ml_dsa_65_signature: Buffer,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct X402PublicKeyBundleOutput {
+    pub ml_dsa_65_public_key: Buffer,
+}
+
+#[napi(object)]
+#[derive(Clone)]
 pub struct X402SignIntentInput {
     pub intent_id: Option<String>,
+    pub signature_scheme: Option<String>,
     pub signature: String,
     pub public_key: String,
+    pub signature_bundle: Option<X402SignatureBundleInput>,
+    pub public_key_bundle: Option<X402PublicKeyBundleInput>,
 }
 
 #[napi(object)]
@@ -11047,7 +11089,7 @@ pub struct X402IntentFilterInput {
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone)]
 pub struct X402IntentOutput {
     pub id: String,
     pub version: String,
@@ -11071,8 +11113,11 @@ pub struct X402IntentOutput {
     pub invoice_id: Option<String>,
     pub merchant_id: Option<String>,
     pub signing_hash: Option<String>,
+    pub payer_signature_scheme: Option<String>,
     pub payer_signature: Option<String>,
     pub payer_public_key: Option<String>,
+    pub payer_signature_bundle: Option<X402SignatureBundleOutput>,
+    pub payer_public_key_bundle: Option<X402PublicKeyBundleOutput>,
     pub sequence_number: Option<i64>,
     pub sequenced_at: Option<String>,
     pub batch_id: Option<String>,
@@ -11112,8 +11157,19 @@ impl From<stateset_core::X402PaymentIntent> for X402IntentOutput {
             invoice_id: intent.invoice_id.map(|id| id.to_string()),
             merchant_id: intent.merchant_id,
             signing_hash: intent.signing_hash,
+            payer_signature_scheme: intent.payer_signature_scheme.map(|scheme| scheme.to_string()),
             payer_signature: intent.payer_signature,
             payer_public_key: intent.payer_public_key,
+            payer_signature_bundle: intent.payer_signature_bundle.map(|bundle| {
+                X402SignatureBundleOutput {
+                    ml_dsa_65_signature: Buffer::from(bundle.ml_dsa_65_signature.as_slice()),
+                }
+            }),
+            payer_public_key_bundle: intent.payer_public_key_bundle.map(|bundle| {
+                X402PublicKeyBundleOutput {
+                    ml_dsa_65_public_key: Buffer::from(bundle.ml_dsa_65_public_key.as_slice()),
+                }
+            }),
             sequence_number: intent.sequence_number.map(|n| n as i64),
             sequenced_at: intent.sequenced_at.map(|d| d.to_rfc3339()),
             batch_id: intent.batch_id.map(|id| id.to_string()),
@@ -11345,6 +11401,11 @@ fn parse_x402_status(s: &str) -> Result<stateset_core::X402IntentStatus> {
         .map_err(|e| Error::from_reason(format!("Invalid x402 status: {}", e)))
 }
 
+fn parse_x402_signature_scheme(s: &str) -> Result<stateset_core::X402SignatureScheme> {
+    s.parse::<stateset_core::X402SignatureScheme>()
+        .map_err(|e| Error::from_reason(format!("Invalid x402 signature scheme: {}", e)))
+}
+
 fn parse_trust_level(s: &str) -> Result<stateset_core::TrustLevel> {
     s.parse::<stateset_core::TrustLevel>()
         .map_err(|e| Error::from_reason(format!("Invalid trust level: {}", e)))
@@ -11386,6 +11447,51 @@ fn parse_u64_opt(field: &str, value: Option<i64>) -> Result<Option<u64>> {
         Some(val) => Ok(Some(parse_u64_field(field, val)?)),
         None => Ok(None),
     }
+}
+
+/// Compute the sequencer-compatible x402 signing hash for a payment intent shape.
+#[napi]
+pub fn ves_x402_compute_signing_hash(input: X402SigningHashInput) -> Result<Buffer> {
+    use sha2::{Digest, Sha256};
+
+    let amount = parse_amount(input.amount)?;
+    let chain_id = parse_u64_field("chain_id", input.chain_id)?;
+    let valid_until = parse_u64_field("valid_until", input.valid_until)?;
+    let nonce = parse_u64_field("nonce", input.nonce)?;
+    let asset = parse_x402_asset(&input.asset)?;
+    let network = parse_x402_network(&input.network)?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(stateset_core::X402_DOMAIN_SEPARATOR.as_bytes());
+    hasher.update(input.payer_address.as_bytes());
+    hasher.update(input.payee_address.as_bytes());
+    hasher.update(amount.to_be_bytes());
+    hasher.update(format!("{:?}", asset).to_lowercase().as_bytes());
+    hasher.update(network.to_string().as_bytes());
+    hasher.update(chain_id.to_be_bytes());
+    hasher.update(valid_until.to_be_bytes());
+    hasher.update(nonce.to_be_bytes());
+
+    match input.resource_uri {
+        Some(uri) => {
+            hasher.update([1u8]);
+            hasher.update((uri.len() as u64).to_be_bytes());
+            hasher.update(uri.as_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+
+    match input.resource_method {
+        Some(method) => {
+            hasher.update([1u8]);
+            hasher.update((method.len() as u64).to_be_bytes());
+            hasher.update(method.as_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+
+    let result: [u8; 32] = hasher.finalize().into();
+    Ok(Buffer::from(result.as_slice()))
 }
 
 #[napi]
@@ -11447,8 +11553,23 @@ impl X402 {
                 uuid,
                 stateset_core::SignX402PaymentIntent {
                     intent_id: uuid,
+                    signature_scheme: input
+                        .signature_scheme
+                        .as_deref()
+                        .map(parse_x402_signature_scheme)
+                        .transpose()?,
                     signature: input.signature,
                     public_key: input.public_key,
+                    signature_bundle: input.signature_bundle.map(|bundle| {
+                        stateset_core::X402SignatureBundle {
+                            ml_dsa_65_signature: bundle.ml_dsa_65_signature.as_ref().to_vec(),
+                        }
+                    }),
+                    public_key_bundle: input.public_key_bundle.map(|bundle| {
+                        stateset_core::X402PublicKeyBundle {
+                            ml_dsa_65_public_key: bundle.ml_dsa_65_public_key.as_ref().to_vec(),
+                        }
+                    }),
                 },
             )
             .map_err(|e| Error::from_reason(format!("Failed to sign x402 intent: {}", e)))?;
@@ -12520,6 +12641,17 @@ pub fn ves_hybrid_verify_event_signature(
     ))
 }
 
+/// Return the fixed-seed ML-DSA-65 public key used by cross-language test vectors.
+#[napi]
+pub fn ves_test_vector_ml_dsa_public_key() -> Buffer {
+    Buffer::from(
+        stateset_crypto::pqc::test_vector_ml_dsa_public_key(
+            &stateset_crypto::pqc::TEST_VECTOR_SIGNING_SEED,
+        )
+        .as_slice(),
+    )
+}
+
 /// Generate a hybrid `X25519 + ML-KEM-768` recipient keypair.
 #[napi]
 pub fn ves_hybrid_generate_recipient_keypair(kid: u32) -> Result<HybridRecipientKeypairOutput> {
@@ -12534,6 +12666,17 @@ pub fn ves_hybrid_generate_recipient_keypair(kid: u32) -> Result<HybridRecipient
         ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
         ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
     })
+}
+
+/// Return the fixed-seed ML-KEM-768 public key used by cross-language test vectors.
+#[napi]
+pub fn ves_test_vector_ml_kem_public_key() -> Buffer {
+    Buffer::from(
+        stateset_crypto::pqc::test_vector_ml_kem_public_key(
+            &stateset_crypto::pqc::TEST_VECTOR_KEM_SEED,
+        )
+        .as_slice(),
+    )
 }
 
 /// Encrypt a JSON payload using hybrid `X25519 + ML-KEM-768` recipient wrapping.
@@ -12558,9 +12701,7 @@ pub fn ves_hybrid_encrypt_payload(
         .map(|recipient| {
             let mut x25519_public_key = [0u8; 32];
             if recipient.x25519_public_key.len() != 32 {
-                return Err(Error::from_reason(
-                    "x25519_public_key must be 32 bytes".to_string(),
-                ));
+                return Err(Error::from_reason("x25519_public_key must be 32 bytes".to_string()));
             }
             x25519_public_key.copy_from_slice(recipient.x25519_public_key.as_ref());
 
@@ -12586,8 +12727,9 @@ pub fn ves_hybrid_encrypt_payload(
         payload_plain_hash: &payload_plain_hash,
     };
 
-    let encrypted = stateset_crypto::pqc::encrypt_payload_hybrid(&payload, &aad, &recipient_keys)
-        .map_err(|e| Error::from_reason(format!("Hybrid payload encryption failed: {}", e)))?;
+    let encrypted =
+        stateset_crypto::pqc::encrypt_payload_hybrid(&payload, &aad, &recipient_keys)
+            .map_err(|e| Error::from_reason(format!("Hybrid payload encryption failed: {}", e)))?;
 
     Ok(HybridEncryptionResultOutput {
         payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted).map_err(
@@ -12637,10 +12779,7 @@ pub fn ves_hybrid_decrypt_payload(
         &payload_encrypted,
         &payload_aad_arr,
         recipient_kid,
-        &stateset_crypto::pqc::HybridRecipientPrivateKey {
-            x25519_private_key,
-            ml_kem_768_seed,
-        },
+        &stateset_crypto::pqc::HybridRecipientPrivateKey { x25519_private_key, ml_kem_768_seed },
         &expected_plain_hash_arr,
     )
     .map_err(|e| Error::from_reason(format!("Hybrid payload decryption failed: {}", e)))?;
@@ -12747,8 +12886,9 @@ pub fn ves_strict_verify_event_signature(
 /// Generate an ML-KEM-768-only recipient keypair for PQC-strict mode.
 #[napi]
 pub fn ves_strict_generate_recipient_keypair(kid: u32) -> Result<StrictRecipientKeypairOutput> {
-    let keypair = stateset_crypto::pqc::generate_strict_recipient_keypair(kid)
-        .map_err(|e| Error::from_reason(format!("Strict recipient key generation failed: {}", e)))?;
+    let keypair = stateset_crypto::pqc::generate_strict_recipient_keypair(kid).map_err(|e| {
+        Error::from_reason(format!("Strict recipient key generation failed: {}", e))
+    })?;
 
     Ok(StrictRecipientKeypairOutput {
         kid: keypair.public.kid,
@@ -12796,8 +12936,9 @@ pub fn ves_strict_encrypt_payload(
         payload_plain_hash: &payload_plain_hash,
     };
 
-    let encrypted = stateset_crypto::pqc::encrypt_payload_strict(&payload, &aad, &recipient_keys)
-        .map_err(|e| Error::from_reason(format!("Strict payload encryption failed: {}", e)))?;
+    let encrypted =
+        stateset_crypto::pqc::encrypt_payload_strict(&payload, &aad, &recipient_keys)
+            .map_err(|e| Error::from_reason(format!("Strict payload encryption failed: {}", e)))?;
 
     Ok(StrictEncryptionResultOutput {
         payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
@@ -12858,7 +12999,10 @@ pub fn ves_hybrid_generate_signing_pop(
     ed25519_public_key: Buffer,
     ml_dsa_65_public_key: Buffer,
 ) -> Result<HybridSignatureBundleOutput> {
-    if ed25519_private_key.len() != 32 || ml_dsa_65_seed.len() != 32 || ed25519_public_key.len() != 32 {
+    if ed25519_private_key.len() != 32
+        || ml_dsa_65_seed.len() != 32
+        || ed25519_public_key.len() != 32
+    {
         return Err(Error::from_reason("Key sizes invalid"));
     }
 
@@ -12920,7 +13064,10 @@ pub fn ves_hybrid_verify_signing_pop(
 
 /// Generate a PQC-strict signing proof-of-possession.
 #[napi]
-pub fn ves_strict_generate_signing_pop(ml_dsa_65_seed: Buffer, ml_dsa_65_public_key: Buffer) -> Result<Buffer> {
+pub fn ves_strict_generate_signing_pop(
+    ml_dsa_65_seed: Buffer,
+    ml_dsa_65_public_key: Buffer,
+) -> Result<Buffer> {
     if ml_dsa_65_seed.len() != 32 {
         return Err(Error::from_reason("ML-DSA-65 seed must be 32 bytes"));
     }

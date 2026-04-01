@@ -41,6 +41,11 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use stateset_crypto::pqc::{
+    HybridSignatureBundle as PqcHybridSignatureBundle, HybridSigningKeypair,
+    HybridSigningPublicKey, StrictSigningKeypair, StrictSigningPublicKey, hybrid_sign_event_hash,
+    hybrid_verify_event_signature, strict_sign_event_hash, strict_verify_event_signature,
+};
 use strum::{Display, EnumString};
 use thiserror::Error;
 use uuid::Uuid;
@@ -263,6 +268,39 @@ pub enum X402CreditDirection {
     Debit,
 }
 
+/// Supported x402 signature schemes for off-chain payment intents.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, Serialize, Deserialize, Default,
+)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum X402SignatureScheme {
+    /// Legacy Ed25519 only.
+    #[default]
+    Ed25519,
+    /// PQC-strict ML-DSA-65 only.
+    MlDsa65,
+    /// Hybrid Ed25519 + ML-DSA-65.
+    Ed25519MlDsa65,
+}
+
+/// Additional PQC signature material for hybrid and strict x402 signatures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct X402SignatureBundle {
+    /// ML-DSA-65 signature bytes.
+    #[serde(with = "hex")]
+    pub ml_dsa_65_signature: Vec<u8>,
+}
+
+/// Additional PQC public-key material for hybrid and strict x402 signatures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct X402PublicKeyBundle {
+    /// ML-DSA-65 public key bytes.
+    #[serde(with = "hex")]
+    pub ml_dsa_65_public_key: Vec<u8>,
+}
+
 /// x402 Payment Intent - A signed off-chain payment request
 ///
 /// This is the core data structure for x402 payments. It contains all the
@@ -352,11 +390,20 @@ pub struct X402PaymentIntent {
     /// Format: `SHA256(X402_DOMAIN_SEPARATOR` || `canonical_json`)
     pub signing_hash: Option<String>,
 
+    /// Signature scheme used to authorize this intent.
+    pub payer_signature_scheme: Option<X402SignatureScheme>,
+
     /// Payer's Ed25519 signature over `signing_hash` (hex-encoded)
     pub payer_signature: Option<String>,
 
     /// Payer's public key (hex-encoded, 32 bytes)
     pub payer_public_key: Option<String>,
+
+    /// Additional PQC signature material for hybrid or strict schemes.
+    pub payer_signature_bundle: Option<X402SignatureBundle>,
+
+    /// Additional PQC public-key material for hybrid or strict schemes.
+    pub payer_public_key_bundle: Option<X402PublicKeyBundle>,
 
     // =========================================================================
     // Sequencer Fields (set after submission)
@@ -445,8 +492,11 @@ impl X402PaymentIntent {
             invoice_id: None,
             merchant_id: None,
             signing_hash: None,
+            payer_signature_scheme: None,
             payer_signature: None,
             payer_public_key: None,
+            payer_signature_bundle: None,
+            payer_public_key_bundle: None,
             sequence_number: None,
             sequenced_at: None,
             batch_id: None,
@@ -512,15 +562,33 @@ impl X402PaymentIntent {
     /// Check if the intent is signed
     #[must_use]
     pub fn is_signed(&self) -> bool {
-        matches!(
-            (
-                self.payer_signature.as_ref(),
-                self.payer_public_key.as_ref(),
-                self.signing_hash.as_ref()
-            ),
-            (Some(signature), Some(public_key), Some(signing_hash))
-                if !signature.is_empty() && !public_key.is_empty() && !signing_hash.is_empty()
-        )
+        let has_signing_hash =
+            self.signing_hash.as_ref().is_some_and(|signing_hash| !signing_hash.is_empty());
+        if !has_signing_hash {
+            return false;
+        }
+
+        match self.signature_scheme() {
+            X402SignatureScheme::Ed25519 => {
+                self.payer_signature.as_ref().is_some_and(|signature| !signature.is_empty())
+                    && self
+                        .payer_public_key
+                        .as_ref()
+                        .is_some_and(|public_key| !public_key.is_empty())
+            }
+            X402SignatureScheme::MlDsa65 => {
+                self.payer_signature_bundle.is_some() && self.payer_public_key_bundle.is_some()
+            }
+            X402SignatureScheme::Ed25519MlDsa65 => {
+                self.payer_signature.as_ref().is_some_and(|signature| !signature.is_empty())
+                    && self
+                        .payer_public_key
+                        .as_ref()
+                        .is_some_and(|public_key| !public_key.is_empty())
+                    && self.payer_signature_bundle.is_some()
+                    && self.payer_public_key_bundle.is_some()
+            }
+        }
     }
 
     /// Check if the intent is settled
@@ -592,6 +660,12 @@ impl X402PaymentIntent {
         hash
     }
 
+    /// Return the effective signature scheme, defaulting legacy rows to Ed25519.
+    #[must_use]
+    pub fn signature_scheme(&self) -> X402SignatureScheme {
+        self.payer_signature_scheme.unwrap_or(X402SignatureScheme::Ed25519)
+    }
+
     /// Sign the intent using Ed25519 (sequencer-compatible hash)
     pub fn sign_with_ed25519(&mut self, private_key: &[u8; 32]) -> Result<(), X402CryptoError> {
         let signing_hash = self.sequencer_signing_hash();
@@ -600,13 +674,59 @@ impl X402PaymentIntent {
         let public_key = signing_key.verifying_key();
 
         self.signing_hash = Some(hex0x(signing_hash));
+        self.payer_signature_scheme = Some(X402SignatureScheme::Ed25519);
         self.payer_signature = Some(hex0x(signature.to_bytes()));
         self.payer_public_key = Some(hex0x(public_key.to_bytes()));
+        self.payer_signature_bundle = None;
+        self.payer_public_key_bundle = None;
         self.status = X402IntentStatus::Signed;
         Ok(())
     }
 
-    /// Verify Ed25519 signature against sequencer-compatible hash
+    /// Sign the intent using hybrid Ed25519 + ML-DSA-65.
+    pub fn sign_with_hybrid(
+        &mut self,
+        keypair: &HybridSigningKeypair,
+    ) -> Result<(), X402CryptoError> {
+        let signing_hash = self.sequencer_signing_hash();
+        let signature = hybrid_sign_event_hash(&signing_hash, &keypair.private)
+            .map_err(|e| X402CryptoError::InvalidKey(e.to_string()))?;
+
+        self.signing_hash = Some(hex0x(signing_hash));
+        self.payer_signature_scheme = Some(X402SignatureScheme::Ed25519MlDsa65);
+        self.payer_signature = Some(hex0x(signature.ed25519_signature));
+        self.payer_public_key = Some(hex0x(keypair.public.ed25519_public_key));
+        self.payer_signature_bundle =
+            Some(X402SignatureBundle { ml_dsa_65_signature: signature.ml_dsa_65_signature });
+        self.payer_public_key_bundle = Some(X402PublicKeyBundle {
+            ml_dsa_65_public_key: keypair.public.ml_dsa_65_public_key.clone(),
+        });
+        self.status = X402IntentStatus::Signed;
+        Ok(())
+    }
+
+    /// Sign the intent using PQC-strict ML-DSA-65.
+    pub fn sign_with_strict(
+        &mut self,
+        keypair: &StrictSigningKeypair,
+    ) -> Result<(), X402CryptoError> {
+        let signing_hash = self.sequencer_signing_hash();
+        let signature = strict_sign_event_hash(&signing_hash, &keypair.private)
+            .map_err(|e| X402CryptoError::InvalidKey(e.to_string()))?;
+
+        self.signing_hash = Some(hex0x(signing_hash));
+        self.payer_signature_scheme = Some(X402SignatureScheme::MlDsa65);
+        self.payer_signature = None;
+        self.payer_public_key = None;
+        self.payer_signature_bundle = Some(X402SignatureBundle { ml_dsa_65_signature: signature });
+        self.payer_public_key_bundle = Some(X402PublicKeyBundle {
+            ml_dsa_65_public_key: keypair.public.ml_dsa_65_public_key.clone(),
+        });
+        self.status = X402IntentStatus::Signed;
+        Ok(())
+    }
+
+    /// Verify the configured x402 signature against the sequencer-compatible hash.
     pub fn verify_signature(&self) -> Result<bool, X402CryptoError> {
         let signing_hash = self.sequencer_signing_hash();
 
@@ -616,20 +736,70 @@ impl X402PaymentIntent {
             return Ok(false);
         }
 
-        let signature_hex = self
-            .payer_signature
-            .as_deref()
-            .ok_or(X402CryptoError::MissingField("payer_signature"))?;
-        let public_key_hex = self
-            .payer_public_key
-            .as_deref()
-            .ok_or(X402CryptoError::MissingField("payer_public_key"))?;
+        match self.signature_scheme() {
+            X402SignatureScheme::Ed25519 => {
+                let signature_hex = self
+                    .payer_signature
+                    .as_deref()
+                    .ok_or(X402CryptoError::MissingField("payer_signature"))?;
+                let public_key_hex = self
+                    .payer_public_key
+                    .as_deref()
+                    .ok_or(X402CryptoError::MissingField("payer_public_key"))?;
 
-        let signature = Signature::from_bytes(&decode_hex_array::<64>(signature_hex)?);
-        let public_key = VerifyingKey::from_bytes(&decode_hex_array::<32>(public_key_hex)?)
-            .map_err(|e| X402CryptoError::InvalidKey(e.to_string()))?;
+                let signature = Signature::from_bytes(&decode_hex_array::<64>(signature_hex)?);
+                let public_key = VerifyingKey::from_bytes(&decode_hex_array::<32>(public_key_hex)?)
+                    .map_err(|e| X402CryptoError::InvalidKey(e.to_string()))?;
 
-        Ok(public_key.verify(&signing_hash, &signature).is_ok())
+                Ok(public_key.verify(&signing_hash, &signature).is_ok())
+            }
+            X402SignatureScheme::MlDsa65 => {
+                let signature_bundle = self
+                    .payer_signature_bundle
+                    .as_ref()
+                    .ok_or(X402CryptoError::MissingField("payer_signature_bundle"))?;
+                let public_key_bundle = self
+                    .payer_public_key_bundle
+                    .as_ref()
+                    .ok_or(X402CryptoError::MissingField("payer_public_key_bundle"))?;
+                let public_key = StrictSigningPublicKey {
+                    ml_dsa_65_public_key: public_key_bundle.ml_dsa_65_public_key.clone(),
+                };
+                Ok(strict_verify_event_signature(
+                    &signing_hash,
+                    &signature_bundle.ml_dsa_65_signature,
+                    &public_key,
+                ))
+            }
+            X402SignatureScheme::Ed25519MlDsa65 => {
+                let signature_hex = self
+                    .payer_signature
+                    .as_deref()
+                    .ok_or(X402CryptoError::MissingField("payer_signature"))?;
+                let public_key_hex = self
+                    .payer_public_key
+                    .as_deref()
+                    .ok_or(X402CryptoError::MissingField("payer_public_key"))?;
+                let signature_bundle = self
+                    .payer_signature_bundle
+                    .as_ref()
+                    .ok_or(X402CryptoError::MissingField("payer_signature_bundle"))?;
+                let public_key_bundle = self
+                    .payer_public_key_bundle
+                    .as_ref()
+                    .ok_or(X402CryptoError::MissingField("payer_public_key_bundle"))?;
+                let signature = PqcHybridSignatureBundle {
+                    ed25519_signature: decode_hex_array::<64>(signature_hex)?,
+                    ml_dsa_65_signature: signature_bundle.ml_dsa_65_signature.clone(),
+                };
+                let public_key = HybridSigningPublicKey {
+                    ed25519_public_key: decode_hex_array::<32>(public_key_hex)?,
+                    ml_dsa_65_public_key: public_key_bundle.ml_dsa_65_public_key.clone(),
+                };
+
+                Ok(hybrid_verify_event_signature(&signing_hash, &signature, &public_key))
+            }
+        }
     }
 }
 
@@ -805,8 +975,14 @@ pub struct X402PaymentReceipt {
     pub valid_until: u64,
     /// Sequencer signing hash (hex-encoded, 32 bytes)
     pub signing_hash: String,
-    /// Ed25519 signature (hex-encoded, 64 bytes)
+    /// Signature scheme used for the original payer authorization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer_signature_scheme: Option<X402SignatureScheme>,
+    /// Legacy Ed25519 signature (hex-encoded, 64 bytes).
     pub payer_signature: String,
+    /// Additional PQC signature material for hybrid or strict signatures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer_signature_bundle: Option<X402SignatureBundle>,
 
     /// Timestamp
     pub created_at: DateTime<Utc>,
@@ -1052,10 +1228,16 @@ pub struct CreateX402PaymentIntent {
 pub struct SignX402PaymentIntent {
     /// Intent ID to sign
     pub intent_id: Uuid,
-    /// Ed25519 signature (hex-encoded, 64 bytes)
+    /// Signature scheme used to authorize the intent. Absent = legacy Ed25519.
+    pub signature_scheme: Option<X402SignatureScheme>,
+    /// Legacy Ed25519 signature (hex-encoded, 64 bytes).
     pub signature: String,
-    /// Payer's public key (hex-encoded, 32 bytes)
+    /// Payer's Ed25519 public key (hex-encoded, 32 bytes).
     pub public_key: String,
+    /// Additional PQC signature material for hybrid or strict signatures.
+    pub signature_bundle: Option<X402SignatureBundle>,
+    /// Additional PQC public-key material for hybrid or strict signatures.
+    pub public_key_bundle: Option<X402PublicKeyBundle>,
 }
 
 /// Filter for listing x402 payment intents
@@ -1152,6 +1334,33 @@ fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N], X402CryptoEr
     Ok(arr)
 }
 
+fn decode_hex_bytes(value: &str) -> Result<Vec<u8>, X402CryptoError> {
+    let trimmed = value.strip_prefix("0x").unwrap_or(value);
+    hex::decode(trimmed).map_err(|e| X402CryptoError::InvalidHex(e.to_string()))
+}
+
+fn normalize_optional_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn update_optional_leaf_bytes(
+    hasher: &mut Sha256,
+    bytes: Option<&[u8]>,
+) -> Result<(), X402CryptoError> {
+    match bytes {
+        Some(bytes) => {
+            let len = u64::try_from(bytes.len())
+                .map_err(|_| X402CryptoError::Serialization("byte slice too large".to_string()))?;
+            hasher.update([1u8]);
+            hasher.update(len.to_be_bytes());
+            hasher.update(bytes);
+        }
+        None => hasher.update([0u8]),
+    }
+    Ok(())
+}
+
 fn payment_leaf_hash(receipt: &X402PaymentReceipt) -> Result<[u8; 32], X402CryptoError> {
     let mut hasher = Sha256::new();
 
@@ -1168,9 +1377,22 @@ fn payment_leaf_hash(receipt: &X402PaymentReceipt) -> Result<[u8; 32], X402Crypt
     hasher.update(receipt.valid_until.to_be_bytes());
 
     let signing_hash = decode_hex_array::<32>(&receipt.signing_hash)?;
-    let signature = decode_hex_array::<64>(&receipt.payer_signature)?;
+    let legacy_signature =
+        normalize_optional_string(&receipt.payer_signature).map(|sig| decode_hex_bytes(&sig));
+    let legacy_signature = legacy_signature.transpose()?;
     hasher.update(signing_hash);
-    hasher.update(signature);
+    hasher.update(
+        receipt
+            .payer_signature_scheme
+            .unwrap_or(X402SignatureScheme::Ed25519)
+            .to_string()
+            .as_bytes(),
+    );
+    update_optional_leaf_bytes(&mut hasher, legacy_signature.as_deref())?;
+    update_optional_leaf_bytes(
+        &mut hasher,
+        receipt.payer_signature_bundle.as_ref().map(|bundle| bundle.ml_dsa_65_signature.as_slice()),
+    )?;
 
     let result = hasher.finalize();
     let mut hash = [0u8; 32];
@@ -1181,6 +1403,7 @@ fn payment_leaf_hash(receipt: &X402PaymentReceipt) -> Result<[u8; 32], X402Crypt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stateset_crypto::pqc::{generate_hybrid_signing_keypair, generate_strict_signing_keypair};
 
     #[test]
     fn test_x402_payment_intent_creation() {
@@ -1263,6 +1486,48 @@ mod tests {
     }
 
     #[test]
+    fn test_hybrid_signature_verifies() {
+        let mut intent = X402PaymentIntent::new(
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "0xabcdef1234567890abcdef1234567890abcdef12",
+            1_000_000,
+            X402Asset::Usdc,
+            X402Network::SetChain,
+        )
+        .with_resource("/hybrid", "POST")
+        .with_nonce(7);
+        let keypair = generate_hybrid_signing_keypair().unwrap();
+
+        intent.sign_with_hybrid(&keypair).unwrap();
+
+        assert_eq!(intent.payer_signature_scheme, Some(X402SignatureScheme::Ed25519MlDsa65));
+        assert!(intent.payer_signature_bundle.is_some());
+        assert!(intent.payer_public_key_bundle.is_some());
+        assert!(intent.verify_signature().unwrap());
+    }
+
+    #[test]
+    fn test_strict_signature_verifies() {
+        let mut intent = X402PaymentIntent::new(
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "0xabcdef1234567890abcdef1234567890abcdef12",
+            1_000_000,
+            X402Asset::Usdc,
+            X402Network::SetChain,
+        )
+        .with_resource("/strict", "POST")
+        .with_nonce(9);
+        let keypair = generate_strict_signing_keypair().unwrap();
+
+        intent.sign_with_strict(&keypair).unwrap();
+
+        assert_eq!(intent.payer_signature_scheme, Some(X402SignatureScheme::MlDsa65));
+        assert!(intent.payer_signature.is_none());
+        assert!(intent.payer_public_key.is_none());
+        assert!(intent.verify_signature().unwrap());
+    }
+
+    #[test]
     fn test_x402_payment_required_header() {
         let req =
             X402PaymentRequired::new("0xpayee", 1_000_000, X402Asset::Usdc, "/api/resource", "GET");
@@ -1296,7 +1561,9 @@ mod tests {
             nonce: 7,
             valid_until: 1_705_320_000,
             signing_hash: format!("0x{}", "11".repeat(32)),
+            payer_signature_scheme: Some(X402SignatureScheme::Ed25519),
             payer_signature: format!("0x{}", "22".repeat(64)),
+            payer_signature_bundle: None,
             created_at: Utc::now(),
         };
 

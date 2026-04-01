@@ -11,19 +11,19 @@ cargo add stateset-embedded
 ### Node.js
 
 ```bash
-npm install @stateset/embedded@0.9.2
+npm install @stateset/embedded@0.9.3
 ```
 
 ### Python
 
 ```bash
-pip install stateset-embedded==0.9.2
+pip install stateset-embedded==0.9.3
 ```
 
 ### CLI (global)
 
 ```bash
-npm install -g @stateset/cli@0.9.2
+npm install -g @stateset/cli@0.9.3
 stateset-init --quickstart
 ```
 
@@ -114,7 +114,7 @@ stateset "find products similar to wireless earbuds"
 ### Embedded Toolkit (OpenAI, Vercel AI SDK, LangChain)
 
 ```bash
-npm install @stateset/cli@0.9.2 @stateset/embedded@0.9.2
+npm install @stateset/cli@0.9.3 @stateset/embedded@0.9.3
 ```
 
 ```javascript

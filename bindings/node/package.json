@@ -1,6 +1,6 @@
 {
   "name": "@stateset/embedded",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "The SQLite of commerce - embeddable commerce library powered by Rust",
   "main": "index.js",
   "types": "index.d.ts",
@@ -21,7 +21,8 @@
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",
   "engines": {
-    "node": ">= 18"
+    "node": ">=20.20.0",
+    "npm": ">=10.0.0"
   },
   "napi": {
     "name": "stateset-embedded",
@@ -37,10 +38,21 @@
     }
   },
   "scripts": {
+    "check:env": "node ../../scripts/check-node.mjs 20.20.0 10.0.0",
+    "check": "npm run build:debug && npm run test",
+    "check:coverage": "npm run build:debug && npm run test:coverage",
+    "preartifacts": "npm run check:env",
+    "prebuild": "npm run check:env",
+    "prebuild:debug": "npm run check:env",
+    "pretest": "npm run check:env",
+    "pretest:coverage": "npm run check:env",
+    "preuniversal": "npm run check:env",
+    "preversion": "npm run check:env",
     "artifacts": "napi artifacts",
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
     "test": "node --test test/*.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.js",
     "universal": "napi universal",
     "version": "napi version"
   },

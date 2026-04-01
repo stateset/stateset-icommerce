@@ -22,17 +22,6 @@ use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use base64::Engine;
 use hkdf::Hkdf;
-use ml_dsa::signature::{Keypair, Signer, Verifier};
-use ml_dsa::{
-    EncodedVerifyingKey as MlDsaEncodedVerifyingKey, KeyGen, MlDsa65,
-    Signature as MlDsaSignature, SigningKey as MlDsaSigningKey,
-    VerifyingKey as MlDsaVerifyingKey,
-};
-use ml_kem::kem::{Decapsulate, KeyExport, TryKeyInit};
-use ml_kem::{
-    B32 as MlKemB32, DecapsulationKey768, EncapsulationKey768, Seed as MlKemSeed,
-    ml_kem_768::Ciphertext as MlKemCiphertext768,
-};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -45,6 +34,9 @@ use crate::canonicalize::canonicalize_json;
 use crate::hash::{
     PayloadAadParams, PayloadCipherParams, compute_payload_aad, compute_payload_cipher_hash,
     compute_payload_plain_hash, compute_recipients_hash,
+};
+use crate::pqc_backend::{
+    MlDsa65SigningKey, MlDsa65VerifyingKey, MlKem768DecapsulationKey, MlKem768EncapsulationKey,
 };
 use crate::sign::{generate_keypair, sign_event_hash, verify_event_signature};
 
@@ -283,37 +275,22 @@ pub struct HybridEncryptionResult {
     pub payload_cipher_hash: [u8; 32],
 }
 
-fn ml_dsa_signing_key_from_seed(seed: &[u8; 32]) -> MlDsaSigningKey<MlDsa65> {
-    <MlDsa65 as KeyGen>::from_seed(&(*seed).into())
+fn ml_dsa_signing_key_from_seed(seed: &[u8; 32]) -> MlDsa65SigningKey {
+    MlDsa65SigningKey::from_seed(seed)
 }
 
-fn ml_dsa_verifying_key_from_bytes(
-    public_key: &[u8],
-) -> Result<MlDsaVerifyingKey<MlDsa65>, CryptoError> {
-    let encoded = MlDsaEncodedVerifyingKey::<MlDsa65>::try_from(public_key)
-        .map_err(|_| CryptoError::SignatureError("Invalid ML-DSA-65 public key".to_string()))?;
-    Ok(MlDsaVerifyingKey::decode(&encoded))
+fn ml_dsa_verifying_key_from_bytes(public_key: &[u8]) -> Result<MlDsa65VerifyingKey, CryptoError> {
+    MlDsa65VerifyingKey::from_bytes(public_key)
 }
 
-fn ml_dsa_signature_from_bytes(signature: &[u8]) -> Result<MlDsaSignature<MlDsa65>, CryptoError> {
-    MlDsaSignature::<MlDsa65>::try_from(signature)
-        .map_err(|_| CryptoError::SignatureError("Invalid ML-DSA-65 signature".to_string()))
-}
-
-fn ml_kem_decapsulation_key_from_seed(seed: &[u8; 64]) -> DecapsulationKey768 {
-    DecapsulationKey768::from_seed(MlKemSeed::from(*seed))
+fn ml_kem_decapsulation_key_from_seed(seed: &[u8; 64]) -> MlKem768DecapsulationKey {
+    MlKem768DecapsulationKey::from_seed(seed)
 }
 
 fn ml_kem_encapsulation_key_from_bytes(
     public_key: &[u8],
-) -> Result<EncapsulationKey768, CryptoError> {
-    EncapsulationKey768::new_from_slice(public_key)
-        .map_err(|_| CryptoError::KeyWrapError("Invalid ML-KEM-768 public key".to_string()))
-}
-
-fn ml_kem_ciphertext_from_bytes(ciphertext: &[u8]) -> Result<MlKemCiphertext768, CryptoError> {
-    MlKemCiphertext768::try_from(ciphertext)
-        .map_err(|_| CryptoError::KeyWrapError("Invalid ML-KEM-768 ciphertext".to_string()))
+) -> Result<MlKem768EncapsulationKey, CryptoError> {
+    MlKem768EncapsulationKey::from_bytes(public_key)
 }
 
 fn hkdf_wrap_key(
@@ -360,13 +337,10 @@ pub fn generate_hybrid_signing_keypair() -> Result<HybridSigningKeypair, CryptoE
     rng.fill_bytes(&mut ml_dsa_65_seed);
 
     let ml_dsa_signing_key = ml_dsa_signing_key_from_seed(&ml_dsa_65_seed);
-    let encoded_public = ml_dsa_signing_key.verifying_key().encode();
+    let encoded_public = ml_dsa_signing_key.verifying_key_bytes();
 
     Ok(HybridSigningKeypair {
-        public: HybridSigningPublicKey {
-            ed25519_public_key,
-            ml_dsa_65_public_key: encoded_public.as_slice().to_vec(),
-        },
+        public: HybridSigningPublicKey { ed25519_public_key, ml_dsa_65_public_key: encoded_public },
         private: HybridSigningPrivateKey { ed25519_private_key, ml_dsa_65_seed },
     })
 }
@@ -383,13 +357,10 @@ pub fn hybrid_sign_event_hash(
     let ed25519_signature = sign_event_hash(event_signing_hash, &private_key.ed25519_private_key)?;
 
     let ml_dsa_signing_key = ml_dsa_signing_key_from_seed(&private_key.ml_dsa_65_seed);
-    let ml_dsa_signature: MlDsaSignature<MlDsa65> = ml_dsa_signing_key
-        .try_sign(event_signing_hash)
-        .map_err(|error| CryptoError::SignatureError(error.to_string()))?;
 
     Ok(HybridSignatureBundle {
         ed25519_signature,
-        ml_dsa_65_signature: ml_dsa_signature.encode().as_slice().to_vec(),
+        ml_dsa_65_signature: ml_dsa_signing_key.sign(event_signing_hash)?,
     })
 }
 
@@ -408,15 +379,12 @@ pub fn hybrid_verify_event_signature(
         return false;
     }
 
-    let Ok(ml_dsa_verifying_key) = ml_dsa_verifying_key_from_bytes(&public_key.ml_dsa_65_public_key)
+    let Ok(ml_dsa_verifying_key) =
+        ml_dsa_verifying_key_from_bytes(&public_key.ml_dsa_65_public_key)
     else {
         return false;
     };
-    let Ok(ml_dsa_signature) = ml_dsa_signature_from_bytes(&signature.ml_dsa_65_signature) else {
-        return false;
-    };
-
-    ml_dsa_verifying_key.verify(event_signing_hash, &ml_dsa_signature).is_ok()
+    ml_dsa_verifying_key.verify(event_signing_hash, &signature.ml_dsa_65_signature).is_ok()
 }
 
 // ===========================================================================
@@ -430,7 +398,7 @@ pub fn hybrid_verify_event_signature(
 #[allow(missing_debug_implementations)]
 pub struct PreparedHybridSigner {
     ed25519_private_key: [u8; 32],
-    ml_dsa_signing_key: MlDsaSigningKey<MlDsa65>,
+    ml_dsa_signing_key: MlDsa65SigningKey,
 }
 
 impl PreparedHybridSigner {
@@ -448,16 +416,15 @@ impl PreparedHybridSigner {
     /// # Errors
     ///
     /// Returns [`CryptoError::SignatureError`] if signing fails.
-    pub fn sign(&self, event_signing_hash: &[u8; 32]) -> Result<HybridSignatureBundle, CryptoError> {
+    pub fn sign(
+        &self,
+        event_signing_hash: &[u8; 32],
+    ) -> Result<HybridSignatureBundle, CryptoError> {
         let ed25519_signature = sign_event_hash(event_signing_hash, &self.ed25519_private_key)?;
-        let ml_dsa_signature: MlDsaSignature<MlDsa65> = self
-            .ml_dsa_signing_key
-            .try_sign(event_signing_hash)
-            .map_err(|error| CryptoError::SignatureError(error.to_string()))?;
 
         Ok(HybridSignatureBundle {
             ed25519_signature,
-            ml_dsa_65_signature: ml_dsa_signature.encode().as_slice().to_vec(),
+            ml_dsa_65_signature: self.ml_dsa_signing_key.sign(event_signing_hash)?,
         })
     }
 }
@@ -465,16 +432,14 @@ impl PreparedHybridSigner {
 /// Pre-expanded strict signer that amortizes ML-DSA-65 key derivation.
 #[allow(missing_debug_implementations)]
 pub struct PreparedStrictSigner {
-    ml_dsa_signing_key: MlDsaSigningKey<MlDsa65>,
+    ml_dsa_signing_key: MlDsa65SigningKey,
 }
 
 impl PreparedStrictSigner {
     /// Create a prepared signer from a strict private key.
     #[must_use]
     pub fn new(private_key: &StrictSigningPrivateKey) -> Self {
-        Self {
-            ml_dsa_signing_key: ml_dsa_signing_key_from_seed(&private_key.ml_dsa_65_seed),
-        }
+        Self { ml_dsa_signing_key: ml_dsa_signing_key_from_seed(&private_key.ml_dsa_65_seed) }
     }
 
     /// Sign an event-signing hash with the pre-expanded key.
@@ -483,11 +448,7 @@ impl PreparedStrictSigner {
     ///
     /// Returns [`CryptoError::SignatureError`] if signing fails.
     pub fn sign(&self, event_signing_hash: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        let sig: MlDsaSignature<MlDsa65> = self
-            .ml_dsa_signing_key
-            .try_sign(event_signing_hash)
-            .map_err(|error| CryptoError::SignatureError(error.to_string()))?;
-        Ok(sig.encode().as_slice().to_vec())
+        self.ml_dsa_signing_key.sign(event_signing_hash)
     }
 }
 
@@ -495,7 +456,7 @@ impl PreparedStrictSigner {
 #[allow(missing_debug_implementations)]
 pub struct PreparedHybridVerifier {
     ed25519_public_key: [u8; 32],
-    ml_dsa_verifying_key: MlDsaVerifyingKey<MlDsa65>,
+    ml_dsa_verifying_key: MlDsa65VerifyingKey,
 }
 
 impl PreparedHybridVerifier {
@@ -506,19 +467,12 @@ impl PreparedHybridVerifier {
     pub fn new(public_key: &HybridSigningPublicKey) -> Option<Self> {
         let ml_dsa_verifying_key =
             ml_dsa_verifying_key_from_bytes(&public_key.ml_dsa_65_public_key).ok()?;
-        Some(Self {
-            ed25519_public_key: public_key.ed25519_public_key,
-            ml_dsa_verifying_key,
-        })
+        Some(Self { ed25519_public_key: public_key.ed25519_public_key, ml_dsa_verifying_key })
     }
 
     /// Verify a hybrid signature with the pre-parsed keys.
     #[must_use]
-    pub fn verify(
-        &self,
-        event_signing_hash: &[u8; 32],
-        signature: &HybridSignatureBundle,
-    ) -> bool {
+    pub fn verify(&self, event_signing_hash: &[u8; 32], signature: &HybridSignatureBundle) -> bool {
         if !verify_event_signature(
             event_signing_hash,
             &signature.ed25519_signature,
@@ -526,10 +480,7 @@ impl PreparedHybridVerifier {
         ) {
             return false;
         }
-        let Ok(ml_dsa_sig) = ml_dsa_signature_from_bytes(&signature.ml_dsa_65_signature) else {
-            return false;
-        };
-        self.ml_dsa_verifying_key.verify(event_signing_hash, &ml_dsa_sig).is_ok()
+        self.ml_dsa_verifying_key.verify(event_signing_hash, &signature.ml_dsa_65_signature).is_ok()
     }
 }
 
@@ -544,7 +495,7 @@ pub fn generate_hybrid_recipient_keypair(kid: u32) -> Result<HybridRecipientKeyp
     let mut ml_kem_768_seed = [0u8; 64];
     rng.fill_bytes(&mut ml_kem_768_seed);
     let ml_kem_key = ml_kem_decapsulation_key_from_seed(&ml_kem_768_seed);
-    let ml_kem_768_public_key = ml_kem_key.encapsulation_key().to_bytes().as_slice().to_vec();
+    let ml_kem_768_public_key = ml_kem_key.encapsulation_key_bytes();
 
     Ok(HybridRecipientKeypair {
         public: HybridRecipientPublicKey { kid, x25519_public_key, ml_kem_768_public_key },
@@ -581,9 +532,10 @@ pub fn wrap_dek_hybrid(
 
     let mut ml_kem_random = Zeroizing::new([0u8; 32]);
     rng.fill_bytes(ml_kem_random.as_mut());
-    let ml_kem_public = ml_kem_encapsulation_key_from_bytes(&recipient_public_key.ml_kem_768_public_key)?;
+    let ml_kem_public =
+        ml_kem_encapsulation_key_from_bytes(&recipient_public_key.ml_kem_768_public_key)?;
     let (ml_kem_ciphertext, ml_kem_shared_secret) =
-        ml_kem_public.encapsulate_deterministic(&MlKemB32::from(*ml_kem_random));
+        ml_kem_public.encapsulate_deterministic(&ml_kem_random);
 
     let x25519_ephemeral_secret = EphemeralSecret::random_from_rng(&mut rng);
     let x25519_ephemeral_public = X25519PublicKey::from(&x25519_ephemeral_secret);
@@ -591,7 +543,7 @@ pub fn wrap_dek_hybrid(
     let x25519_shared_secret = x25519_ephemeral_secret.diffie_hellman(&x25519_recipient_public);
 
     let mut hybrid_shared_secret = Zeroizing::new([0u8; 64]);
-    hybrid_shared_secret[..32].copy_from_slice(ml_kem_shared_secret.as_slice());
+    hybrid_shared_secret[..32].copy_from_slice(&ml_kem_shared_secret);
     hybrid_shared_secret[32..].copy_from_slice(x25519_shared_secret.as_bytes());
     let wrap_info = hybrid_wrap_info(info);
     let wrapping_key = hkdf_wrap_key(&*hybrid_shared_secret, HYBRID_HKDF_SALT, &wrap_info)?;
@@ -611,7 +563,7 @@ pub fn wrap_dek_hybrid(
         recipient_kid: recipient_public_key.kid,
         wrap_alg: Cow::Borrowed(HYBRID_WRAP_SCHEME),
         x25519_enc: *x25519_ephemeral_public.as_bytes(),
-        ml_kem_ct: ml_kem_ciphertext.as_slice().to_vec(),
+        ml_kem_ct: ml_kem_ciphertext,
         wrap_nonce,
         wrapped_key: ciphertext,
     })
@@ -628,15 +580,14 @@ pub fn unwrap_dek_hybrid(
     info: &[u8],
 ) -> Result<[u8; 32], CryptoError> {
     let ml_kem_key = ml_kem_decapsulation_key_from_seed(&recipient_private_key.ml_kem_768_seed);
-    let ml_kem_ciphertext = ml_kem_ciphertext_from_bytes(&wrapped.ml_kem_ct)?;
-    let ml_kem_shared_secret = ml_kem_key.decapsulate(&ml_kem_ciphertext);
+    let ml_kem_shared_secret = ml_kem_key.decapsulate(&wrapped.ml_kem_ct)?;
 
     let x25519_private = StaticSecret::from(recipient_private_key.x25519_private_key);
     let x25519_ephemeral_public = X25519PublicKey::from(wrapped.x25519_enc);
     let x25519_shared_secret = x25519_private.diffie_hellman(&x25519_ephemeral_public);
 
     let mut hybrid_shared_secret = Zeroizing::new([0u8; 64]);
-    hybrid_shared_secret[..32].copy_from_slice(ml_kem_shared_secret.as_slice());
+    hybrid_shared_secret[..32].copy_from_slice(&ml_kem_shared_secret);
     hybrid_shared_secret[32..].copy_from_slice(x25519_shared_secret.as_bytes());
     let wrap_info = hybrid_wrap_info(info);
     let wrapping_key = hkdf_wrap_key(&*hybrid_shared_secret, HYBRID_HKDF_SALT, &wrap_info)?;
@@ -694,12 +645,9 @@ fn hybrid_wrapped_dek_from_json(
 
     let x25519_enc = b64
         .decode(
-            value
-                .get("x25519_enc_b64u")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    CryptoError::DecryptionError("Missing x25519_enc_b64u".to_string())
-                })?,
+            value.get("x25519_enc_b64u").and_then(serde_json::Value::as_str).ok_or_else(|| {
+                CryptoError::DecryptionError("Missing x25519_enc_b64u".to_string())
+            })?,
         )
         .map_err(|error| CryptoError::DecryptionError(error.to_string()))?;
     if x25519_enc.len() != 32 {
@@ -722,12 +670,9 @@ fn hybrid_wrapped_dek_from_json(
 
     let wrap_nonce = b64
         .decode(
-            value
-                .get("wrap_nonce_b64u")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    CryptoError::DecryptionError("Missing wrap_nonce_b64u".to_string())
-                })?,
+            value.get("wrap_nonce_b64u").and_then(serde_json::Value::as_str).ok_or_else(|| {
+                CryptoError::DecryptionError("Missing wrap_nonce_b64u".to_string())
+            })?,
         )
         .map_err(|error| CryptoError::DecryptionError(error.to_string()))?;
     if wrap_nonce.len() != NONCE_SIZE {
@@ -845,12 +790,7 @@ pub fn encrypt_payload_hybrid(
         "recipients": recipients,
     });
 
-    Ok(HybridEncryptionResult {
-        payload_encrypted,
-        salt,
-        payload_plain_hash,
-        payload_cipher_hash,
-    })
+    Ok(HybridEncryptionResult { payload_encrypted, salt, payload_plain_hash, payload_cipher_hash })
 }
 
 /// Decrypt a payload previously encrypted by [`encrypt_payload_hybrid`].
@@ -1009,12 +949,10 @@ pub fn generate_strict_signing_keypair() -> Result<StrictSigningKeypair, CryptoE
     rng.fill_bytes(&mut seed);
 
     let signing_key = ml_dsa_signing_key_from_seed(&seed);
-    let encoded = signing_key.verifying_key().encode();
+    let encoded = signing_key.verifying_key_bytes();
 
     Ok(StrictSigningKeypair {
-        public: StrictSigningPublicKey {
-            ml_dsa_65_public_key: encoded.as_slice().to_vec(),
-        },
+        public: StrictSigningPublicKey { ml_dsa_65_public_key: encoded },
         private: StrictSigningPrivateKey { ml_dsa_65_seed: seed },
     })
 }
@@ -1029,10 +967,7 @@ pub fn strict_sign_event_hash(
     private_key: &StrictSigningPrivateKey,
 ) -> Result<Vec<u8>, CryptoError> {
     let signing_key = ml_dsa_signing_key_from_seed(&private_key.ml_dsa_65_seed);
-    let signature: MlDsaSignature<MlDsa65> = signing_key
-        .try_sign(event_signing_hash)
-        .map_err(|error| CryptoError::SignatureError(error.to_string()))?;
-    Ok(signature.encode().as_slice().to_vec())
+    signing_key.sign(event_signing_hash)
 }
 
 /// Verify an ML-DSA-65-only event signature (PQC-strict mode).
@@ -1046,10 +981,7 @@ pub fn strict_verify_event_signature(
     else {
         return false;
     };
-    let Ok(sig) = ml_dsa_signature_from_bytes(signature) else {
-        return false;
-    };
-    verifying_key.verify(event_signing_hash, &sig).is_ok()
+    verifying_key.verify(event_signing_hash, signature).is_ok()
 }
 
 // ===========================================================================
@@ -1063,7 +995,7 @@ pub fn generate_strict_recipient_keypair(kid: u32) -> Result<StrictRecipientKeyp
     rng.fill_bytes(&mut seed);
 
     let dk = ml_kem_decapsulation_key_from_seed(&seed);
-    let public_key = dk.encapsulation_key().to_bytes().as_slice().to_vec();
+    let public_key = dk.encapsulation_key_bytes();
 
     Ok(StrictRecipientKeypair {
         public: StrictRecipientPublicKey { kid, ml_kem_768_public_key: public_key },
@@ -1093,10 +1025,10 @@ pub fn wrap_dek_strict(
     let mut ml_kem_random = [0u8; 32];
     rng.fill_bytes(&mut ml_kem_random);
     let ek = ml_kem_encapsulation_key_from_bytes(&recipient_public_key.ml_kem_768_public_key)?;
-    let (ct, shared_secret) = ek.encapsulate_deterministic(&MlKemB32::from(ml_kem_random));
+    let (ct, shared_secret) = ek.encapsulate_deterministic(&ml_kem_random);
 
     let wrap_info = strict_wrap_info(info);
-    let wrapping_key = hkdf_wrap_key(shared_secret.as_slice(), STRICT_HKDF_SALT, &wrap_info)?;
+    let wrapping_key = hkdf_wrap_key(&shared_secret, STRICT_HKDF_SALT, &wrap_info)?;
 
     let mut wrap_nonce = [0u8; NONCE_SIZE];
     rng.fill_bytes(&mut wrap_nonce);
@@ -1112,7 +1044,7 @@ pub fn wrap_dek_strict(
     Ok(StrictWrappedDek {
         recipient_kid: recipient_public_key.kid,
         wrap_alg: Cow::Borrowed(STRICT_WRAP_SCHEME),
-        ml_kem_ct: ct.as_slice().to_vec(),
+        ml_kem_ct: ct,
         wrap_nonce,
         wrapped_key: ciphertext,
     })
@@ -1129,11 +1061,10 @@ pub fn unwrap_dek_strict(
     info: &[u8],
 ) -> Result<[u8; 32], CryptoError> {
     let dk = ml_kem_decapsulation_key_from_seed(&recipient_private_key.ml_kem_768_seed);
-    let ct = ml_kem_ciphertext_from_bytes(&wrapped.ml_kem_ct)?;
-    let shared_secret = dk.decapsulate(&ct);
+    let shared_secret = dk.decapsulate(&wrapped.ml_kem_ct)?;
 
     let wrap_info = strict_wrap_info(info);
-    let wrapping_key = hkdf_wrap_key(shared_secret.as_slice(), STRICT_HKDF_SALT, &wrap_info)?;
+    let wrapping_key = hkdf_wrap_key(&shared_secret, STRICT_HKDF_SALT, &wrap_info)?;
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&*wrapping_key));
     let dek_bytes = cipher
@@ -1166,7 +1097,9 @@ fn strict_wrapped_dek_to_json(wrapped: &StrictWrappedDek) -> serde_json::Value {
     })
 }
 
-fn strict_wrapped_dek_from_json(value: &serde_json::Value) -> Result<StrictWrappedDek, CryptoError> {
+fn strict_wrapped_dek_from_json(
+    value: &serde_json::Value,
+) -> Result<StrictWrappedDek, CryptoError> {
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let recipient_kid = value
         .get("recipient_kid")
@@ -1193,10 +1126,9 @@ fn strict_wrapped_dek_from_json(value: &serde_json::Value) -> Result<StrictWrapp
 
     let wrap_nonce = b64
         .decode(
-            value
-                .get("wrap_nonce_b64u")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| CryptoError::DecryptionError("Missing wrap_nonce_b64u".to_string()))?,
+            value.get("wrap_nonce_b64u").and_then(serde_json::Value::as_str).ok_or_else(|| {
+                CryptoError::DecryptionError("Missing wrap_nonce_b64u".to_string())
+            })?,
         )
         .map_err(|error| CryptoError::DecryptionError(error.to_string()))?;
     if wrap_nonce.len() != NONCE_SIZE {
@@ -1327,12 +1259,7 @@ pub fn encrypt_payload_strict(
         "recipients": recipients,
     });
 
-    Ok(StrictEncryptionResult {
-        payload_encrypted,
-        salt,
-        payload_plain_hash,
-        payload_cipher_hash,
-    })
+    Ok(StrictEncryptionResult { payload_encrypted, salt, payload_plain_hash, payload_cipher_hash })
 }
 
 /// Decrypt a payload previously encrypted by [`encrypt_payload_strict`].
@@ -1398,7 +1325,8 @@ pub fn decrypt_payload_strict(
     let wrapped = recipients
         .iter()
         .find(|r| {
-            r.get("recipient_kid").and_then(serde_json::Value::as_u64) == Some(u64::from(recipient_kid))
+            r.get("recipient_kid").and_then(serde_json::Value::as_u64)
+                == Some(u64::from(recipient_kid))
         })
         .ok_or(CryptoError::RecipientNotFound(recipient_kid))
         .and_then(strict_wrapped_dek_from_json)?;
@@ -1424,7 +1352,9 @@ pub fn decrypt_payload_strict(
             payload_encrypted
                 .get("ciphertext_b64u")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| CryptoError::DecryptionError("Missing ciphertext_b64u".to_string()))?,
+                .ok_or_else(|| {
+                    CryptoError::DecryptionError("Missing ciphertext_b64u".to_string())
+                })?,
         )
         .map_err(|error| CryptoError::DecryptionError(error.to_string()))?;
     let tag = b64
@@ -1519,9 +1449,7 @@ pub fn verify_hybrid_signing_pop(
 /// # Errors
 ///
 /// Returns [`CryptoError::SignatureError`] if signing fails.
-pub fn generate_strict_signing_pop(
-    keypair: &StrictSigningKeypair,
-) -> Result<Vec<u8>, CryptoError> {
+pub fn generate_strict_signing_pop(keypair: &StrictSigningKeypair) -> Result<Vec<u8>, CryptoError> {
     let challenge = pop_challenge(&keypair.public.ml_dsa_65_public_key);
     strict_sign_event_hash(&challenge, &keypair.private)
 }
@@ -1590,14 +1518,20 @@ pub fn strict_verify_receipt_signature(
 
 /// Known-answer seed for cross-language signing test vectors.
 pub const TEST_VECTOR_SIGNING_SEED: [u8; 32] = [
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-    0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
 ];
 
 /// Known-answer message hash for cross-language test vectors.
 pub const TEST_VECTOR_MESSAGE_HASH: [u8; 32] = [0x42; 32];
+
+/// Known-answer seed for cross-language ML-KEM-768 test vectors.
+pub const TEST_VECTOR_KEM_SEED: [u8; 64] = [
+    0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
+    0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf,
+    0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
+];
 
 /// Derive the ML-DSA-65 public key from a known seed for test vectors.
 ///
@@ -1606,7 +1540,17 @@ pub const TEST_VECTOR_MESSAGE_HASH: [u8; 32] = [0x42; 32];
 #[must_use]
 pub fn test_vector_ml_dsa_public_key(seed: &[u8; 32]) -> Vec<u8> {
     let sk = ml_dsa_signing_key_from_seed(seed);
-    sk.verifying_key().encode().as_slice().to_vec()
+    sk.verifying_key_bytes()
+}
+
+/// Derive the ML-KEM-768 public key from a known seed for test vectors.
+///
+/// Used in cross-language interop tests to verify both Rust and Node produce
+/// identical recipient public keys from the same seed.
+#[must_use]
+pub fn test_vector_ml_kem_public_key(seed: &[u8; 64]) -> Vec<u8> {
+    let dk = ml_kem_decapsulation_key_from_seed(seed);
+    dk.encapsulation_key_bytes()
 }
 
 #[cfg(test)]
@@ -1675,7 +1619,8 @@ mod tests {
         let provisional_plain_hash = compute_payload_plain_hash(&payload, None).unwrap();
         let aad_params = test_aad_params(&provisional_plain_hash);
         let encrypted =
-            encrypt_payload_hybrid(&payload, &aad_params, &[recipient.public.clone()]).unwrap();
+            encrypt_payload_hybrid(&payload, &aad_params, std::slice::from_ref(&recipient.public))
+                .unwrap();
 
         let decrypt_aad =
             PayloadAadParams { payload_plain_hash: &encrypted.payload_plain_hash, ..aad_params };
@@ -1733,7 +1678,9 @@ mod tests {
 
     #[test]
     fn serde_roundtrip_security_profile() {
-        for profile in [SecurityProfile::Legacy, SecurityProfile::Hybrid, SecurityProfile::PqcStrict] {
+        for profile in
+            [SecurityProfile::Legacy, SecurityProfile::Hybrid, SecurityProfile::PqcStrict]
+        {
             let json = serde_json::to_string(&profile).unwrap();
             let deserialized: SecurityProfile = serde_json::from_str(&json).unwrap();
             assert_eq!(profile, deserialized);
@@ -1845,12 +1792,10 @@ mod tests {
         let provisional = compute_payload_plain_hash(&payload, None).unwrap();
         let aad = test_aad_params(&provisional);
         let encrypted =
-            encrypt_payload_strict(&payload, &aad, &[recipient.public.clone()]).unwrap();
+            encrypt_payload_strict(&payload, &aad, std::slice::from_ref(&recipient.public))
+                .unwrap();
 
-        let dec_aad = PayloadAadParams {
-            payload_plain_hash: &encrypted.payload_plain_hash,
-            ..aad
-        };
+        let dec_aad = PayloadAadParams { payload_plain_hash: &encrypted.payload_plain_hash, ..aad };
         let payload_aad = compute_payload_aad(&dec_aad).unwrap();
         let decrypted = decrypt_payload_strict(
             &encrypted.payload_encrypted,
@@ -1871,18 +1816,13 @@ mod tests {
 
         let provisional = compute_payload_plain_hash(&payload, None).unwrap();
         let aad = test_aad_params(&provisional);
-        let encrypted = encrypt_payload_strict(
-            &payload,
-            &aad,
-            &[r1.public.clone(), r2.public.clone()],
-        )
-        .unwrap();
+        let encrypted =
+            encrypt_payload_strict(&payload, &aad, &[r1.public.clone(), r2.public.clone()])
+                .unwrap();
 
         for (kid, private) in [(1, &r1.private), (2, &r2.private)] {
-            let dec_aad = PayloadAadParams {
-                payload_plain_hash: &encrypted.payload_plain_hash,
-                ..aad
-            };
+            let dec_aad =
+                PayloadAadParams { payload_plain_hash: &encrypted.payload_plain_hash, ..aad };
             let payload_aad = compute_payload_aad(&dec_aad).unwrap();
             let decrypted = decrypt_payload_strict(
                 &encrypted.payload_encrypted,
@@ -1924,12 +1864,9 @@ mod tests {
         let provisional = compute_payload_plain_hash(&payload, None).unwrap();
         let aad = test_aad_params(&provisional);
         let encrypted =
-            encrypt_payload_strict(&payload, &aad, &[r1.public.clone()]).unwrap();
+            encrypt_payload_strict(&payload, &aad, std::slice::from_ref(&r1.public)).unwrap();
 
-        let dec_aad = PayloadAadParams {
-            payload_plain_hash: &encrypted.payload_plain_hash,
-            ..aad
-        };
+        let dec_aad = PayloadAadParams { payload_plain_hash: &encrypted.payload_plain_hash, ..aad };
         let payload_aad = compute_payload_aad(&dec_aad).unwrap();
         // Ask for non-existent kid
         let result = decrypt_payload_strict(
@@ -2066,18 +2003,13 @@ mod tests {
 
         let provisional = compute_payload_plain_hash(&payload, None).unwrap();
         let aad = test_aad_params(&provisional);
-        let encrypted = encrypt_payload_hybrid(
-            &payload,
-            &aad,
-            &[r1.public.clone(), r2.public.clone()],
-        )
-        .unwrap();
+        let encrypted =
+            encrypt_payload_hybrid(&payload, &aad, &[r1.public.clone(), r2.public.clone()])
+                .unwrap();
 
         for (kid, private) in [(1, &r1.private), (2, &r2.private)] {
-            let dec_aad = PayloadAadParams {
-                payload_plain_hash: &encrypted.payload_plain_hash,
-                ..aad
-            };
+            let dec_aad =
+                PayloadAadParams { payload_plain_hash: &encrypted.payload_plain_hash, ..aad };
             let paad = compute_payload_aad(&dec_aad).unwrap();
             let decrypted = decrypt_payload_hybrid(
                 &encrypted.payload_encrypted,
@@ -2126,14 +2058,20 @@ mod tests {
     }
 
     #[test]
+    fn test_vector_ml_kem_public_key_deterministic() {
+        let pk1 = test_vector_ml_kem_public_key(&TEST_VECTOR_KEM_SEED);
+        let pk2 = test_vector_ml_kem_public_key(&TEST_VECTOR_KEM_SEED);
+        assert_eq!(pk1, pk2);
+        assert!(!pk1.is_empty());
+    }
+
+    #[test]
     fn test_vector_strict_sign_deterministic_public_key() {
         let kp = StrictSigningKeypair {
             public: StrictSigningPublicKey {
                 ml_dsa_65_public_key: test_vector_ml_dsa_public_key(&TEST_VECTOR_SIGNING_SEED),
             },
-            private: StrictSigningPrivateKey {
-                ml_dsa_65_seed: TEST_VECTOR_SIGNING_SEED,
-            },
+            private: StrictSigningPrivateKey { ml_dsa_65_seed: TEST_VECTOR_SIGNING_SEED },
         };
         let sig = strict_sign_event_hash(&TEST_VECTOR_MESSAGE_HASH, &kp.private).unwrap();
         assert!(strict_verify_event_signature(&TEST_VECTOR_MESSAGE_HASH, &sig, &kp.public));

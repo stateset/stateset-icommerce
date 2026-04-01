@@ -6,7 +6,7 @@ StateSet iCommerce is a portable, AI-native commerce engine that runs in-process
 
 Think of it as the **SQLite of Commerce**: embed a full commerce engine in any application, in any language, with a single dependency.
 
-Current release: **0.9.2**
+Current release: **0.9.3**
 
 ## See It In Action
 
@@ -127,4 +127,4 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 4. [Compliance & Audit](advanced/compliance.md) — GDPR, SOC 2, audit trails
 5. [Testing Strategy](advanced/testing.md) — 15,300+ tests across all layers
 
-Current release: **0.9.2**
+Current release: **0.9.3**

@@ -8,7 +8,8 @@ use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use stateset_core::{
     BatchResult, CommerceError, CreateX402PaymentIntent, Result, SignX402PaymentIntent,
     X402_DEFAULT_VALIDITY_SECONDS, X402Asset, X402IntentStatus, X402Network, X402PaymentIntent,
-    X402PaymentIntentFilter, X402PaymentIntentRepository, validate_batch_size,
+    X402PaymentIntentFilter, X402PaymentIntentRepository, X402SignatureScheme,
+    validate_batch_size,
 };
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -45,8 +46,11 @@ struct IntentRow {
     invoice_id: Option<Uuid>,
     merchant_id: Option<String>,
     signing_hash: Option<String>,
+    payer_signature_scheme: Option<String>,
     payer_signature: Option<String>,
     payer_public_key: Option<String>,
+    payer_signature_bundle: Option<serde_json::Value>,
+    payer_public_key_bundle: Option<serde_json::Value>,
     sequence_number: Option<i64>,
     sequenced_at: Option<DateTime<Utc>>,
     batch_id: Option<Uuid>,
@@ -94,6 +98,38 @@ impl PgX402PaymentIntentRepository {
                 entity, field, value, e
             ))
         })
+    }
+
+    fn parse_signature_scheme(
+        value: Option<String>,
+        entity: &str,
+        field: &str,
+    ) -> Result<Option<X402SignatureScheme>> {
+        value
+            .map(|raw| {
+                X402SignatureScheme::from_str(&raw).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid {}.{} '{}' : {}",
+                        entity, field, raw, e
+                    ))
+                })
+            })
+            .transpose()
+    }
+
+    fn parse_bundle<T: serde::de::DeserializeOwned>(
+        value: Option<serde_json::Value>,
+        field: &str,
+    ) -> Result<Option<T>> {
+        value
+            .map(|raw| {
+                serde_json::from_value::<T>(raw).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid JSON for x402_intent.{field}: {e}",
+                    ))
+                })
+            })
+            .transpose()
     }
 
     fn to_i64(value: u64, field: &str) -> Result<i64> {
@@ -149,8 +185,21 @@ impl PgX402PaymentIntentRepository {
             invoice_id: row.invoice_id,
             merchant_id: row.merchant_id,
             signing_hash: row.signing_hash,
+            payer_signature_scheme: Self::parse_signature_scheme(
+                row.payer_signature_scheme,
+                "x402_intent",
+                "payer_signature_scheme",
+            )?,
             payer_signature: row.payer_signature,
             payer_public_key: row.payer_public_key,
+            payer_signature_bundle: Self::parse_bundle(
+                row.payer_signature_bundle,
+                "payer_signature_bundle",
+            )?,
+            payer_public_key_bundle: Self::parse_bundle(
+                row.payer_public_key_bundle,
+                "payer_public_key_bundle",
+            )?,
             sequence_number: row.sequence_number.map(|n| n as u64),
             sequenced_at: row.sequenced_at,
             batch_id: row.batch_id,
@@ -386,27 +435,48 @@ impl PgX402PaymentIntentRepository {
         let hash_bytes = intent.sequencer_signing_hash();
         let signing_hash =
             format!("0x{}", hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+        let signature_scheme = input.signature_scheme.unwrap_or(X402SignatureScheme::Ed25519);
+        let signature = (!input.signature.trim().is_empty()).then(|| input.signature.clone());
+        let public_key = (!input.public_key.trim().is_empty()).then(|| input.public_key.clone());
+        let signature_bundle_json = input
+            .signature_bundle
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
+        let public_key_bundle_json = input
+            .public_key_bundle
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
 
         // Validate signature/public key pair against the intent hash before persisting.
         let mut signed_intent = intent.clone();
         signed_intent.signing_hash = Some(signing_hash.clone());
-        signed_intent.payer_signature = Some(input.signature.clone());
-        signed_intent.payer_public_key = Some(input.public_key.clone());
+        signed_intent.payer_signature_scheme = Some(signature_scheme);
+        signed_intent.payer_signature = signature.clone();
+        signed_intent.payer_public_key = public_key.clone();
+        signed_intent.payer_signature_bundle = input.signature_bundle.clone();
+        signed_intent.payer_public_key_bundle = input.public_key_bundle.clone();
 
         let is_valid_signature = signed_intent.verify_signature().unwrap_or(false);
         if !is_valid_signature {
             return Err(CommerceError::ValidationError(
-                "Invalid Ed25519 signature for payment intent".to_string(),
+                "Invalid x402 signature for payment intent".to_string(),
             ));
         }
 
         sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, signing_hash = $2, payer_signature = $3, payer_public_key = $4, updated_at = $5 WHERE id = $6",
+            "UPDATE x402_payment_intents SET status = $1, signing_hash = $2, payer_signature_scheme = $3, payer_signature = $4, payer_public_key = $5, payer_signature_bundle = $6, payer_public_key_bundle = $7, updated_at = $8 WHERE id = $9",
         )
         .bind(X402IntentStatus::Signed.to_string())
         .bind(signing_hash)
-        .bind(input.signature)
-        .bind(input.public_key)
+        .bind(signature_scheme.to_string())
+        .bind(signature)
+        .bind(public_key)
+        .bind(signature_bundle_json)
+        .bind(public_key_bundle_json)
         .bind(Utc::now())
         .bind(id)
         .execute(tx.as_mut())

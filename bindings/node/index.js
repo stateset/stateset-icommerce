@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Commerce, Events, CommerceEventSubscription, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, X402, VectorSearch, jcsCanonicalize, domainHash, ed25519Sign, ed25519Verify, vesHybridGenerateSigningKeypair, vesHybridSignEventHash, vesHybridVerifyEventSignature, vesHybridGenerateRecipientKeypair, vesHybridEncryptPayload, vesHybridDecryptPayload, vesStrictGenerateSigningKeypair, vesStrictSignEventHash, vesStrictVerifyEventSignature, vesStrictGenerateRecipientKeypair, vesStrictEncryptPayload, vesStrictDecryptPayload, vesHybridGenerateSigningPop, vesHybridVerifySigningPop, vesStrictGenerateSigningPop, vesStrictVerifySigningPop, aesGcmEncrypt, aesGcmDecrypt, merkleRoot } = nativeBinding
+const { Commerce, Events, CommerceEventSubscription, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, vesX402ComputeSigningHash, X402, VectorSearch, jcsCanonicalize, domainHash, ed25519Sign, ed25519Verify, vesHybridGenerateSigningKeypair, vesHybridSignEventHash, vesHybridVerifyEventSignature, vesTestVectorMlDsaPublicKey, vesHybridGenerateRecipientKeypair, vesTestVectorMlKemPublicKey, vesHybridEncryptPayload, vesHybridDecryptPayload, vesStrictGenerateSigningKeypair, vesStrictSignEventHash, vesStrictVerifyEventSignature, vesStrictGenerateRecipientKeypair, vesStrictEncryptPayload, vesStrictDecryptPayload, vesHybridGenerateSigningPop, vesHybridVerifySigningPop, vesStrictGenerateSigningPop, vesStrictVerifySigningPop, aesGcmEncrypt, aesGcmDecrypt, merkleRoot } = nativeBinding
 
 module.exports.Commerce = Commerce
 module.exports.Events = Events
@@ -346,6 +346,7 @@ module.exports.CostAccounting = CostAccounting
 module.exports.Credit = Credit
 module.exports.Backorders = Backorders
 module.exports.GeneralLedger = GeneralLedger
+module.exports.vesX402ComputeSigningHash = vesX402ComputeSigningHash
 module.exports.X402 = X402
 module.exports.VectorSearch = VectorSearch
 module.exports.jcsCanonicalize = jcsCanonicalize
@@ -355,7 +356,9 @@ module.exports.ed25519Verify = ed25519Verify
 module.exports.vesHybridGenerateSigningKeypair = vesHybridGenerateSigningKeypair
 module.exports.vesHybridSignEventHash = vesHybridSignEventHash
 module.exports.vesHybridVerifyEventSignature = vesHybridVerifyEventSignature
+module.exports.vesTestVectorMlDsaPublicKey = vesTestVectorMlDsaPublicKey
 module.exports.vesHybridGenerateRecipientKeypair = vesHybridGenerateRecipientKeypair
+module.exports.vesTestVectorMlKemPublicKey = vesTestVectorMlKemPublicKey
 module.exports.vesHybridEncryptPayload = vesHybridEncryptPayload
 module.exports.vesHybridDecryptPayload = vesHybridDecryptPayload
 module.exports.vesStrictGenerateSigningKeypair = vesStrictGenerateSigningKeypair

@@ -74,8 +74,11 @@ async fn postgres_x402_payment_intent_smoke() {
             intent.id,
             SignX402PaymentIntent {
                 intent_id: intent.id,
+                signature_scheme: None,
                 signature: local_signed.payer_signature.expect("generated signature"),
                 public_key: local_signed.payer_public_key.expect("generated public key"),
+                signature_bundle: None,
+                public_key_bundle: None,
             },
         )
         .await

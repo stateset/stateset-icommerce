@@ -32,7 +32,7 @@ r2d2_sqlite = { workspace = true, optional = true }
 #
 # Keep SQLx lean: don't enable its default features (notably `any`), which pull
 # in unused drivers (MySQL, SQLite) and complicate dependency audit.
-sqlx = { workspace = true, optional = true, default-features = false, features = ["runtime-tokio", "postgres", "macros", "json", "uuid", "chrono", "rust_decimal", "tls-none"] }
+sqlx = { workspace = true, optional = true, default-features = false, features = ["runtime-tokio", "postgres", "macros", "json", "uuid", "chrono", "rust_decimal", "tls-rustls-ring-native-roots"] }
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]

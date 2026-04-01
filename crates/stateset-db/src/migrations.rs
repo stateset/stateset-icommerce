@@ -148,5 +148,7 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("033_orders_cart_id", include_str!("../migrations/033_orders_cart_id.sql")),
         // x402 nonce and idempotency integrity hardening
         ("034_x402_nonce_integrity", include_str!("../migrations/034_x402_nonce_integrity.sql")),
+        // x402 PQC signature metadata
+        ("035_x402_pqc", include_str!("../migrations/035_x402_pqc.sql")),
     ]
 }

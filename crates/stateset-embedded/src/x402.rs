@@ -32,8 +32,12 @@
 //!
 //! // Sign the intent (agent signs with their Ed25519 key)
 //! let signed = commerce.x402().sign_intent(intent.id, SignX402PaymentIntent {
+//!     intent_id: intent.id,
+//!     signature_scheme: None,
 //!     signature: "base64_signature".into(),
 //!     public_key: "base64_public_key".into(),
+//!     signature_bundle: None,
+//!     public_key_bundle: None,
 //! })?;
 //!
 //! // After on-chain settlement, mark as settled
@@ -117,8 +121,12 @@ impl X402 {
     ///
     /// ```rust,ignore
     /// let signed = commerce.x402().sign_intent(intent.id, SignX402PaymentIntent {
+    ///     intent_id: intent.id,
+    ///     signature_scheme: None,
     ///     signature: base64::encode(&signature_bytes),
     ///     public_key: base64::encode(&public_key_bytes),
+    ///     signature_bundle: None,
+    ///     public_key_bundle: None,
     /// })?;
     /// ```
     pub fn sign_intent(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
@@ -681,8 +689,11 @@ mod tests {
                 intent.id,
                 SignX402PaymentIntent {
                     intent_id: intent.id,
+                    signature_scheme: None,
                     signature: signature.clone(),
                     public_key: public_key.clone(),
+                    signature_bundle: None,
+                    public_key_bundle: None,
                 },
             )
             .unwrap();
@@ -715,8 +726,11 @@ mod tests {
                 intent.id,
                 SignX402PaymentIntent {
                     intent_id: intent.id,
+                    signature_scheme: None,
                     signature: to_sign.payer_signature.unwrap(),
                     public_key: to_sign.payer_public_key.unwrap(),
+                    signature_bundle: None,
+                    public_key_bundle: None,
                 },
             )
             .unwrap();
@@ -743,8 +757,11 @@ mod tests {
             intent.id,
             SignX402PaymentIntent {
                 intent_id: intent.id,
+                signature_scheme: None,
                 signature: "not-hex-signature".into(),
                 public_key: "not-hex-public-key".into(),
+                signature_bundle: None,
+                public_key_bundle: None,
             },
         );
 
@@ -772,8 +789,11 @@ mod tests {
             intent.id,
             SignX402PaymentIntent {
                 intent_id: Uuid::new_v4(),
+                signature_scheme: None,
                 signature: locally_signed.payer_signature.unwrap(),
                 public_key: locally_signed.payer_public_key.unwrap(),
+                signature_bundle: None,
+                public_key_bundle: None,
             },
         );
 
@@ -805,8 +825,11 @@ mod tests {
                 intent.id,
                 SignX402PaymentIntent {
                     intent_id: intent.id,
+                    signature_scheme: None,
                     signature: locally_signed.payer_signature.unwrap(),
                     public_key: locally_signed.payer_public_key.unwrap(),
+                    signature_bundle: None,
+                    public_key_bundle: None,
                 },
             )
             .unwrap();

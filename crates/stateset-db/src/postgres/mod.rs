@@ -95,9 +95,10 @@ pub use x402_payment_intents::*;
 pub use zone_shipping_methods::*;
 
 use sha2::{Digest, Sha256};
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
 use stateset_core::CommerceError;
 use std::future::Future;
+use std::str::FromStr;
 use std::time::Duration;
 
 /// PostgreSQL database connection pool
@@ -119,10 +120,11 @@ impl PostgresDatabase {
         acquire_timeout_secs: u64,
     ) -> Result<Self, CommerceError> {
         let url = url.into();
+        let connect_options = parse_secure_connect_options(&url)?;
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .acquire_timeout(Duration::from_secs(acquire_timeout_secs))
-            .connect(&url)
+            .connect_with(connect_options)
             .await
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -209,6 +211,7 @@ impl PostgresDatabase {
         ));
         migrations.push(("048_fraud", include_str!("migrations/048_fraud.sql")));
         migrations.push(("049_loyalty", include_str!("migrations/049_loyalty.sql")));
+        migrations.push(("050_x402_pqc", include_str!("migrations/050_x402_pqc.sql")));
 
         for (name, sql) in migrations {
             let mut tx =
@@ -495,6 +498,20 @@ impl PostgresDatabase {
     /// Get underlying pool (for advanced use)
     pub const fn pool(&self) -> &PgPool {
         &self.pool
+    }
+}
+
+fn parse_secure_connect_options(url: &str) -> Result<PgConnectOptions, CommerceError> {
+    let options = PgConnectOptions::from_str(url)
+        .map_err(|e| CommerceError::DatabaseError(format!("invalid postgres URL: {e}")))?;
+
+    match options.get_ssl_mode() {
+        PgSslMode::Disable | PgSslMode::Allow | PgSslMode::Prefer => {
+            Err(CommerceError::DatabaseError(
+                "postgres sslmode must be require, verify-ca, or verify-full".to_string(),
+            ))
+        }
+        PgSslMode::Require | PgSslMode::VerifyCa | PgSslMode::VerifyFull => Ok(options),
     }
 }
 

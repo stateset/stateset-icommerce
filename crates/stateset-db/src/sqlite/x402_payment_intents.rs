@@ -12,7 +12,7 @@ use rust_decimal::Decimal;
 use stateset_core::{
     BatchResult, CommerceError, CreateX402PaymentIntent, Result, SignX402PaymentIntent,
     X402_DEFAULT_VALIDITY_SECONDS, X402IntentStatus, X402PaymentIntent, X402PaymentIntentFilter,
-    X402PaymentIntentRepository, validate_batch_size,
+    X402PaymentIntentRepository, X402SignatureScheme, validate_batch_size,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -52,6 +52,45 @@ impl SqliteX402PaymentIntentRepository {
                         Box::new(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             format!("Invalid JSON for x402_intent.inclusion_proof: {e}"),
+                        )),
+                    )
+                })
+            })
+            .transpose()
+    }
+
+    fn parse_signature_scheme(
+        value: Option<String>,
+    ) -> rusqlite::Result<Option<X402SignatureScheme>> {
+        value
+            .map(|raw| {
+                raw.parse::<X402SignatureScheme>().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Invalid x402_intent.payer_signature_scheme '{raw}': {e}"),
+                        )),
+                    )
+                })
+            })
+            .transpose()
+    }
+
+    fn parse_bundle<T: serde::de::DeserializeOwned>(
+        value: Option<String>,
+        field: &str,
+    ) -> rusqlite::Result<Option<T>> {
+        value
+            .map(|raw| {
+                serde_json::from_str::<T>(&raw).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Invalid JSON for x402_intent.{field}: {e}"),
                         )),
                     )
                 })
@@ -107,8 +146,19 @@ impl SqliteX402PaymentIntentRepository {
             merchant_id: row.get("merchant_id")?,
 
             signing_hash: row.get("signing_hash")?,
+            payer_signature_scheme: Self::parse_signature_scheme(
+                row.get("payer_signature_scheme")?,
+            )?,
             payer_signature: row.get("payer_signature")?,
             payer_public_key: row.get("payer_public_key")?,
+            payer_signature_bundle: Self::parse_bundle(
+                row.get("payer_signature_bundle")?,
+                "payer_signature_bundle",
+            )?,
+            payer_public_key_bundle: Self::parse_bundle(
+                row.get("payer_public_key_bundle")?,
+                "payer_public_key_bundle",
+            )?,
 
             sequence_number: row.get::<_, Option<i64>>("sequence_number")?.map(|n| n as u64),
             sequenced_at: parse_datetime_opt_row(
@@ -273,29 +323,57 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let hash_bytes = intent.sequencer_signing_hash();
         let signing_hash =
             format!("0x{}", hash_bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        let SignX402PaymentIntent {
+            intent_id: _,
+            signature_scheme,
+            signature,
+            public_key,
+            signature_bundle,
+            public_key_bundle,
+        } = input;
+        let signature_scheme = signature_scheme.unwrap_or(X402SignatureScheme::Ed25519);
+        let signature = (!signature.trim().is_empty()).then_some(signature);
+        let public_key = (!public_key.trim().is_empty()).then_some(public_key);
+        let signature_bundle_json = signature_bundle
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
+        let public_key_bundle_json = public_key_bundle
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
 
         // Validate signature/public key pair against the intent hash before persisting.
         let mut signed_intent = intent;
         signed_intent.signing_hash = Some(signing_hash.clone());
-        signed_intent.payer_signature = Some(input.signature.clone());
-        signed_intent.payer_public_key = Some(input.public_key.clone());
+        signed_intent.payer_signature_scheme = Some(signature_scheme);
+        signed_intent.payer_signature = signature.clone();
+        signed_intent.payer_public_key = public_key.clone();
+        signed_intent.payer_signature_bundle = signature_bundle;
+        signed_intent.payer_public_key_bundle = public_key_bundle;
 
         let is_valid_signature = signed_intent.verify_signature().unwrap_or(false);
         if !is_valid_signature {
             return Err(CommerceError::ValidationError(
-                "Invalid Ed25519 signature for payment intent".to_string(),
+                "Invalid x402 signature for payment intent".to_string(),
             ));
         }
 
         conn.execute(
             "UPDATE x402_payment_intents SET
-                status = ?, signing_hash = ?, payer_signature = ?, payer_public_key = ?, updated_at = ?
+                status = ?, signing_hash = ?, payer_signature_scheme = ?, payer_signature = ?, payer_public_key = ?,
+                payer_signature_bundle = ?, payer_public_key_bundle = ?, updated_at = ?
              WHERE id = ?",
             rusqlite::params![
                 X402IntentStatus::Signed.to_string(),
                 signing_hash,
-                input.signature,
-                input.public_key,
+                signature_scheme.to_string(),
+                signature,
+                public_key,
+                signature_bundle_json,
+                public_key_bundle_json,
                 Utc::now().to_rfc3339(),
                 id.to_string(),
             ],

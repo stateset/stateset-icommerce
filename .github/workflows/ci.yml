@@ -157,6 +157,9 @@ jobs:
           cargo check -p stateset-primitives --all-targets
           cargo check -p stateset-observability --all-targets
           cargo check -p stateset-test-utils --all-targets
+          cargo check -p stateset-crypto --all-targets
+          cargo check -p stateset-protocol --all-targets
+          cargo check -p stateset-sync --all-targets
           cargo check -p stateset-core --features metrics --all-targets
           cargo check -p stateset-db --no-default-features --features postgres --all-targets
           cargo check -p stateset-db --no-default-features --features "postgres,saga" --all-targets
@@ -184,6 +187,9 @@ jobs:
           cargo check -p stateset-primitives --all-targets
           cargo check -p stateset-observability --all-targets
           cargo check -p stateset-test-utils --all-targets
+          cargo check -p stateset-crypto --all-targets
+          cargo check -p stateset-protocol --all-targets
+          cargo check -p stateset-sync --all-targets
           cargo check -p stateset-core --features metrics --all-targets
           cargo check -p stateset-db --no-default-features --features postgres --all-targets
           cargo check -p stateset-db --no-default-features --features "postgres,saga" --all-targets
@@ -284,6 +290,8 @@ jobs:
           cargo doc --no-deps --document-private-items \
             -p stateset-crypto
           cargo doc --no-deps --document-private-items \
+            -p stateset-protocol
+          cargo doc --no-deps --document-private-items \
             -p stateset-db --all-features
           cargo doc --no-deps --document-private-items \
             -p stateset-embedded
@@ -344,11 +352,17 @@ jobs:
           cargo check -p stateset-db --no-default-features --features "postgres,saga"
           cargo check -p stateset-embedded --features postgres
 
-      - name: Test
+      - name: Test core crates
         run: |
           cargo test -p stateset-core -p stateset-db -p stateset-embedded
           cargo test -p stateset-observability -p stateset-integration-tests
           cargo test -p stateset-core --features metrics
+
+      - name: Test protocol and crypto contracts
+        # Keep the PQC wire/signing crates on the primary CI path instead of
+        # relying on manual validation or downstream binding jobs.
+        run: |
+          cargo test -p stateset-crypto -p stateset-protocol -p stateset-sync
 
       - name: Mutation Testing (Core)
         if: >
@@ -384,13 +398,9 @@ jobs:
         working-directory: bindings/node
         run: npm ci
 
-      - name: Build native module
+      - name: Check binding package
         working-directory: bindings/node
-        run: npm run build -- --target x86_64-unknown-linux-gnu
-
-      - name: Test
-        working-directory: bindings/node
-        run: npm test
+        run: npm run check
 
   python-bindings:
     name: Python Bindings

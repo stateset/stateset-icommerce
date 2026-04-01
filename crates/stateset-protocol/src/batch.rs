@@ -25,6 +25,11 @@
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use stateset_crypto::pqc::{
+    HybridSignatureBundle, HybridSigningPublicKey, StrictSigningPublicKey,
+    hybrid_verify_event_signature, strict_verify_event_signature,
+};
 use uuid::Uuid;
 
 use crate::envelope::EventEnvelope;
@@ -246,6 +251,91 @@ impl SyncBatch {
                     ProtocolError::InvalidSignature(format!("ed25519 verification failed: {e}"))
                 })?;
             }
+            SignatureAlgorithm::MlDsa65 => {
+                let signing_hash = pqc_signature_hash(message);
+                let public_key_bundle = signature.public_key_bundle.as_ref().ok_or_else(|| {
+                    ProtocolError::InvalidSignature(
+                        "mldsa65 signatures require public_key_bundle".into(),
+                    )
+                })?;
+                let signature_bundle = signature.signature_bundle.as_ref().ok_or_else(|| {
+                    ProtocolError::InvalidSignature(
+                        "mldsa65 signatures require signature_bundle".into(),
+                    )
+                })?;
+                let public_key = StrictSigningPublicKey {
+                    ml_dsa_65_public_key: public_key_bundle
+                        .ml_dsa_65_public_key
+                        .clone()
+                        .ok_or_else(|| {
+                            ProtocolError::InvalidSignature(
+                                "mldsa65 public_key_bundle is missing ml_dsa_65_public_key".into(),
+                            )
+                        })?,
+                };
+                let ml_dsa_signature =
+                    signature_bundle.ml_dsa_65_signature.as_deref().ok_or_else(|| {
+                        ProtocolError::InvalidSignature(
+                            "mldsa65 signature_bundle is missing ml_dsa_65_signature".into(),
+                        )
+                    })?;
+                if !strict_verify_event_signature(&signing_hash, ml_dsa_signature, &public_key) {
+                    return Err(ProtocolError::InvalidSignature(
+                        "mldsa65 verification failed".into(),
+                    ));
+                }
+            }
+            SignatureAlgorithm::Ed25519MlDsa65 => {
+                let signing_hash = pqc_signature_hash(message);
+                let ed25519_public_key: [u8; 32] =
+                    signature.public_key.as_slice().try_into().map_err(|_| {
+                        ProtocolError::InvalidSignature(
+                            "hybrid public_key must be exactly 32 bytes".into(),
+                        )
+                    })?;
+                let ed25519_signature: [u8; 64] =
+                    signature.signature.as_slice().try_into().map_err(|_| {
+                        ProtocolError::InvalidSignature(
+                            "hybrid signature must be exactly 64 bytes".into(),
+                        )
+                    })?;
+                let public_key_bundle = signature.public_key_bundle.as_ref().ok_or_else(|| {
+                    ProtocolError::InvalidSignature(
+                        "hybrid signatures require public_key_bundle".into(),
+                    )
+                })?;
+                let signature_bundle = signature.signature_bundle.as_ref().ok_or_else(|| {
+                    ProtocolError::InvalidSignature(
+                        "hybrid signatures require signature_bundle".into(),
+                    )
+                })?;
+                let public_key = HybridSigningPublicKey {
+                    ed25519_public_key,
+                    ml_dsa_65_public_key: public_key_bundle
+                        .ml_dsa_65_public_key
+                        .clone()
+                        .ok_or_else(|| {
+                            ProtocolError::InvalidSignature(
+                                "hybrid public_key_bundle is missing ml_dsa_65_public_key".into(),
+                            )
+                        })?,
+                };
+                let signature_bundle = HybridSignatureBundle {
+                    ed25519_signature,
+                    ml_dsa_65_signature: signature_bundle.ml_dsa_65_signature.clone().ok_or_else(
+                        || {
+                            ProtocolError::InvalidSignature(
+                                "hybrid signature_bundle is missing ml_dsa_65_signature".into(),
+                            )
+                        },
+                    )?,
+                };
+                if !hybrid_verify_event_signature(&signing_hash, &signature_bundle, &public_key) {
+                    return Err(ProtocolError::InvalidSignature(
+                        "hybrid signature verification failed".into(),
+                    ));
+                }
+            }
         }
 
         Ok(())
@@ -325,6 +415,13 @@ fn validate_required_batch_str(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+fn pqc_signature_hash(message: &[u8]) -> [u8; 32] {
+    let digest = Sha256::digest(message);
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&digest);
+    hash
+}
+
 /// A cryptographic signature over a batch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -337,6 +434,30 @@ pub struct BatchSignature {
     pub signature: Vec<u8>,
     /// The signer's public key.
     pub public_key: Vec<u8>,
+    /// Optional multi-algorithm signature components.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_bundle: Option<BatchSignatureBundle>,
+    /// Optional multi-algorithm public-key components.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key_bundle: Option<BatchPublicKeyBundle>,
+}
+
+/// Optional multi-algorithm batch signature components.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct BatchSignatureBundle {
+    /// ML-DSA-65 signature bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ml_dsa_65_signature: Option<Vec<u8>>,
+}
+
+/// Optional multi-algorithm public-key components for batch signatures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct BatchPublicKeyBundle {
+    /// ML-DSA-65 public key bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ml_dsa_65_public_key: Option<Vec<u8>>,
 }
 
 /// Supported signature algorithms.
@@ -346,12 +467,18 @@ pub struct BatchSignature {
 pub enum SignatureAlgorithm {
     /// Ed25519 (RFC 8032).
     Ed25519,
+    /// ML-DSA-65 only over the SHA-256 of the canonical batch signature payload.
+    MlDsa65,
+    /// Hybrid Ed25519 + ML-DSA-65 over the SHA-256 of the canonical batch signature payload.
+    Ed25519MlDsa65,
 }
 
 impl std::fmt::Display for SignatureAlgorithm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ed25519 => write!(f, "ed25519"),
+            Self::MlDsa65 => write!(f, "mldsa65"),
+            Self::Ed25519MlDsa65 => write!(f, "ed25519_mldsa65"),
         }
     }
 }
@@ -392,6 +519,10 @@ impl MerkleProof {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+    use stateset_crypto::pqc::{
+        generate_hybrid_signing_keypair, generate_strict_signing_keypair, hybrid_sign_event_hash,
+        strict_sign_event_hash,
+    };
 
     fn make_envelope(entity_id: &str, payload: &[u8]) -> EventEnvelope {
         EventEnvelope::builder()
@@ -550,6 +681,8 @@ mod tests {
             algorithm: SignatureAlgorithm::Ed25519,
             signature: vec![0u8; 64],
             public_key: vec![0u8; 32],
+            signature_bundle: None,
+            public_key_bundle: None,
         };
         batch.add_signature(sig);
         assert_eq!(batch.signatures.len(), 1);
@@ -583,6 +716,8 @@ mod tests {
             algorithm: SignatureAlgorithm::Ed25519,
             signature: signature.to_bytes().to_vec(),
             public_key: signing_key.verifying_key().to_bytes().to_vec(),
+            signature_bundle: None,
+            public_key_bundle: None,
         });
 
         assert!(batch.validate().is_ok());
@@ -597,6 +732,8 @@ mod tests {
             algorithm: SignatureAlgorithm::Ed25519,
             signature: vec![1, 2, 3],
             public_key: vec![0u8; 32],
+            signature_bundle: None,
+            public_key_bundle: None,
         });
 
         let err = batch.validate().unwrap_err();
@@ -612,6 +749,8 @@ mod tests {
             algorithm: SignatureAlgorithm::Ed25519,
             signature: vec![0u8; 64],
             public_key: vec![0u8; 32],
+            signature_bundle: None,
+            public_key_bundle: None,
         });
 
         let err = batch.validate().unwrap_err();
@@ -649,6 +788,8 @@ mod tests {
     #[test]
     fn signature_algorithm_display() {
         assert_eq!(SignatureAlgorithm::Ed25519.to_string(), "ed25519");
+        assert_eq!(SignatureAlgorithm::MlDsa65.to_string(), "mldsa65");
+        assert_eq!(SignatureAlgorithm::Ed25519MlDsa65.to_string(), "ed25519_mldsa65");
     }
 
     #[test]
@@ -668,6 +809,8 @@ mod tests {
             algorithm: SignatureAlgorithm::Ed25519,
             signature: vec![1, 2, 3],
             public_key: vec![4, 5, 6],
+            signature_bundle: None,
+            public_key_bundle: None,
         };
         let json = serde_json::to_string(&sig).unwrap();
         let deserialized: BatchSignature = serde_json::from_str(&json).unwrap();
@@ -681,9 +824,57 @@ mod tests {
             algorithm: SignatureAlgorithm::Ed25519,
             signature: vec![],
             public_key: vec![],
+            signature_bundle: None,
+            public_key_bundle: None,
         };
         let debug = format!("{sig:?}");
         assert!(debug.contains("BatchSignature"));
+    }
+
+    #[test]
+    fn validate_accepts_strict_pqc_signature() {
+        let envs = vec![make_envelope("1", b"d")];
+        let mut batch = SyncBatch::new("node", envs);
+        let signing_hash = pqc_signature_hash(&batch.signature_message().unwrap());
+        let keypair = generate_strict_signing_keypair().unwrap();
+        let signature = strict_sign_event_hash(&signing_hash, &keypair.private).unwrap();
+
+        batch.add_signature(BatchSignature {
+            signer_id: "strict".into(),
+            algorithm: SignatureAlgorithm::MlDsa65,
+            signature: Vec::new(),
+            public_key: Vec::new(),
+            signature_bundle: Some(BatchSignatureBundle { ml_dsa_65_signature: Some(signature) }),
+            public_key_bundle: Some(BatchPublicKeyBundle {
+                ml_dsa_65_public_key: Some(keypair.public.ml_dsa_65_public_key),
+            }),
+        });
+
+        assert!(batch.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_hybrid_pqc_signature() {
+        let envs = vec![make_envelope("1", b"d")];
+        let mut batch = SyncBatch::new("node", envs);
+        let signing_hash = pqc_signature_hash(&batch.signature_message().unwrap());
+        let keypair = generate_hybrid_signing_keypair().unwrap();
+        let signature = hybrid_sign_event_hash(&signing_hash, &keypair.private).unwrap();
+
+        batch.add_signature(BatchSignature {
+            signer_id: "hybrid".into(),
+            algorithm: SignatureAlgorithm::Ed25519MlDsa65,
+            signature: signature.ed25519_signature.to_vec(),
+            public_key: keypair.public.ed25519_public_key.to_vec(),
+            signature_bundle: Some(BatchSignatureBundle {
+                ml_dsa_65_signature: Some(signature.ml_dsa_65_signature),
+            }),
+            public_key_bundle: Some(BatchPublicKeyBundle {
+                ml_dsa_65_public_key: Some(keypair.public.ml_dsa_65_public_key),
+            }),
+        });
+
+        assert!(batch.validate().is_ok());
     }
 
     // --- MerkleProof tests ---

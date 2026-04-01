@@ -8,6 +8,8 @@
 //! Counterpart: `cli/test/unit/crypto-vectors.test.js`
 
 use serde_json::json;
+#[cfg(feature = "pqc")]
+use sha2::{Digest, Sha256};
 use stateset_crypto::canonicalize::canonicalize_json;
 use stateset_crypto::hash::{
     EventSigningParams, PayloadAadParams, PayloadCipherParams, compute_event_signing_hash,
@@ -17,6 +19,11 @@ use stateset_crypto::hash::{
 use stateset_crypto::merkle::{
     LeafParams, ReceiptParams, compute_leaf_hash, compute_node_hash, compute_pad_leaf,
     compute_receipt_hash, compute_stream_id,
+};
+#[cfg(feature = "pqc")]
+use stateset_crypto::pqc::{
+    TEST_VECTOR_KEM_SEED, TEST_VECTOR_SIGNING_SEED, test_vector_ml_dsa_public_key,
+    test_vector_ml_kem_public_key,
 };
 use stateset_crypto::{bytes_to_hex, encode_string, u32_be, u64_be, uuid_to_bytes};
 
@@ -339,5 +346,37 @@ fn recipients_hash_sorts_by_kid() {
     assert_eq!(
         bytes_to_hex(&hash),
         "0x9209fbf107e6f97f3fe2c4179d90e8ab7be79d1528eeaeb82b83f2b832c91d94"
+    );
+}
+
+// =============================================================================
+// 11. PQC public-key vectors
+// =============================================================================
+
+#[cfg(feature = "pqc")]
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    bytes_to_hex(&digest)
+}
+
+#[cfg(feature = "pqc")]
+#[test]
+fn pqc_mldsa_public_key_known_seed_sha256() {
+    let public_key = test_vector_ml_dsa_public_key(&TEST_VECTOR_SIGNING_SEED);
+    assert_eq!(public_key.len(), 1952);
+    assert_eq!(
+        sha256_hex(&public_key),
+        "0xe933697f7a3d671b8c294452465230d4d433d337afd25b99dba884175541a855"
+    );
+}
+
+#[cfg(feature = "pqc")]
+#[test]
+fn pqc_mlkem_public_key_known_seed_sha256() {
+    let public_key = test_vector_ml_kem_public_key(&TEST_VECTOR_KEM_SEED);
+    assert_eq!(public_key.len(), 1184);
+    assert_eq!(
+        sha256_hex(&public_key),
+        "0x63ae13ddb2f35156d69304a1783fa465e87414e38bf6aac6931797368235d296"
     );
 }

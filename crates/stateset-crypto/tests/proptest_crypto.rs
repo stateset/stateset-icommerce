@@ -341,10 +341,7 @@ mod pqc_proptests {
     /// Generate an arbitrary small JSON object for encrypt/decrypt round-trips.
     fn arb_pqc_json_payload() -> impl Strategy<Value = serde_json::Value> {
         prop::collection::vec(
-            (
-                prop::string::string_regex("[a-z]{1,20}").unwrap(),
-                (0..1000i64),
-            ),
+            (prop::string::string_regex("[a-z]{1,20}").unwrap(), (0..1000i64)),
             1..4,
         )
         .prop_map(|pairs| {
@@ -522,7 +519,9 @@ mod pqc_proptests {
             let recipient = generate_hybrid_recipient_keypair(1)
                 .expect("hybrid recipient keygen should succeed");
             let enc_result = encrypt_payload_hybrid(
-                &payload, &aad_params, &[recipient.public.clone()],
+                &payload,
+                &aad_params,
+                std::slice::from_ref(&recipient.public),
             ).expect("hybrid encryption should succeed");
 
             let dec_aad_params = PayloadAadParams {
@@ -574,7 +573,9 @@ mod pqc_proptests {
             let recipient = generate_strict_recipient_keypair(1)
                 .expect("strict recipient keygen should succeed");
             let enc_result = encrypt_payload_strict(
-                &payload, &aad_params, &[recipient.public.clone()],
+                &payload,
+                &aad_params,
+                std::slice::from_ref(&recipient.public),
             ).expect("strict encryption should succeed");
 
             let dec_aad_params = PayloadAadParams {

@@ -244,6 +244,8 @@ fn batch_with_wrong_public_key_length_fails() {
         algorithm: SignatureAlgorithm::Ed25519,
         signature: vec![0u8; 64],
         public_key: vec![0u8; 16], // wrong length, should be 32
+        signature_bundle: None,
+        public_key_bundle: None,
     });
 
     assert!(matches!(batch.validate(), Err(ProtocolError::InvalidSignature(_))));
@@ -258,6 +260,8 @@ fn batch_with_invalid_signature_bytes_fails() {
         algorithm: SignatureAlgorithm::Ed25519,
         signature: vec![0xDE, 0xAD],
         public_key: vec![0u8; 32],
+        signature_bundle: None,
+        public_key_bundle: None,
     });
 
     assert!(matches!(batch.validate(), Err(ProtocolError::InvalidSignature(_))));
@@ -272,6 +276,8 @@ fn batch_with_empty_signer_id_fails() {
         algorithm: SignatureAlgorithm::Ed25519,
         signature: vec![0u8; 64],
         public_key: vec![0u8; 32],
+        signature_bundle: None,
+        public_key_bundle: None,
     });
 
     assert!(matches!(batch.validate(), Err(ProtocolError::InvalidSignature(_))));

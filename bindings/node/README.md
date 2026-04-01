@@ -16,6 +16,14 @@ The SQLite of commerce - an embeddable commerce library powered by Rust.
 npm install @stateset/embedded
 ```
 
+Requires Node `20.20.0+`.
+
+## Development
+
+Repo development uses the workspace-standard Node toolchain: Node `20.20.0+`
+and npm `10+`. The binding package now checks that version before running
+`build`, `build:debug`, `test`, `test:coverage`, `artifacts`, or `universal`.
+
 ## Quick Start
 
 ```javascript

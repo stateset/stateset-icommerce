@@ -259,6 +259,8 @@ impl SequencerHttpTransport {
             payload_cipher_hash: hex::encode(ZERO_HASH),
             agent_key_id: event.agent_key_id.unwrap_or(self.agent_key_id),
             agent_signature: signature,
+            agent_signature_scheme: event.agent_signature_scheme,
+            agent_signature_bundle: event.agent_signature_bundle.clone(),
             source_agent_id: event.source_agent_id.clone().unwrap_or_else(|| self.agent_id.clone()),
             base_version: event.base_version,
             created_at: event.timestamp.to_rfc3339(),
@@ -407,6 +409,8 @@ impl SequencerHttpTransport {
         .with_remote_sequence(sequence);
 
         mapped.signature = event.envelope.agent_signature;
+        mapped.agent_signature_scheme = event.envelope.agent_signature_scheme;
+        mapped.agent_signature_bundle = event.envelope.agent_signature_bundle;
         mapped.command_id = event.envelope.command_id;
         mapped.base_version = event.envelope.base_version;
         mapped.source_agent_id = event.envelope.source_agent_id;
@@ -545,6 +549,10 @@ struct VesEventEnvelope {
     payload_cipher_hash: String,
     agent_key_id: u32,
     agent_signature: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_signature_scheme: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_signature_bundle: Option<Value>,
     source_agent_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_version: Option<u64>,
@@ -748,6 +756,10 @@ struct PulledEnvelope {
     payload_hash: Option<String>,
     #[serde(default)]
     agent_signature: Option<String>,
+    #[serde(default, alias = "agentSignatureScheme", alias = "agent_signature_scheme")]
+    agent_signature_scheme: Option<i32>,
+    #[serde(default, alias = "agentSignatureBundle", alias = "agent_signature_bundle")]
+    agent_signature_bundle: Option<Value>,
     #[serde(default, alias = "sourceAgentId", alias = "source_agent_id")]
     source_agent_id: Option<String>,
     #[serde(default, alias = "agentKeyId", alias = "agent_key_id")]
@@ -911,6 +923,8 @@ mod tests {
         );
 
         let event_a = signed_event("created")
+            .with_agent_signature_scheme(3)
+            .with_agent_signature_bundle(json!({"ml_dsa_65_signature": "mlsig-created"}))
             .with_command_id("cmd-1")
             .with_base_version(3)
             .with_source_agent_id("agent-created")
@@ -942,6 +956,11 @@ mod tests {
         assert_eq!(body["events"][0]["base_version"], json!(3));
         assert_eq!(body["events"][0]["agent_key_id"], json!(99));
         assert_eq!(body["events"][0]["agent_signature"], json!("sig-created"));
+        assert_eq!(body["events"][0]["agent_signature_scheme"], json!(3));
+        assert_eq!(
+            body["events"][0]["agent_signature_bundle"],
+            json!({"ml_dsa_65_signature": "mlsig-created"})
+        );
         assert_eq!(body["events"][0]["source_agent_id"], json!("agent-created"));
         assert_eq!(body["events"][0]["payload_cipher_hash"], json!("0".repeat(64)));
         assert_eq!(body["events"][1]["agent_signature"], json!("sig-confirmed"));
@@ -1057,6 +1076,8 @@ mod tests {
                             "payload": { "status": "shipped" },
                             "payload_plain_hash": "abc123",
                             "agent_signature": "deadbeef",
+                            "agent_signature_scheme": 3,
+                            "agent_signature_bundle": { "ml_dsa_65_signature": "cafebabe" },
                             "source_agent_id": "agent-remote",
                             "agent_key_id": 21,
                             "base_version": 5,
@@ -1086,6 +1107,8 @@ mod tests {
         assert_eq!(event.sequence_authority, SequenceAuthority::CanonicalRemote);
         assert_eq!(event.canonical_sequence(), Some(7));
         assert_eq!(event.signature.as_deref(), Some("deadbeef"));
+        assert_eq!(event.agent_signature_scheme, Some(3));
+        assert_eq!(event.agent_signature_bundle, Some(json!({"ml_dsa_65_signature": "cafebabe"})));
         assert_eq!(event.command_id.as_deref(), Some("cmd-7"));
         assert_eq!(event.base_version, Some(5));
         assert_eq!(event.source_agent_id.as_deref(), Some("agent-remote"));

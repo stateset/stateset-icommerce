@@ -1,13 +1,13 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use serde_json::json;
 use stateset_crypto::hash::PayloadAadParams;
 use stateset_crypto::pqc::{
-    encrypt_payload_hybrid, encrypt_payload_strict, generate_hybrid_recipient_keypair,
-    generate_hybrid_signing_keypair, generate_hybrid_signing_pop, generate_strict_recipient_keypair,
+    PreparedHybridSigner, PreparedHybridVerifier, PreparedStrictSigner, encrypt_payload_hybrid,
+    encrypt_payload_strict, generate_hybrid_recipient_keypair, generate_hybrid_signing_keypair,
+    generate_hybrid_signing_pop, generate_strict_recipient_keypair,
     generate_strict_signing_keypair, generate_strict_signing_pop, hybrid_sign_event_hash,
     hybrid_verify_event_signature, strict_sign_event_hash, strict_verify_event_signature,
     unwrap_dek_hybrid, unwrap_dek_strict, wrap_dek_hybrid, wrap_dek_strict,
-    PreparedHybridSigner, PreparedHybridVerifier, PreparedStrictSigner,
 };
 
 // ---------------------------------------------------------------------------
@@ -83,10 +83,8 @@ fn bench_pqc_signing(c: &mut Criterion) {
     });
 
     // -- Verify --
-    let hybrid_sig =
-        hybrid_sign_event_hash(&hash, &hybrid_kp.private).expect("hybrid sign setup");
-    let strict_sig =
-        strict_sign_event_hash(&hash, &strict_kp.private).expect("strict sign setup");
+    let hybrid_sig = hybrid_sign_event_hash(&hash, &hybrid_kp.private).expect("hybrid sign setup");
+    let strict_sig = strict_sign_event_hash(&hash, &strict_kp.private).expect("strict sign setup");
 
     group.bench_function("hybrid_verify", |b| {
         b.iter(|| {
@@ -156,10 +154,8 @@ fn bench_pqc_kem(c: &mut Criterion) {
     });
 
     // -- Unwrap --
-    let hybrid_wrapped =
-        wrap_dek_hybrid(&dek, &hybrid_rk.public, info).expect("hybrid wrap setup");
-    let strict_wrapped =
-        wrap_dek_strict(&dek, &strict_rk.public, info).expect("strict wrap setup");
+    let hybrid_wrapped = wrap_dek_hybrid(&dek, &hybrid_rk.public, info).expect("hybrid wrap setup");
+    let strict_wrapped = wrap_dek_strict(&dek, &strict_rk.public, info).expect("strict wrap setup");
 
     group.bench_function("hybrid_unwrap", |b| {
         b.iter(|| {
@@ -239,15 +235,11 @@ fn bench_pqc_pop(c: &mut Criterion) {
     let strict_kp = generate_strict_signing_keypair().expect("strict keygen setup");
 
     group.bench_function("hybrid_pop_generate", |b| {
-        b.iter(|| {
-            generate_hybrid_signing_pop(black_box(&hybrid_kp)).expect("hybrid pop")
-        });
+        b.iter(|| generate_hybrid_signing_pop(black_box(&hybrid_kp)).expect("hybrid pop"));
     });
 
     group.bench_function("strict_pop_generate", |b| {
-        b.iter(|| {
-            generate_strict_signing_pop(black_box(&strict_kp)).expect("strict pop")
-        });
+        b.iter(|| generate_strict_signing_pop(black_box(&strict_kp)).expect("strict pop"));
     });
 
     group.finish();
@@ -291,32 +283,15 @@ fn bench_prepared_signers(c: &mut Criterion) {
 
     // Compare: unprepared hybrid verify
     group.bench_function("unprepared_hybrid_verify", |b| {
-        b.iter(|| {
-            hybrid_verify_event_signature(black_box(&hash), &hybrid_sig, &hybrid_kp.public)
-        });
+        b.iter(|| hybrid_verify_event_signature(black_box(&hash), &hybrid_sig, &hybrid_kp.public));
     });
 
     group.finish();
 }
 
-criterion_group!(
-    pqc_signing,
-    bench_pqc_signing
-);
-criterion_group!(
-    pqc_kem,
-    bench_pqc_kem
-);
-criterion_group!(
-    pqc_payload,
-    bench_pqc_payload
-);
-criterion_group!(
-    pqc_pop,
-    bench_pqc_pop
-);
-criterion_group!(
-    pqc_prepared,
-    bench_prepared_signers
-);
+criterion_group!(pqc_signing, bench_pqc_signing);
+criterion_group!(pqc_kem, bench_pqc_kem);
+criterion_group!(pqc_payload, bench_pqc_payload);
+criterion_group!(pqc_pop, bench_pqc_pop);
+criterion_group!(pqc_prepared, bench_prepared_signers);
 criterion_main!(pqc_signing, pqc_kem, pqc_payload, pqc_pop, pqc_prepared);

@@ -13,6 +13,7 @@ categories = ["data-structures"]
 
 [dependencies]
 stateset-primitives = { workspace = true }
+stateset-crypto = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

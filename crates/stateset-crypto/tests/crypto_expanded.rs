@@ -5,8 +5,6 @@ use serde_json::json;
 use stateset_crypto::canonicalize::*;
 use stateset_crypto::hash::*;
 use stateset_crypto::merkle::*;
-#[cfg(feature = "pqc")]
-use stateset_crypto::pqc::*;
 use stateset_crypto::sign::*;
 use stateset_crypto::*;
 
@@ -67,11 +65,10 @@ fn merkle_root_four_leaves_exact_power_of_two() {
 
 #[test]
 fn merkle_root_five_leaves_pads_to_eight() {
-    let leaves: Vec<[u8; 32]> = (0..5).map(|i| [i as u8; 32]).collect();
+    let mut padded: Vec<[u8; 32]> = (0..5).map(|i| [i as u8; 32]).collect();
     let pad = compute_pad_leaf();
-    let root = compute_merkle_root(&leaves);
+    let root = compute_merkle_root(&padded);
     // Should pad to 8 leaves
-    let mut padded = leaves.clone();
     padded.resize(8, pad);
     // Manually compute for 8 leaves
     let l01 = compute_node_hash(&padded[0], &padded[1]);
@@ -583,14 +580,15 @@ fn zero_hash_constant() {
 
 #[cfg(feature = "pqc")]
 mod pqc_integration {
-    use super::*;
     use serde_json::json;
-    use stateset_crypto::hash::{PayloadAadParams, compute_payload_aad, compute_payload_plain_hash};
+    use stateset_crypto::hash::{
+        PayloadAadParams, compute_payload_aad, compute_payload_plain_hash,
+    };
     use stateset_crypto::pqc::*;
 
     const TEST_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
-    fn test_aad_params(plain_hash: &[u8; 32]) -> PayloadAadParams<'_> {
+    const fn test_aad_params(plain_hash: &[u8; 32]) -> PayloadAadParams<'_> {
         PayloadAadParams {
             ves_version: 1,
             tenant_id: TEST_UUID,
@@ -635,11 +633,11 @@ mod pqc_integration {
         let pph = compute_payload_plain_hash(&payload, None).unwrap();
         let aad = test_aad_params(&pph);
         let enc =
-            encrypt_payload_hybrid(&payload, &aad, &[recipient_kp.public.clone()]).unwrap();
+            encrypt_payload_hybrid(&payload, &aad, std::slice::from_ref(&recipient_kp.public))
+                .unwrap();
 
         // Decrypt
-        let dec_aad =
-            PayloadAadParams { payload_plain_hash: &enc.payload_plain_hash, ..aad };
+        let dec_aad = PayloadAadParams { payload_plain_hash: &enc.payload_plain_hash, ..aad };
         let paad = compute_payload_aad(&dec_aad).unwrap();
         let dec = decrypt_payload_hybrid(
             &enc.payload_encrypted,
@@ -666,10 +664,11 @@ mod pqc_integration {
 
         let pph = compute_payload_plain_hash(&payload, None).unwrap();
         let aad = test_aad_params(&pph);
-        let enc = encrypt_payload_strict(&payload, &aad, &[recipient_kp.public.clone()]).unwrap();
+        let enc =
+            encrypt_payload_strict(&payload, &aad, std::slice::from_ref(&recipient_kp.public))
+                .unwrap();
 
-        let dec_aad =
-            PayloadAadParams { payload_plain_hash: &enc.payload_plain_hash, ..aad };
+        let dec_aad = PayloadAadParams { payload_plain_hash: &enc.payload_plain_hash, ..aad };
         let paad = compute_payload_aad(&dec_aad).unwrap();
         let dec = decrypt_payload_strict(
             &enc.payload_encrypted,
@@ -691,8 +690,7 @@ mod pqc_integration {
 
         // Serialize PoP (simulates key registration wire format)
         let pop_json = serde_json::to_string(&pop).unwrap();
-        let pop_deserialized: HybridSignatureBundle =
-            serde_json::from_str(&pop_json).unwrap();
+        let pop_deserialized: HybridSignatureBundle = serde_json::from_str(&pop_json).unwrap();
 
         // Verify deserialized PoP
         assert!(verify_hybrid_signing_pop(&pop_deserialized, &kp.public));

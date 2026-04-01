@@ -14,10 +14,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==0.9.2     # Python
-npm install @stateset/embedded@0.9.2     # Node.js
-npm install -g @stateset/cli@0.9.2       # CLI
-gem install stateset_embedded -v 0.9.2   # Ruby
+pip install stateset-embedded==0.9.3     # Python
+npm install @stateset/embedded@0.9.3     # Node.js
+npm install -g @stateset/cli@0.9.3       # CLI
+gem install stateset_embedded -v 0.9.3   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -109,7 +109,7 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/cli@0.9.2 @stateset/embedded@0.9.2
+npm install @stateset/cli@0.9.3 @stateset/embedded@0.9.3
 ```
 
 ```javascript
@@ -164,9 +164,9 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.9.2
+## What's New in v0.9.3
 
-**Post-Quantum Security Release** - `0.9.2` introduces hybrid and strict PQC support across VES, `stateset-sync`, the native Node bindings, and release documentation.
+**Post-Quantum Security Release** - `0.9.3` introduces hybrid and strict PQC support across VES, `stateset-sync`, the native Node bindings, and release documentation.
 
 ### PQC Security Profiles
 - `legacy`: existing Ed25519 and X25519 compatibility mode
@@ -1331,7 +1331,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.9.2"
+stateset-embedded = "0.9.3"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1381,14 +1381,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.9.2</version>
+    <version>0.9.3</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.9.2'
+implementation 'com.stateset:embedded:0.9.3'
 ```
 
 ### Kotlin (Gradle)
@@ -1396,7 +1396,7 @@ implementation 'com.stateset:embedded:0.9.2'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.9.2")
+    implementation("com.stateset:embedded-kotlin:0.9.3")
 }
 ```
 
@@ -1405,32 +1405,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.2")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.3")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.9.2'
+pod 'StateSet', '~> 0.9.3'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.9.2
+dotnet add package StateSet.Embedded --version 0.9.3
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.9.2" />
+<PackageReference Include="StateSet.Embedded" Version="0.9.3" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.2
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.3
 ```
 
 ### CLI

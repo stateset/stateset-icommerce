@@ -67,6 +67,12 @@ pub struct SyncEvent {
     pub hash: String,
     /// Optional cryptographic signature (hex-encoded Ed25519).
     pub signature: Option<String>,
+    /// Optional signature scheme identifier used for PQC-aware verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_signature_scheme: Option<i32>,
+    /// Optional PQC signature bundle mirrored from the sequencer VES envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_signature_bundle: Option<Value>,
     /// Optional upstream command identifier associated with the event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_id: Option<String>,
@@ -103,6 +109,8 @@ impl SyncEvent {
             payload,
             hash,
             signature: None,
+            agent_signature_scheme: None,
+            agent_signature_bundle: None,
             command_id: None,
             base_version: None,
             source_agent_id: None,
@@ -133,6 +141,8 @@ impl SyncEvent {
             payload,
             hash,
             signature: None,
+            agent_signature_scheme: None,
+            agent_signature_bundle: None,
             command_id: None,
             base_version: None,
             source_agent_id: None,
@@ -184,6 +194,20 @@ impl SyncEvent {
     #[must_use]
     pub fn with_signature(mut self, signature: impl Into<String>) -> Self {
         self.signature = Some(signature.into());
+        self
+    }
+
+    /// Attach the PQC-aware signature scheme identifier recorded in the VES envelope.
+    #[must_use]
+    pub const fn with_agent_signature_scheme(mut self, agent_signature_scheme: i32) -> Self {
+        self.agent_signature_scheme = Some(agent_signature_scheme);
+        self
+    }
+
+    /// Attach the PQC-aware signature bundle recorded in the VES envelope.
+    #[must_use]
+    pub fn with_agent_signature_bundle(mut self, agent_signature_bundle: Value) -> Self {
+        self.agent_signature_bundle = Some(agent_signature_bundle);
         self
     }
 
@@ -289,6 +313,8 @@ mod tests {
         assert_eq!(event.sequence, 0);
         assert_eq!(event.sequence_authority, SequenceAuthority::LocalOutbox);
         assert!(event.signature.is_none());
+        assert!(event.agent_signature_scheme.is_none());
+        assert!(event.agent_signature_bundle.is_none());
         assert!(event.command_id.is_none());
         assert!(event.base_version.is_none());
         assert!(event.source_agent_id.is_none());
@@ -299,6 +325,8 @@ mod tests {
     fn event_serde_roundtrip() {
         let event =
             SyncEvent::new("product.updated", "product", "PROD-1", json!({"name": "Widget"}))
+                .with_agent_signature_scheme(3)
+                .with_agent_signature_bundle(json!({"ml_dsa_65_signature": "beef"}))
                 .with_command_id("cmd-1")
                 .with_base_version(7)
                 .with_source_agent_id("agent-7")
@@ -310,6 +338,11 @@ mod tests {
         assert_eq!(deserialized.hash, event.hash);
         assert_eq!(deserialized.payload, event.payload);
         assert_eq!(deserialized.sequence_authority, SequenceAuthority::LocalOutbox);
+        assert_eq!(deserialized.agent_signature_scheme, Some(3));
+        assert_eq!(
+            deserialized.agent_signature_bundle,
+            Some(json!({"ml_dsa_65_signature": "beef"}))
+        );
         assert_eq!(deserialized.command_id.as_deref(), Some("cmd-1"));
         assert_eq!(deserialized.base_version, Some(7));
         assert_eq!(deserialized.source_agent_id.as_deref(), Some("agent-7"));
@@ -348,6 +381,15 @@ mod tests {
         let event =
             SyncEvent::new("order.created", "order", "ORD-1", json!({})).with_signature("deadbeef");
         assert_eq!(event.signature, Some("deadbeef".to_string()));
+    }
+
+    #[test]
+    fn event_with_signature_bundle() {
+        let event = SyncEvent::new("order.created", "order", "ORD-1", json!({}))
+            .with_agent_signature_scheme(2)
+            .with_agent_signature_bundle(json!({"ml_dsa_65_signature": "cafebabe"}));
+        assert_eq!(event.agent_signature_scheme, Some(2));
+        assert_eq!(event.agent_signature_bundle, Some(json!({"ml_dsa_65_signature": "cafebabe"})));
     }
 
     #[test]

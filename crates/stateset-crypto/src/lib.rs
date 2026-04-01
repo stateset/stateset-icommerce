@@ -23,6 +23,8 @@ pub mod sign;
 
 mod encoding;
 mod error;
+#[cfg(feature = "pqc")]
+mod pqc_backend;
 
 pub use encoding::{bytes_to_hex, encode_string, hex_to_bytes, u32_be, u64_be, uuid_to_bytes};
 pub use error::CryptoError;
