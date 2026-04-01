@@ -21,7 +21,7 @@ pub struct SqliteX402CreditRepository {
 }
 
 impl SqliteX402CreditRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }

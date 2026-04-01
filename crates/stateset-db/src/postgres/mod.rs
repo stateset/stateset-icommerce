@@ -18,11 +18,13 @@ mod credit;
 mod currency;
 mod custom_objects;
 mod customers;
+mod fraud;
 mod fulfillment;
 mod general_ledger;
 mod inventory;
 mod invoices;
 mod lots;
+mod loyalty;
 mod orders;
 mod payments;
 mod products;
@@ -31,8 +33,12 @@ mod purchase_orders;
 mod quality;
 mod receiving;
 mod returns;
+mod rewards;
+mod search_configs;
+mod segments;
 mod serials;
 mod shipments;
+mod shipping_zones;
 mod subscriptions;
 mod tax;
 mod warehouse;
@@ -40,6 +46,7 @@ mod warranties;
 mod work_orders;
 mod x402_credits;
 mod x402_payment_intents;
+mod zone_shipping_methods;
 
 pub use a2a::*;
 pub use accounts_payable::*;
@@ -57,11 +64,13 @@ pub use credit::*;
 pub use currency::*;
 pub use custom_objects::*;
 pub use customers::*;
+pub use fraud::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
 pub use inventory::*;
 pub use invoices::*;
 pub use lots::*;
+pub use loyalty::*;
 pub use orders::*;
 pub use payments::*;
 pub use products::*;
@@ -70,8 +79,12 @@ pub use purchase_orders::*;
 pub use quality::*;
 pub use receiving::*;
 pub use returns::*;
+pub use rewards::*;
+pub use search_configs::*;
+pub use segments::*;
 pub use serials::*;
 pub use shipments::*;
+pub use shipping_zones::*;
 pub use subscriptions::*;
 pub use tax::*;
 pub use warehouse::*;
@@ -79,6 +92,7 @@ pub use warranties::*;
 pub use work_orders::*;
 pub use x402_credits::*;
 pub use x402_payment_intents::*;
+pub use zone_shipping_methods::*;
 
 use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -94,20 +108,21 @@ pub struct PostgresDatabase {
 
 impl PostgresDatabase {
     /// Connect to PostgreSQL database with URL
-    pub async fn connect(url: &str) -> Result<Self, CommerceError> {
+    pub async fn connect(url: impl Into<String>) -> Result<Self, CommerceError> {
         Self::connect_with_options(url, 10, 30).await
     }
 
     /// Connect with custom options
     pub async fn connect_with_options(
-        url: &str,
+        url: impl Into<String>,
         max_connections: u32,
         acquire_timeout_secs: u64,
     ) -> Result<Self, CommerceError> {
+        let url = url.into();
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .acquire_timeout(Duration::from_secs(acquire_timeout_secs))
-            .connect(url)
+            .connect(&url)
             .await
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -184,6 +199,16 @@ impl PostgresDatabase {
             "037_x402_nonce_integrity",
             include_str!("migrations/037_x402_nonce_integrity.sql"),
         ));
+        migrations.push(("043_segments", include_str!("migrations/043_segments.sql")));
+        migrations.push(("044_shipping_zones", include_str!("migrations/044_shipping_zones.sql")));
+        migrations.push(("045_rewards", include_str!("migrations/045_rewards.sql")));
+        migrations.push(("046_search_configs", include_str!("migrations/046_search_configs.sql")));
+        migrations.push((
+            "047_zone_shipping_methods",
+            include_str!("migrations/047_zone_shipping_methods.sql"),
+        ));
+        migrations.push(("048_fraud", include_str!("migrations/048_fraud.sql")));
+        migrations.push(("049_loyalty", include_str!("migrations/049_loyalty.sql")));
 
         for (name, sql) in migrations {
             let mut tx =
@@ -430,6 +455,41 @@ impl PostgresDatabase {
     /// Get agent validation repository (ERC-8004)
     pub fn agent_validation(&self) -> PgAgentValidationRepository {
         PgAgentValidationRepository::new(self.pool.clone())
+    }
+
+    /// Get segment repository
+    pub fn segments(&self) -> PgSegmentRepository {
+        PgSegmentRepository::new(self.pool.clone())
+    }
+
+    /// Get shipping zone repository
+    pub fn shipping_zones(&self) -> PgShippingZoneRepository {
+        PgShippingZoneRepository::new(self.pool.clone())
+    }
+
+    /// Get fraud repository
+    pub fn fraud(&self) -> PgFraudRepository {
+        PgFraudRepository::new(self.pool.clone())
+    }
+
+    /// Get loyalty program repository
+    pub fn loyalty(&self) -> PgLoyaltyProgramRepository {
+        PgLoyaltyProgramRepository::new(self.pool.clone())
+    }
+
+    /// Get reward repository
+    pub fn rewards(&self) -> PgRewardRepository {
+        PgRewardRepository::new(self.pool.clone())
+    }
+
+    /// Get search config repository
+    pub fn search_configs(&self) -> PgSearchConfigRepository {
+        PgSearchConfigRepository::new(self.pool.clone())
+    }
+
+    /// Get zone shipping method repository
+    pub fn zone_shipping_methods(&self) -> PgZoneShippingMethodRepository {
+        PgZoneShippingMethodRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

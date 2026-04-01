@@ -11,7 +11,33 @@
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import { bufferToHex, hexToBuffer } from './crypto.js';
+import {
+  bufferToHex,
+  generateHybridRecipientKeypair,
+  generateHybridSigningKeypair,
+  generateHybridSigningPop,
+  generateStrictRecipientKeypair,
+  generateStrictSigningKeypair,
+  generateStrictSigningPop,
+  hexToBuffer,
+} from './crypto.js';
+import {
+  auditKeyGenerated,
+  auditEncryptionKeyGenerated,
+  auditKeyRotated,
+} from './pqc-audit.js';
+import {
+  KEY_ALGORITHM_ED25519,
+  KEY_ALGORITHM_ED25519_ML_DSA_65,
+  KEY_ALGORITHM_ML_DSA_65,
+  KEY_ALGORITHM_ML_KEM_768,
+  KEY_ALGORITHM_X25519,
+  KEY_ALGORITHM_X25519_ML_KEM_768,
+  SECURITY_PROFILE_LEGACY,
+  SECURITY_PROFILE_HYBRID,
+  SECURITY_PROFILE_PQC_STRICT,
+  resolveSecurityProfile,
+} from './pqc.js';
 import { getRotationPolicyManager } from './rotation-policy.js';
 
 /**
@@ -43,6 +69,36 @@ import { getRotationPolicyManager } from './rotation-policy.js';
 /** @type {ManagedKeyType[]} */
 const KEY_TYPES = ['signing', 'encryption'];
 
+function serializeBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return Object.fromEntries(
+    Object.entries(bundle).map(([key, value]) => [
+      key,
+      Buffer.isBuffer(value) || value instanceof Uint8Array ? bufferToHex(Buffer.from(value)) : value,
+    ]),
+  );
+}
+
+function deserializeBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return Object.fromEntries(
+    Object.entries(bundle).map(([key, value]) => [
+      key,
+      typeof value === 'string' && value.startsWith('0x') ? hexToBuffer(value) : value,
+    ]),
+  );
+}
+
+function getLegacyKeyAlgorithm(keyType) {
+  return keyType === 'signing' ? KEY_ALGORITHM_ED25519 : KEY_ALGORITHM_X25519;
+}
+
 /**
  * Agent Key Manager
  *
@@ -51,9 +107,13 @@ const KEY_TYPES = ['signing', 'encryption'];
 export class AgentKeyManager {
   /**
    * @param {string} configDir - Base config directory (default: .stateset)
+   * @param {{securityProfile?: 'legacy' | 'hybrid' | 'pqc-strict'}} [options]
    */
-  constructor(configDir = '.stateset') {
+  constructor(configDir = '.stateset', options = {}) {
     this.keysDir = path.join(configDir, 'keys');
+    this.securityProfile = resolveSecurityProfile(
+      options.securityProfile ?? SECURITY_PROFILE_LEGACY,
+    );
   }
 
   /**
@@ -105,6 +165,8 @@ export class AgentKeyManager {
         ...k,
         publicKey: hexToBuffer(k.publicKey),
         privateKey: hexToBuffer(k.privateKey),
+        publicKeyBundle: deserializeBundle(k.publicKeyBundle),
+        privateKeyBundle: deserializeBundle(k.privateKeyBundle),
       }));
     } catch (e) {
       if (e.code === 'ENOENT') return [];
@@ -125,6 +187,8 @@ export class AgentKeyManager {
       ...k,
       publicKey: bufferToHex(k.publicKey),
       privateKey: bufferToHex(k.privateKey),
+      publicKeyBundle: serializeBundle(k.publicKeyBundle),
+      privateKeyBundle: serializeBundle(k.privateKeyBundle),
     }));
     await fs.writeFile(
       this._keyFilePath(agentId, keyType),
@@ -155,31 +219,75 @@ export class AgentKeyManager {
    * @returns {Promise<SigningKeyPair>}
    */
   async generateSigningKey(agentId) {
+    const securityProfile = this.securityProfile;
     const keyId = await this._nextKeyId(agentId, 'signing');
 
-    // Generate Ed25519 key pair
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    let keyPair;
+    if (securityProfile === SECURITY_PROFILE_HYBRID) {
+      const hybrid = generateHybridSigningKeypair();
+      keyPair = {
+        keyId,
+        publicKey: hybrid.ed25519PublicKey,
+        privateKey: hybrid.ed25519PrivateKey,
+        keyAlgorithm: KEY_ALGORITHM_ED25519_ML_DSA_65,
+        securityProfile,
+        publicKeyBundle: {
+          ed25519PublicKey: hybrid.ed25519PublicKey,
+          mlDsa65PublicKey: hybrid.mlDsa65PublicKey,
+        },
+        privateKeyBundle: {
+          ed25519PrivateKey: hybrid.ed25519PrivateKey,
+          mlDsa65Seed: hybrid.mlDsa65Seed,
+        },
+        createdAt: new Date().toISOString(),
+      };
+    } else {
+      if (securityProfile === SECURITY_PROFILE_PQC_STRICT) {
+        const strict = generateStrictSigningKeypair();
+        keyPair = {
+          keyId,
+          publicKey: strict.mlDsa65PublicKey,
+          privateKey: strict.mlDsa65Seed,
+          keyAlgorithm: KEY_ALGORITHM_ML_DSA_65,
+          securityProfile,
+          publicKeyBundle: {
+            mlDsa65PublicKey: strict.mlDsa65PublicKey,
+          },
+          privateKeyBundle: {
+            mlDsa65Seed: strict.mlDsa65Seed,
+          },
+          createdAt: new Date().toISOString(),
+        };
+      } else {
+      // Generate Ed25519 key pair (legacy)
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
 
-    // Extract raw bytes
-    const pubDer = publicKey.export({ type: 'spki', format: 'der' });
-    const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
+      // Extract raw bytes
+      const pubDer = publicKey.export({ type: 'spki', format: 'der' });
+      const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
 
-    // Ed25519 public key is last 32 bytes of SPKI DER
-    const pubKey32 = pubDer.subarray(-32);
-    // Ed25519 private key (seed) is last 32 bytes of PKCS#8 DER
-    const privKey32 = privDer.subarray(-32);
+      // Ed25519 public key is last 32 bytes of SPKI DER
+      const pubKey32 = pubDer.subarray(-32);
+      // Ed25519 private key (seed) is last 32 bytes of PKCS#8 DER
+      const privKey32 = privDer.subarray(-32);
 
-    const keyPair = {
-      keyId,
-      publicKey: pubKey32,
-      privateKey: privKey32,
-      createdAt: new Date().toISOString(),
-    };
+      keyPair = {
+        keyId,
+        publicKey: pubKey32,
+        privateKey: privKey32,
+        keyAlgorithm: KEY_ALGORITHM_ED25519,
+        securityProfile,
+        createdAt: new Date().toISOString(),
+      };
+      }
+    }
 
     // Save to storage
     const keys = await this._loadKeys(agentId, 'signing');
     keys.push(keyPair);
     await this._saveKeys(agentId, 'signing', keys);
+
+    auditKeyGenerated(agentId, keyId, keyPair.securityProfile ?? 'legacy', keyPair.keyAlgorithm ?? 1);
 
     return keyPair;
   }
@@ -191,10 +299,23 @@ export class AgentKeyManager {
    */
   async getCurrentSigningKey(agentId) {
     const keys = await this._loadKeys(agentId, 'signing');
-    // Find latest non-revoked key
-    const activeKeys = keys.filter((k) => !k.revokedAt);
+    const now = Date.now();
+    // Filter to non-revoked keys within their validity window
+    const activeKeys = keys.filter((k) => {
+      if (k.revokedAt) return false;
+      // If expired and past grace period, exclude
+      if (k.expiresAt && new Date(k.expiresAt).getTime() < now) {
+        if (!k.graceUntil || new Date(k.graceUntil).getTime() < now) return false;
+      }
+      return true;
+    });
     if (activeKeys.length === 0) return null;
-    return activeKeys.reduce((a, b) => (a.keyId > b.keyId ? a : b));
+    // Prefer non-expired keys over grace-period keys
+    const nonExpired = activeKeys.filter(
+      (k) => !k.expiresAt || new Date(k.expiresAt).getTime() >= now,
+    );
+    const pool = nonExpired.length > 0 ? nonExpired : activeKeys;
+    return pool.reduce((a, b) => (a.keyId > b.keyId ? a : b));
   }
 
   /**
@@ -242,30 +363,74 @@ export class AgentKeyManager {
    * @returns {Promise<EncryptionKeyPair>}
    */
   async generateEncryptionKey(agentId) {
+    const securityProfile = this.securityProfile;
     const keyId = await this._nextKeyId(agentId, 'encryption');
 
-    // Generate X25519 key pair
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519');
+    let keyPair;
+    if (securityProfile === SECURITY_PROFILE_HYBRID) {
+      const hybrid = generateHybridRecipientKeypair(keyId);
+      keyPair = {
+        keyId,
+        publicKey: hybrid.x25519PublicKey,
+        privateKey: hybrid.x25519PrivateKey,
+        keyAlgorithm: KEY_ALGORITHM_X25519_ML_KEM_768,
+        securityProfile,
+        publicKeyBundle: {
+          x25519PublicKey: hybrid.x25519PublicKey,
+          mlKem768PublicKey: hybrid.mlKem768PublicKey,
+        },
+        privateKeyBundle: {
+          x25519PrivateKey: hybrid.x25519PrivateKey,
+          mlKem768Seed: hybrid.mlKem768Seed,
+        },
+        createdAt: new Date().toISOString(),
+      };
+    } else {
+      if (securityProfile === SECURITY_PROFILE_PQC_STRICT) {
+        const strict = generateStrictRecipientKeypair(keyId);
+        keyPair = {
+          keyId,
+          publicKey: strict.mlKem768PublicKey,
+          privateKey: strict.mlKem768Seed,
+          keyAlgorithm: KEY_ALGORITHM_ML_KEM_768,
+          securityProfile,
+          publicKeyBundle: {
+            mlKem768PublicKey: strict.mlKem768PublicKey,
+          },
+          privateKeyBundle: {
+            mlKem768Seed: strict.mlKem768Seed,
+          },
+          createdAt: new Date().toISOString(),
+        };
+      } else {
+      // Generate X25519 key pair (legacy)
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519');
 
-    // Extract raw bytes
-    const pubDer = publicKey.export({ type: 'spki', format: 'der' });
-    const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
+      // Extract raw bytes
+      const pubDer = publicKey.export({ type: 'spki', format: 'der' });
+      const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
 
-    // X25519 keys are last 32 bytes of DER encoding
-    const pubKey32 = pubDer.subarray(-32);
-    const privKey32 = privDer.subarray(-32);
+      // X25519 keys are last 32 bytes of DER encoding
+      const pubKey32 = pubDer.subarray(-32);
+      const privKey32 = privDer.subarray(-32);
 
-    const keyPair = {
-      keyId,
-      publicKey: pubKey32,
-      privateKey: privKey32,
-      createdAt: new Date().toISOString(),
-    };
+      keyPair = {
+        keyId,
+        publicKey: pubKey32,
+        privateKey: privKey32,
+        keyAlgorithm: KEY_ALGORITHM_X25519,
+        securityProfile,
+        createdAt: new Date().toISOString(),
+      };
+      }
+    }
 
     // Save to storage
     const keys = await this._loadKeys(agentId, 'encryption');
     keys.push(keyPair);
     await this._saveKeys(agentId, 'encryption', keys);
+
+    auditEncryptionKeyGenerated(agentId, keyId, keyPair.securityProfile ?? 'legacy', keyPair.keyAlgorithm ?? 2);
 
     return keyPair;
   }
@@ -277,9 +442,20 @@ export class AgentKeyManager {
    */
   async getCurrentEncryptionKey(agentId) {
     const keys = await this._loadKeys(agentId, 'encryption');
-    const activeKeys = keys.filter((k) => !k.revokedAt);
+    const now = Date.now();
+    const activeKeys = keys.filter((k) => {
+      if (k.revokedAt) return false;
+      if (k.expiresAt && new Date(k.expiresAt).getTime() < now) {
+        if (!k.graceUntil || new Date(k.graceUntil).getTime() < now) return false;
+      }
+      return true;
+    });
     if (activeKeys.length === 0) return null;
-    return activeKeys.reduce((a, b) => (a.keyId > b.keyId ? a : b));
+    const nonExpired = activeKeys.filter(
+      (k) => !k.expiresAt || new Date(k.expiresAt).getTime() >= now,
+    );
+    const pool = nonExpired.length > 0 ? nonExpired : activeKeys;
+    return pool.reduce((a, b) => (a.keyId > b.keyId ? a : b));
   }
 
   /**
@@ -372,11 +548,46 @@ export class AgentKeyManager {
 
     if (!key) throw new Error('No signing key found');
 
-    return {
+    const result = {
       keyId: key.keyId,
+      keyAlgorithm: key.keyAlgorithm ?? getLegacyKeyAlgorithm('signing'),
+      securityProfile: key.securityProfile ?? SECURITY_PROFILE_LEGACY,
       publicKey: bufferToHex(key.publicKey),
+      publicKeyBundle: serializeBundle(key.publicKeyBundle),
       createdAt: key.createdAt,
+      proofOfPossession: null,
+      proofOfPossessionBundle: null,
     };
+
+    // Generate PoP for hybrid and pqc-strict profiles (requires native support)
+    try {
+      if (key.securityProfile === SECURITY_PROFILE_HYBRID && key.privateKeyBundle) {
+        const pop = generateHybridSigningPop({
+          ed25519PrivateKey: key.privateKeyBundle.ed25519PrivateKey,
+          mlDsa65Seed: key.privateKeyBundle.mlDsa65Seed,
+          ed25519PublicKey: key.publicKeyBundle.ed25519PublicKey,
+          mlDsa65PublicKey: key.publicKeyBundle.mlDsa65PublicKey,
+        });
+        result.proofOfPossession = bufferToHex(pop.ed25519Signature);
+        result.proofOfPossessionBundle = {
+          ed25519Pop: bufferToHex(pop.ed25519Signature),
+          mlDsa65Pop: bufferToHex(pop.mlDsa65Signature),
+        };
+      } else if (key.securityProfile === SECURITY_PROFILE_PQC_STRICT && key.privateKeyBundle) {
+        const pop = generateStrictSigningPop({
+          mlDsa65Seed: key.privateKeyBundle.mlDsa65Seed,
+          mlDsa65PublicKey: key.publicKeyBundle.mlDsa65PublicKey,
+        });
+        result.proofOfPossession = bufferToHex(pop);
+        result.proofOfPossessionBundle = {
+          mlDsa65Pop: bufferToHex(pop),
+        };
+      }
+    } catch {
+      // PoP generation requires native support; export without PoP if unavailable
+    }
+
+    return result;
   }
 
   /**
@@ -394,7 +605,10 @@ export class AgentKeyManager {
 
     return {
       keyId: key.keyId,
+      keyAlgorithm: key.keyAlgorithm ?? getLegacyKeyAlgorithm('encryption'),
+      securityProfile: key.securityProfile ?? SECURITY_PROFILE_LEGACY,
       publicKey: bufferToHex(key.publicKey),
+      publicKeyBundle: serializeBundle(key.publicKeyBundle),
       createdAt: key.createdAt,
     };
   }
@@ -510,6 +724,8 @@ export class AgentKeyManager {
 
     // Reset usage counter for new key
     await policyManager.resetUsage(agentId, keyType, newKey.keyId);
+
+    auditKeyRotated(agentId, keyType, currentKey.keyId, newKey.keyId, options.reason ?? 'manual');
 
     return {
       oldKey: currentKey,
@@ -747,11 +963,19 @@ let _defaultManager = null;
 /**
  * Get or create default key manager instance
  * @param {string} [configDir]
+ * @param {{securityProfile?: 'legacy' | 'hybrid' | 'pqc-strict'}} [options]
  * @returns {AgentKeyManager}
  */
-export function getKeyManager(configDir = '.stateset') {
-  if (!_defaultManager || _defaultManager.keysDir !== path.join(configDir, 'keys')) {
-    _defaultManager = new AgentKeyManager(configDir);
+export function getKeyManager(configDir = '.stateset', options = {}) {
+  const securityProfile = resolveSecurityProfile(
+    options.securityProfile ?? SECURITY_PROFILE_LEGACY,
+  );
+  if (
+    !_defaultManager ||
+    _defaultManager.keysDir !== path.join(configDir, 'keys') ||
+    _defaultManager.securityProfile !== securityProfile
+  ) {
+    _defaultManager = new AgentKeyManager(configDir, { securityProfile });
   }
   return _defaultManager;
 }

@@ -46,38 +46,35 @@ impl Condition {
     /// For non-unary operators, dynamic references (e.g., `"${order.total}"`)
     /// in `self.value` are resolved against `context`. If a dynamic reference
     /// cannot be resolved, the condition returns `false` (safe default).
-    #[must_use] 
+    #[must_use]
     pub fn evaluate(&self, context: &Value) -> bool {
-        let field_value = get_nested_value(context, &self.field).cloned().unwrap_or(Value::Null);
+        // Borrow field value directly from context to avoid .clone().
+        static NULL: Value = Value::Null;
+        let field_value = get_nested_value(context, &self.field).unwrap_or(&NULL);
 
-        let is_unary = self.operator.is_unary();
+        // Fast path for unary operators: no compare value needed.
+        if self.operator.is_unary() {
+            let result = self.operator.evaluate(field_value, &NULL);
+            return if self.negate { !result } else { result };
+        }
 
-        let compare_value = if is_unary {
-            Value::Null
-        } else {
-            let (resolved, is_dynamic) = resolve_dynamic_ref(&self.value, context);
+        let (resolved, is_dynamic) = resolve_dynamic_ref(&self.value, context);
 
-            // Missing dynamic references => non-match (safe default)
-            if is_dynamic && resolved.is_null() {
-                // Check if the original path truly resolved to null vs missing
-                // In JS: `isDynamicRef && compareValue === undefined`
-                // We treat null as the "missing" sentinel for dynamic refs
-                if get_nested_value(context, extract_ref_path(&self.value).unwrap_or("")).is_none()
-                {
-                    return false;
-                }
-            }
+        // Missing dynamic references => non-match (safe default)
+        if is_dynamic
+            && resolved.is_null()
+            && get_nested_value(context, extract_ref_path(&self.value).unwrap_or("")).is_none()
+        {
+            return false;
+        }
 
-            resolved
-        };
-
-        let result = self.operator.evaluate(&field_value, &compare_value);
+        let result = self.operator.evaluate(field_value, &resolved);
 
         if self.negate { !result } else { result }
     }
 
     /// Evaluate this condition and return detailed results for explainable decisions.
-    #[must_use] 
+    #[must_use]
     pub fn evaluate_with_detail(&self, context: &Value) -> ConditionDetail {
         let field_value = get_nested_value(context, &self.field).cloned().unwrap_or(Value::Null);
 
@@ -175,7 +172,7 @@ pub enum ConditionNode {
 
 impl ConditionNode {
     /// Evaluate this node against the given context.
-    #[must_use] 
+    #[must_use]
     pub fn evaluate(&self, context: &Value) -> bool {
         match self {
             Self::Leaf(c) => c.evaluate(context),
@@ -184,7 +181,7 @@ impl ConditionNode {
     }
 
     /// Evaluate with detail.
-    #[must_use] 
+    #[must_use]
     pub fn evaluate_with_detail(&self, context: &Value) -> Vec<ConditionDetail> {
         match self {
             Self::Leaf(c) => vec![c.evaluate_with_detail(context)],
@@ -193,7 +190,7 @@ impl ConditionNode {
     }
 
     /// Evaluate this node and return its match result plus flattened leaf details.
-    #[must_use] 
+    #[must_use]
     pub fn evaluate_full(&self, context: &Value) -> (bool, Vec<ConditionDetail>) {
         match self {
             Self::Leaf(c) => {
@@ -236,7 +233,7 @@ pub struct ConditionGroup {
 
 impl ConditionGroup {
     /// Create a new condition group.
-    #[must_use] 
+    #[must_use]
     pub const fn new(logic: Logic, conditions: Vec<ConditionNode>) -> Self {
         Self { logic, conditions }
     }
@@ -246,7 +243,7 @@ impl ConditionGroup {
     /// Empty groups follow standard boolean identity semantics:
     /// - empty `And` is `true`
     /// - empty `Or` is `false`
-    #[must_use] 
+    #[must_use]
     pub fn evaluate(&self, context: &Value) -> bool {
         if self.conditions.is_empty() {
             return matches!(self.logic, Logic::And);
@@ -262,7 +259,7 @@ impl ConditionGroup {
     ///
     /// The `matched` result of the group (And/Or) can be derived from the
     /// individual details, but is also available from [`evaluate`](Self::evaluate).
-    #[must_use] 
+    #[must_use]
     pub fn evaluate_with_detail(&self, context: &Value) -> Vec<ConditionDetail> {
         if self.conditions.is_empty() {
             return Vec::new();

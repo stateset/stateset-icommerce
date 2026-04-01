@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -101,7 +101,7 @@
     "test:heartbeat": "node --test tests/v031-heartbeat.test.js",
     "test:permissions": "node --test tests/v031-permissions.test.js",
     "test:v031": "node --test tests/v031-permissions.test.js tests/v031-heartbeat.test.js",
-    "test:smoke": "node --test tests/credentials.test.js tests/v028-features.test.js tests/v030-integration.test.js",
+    "test:smoke": "node --test tests/credentials.test.js tests/v028-features.test.js tests/v030-integration.test.js tests/cli-help-version.test.js test/unit/agent-session-store.test.js test/unit/doctor-checks.test.js test/unit/audit-store.test.js test/unit/audit-tools.test.js test/unit/channel-session-store.test.js test/unit/identity.test.js test/unit/treasury-store.test.js test/unit/erc8004.test.js test/unit/erc8004-tools.test.js test/unit/a2a-store-column-whitelist.test.js test/unit/a2a-sla.test.js test/unit/a2a-workflows.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js test/unit/*.test.js test/integration/*.test.js test/e2e/*.test.js test/a2a/*.test.js test/adapters/*.test.js test/x402/*.test.js tests/*.test.js",
     "lint": "npx eslint src/ bin/",
     "lint:fix": "npx eslint --fix src/ bin/",
@@ -183,7 +183,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
-    "@stateset/embedded": "^0.8.1",
+    "@stateset/embedded": "^0.9.2",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ethers": "^6.16.0",

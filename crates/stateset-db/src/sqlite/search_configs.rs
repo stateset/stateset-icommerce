@@ -42,11 +42,7 @@ impl SqliteSearchConfigRepository {
                 "search_config",
                 "searchable_fields",
             )?,
-            facets: parse_json_row::<Vec<FacetConfig>>(
-                &facets_json,
-                "search_config",
-                "facets",
-            )?,
+            facets: parse_json_row::<Vec<FacetConfig>>(&facets_json, "search_config", "facets")?,
             synonyms: parse_json_row::<Vec<SynonymGroup>>(
                 &synonyms_json,
                 "search_config",
@@ -144,36 +140,36 @@ impl SearchConfigRepository for SqliteSearchConfigRepository {
             }
             if let Some(ref fields) = input.searchable_fields {
                 let json = serde_json::to_string(fields).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::DatabaseError(e.to_string()),
-                    ))
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        e.to_string(),
+                    )))
                 })?;
                 sets.push("searchable_fields = ?".into());
                 params.push(Box::new(json));
             }
             if let Some(ref facets) = input.facets {
                 let json = serde_json::to_string(facets).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::DatabaseError(e.to_string()),
-                    ))
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        e.to_string(),
+                    )))
                 })?;
                 sets.push("facets = ?".into());
                 params.push(Box::new(json));
             }
             if let Some(ref synonyms) = input.synonyms {
                 let json = serde_json::to_string(synonyms).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::DatabaseError(e.to_string()),
-                    ))
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        e.to_string(),
+                    )))
                 })?;
                 sets.push("synonyms = ?".into());
                 params.push(Box::new(json));
             }
             if let Some(ref boost_rules) = input.boost_rules {
                 let json = serde_json::to_string(boost_rules).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::DatabaseError(e.to_string()),
-                    ))
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        e.to_string(),
+                    )))
                 })?;
                 sets.push("boost_rules = ?".into());
                 params.push(Box::new(json));
@@ -258,10 +254,7 @@ impl SearchConfigRepository for SqliteSearchConfigRepository {
 
         with_immediate_transaction(&self.pool, |tx| {
             // Deactivate all configs first
-            tx.execute(
-                "UPDATE search_configs SET is_active = 0, updated_at = ?",
-                [&now_str],
-            )?;
+            tx.execute("UPDATE search_configs SET is_active = 0, updated_at = ?", [&now_str])?;
 
             // Activate the requested config
             tx.execute(
@@ -281,8 +274,8 @@ impl SearchConfigRepository for SqliteSearchConfigRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use stateset_core::{SearchField, Tokenizer};
 
     fn test_repo() -> SqliteSearchConfigRepository {

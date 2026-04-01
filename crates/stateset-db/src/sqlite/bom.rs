@@ -21,7 +21,7 @@ pub struct SqliteBomRepository {
 }
 
 impl SqliteBomRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -310,7 +310,8 @@ impl BomRepository for SqliteBomRepository {
             let mut stmt =
                 conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))
@@ -475,7 +476,8 @@ impl BomRepository for SqliteBomRepository {
             params.push(Box::new(status.to_string()));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 = conn
             .query_row(&sql, param_refs.as_slice(), |row| row.get(0))

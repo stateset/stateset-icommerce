@@ -609,6 +609,8 @@ export async function ensureAgentWallet(agentId, chainId, configDir = '.stateset
   return getOrCreateWallet(agentId, chainId, { configDir });
 }
 
+export { toSmallestUnit, fromSmallestUnit } from '../chains/config.js';
+
 export default {
   loadTreasuryContext,
   resolveToken,

@@ -52,15 +52,13 @@ impl GiftCardFilterParams {
 
     /// Resolved limit with bounds checking.
     #[must_use]
-    pub fn resolved_limit(&self) -> u32 {
-        self.limit
-            .unwrap_or(Self::DEFAULT_LIMIT)
-            .clamp(1, Self::MAX_LIMIT)
+    pub(crate) fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(Self::DEFAULT_LIMIT).clamp(1, Self::MAX_LIMIT)
     }
 
     /// Resolved offset.
     #[must_use]
-    pub fn resolved_offset(&self) -> u32 {
+    pub(crate) fn resolved_offset(&self) -> u32 {
         self.offset.unwrap_or(0)
     }
 }
@@ -131,9 +129,7 @@ pub(crate) async fn create_gift_card(
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     if req.initial_balance <= 0.0 {
-        return Err(HttpError::BadRequest(
-            "initial_balance must be positive".to_string(),
-        ));
+        return Err(HttpError::BadRequest("initial_balance must be positive".to_string()));
     }
 
     let currency = req
@@ -151,20 +147,16 @@ pub(crate) async fn create_gift_card(
         })
         .transpose()?;
 
-    let gift_card =
-        commerce
-            .gift_cards()
-            .create(stateset_core::CreateGiftCard {
-                code: None,
-                initial_balance: Decimal::try_from(req.initial_balance).map_err(|e| {
-                    HttpError::BadRequest(format!("Invalid initial_balance: {e}"))
-                })?,
-                currency,
-                recipient_email: req.recipient_email,
-                sender_name: None,
-                message: req.message,
-                expires_at,
-            })?;
+    let gift_card = commerce.gift_cards().create(stateset_core::CreateGiftCard {
+        code: None,
+        initial_balance: Decimal::try_from(req.initial_balance)
+            .map_err(|e| HttpError::BadRequest(format!("Invalid initial_balance: {e}")))?,
+        currency,
+        recipient_email: req.recipient_email,
+        sender_name: None,
+        message: req.message,
+        expires_at,
+    })?;
 
     Ok((StatusCode::CREATED, Json(gift_card_to_response(gift_card))))
 }
@@ -225,12 +217,8 @@ pub(crate) async fn list_gift_cards(
         .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
 
     // Count total matching records (without pagination)
-    let count_filter = stateset_core::GiftCardFilter {
-        status,
-        code: None,
-        limit: None,
-        offset: None,
-    };
+    let count_filter =
+        stateset_core::GiftCardFilter { status, code: None, limit: None, offset: None };
     let total = commerce.gift_cards().list(count_filter)?.len();
 
     // Fetch the requested page
@@ -247,10 +235,7 @@ pub(crate) async fn list_gift_cards(
     }
 
     Ok(Json(GiftCardListResponse {
-        gift_cards: gift_cards
-            .into_iter()
-            .map(gift_card_to_response)
-            .collect(),
+        gift_cards: gift_cards.into_iter().map(gift_card_to_response).collect(),
         total,
         limit,
         offset,

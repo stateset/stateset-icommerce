@@ -22,7 +22,7 @@ use serde_json::Value;
 /// assert_eq!(get_nested_value(&data, "order.items[0].sku"), Some(&json!("ABC")));
 /// assert_eq!(get_nested_value(&data, "order.missing"), None);
 /// ```
-#[must_use] 
+#[must_use]
 pub fn get_nested_value<'a>(obj: &'a Value, path: &str) -> Option<&'a Value> {
     if path.is_empty() {
         return Some(obj);
@@ -93,7 +93,7 @@ fn parse_array_access(part: &str) -> Option<(&str, usize)> {
 /// assert!(!is_ref);
 /// assert_eq!(resolved, json!(42));
 /// ```
-#[must_use] 
+#[must_use]
 pub fn resolve_dynamic_ref(value: &Value, context: &Value) -> (Value, bool) {
     if let Value::String(s) = value {
         // Match pattern: ${path.to.field}

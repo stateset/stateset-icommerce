@@ -31,7 +31,7 @@ pub enum Resolution {
     /// Keep the remote event.
     KeepRemote,
     /// Merge both events into a new event.
-    Merge(SyncEvent),
+    Merge(Box<SyncEvent>),
 }
 
 /// Resolves conflicts between a local and a remote `SyncEvent`.
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn resolution_merge_variant() {
         let event = make_event_at("merged", 0);
-        let resolution = Resolution::Merge(event);
+        let resolution = Resolution::Merge(Box::new(event));
         if let Resolution::Merge(merged) = resolution {
             assert_eq!(merged.event_type, "merged");
         } else {

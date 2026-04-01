@@ -4,8 +4,7 @@ use chrono::{Duration, Utc};
 use rust_decimal_macros::dec;
 use stateset_core::{
     CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CustomerId,
-    CustomerRepository, InventoryRepository, OrderRepository, OrderStatus, PaymentStatus,
-    ProductId, ReservationStatus, UpdateOrder,
+    OrderStatus, PaymentStatus, ProductId, ReservationStatus, UpdateOrder,
 };
 use stateset_db::PostgresDatabase;
 use std::collections::HashMap;
@@ -98,7 +97,7 @@ async fn postgres_rejects_invalid_order_status_transition() {
     let result = db
         .orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
         )
         .await;
@@ -118,21 +117,21 @@ async fn postgres_rejects_cancel_after_shipped() {
 
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
         )
         .await
         .expect("update order to confirmed");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
         )
         .await
         .expect("update order to processing");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
         )
         .await
@@ -141,7 +140,7 @@ async fn postgres_rejects_cancel_after_shipped() {
     let result = db
         .orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
         )
         .await;
@@ -161,28 +160,28 @@ async fn postgres_rejects_refund_without_paid_status() {
 
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
         )
         .await
         .expect("update order to confirmed");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
         )
         .await
         .expect("update order to processing");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
         )
         .await
         .expect("update order to shipped");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
         )
         .await
@@ -191,7 +190,7 @@ async fn postgres_rejects_refund_without_paid_status() {
     let result = db
         .orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder {
                 status: Some(OrderStatus::Refunded),
                 payment_status: Some(PaymentStatus::Pending),
@@ -216,28 +215,28 @@ async fn postgres_allows_refund_with_paid_status() {
 
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
         )
         .await
         .expect("update order to confirmed");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
         )
         .await
         .expect("update order to processing");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
         )
         .await
         .expect("update order to shipped");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
         )
         .await
@@ -246,7 +245,7 @@ async fn postgres_allows_refund_with_paid_status() {
     let updated = db
         .orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder {
                 status: Some(OrderStatus::Refunded),
                 payment_status: Some(PaymentStatus::Paid),
@@ -291,7 +290,7 @@ async fn postgres_ship_fails_when_reservation_expired() {
     let result = db
         .orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
         )
         .await;
@@ -345,14 +344,14 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
 
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
         )
         .await
         .expect("update order to confirmed");
     db.orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
         )
         .await
@@ -378,7 +377,7 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
     let result = db
         .orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
         )
         .await;
@@ -389,7 +388,7 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
     }
 
     let refreshed =
-        db.orders().get_async(order.id).await.expect("get order").expect("order exists");
+        db.orders().get_async(order.id.into()).await.expect("get order").expect("order exists");
     assert_eq!(refreshed.status, OrderStatus::Processing);
 
     let updated = db

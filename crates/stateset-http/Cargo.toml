@@ -43,3 +43,4 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 rust_decimal_macros = "1.36"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+futures = "0.3"

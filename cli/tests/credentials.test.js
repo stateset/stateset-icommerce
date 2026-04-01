@@ -26,39 +26,26 @@ afterEach(() => {
 });
 
 describe('credentials fallback', () => {
-  it('falls back to env and warns at most once when the native store is unavailable', () => {
+  it('uses the credential store when available and falls back to env without warning noise', () => {
     process.env[OPENAI_ENV_KEY] = 'env-openai-key';
     const dbPath = createTempDbPath('credentials.db');
     const warnings = [];
     const originalWarn = console.warn;
-    let storeAvailable = true;
 
     console.warn = (...args) => {
       warnings.push(args.map(String).join(' '));
     };
 
     try {
-      try {
-        getCredentialStore({ dbPath });
-      } catch {
-        storeAvailable = false;
-      }
+      const store = getCredentialStore({ dbPath });
+      assert.ok(store);
 
       const first = resolveProviderApiKey('openai');
       const second = resolveProviderApiKey('openai');
 
       assert.equal(first, 'env-openai-key');
       assert.equal(second, 'env-openai-key');
-
-      if (storeAvailable) {
-        assert.equal(warnings.length, 0);
-      } else {
-        assert.equal(warnings.length, 1);
-        assert.match(
-          warnings[0],
-          /Credential store unavailable, falling back to environment variables:/,
-        );
-      }
+      assert.equal(warnings.length, 0);
     } finally {
       console.warn = originalWarn;
     }

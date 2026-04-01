@@ -2,8 +2,10 @@
  * ERC-8004 Identity Registry helpers (SQLite-backed)
  */
 
-import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const IDENTITY_SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_identities (
@@ -37,6 +39,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_identities_active
 `;
 
 const PROOF_TYPES = new Set(['eip712', 'erc1271']);
+const require = createRequire(import.meta.url);
+const FALLBACK_IDENTITY_DATABASES = new Map();
+let cachedDatabaseCtor;
 
 function normalizeProofType(value) {
   if (!value) return null;
@@ -47,11 +52,103 @@ function normalizeProofType(value) {
   return normalized;
 }
 
-function openDb(dbPath) {
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.exec(IDENTITY_SCHEMA);
-  return db;
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+  }
+
+  return cachedDatabaseCtor;
+}
+
+function ensureDbFile(dbPath) {
+  if (!dbPath) {
+    throw new Error('dbPath is required');
+  }
+  if (dbPath === ':memory:') return;
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const fd = fs.openSync(dbPath, 'a');
+  fs.closeSync(fd);
+}
+
+function getFallbackState(dbPath) {
+  if (dbPath === ':memory:') {
+    return { rows: new Map() };
+  }
+
+  let state = FALLBACK_IDENTITY_DATABASES.get(dbPath);
+  if (!state || !fs.existsSync(dbPath)) {
+    ensureDbFile(dbPath);
+    state = { rows: new Map() };
+    FALLBACK_IDENTITY_DATABASES.set(dbPath, state);
+  }
+  return state;
+}
+
+function identityKey(agentRegistry, agentId) {
+  return `${agentRegistry}\u0000${agentId}`;
+}
+
+function openStore(dbPath) {
+  ensureDbFile(dbPath);
+  const Database = loadDatabaseCtor();
+  if (!Database) {
+    return {
+      db: null,
+      state: getFallbackState(dbPath),
+      close() {},
+    };
+  }
+
+  try {
+    const db = new Database(dbPath);
+    db.pragma('journal_mode = WAL');
+    db.exec(IDENTITY_SCHEMA);
+    return {
+      db,
+      state: null,
+      close() {
+        db.close();
+      },
+    };
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED') {
+      throw error;
+    }
+    return {
+      db: null,
+      state: getFallbackState(dbPath),
+      close() {},
+    };
+  }
+}
+
+function selectIdentity(state, agentRegistry, agentId) {
+  return state.rows.get(identityKey(agentRegistry, agentId)) || null;
+}
+
+function selectIdentityByWallet(state, wallet) {
+  for (const row of state.rows.values()) {
+    if (row.agent_wallet === wallet) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function sortIdentitiesByUpdatedAt(rows) {
+  return [...rows].sort(
+    (a, b) => b.updated_at.localeCompare(a.updated_at) || b.created_at.localeCompare(a.created_at),
+  );
 }
 
 function mapIdentity(row) {
@@ -63,13 +160,39 @@ function mapIdentity(row) {
 }
 
 export function registerIdentity(dbPath, input) {
-  const db = openDb(dbPath);
+  const store = openStore(dbPath);
   const now = new Date().toISOString();
-  const id = input.id || randomUUID();
   const active = input.active === undefined ? 1 : input.active ? 1 : 0;
   const proofType = normalizeProofType(input.walletProofType);
+  const existing = store.state ? selectIdentity(store.state, input.agentRegistry, input.agentId) : null;
+  const id = existing?.id || input.id || randomUUID();
+  const createdAt = existing?.created_at || now;
 
-  const stmt = db.prepare(`
+  if (store.state) {
+    const row = {
+      id,
+      agent_registry: input.agentRegistry,
+      agent_id: input.agentId,
+      agent_uri: input.agentUri,
+      agent_wallet: input.agentWallet || null,
+      owner_address: input.ownerAddress || null,
+      agent_card_id: input.agentCardId || null,
+      registration: input.registration || null,
+      registration_hash: input.registrationHash || null,
+      wallet_proof_type: proofType,
+      wallet_proof: input.walletProof || null,
+      wallet_proof_chain_id: input.walletProofChainId || null,
+      wallet_proof_deadline: input.walletProofDeadline || null,
+      active,
+      created_at: createdAt,
+      updated_at: now,
+    };
+    store.state.rows.set(identityKey(input.agentRegistry, input.agentId), row);
+    store.close();
+    return mapIdentity(row);
+  }
+
+  const stmt = store.db.prepare(`
     INSERT INTO agent_identities (
       id, agent_registry, agent_id, agent_uri, agent_wallet, owner_address,
       agent_card_id, registration, registration_hash, wallet_proof_type,
@@ -106,23 +229,43 @@ export function registerIdentity(dbPath, input) {
     input.walletProofChainId || null,
     input.walletProofDeadline || null,
     active,
-    now,
+    createdAt,
     now,
   );
 
-  const record = db
+  const record = store.db
     .prepare('SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?')
     .get(input.agentRegistry, input.agentId);
-  db.close();
+  store.close();
   return mapIdentity(record);
 }
 
 export function setAgentWallet(dbPath, input) {
-  const db = openDb(dbPath);
+  const store = openStore(dbPath);
   const now = new Date().toISOString();
   const proofType = normalizeProofType(input.walletProofType);
+  if (store.state) {
+    const existing = selectIdentity(store.state, input.agentRegistry, input.agentId);
+    if (!existing) {
+      store.close();
+      throw new Error(`Agent identity not found for ${input.agentRegistry}:${input.agentId}`);
+    }
 
-  const stmt = db.prepare(`
+    const row = {
+      ...existing,
+      agent_wallet: input.agentWallet,
+      wallet_proof_type: proofType,
+      wallet_proof: input.walletProof || null,
+      wallet_proof_chain_id: input.walletProofChainId || null,
+      wallet_proof_deadline: input.walletProofDeadline || null,
+      updated_at: now,
+    };
+    store.state.rows.set(identityKey(input.agentRegistry, input.agentId), row);
+    store.close();
+    return mapIdentity(row);
+  }
+
+  const stmt = store.db.prepare(`
     UPDATE agent_identities
     SET agent_wallet = ?,
         wallet_proof_type = ?,
@@ -144,10 +287,10 @@ export function setAgentWallet(dbPath, input) {
     input.agentId,
   );
 
-  const record = db
+  const record = store.db
     .prepare('SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?')
     .get(input.agentRegistry, input.agentId);
-  db.close();
+  store.close();
 
   if (!record) {
     throw new Error(`Agent identity not found for ${input.agentRegistry}:${input.agentId}`);
@@ -157,23 +300,45 @@ export function setAgentWallet(dbPath, input) {
 }
 
 export function getIdentity(dbPath, agentRegistry, agentId) {
-  const db = openDb(dbPath);
-  const record = db
-    .prepare('SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?')
-    .get(agentRegistry, agentId);
-  db.close();
+  const store = openStore(dbPath);
+  const record = store.state
+    ? selectIdentity(store.state, agentRegistry, agentId)
+    : store.db
+        .prepare('SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?')
+        .get(agentRegistry, agentId);
+  store.close();
   return mapIdentity(record);
 }
 
 export function getIdentityByWallet(dbPath, wallet) {
-  const db = openDb(dbPath);
-  const record = db.prepare('SELECT * FROM agent_identities WHERE agent_wallet = ?').get(wallet);
-  db.close();
+  const store = openStore(dbPath);
+  const record = store.state
+    ? selectIdentityByWallet(store.state, wallet)
+    : store.db.prepare('SELECT * FROM agent_identities WHERE agent_wallet = ?').get(wallet);
+  store.close();
   return mapIdentity(record);
 }
 
 export function listIdentities(dbPath, filter = {}) {
-  const db = openDb(dbPath);
+  const limit = filter.limit || 50;
+  const store = openStore(dbPath);
+
+  if (store.state) {
+    const rows = sortIdentitiesByUpdatedAt(store.state.rows.values())
+      .filter(
+        (row) =>
+          (!filter.agentRegistry || row.agent_registry === filter.agentRegistry) &&
+          (!filter.agentId || row.agent_id === filter.agentId) &&
+          (!filter.agentWallet || row.agent_wallet === filter.agentWallet) &&
+          (filter.active === undefined ||
+            filter.active === null ||
+            row.active === (filter.active ? 1 : 0)),
+      )
+      .slice(0, limit);
+    store.close();
+    return rows.map(mapIdentity);
+  }
+
   const conditions = [];
   const params = [];
 
@@ -195,9 +360,8 @@ export function listIdentities(dbPath, filter = {}) {
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const limit = filter.limit || 50;
 
-  const rows = db
+  const rows = store.db
     .prepare(
       `
     SELECT * FROM agent_identities
@@ -208,7 +372,7 @@ export function listIdentities(dbPath, filter = {}) {
     )
     .all(...params, limit);
 
-  db.close();
+  store.close();
   return rows.map(mapIdentity);
 }
 

@@ -63,35 +63,35 @@ impl Default for CircuitBreakerConfig {
 
 impl CircuitBreakerConfig {
     /// Create a config with custom per-transaction limit.
-    #[must_use] 
+    #[must_use]
     pub const fn with_max_spend_per_tx(mut self, limit: Decimal) -> Self {
         self.max_spend_per_tx = limit;
         self
     }
 
     /// Create a config with custom daily limit.
-    #[must_use] 
+    #[must_use]
     pub const fn with_daily_limit(mut self, limit: Decimal) -> Self {
         self.daily_spend_limit = limit;
         self
     }
 
     /// Create a config with custom monthly limit.
-    #[must_use] 
+    #[must_use]
     pub const fn with_monthly_limit(mut self, limit: Decimal) -> Self {
         self.monthly_spend_limit = limit;
         self
     }
 
     /// Create a config with custom failure rate.
-    #[must_use] 
+    #[must_use]
     pub const fn with_max_failure_rate(mut self, rate: Decimal) -> Self {
         self.max_failure_rate = rate;
         self
     }
 
     /// Enable the global kill switch.
-    #[must_use] 
+    #[must_use]
     pub const fn with_kill_switch(mut self) -> Self {
         self.global_kill_switch = true;
         self

@@ -183,11 +183,7 @@ impl ValidationBuilder {
 
     /// Validate a decimal value is within range
     pub fn range(self, field: &str, value: Decimal, min: Decimal, max: Decimal) -> Self {
-        self.check(
-            field,
-            value >= min && value <= max,
-            &format!("must be between {min} and {max}"),
-        )
+        self.check(field, value >= min && value <= max, &format!("must be between {min} and {max}"))
     }
 
     /// Validate a positive integer value (> 0)

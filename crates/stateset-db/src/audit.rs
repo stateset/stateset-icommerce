@@ -53,14 +53,12 @@ mod tests {
 
         record_audit(&conn, "create", "order", "ord-123", Some("admin"), Some("{\"total\":99.99}"));
 
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0))
-            .unwrap();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 1);
 
-        let action: String = conn
-            .query_row("SELECT action FROM audit_log WHERE id = 1", [], |r| r.get(0))
-            .unwrap();
+        let action: String =
+            conn.query_row("SELECT action FROM audit_log WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(action, "create");
     }
 

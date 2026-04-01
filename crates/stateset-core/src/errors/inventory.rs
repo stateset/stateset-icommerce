@@ -71,7 +71,7 @@ impl InventoryError {
     /// Convenience constructor for `ReservationNotFound`.
     #[inline]
     #[track_caller]
-    #[must_use] 
+    #[must_use]
     pub const fn reservation_not_found(id: Uuid) -> Self {
         Self::ReservationNotFound(id)
     }
@@ -79,7 +79,7 @@ impl InventoryError {
     /// Convenience constructor for `ReservationExpired`.
     #[inline]
     #[track_caller]
-    #[must_use] 
+    #[must_use]
     pub const fn reservation_expired(id: Uuid) -> Self {
         Self::ReservationExpired(id)
     }

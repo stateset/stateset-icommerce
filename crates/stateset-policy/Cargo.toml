@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 regex = "1"
+smallvec = "1"
 tracing = "0.1"
 rust_decimal = { workspace = true }
 

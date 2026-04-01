@@ -862,7 +862,7 @@ export const agentRuntimeTools = [
       }));
       if (typeof rt.createSplitDeal === 'function') {
         const result = await rt.createSplitDeal({ ...params, recipients: mappedRecipients });
-        return { success: true, ...result };
+        return { success: true, ...result, split: result.splitPayment || result.split };
       }
       const defaultPayment = rt.getDefaultPaymentConfig?.() || {};
       // Fallback: use splits service directly

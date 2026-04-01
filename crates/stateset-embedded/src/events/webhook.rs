@@ -83,7 +83,7 @@ impl Webhook {
     }
 
     /// Filter to specific event types
-    #[must_use] 
+    #[must_use]
     pub fn with_events(mut self, events: Vec<String>) -> Self {
         self.event_types = events;
         self
@@ -96,7 +96,7 @@ impl Webhook {
     }
 
     /// Check if this webhook should receive an event
-    #[must_use] 
+    #[must_use]
     pub fn should_receive(&self, event: &CommerceEvent) -> bool {
         if !self.active {
             return false;
@@ -249,13 +249,13 @@ impl std::fmt::Debug for WebhookManager {
 
 impl WebhookManager {
     /// Create a new webhook manager
-    #[must_use] 
+    #[must_use]
     pub fn new(max_retries: u32, timeout_secs: u64) -> Self {
         Self::with_config(WebhookConfig { max_retries, timeout_secs, ..Default::default() })
     }
 
     /// Create a new webhook manager with full configuration.
-    #[must_use] 
+    #[must_use]
     pub fn with_config(config: WebhookConfig) -> Self {
         let mut config = WebhookConfig {
             max_in_flight: config.max_in_flight.max(1),
@@ -451,10 +451,7 @@ impl WebhookManager {
         history
             .values()
             .flat_map(|entries| {
-                entries
-                    .iter()
-                    .filter(|d| d.status == DeliveryStatus::Failed)
-                    .cloned()
+                entries.iter().filter(|d| d.status == DeliveryStatus::Failed).cloned()
             })
             .collect()
     }
@@ -823,7 +820,9 @@ where
         return false;
     }
 
-    let host = if let Some(host) = parsed.host_str() { host } else {
+    let host = if let Some(host) = parsed.host_str() {
+        host
+    } else {
         tracing::warn!(webhook_url = %url, "Webhook URL host missing");
         return false;
     };

@@ -8,7 +8,7 @@
 //! unintended schema changes.
 
 use insta::assert_debug_snapshot;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use stateset_db::migrations::run_migrations;
 
 fn get_all_tables(conn: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
@@ -33,6 +33,34 @@ fn get_table_indexes(conn: &Connection, table_name: &str) -> Result<Vec<String>,
 
     let index_iter = stmt.query_map([table_name], |row| row.get::<_, String>(0))?;
     index_iter.collect()
+}
+
+fn fts5_available(conn: &Connection) -> bool {
+    conn.query_row("SELECT sqlite_compileoption_used('ENABLE_FTS5')", [], |row| {
+        row.get::<_, i32>(0)
+    })
+    .optional()
+    .ok()
+    .flatten()
+    .unwrap_or(0)
+        == 1
+}
+
+fn expected_applied_migration_names(conn: &Connection) -> Vec<String> {
+    let mut names = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
+        .expect("Failed to list migrations directory")
+        .map(|entry| entry.expect("Failed to read migrations directory entry"))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.ends_with(".sql"))
+        .map(|name| {
+            name.strip_suffix(".sql").expect("Migration file should end with .sql").to_string()
+        })
+        .collect::<Vec<_>>();
+
+    names.sort();
+    names.retain(|name| name != "027_vector_search" || cfg!(feature = "vector"));
+    names.retain(|name| name != "028_bm25_search" || fts5_available(conn));
+    names
 }
 
 #[test]
@@ -199,8 +227,9 @@ fn snapshot_migration_versions() {
 
     let migrations =
         stmt.query_map([], |row| row.get::<_, String>(0)).expect("Failed to query migrations");
+    let applied_migrations = migrations.collect::<Result<Vec<_>, _>>().expect("Collect migrations");
 
-    assert_debug_snapshot!(migrations.collect::<Result<Vec<_>, _>>());
+    assert_eq!(applied_migrations, expected_applied_migration_names(&conn));
 }
 
 #[test]

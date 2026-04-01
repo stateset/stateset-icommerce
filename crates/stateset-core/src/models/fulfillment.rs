@@ -472,7 +472,7 @@ pub struct ShipTaskFilter {
 ///
 /// Format: `WV-YYYYMMDDHHmmSS-XXXXXXXX` (8 hex chars = 4 billion possible
 /// values per second, eliminating test-parallelism collisions).
-#[must_use] 
+#[must_use]
 pub fn generate_wave_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
     let random = &uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_uppercase();
@@ -482,7 +482,7 @@ pub fn generate_wave_number() -> String {
 /// Generate a unique carton number.
 ///
 /// Format: `CTN-HHmmSS-XXXXXXXX`
-#[must_use] 
+#[must_use]
 pub fn generate_carton_number() -> String {
     let timestamp = chrono::Utc::now().format("%H%M%S").to_string();
     let random = &uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_uppercase();

@@ -25,7 +25,7 @@ pub struct SqliteWorkOrderRepository {
 }
 
 impl SqliteWorkOrderRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -533,7 +533,8 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             let mut stmt =
                 conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))
@@ -909,7 +910,8 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             params.push(Box::new(Utc::now().to_rfc3339()));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 = conn
             .query_row(&sql, param_refs.as_slice(), |row| row.get(0))

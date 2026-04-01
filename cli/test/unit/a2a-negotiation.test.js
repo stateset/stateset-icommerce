@@ -48,7 +48,10 @@ function createMockA2A() {
     listQuotes: async () => [...quotes.values()],
   };
 
-  const commerce = { a2a: () => a2aStore };
+  const commerce = {
+    a2a: () => a2aStore,
+    x402: () => ({ getAgent: async () => null, getAgentByWallet: async () => null }),
+  };
   return { commerce, a2aStore, quotes };
 }
 

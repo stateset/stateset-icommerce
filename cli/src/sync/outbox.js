@@ -17,11 +17,27 @@ import {
   computePayloadPlainHash,
   computeEventSigningHash,
   signEventHash,
+  signEventHashHybrid,
+  signEventHashStrict,
   encryptPayload,
+  encryptPayloadHybrid,
+  encryptPayloadStrict,
   bufferToHex,
+  hexToBuffer,
   ZERO_HASH,
 } from './crypto.js';
 import { getKeyManager } from './keys.js';
+import {
+  SECURITY_PROFILE_HYBRID,
+  SECURITY_PROFILE_LEGACY,
+  SECURITY_PROFILE_PQC_STRICT,
+  SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+  SIGNATURE_SCHEME_ML_DSA_65,
+  KEY_WRAP_SCHEME_ML_KEM_768,
+  resolveSecurityProfile,
+  profileMetricLabel,
+} from './pqc.js';
+import { getRotationPolicyManager } from './rotation-policy.js';
 
 /**
  * @typedef {Object} OutboxEvent
@@ -41,6 +57,8 @@ import { getKeyManager } from './keys.js';
  * @property {string} payloadCipherHash - SHA-256 of ciphertext or zero hash (hex)
  * @property {number} agentKeyId - Key ID used to sign
  * @property {string} agentSignature - Ed25519 signature (hex)
+ * @property {number} [agentSignatureScheme] - PQ or hybrid signature scheme
+ * @property {Object|null} [agentSignatureBundle] - Structured signature bundle
  * @property {number|null} baseVersion - Optimistic concurrency version
  * @property {string} sourceAgent - Agent UUID that created the event
  * @property {Date} createdAt - When event was created
@@ -97,6 +115,8 @@ CREATE TABLE IF NOT EXISTS _ves_outbox (
     -- VES v1.0 signature fields
     agent_key_id INTEGER NOT NULL,
     agent_signature TEXT NOT NULL,
+    agent_signature_scheme INTEGER NOT NULL DEFAULT 0,
+    agent_signature_bundle TEXT,
 
     -- Metadata
     base_version INTEGER,
@@ -170,6 +190,8 @@ CREATE TABLE IF NOT EXISTS _ves_pulled_events (
     -- VES v1.0 signature fields
     agent_key_id INTEGER NOT NULL,
     agent_signature TEXT NOT NULL,
+    agent_signature_scheme INTEGER NOT NULL DEFAULT 0,
+    agent_signature_bundle TEXT,
 
     -- Metadata
     base_version INTEGER,
@@ -202,8 +224,65 @@ export class Outbox {
   constructor(db, options = {}) {
     this.db = db;
     this.configDir = options.configDir || '.stateset';
-    this.keyManager = options.keyManager || getKeyManager(this.configDir);
+    this.securityProfile = resolveSecurityProfile(
+      options.securityProfile ?? SECURITY_PROFILE_LEGACY,
+    );
+    this.keyManager =
+      options.keyManager ||
+      getKeyManager(this.configDir, { securityProfile: this.securityProfile });
     this._initialized = false;
+    /** @type {{ legacy: number, hybrid: number, 'pqc-strict': number }} */
+    this._signatureProfileCounts = { legacy: 0, hybrid: 0, 'pqc-strict': 0 };
+    /** @type {{ legacy: number, hybrid: number, 'pqc-strict': number }} */
+    this._encryptionProfileCounts = { legacy: 0, hybrid: 0, 'pqc-strict': 0 };
+  }
+
+  /**
+   * Return a snapshot of PQC profile usage counters.
+   * @returns {{ signatures: { legacy: number, hybrid: number, 'pqc-strict': number }, encryptions: { legacy: number, hybrid: number, 'pqc-strict': number } }}
+   */
+  get pqcMetrics() {
+    return {
+      signatures: { ...this._signatureProfileCounts },
+      encryptions: { ...this._encryptionProfileCounts },
+    };
+  }
+
+  /**
+   * Record key usage and check if rotation is due (non-blocking).
+   * @private
+   * @param {string} agentId
+   * @param {'signing'|'encryption'} keyType
+   * @param {number} keyId
+   * @param {Object} keyData
+   */
+  async _recordKeyUsageAndCheckRotation(agentId, keyType, keyId, keyData) {
+    try {
+      const pm = getRotationPolicyManager(this.configDir);
+      await pm.recordUsage(agentId, keyType, keyId);
+      const { shouldRotate, reason } = await pm.shouldRotate(agentId, keyId, keyType, keyData);
+      if (shouldRotate) {
+        this._lastRotationWarning = { agentId, keyType, keyId, reason, at: new Date().toISOString() };
+      }
+    } catch {
+      // Rotation tracking is best-effort; don't block event signing
+    }
+  }
+
+  /**
+   * Return the last rotation warning, if any.
+   * @returns {{ agentId: string, keyType: string, keyId: number, reason: string, at: string } | null}
+   */
+  get rotationWarning() {
+    return this._lastRotationWarning ?? null;
+  }
+
+  _ensureColumn(tableName, columnName, columnDefinition) {
+    const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all();
+    if (columns.some((column) => column.name === columnName)) {
+      return;
+    }
+    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnDefinition}`);
   }
 
   /**
@@ -220,6 +299,27 @@ export class Outbox {
     for (const stmt of statements) {
       this.db.exec(stmt);
     }
+
+    this._ensureColumn(
+      '_ves_outbox',
+      'agent_signature_scheme',
+      'agent_signature_scheme INTEGER NOT NULL DEFAULT 0',
+    );
+    this._ensureColumn(
+      '_ves_outbox',
+      'agent_signature_bundle',
+      'agent_signature_bundle TEXT',
+    );
+    this._ensureColumn(
+      '_ves_pulled_events',
+      'agent_signature_scheme',
+      'agent_signature_scheme INTEGER NOT NULL DEFAULT 0',
+    );
+    this._ensureColumn(
+      '_ves_pulled_events',
+      'agent_signature_bundle',
+      'agent_signature_bundle TEXT',
+    );
 
     this._initialized = true;
   }
@@ -252,6 +352,190 @@ export class Outbox {
   }
 
   /**
+   * Normalize a hybrid recipient key bundle from CLI/runtime input.
+   * @private
+   * @param {Object | null | undefined} bundle
+   * @returns {{x25519PublicKey: Buffer, mlKem768PublicKey: Buffer} | null}
+   */
+  _normalizeRecipientPublicKeyBundle(bundle) {
+    if (!bundle || typeof bundle !== 'object') {
+      return null;
+    }
+
+    const x25519PublicKey = bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null;
+    const mlKem768PublicKey = bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null;
+    if (!x25519PublicKey || !mlKem768PublicKey) {
+      return null;
+    }
+
+    const toBinary = (value) => {
+      if (Buffer.isBuffer(value)) {
+        return value;
+      }
+      if (value instanceof Uint8Array) {
+        return Buffer.from(value);
+      }
+      if (typeof value === 'string' && value.startsWith('0x')) {
+        return hexToBuffer(value);
+      }
+      return Buffer.from(value);
+    };
+
+    return {
+      x25519PublicKey: toBinary(x25519PublicKey),
+      mlKem768PublicKey: toBinary(mlKem768PublicKey),
+    };
+  }
+
+  /**
+   * Encrypt a payload for the active security profile.
+   * @private
+   * @param {Object} payload
+   * @param {Object} aadParams
+   * @param {Object} signingKey
+   * @param {Object} options
+   * @returns {{
+   *   payloadKind: number,
+   *   payloadEncrypted: Object | null,
+   *   payloadPlainHash: Buffer,
+   *   payloadCipherHash: Buffer,
+   * }}
+   */
+  _encryptPayloadForProfile(payload, aadParams, signingKey, options) {
+    let payloadKind = 0;
+    let payloadEncrypted = null;
+    let payloadPlainHash = aadParams.payloadPlainHash;
+    let payloadCipherHash = ZERO_HASH;
+
+    if (!options.encrypt) {
+      return { payloadKind, payloadEncrypted, payloadPlainHash, payloadCipherHash };
+    }
+
+    const encLabel = profileMetricLabel(this.securityProfile);
+    this._encryptionProfileCounts[encLabel] = (this._encryptionProfileCounts[encLabel] ?? 0) + 1;
+
+    const recipientKid = Number(options.recipientKeyId ?? signingKey.keyId);
+
+    if (this.securityProfile === SECURITY_PROFILE_HYBRID) {
+      const recipientBundle =
+        this._normalizeRecipientPublicKeyBundle(options.recipientPublicKeyBundle) ||
+        this._normalizeRecipientPublicKeyBundle(options.recipientPublicKey);
+      if (!recipientBundle) {
+        throw new Error(
+          'Hybrid payload encryption requires recipientPublicKeyBundle with x25519PublicKey and mlKem768PublicKey',
+        );
+      }
+
+      const encrypted = encryptPayloadHybrid(payload, aadParams, [
+        {
+          kid: recipientKid,
+          x25519PublicKey: recipientBundle.x25519PublicKey,
+          mlKem768PublicKey: recipientBundle.mlKem768PublicKey,
+        },
+      ]);
+
+      payloadKind = 1;
+      payloadEncrypted = encrypted.payloadEncrypted;
+      payloadPlainHash = encrypted.payloadPlainHash;
+      payloadCipherHash = encrypted.payloadCipherHash;
+      return { payloadKind, payloadEncrypted, payloadPlainHash, payloadCipherHash };
+    }
+
+    if (this.securityProfile === SECURITY_PROFILE_PQC_STRICT) {
+      const recipientBundle =
+        this._normalizeRecipientPublicKeyBundle(options.recipientPublicKeyBundle) ||
+        this._normalizeRecipientPublicKeyBundle(options.recipientPublicKey);
+      if (!recipientBundle?.mlKem768PublicKey) {
+        throw new Error(
+          'pqc-strict payload encryption requires recipientPublicKeyBundle with mlKem768PublicKey',
+        );
+      }
+
+      const encrypted = encryptPayloadStrict(payload, aadParams, [
+        {
+          kid: recipientKid,
+          mlKem768PublicKey: recipientBundle.mlKem768PublicKey,
+        },
+      ]);
+
+      payloadKind = 1;
+      payloadEncrypted = encrypted.payloadEncrypted;
+      payloadPlainHash = encrypted.payloadPlainHash;
+      payloadCipherHash = encrypted.payloadCipherHash;
+      return { payloadKind, payloadEncrypted, payloadPlainHash, payloadCipherHash };
+    }
+
+    if (!options.recipientPublicKey) {
+      throw new Error('Payload encryption requires recipientPublicKey');
+    }
+
+    const recipientPublicKey =
+      typeof options.recipientPublicKey === 'string' &&
+      options.recipientPublicKey.startsWith('0x')
+        ? hexToBuffer(options.recipientPublicKey)
+        : options.recipientPublicKey;
+
+    const encrypted = encryptPayload(payload, aadParams, [
+      { kid: recipientKid, publicKey: recipientPublicKey },
+    ]);
+
+    payloadKind = 1;
+    payloadEncrypted = encrypted.payloadEncrypted;
+    payloadPlainHash = encrypted.payloadPlainHash;
+    payloadCipherHash = encrypted.payloadCipherHash;
+    return { payloadKind, payloadEncrypted, payloadPlainHash, payloadCipherHash };
+  }
+
+  /**
+   * Sign an event hash for the active security profile.
+   * @private
+   * @param {Buffer} eventSigningHash
+   * @param {Object} signingKey
+   * @returns {{agentSignature: Buffer, agentSignatureScheme: number, agentSignatureBundle: Object | null}}
+   */
+  _signEventForProfile(eventSigningHash, signingKey) {
+    const label = profileMetricLabel(this.securityProfile);
+    this._signatureProfileCounts[label] = (this._signatureProfileCounts[label] ?? 0) + 1;
+
+    if (this.securityProfile === SECURITY_PROFILE_HYBRID) {
+      if (!signingKey.privateKeyBundle) {
+        throw new Error('Hybrid signing requires a privateKeyBundle');
+      }
+
+      const bundle = signEventHashHybrid(eventSigningHash, signingKey.privateKeyBundle);
+      return {
+        agentSignature: bundle.ed25519Signature,
+        agentSignatureScheme: SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+        agentSignatureBundle: {
+          ed25519Signature: bufferToHex(bundle.ed25519Signature),
+          mlDsa65Signature: bufferToHex(bundle.mlDsa65Signature),
+        },
+      };
+    }
+
+    if (this.securityProfile === SECURITY_PROFILE_PQC_STRICT) {
+      if (!signingKey.privateKeyBundle?.mlDsa65Seed) {
+        throw new Error('pqc-strict signing requires a privateKeyBundle with mlDsa65Seed');
+      }
+
+      const mlDsa65Signature = signEventHashStrict(eventSigningHash, signingKey.privateKeyBundle);
+      return {
+        agentSignature: mlDsa65Signature,
+        agentSignatureScheme: SIGNATURE_SCHEME_ML_DSA_65,
+        agentSignatureBundle: {
+          mlDsa65Signature: bufferToHex(mlDsa65Signature),
+        },
+      };
+    }
+
+    return {
+      agentSignature: signEventHash(eventSigningHash, signingKey.privateKey),
+      agentSignatureScheme: 0,
+      agentSignatureBundle: null,
+    };
+  }
+
+  /**
    * Append an event to the outbox with VES v1.0 signing
    * @param {Object} event - Event to append
    * @param {string} event.tenantId
@@ -267,6 +551,8 @@ export class Outbox {
    * @param {Object} [options] - VES v1.0 options
    * @param {boolean} [options.encrypt=false] - Whether to encrypt payload
    * @param {Buffer} [options.recipientPublicKey] - X25519 public key for encryption
+   * @param {Object} [options.recipientPublicKeyBundle] - Hybrid recipient public key bundle
+   * @param {number} [options.recipientKeyId] - Recipient key identifier
    * @param {number} [options.vesVersion=1] - VES protocol version
    * @returns {Promise<number>} Local sequence number
    */
@@ -286,23 +572,18 @@ export class Outbox {
     }
 
     // Compute plaintext hash
-    const payloadPlainHash = computePayloadPlainHash(event.payload);
+    const initialPayloadPlainHash = computePayloadPlainHash(event.payload);
     const payloadJson = JSON.stringify(event.payload);
 
     // Handle encryption if requested
-    let payloadKind = 0;
-    let payloadEncrypted = null;
-    let payloadCipherHash = ZERO_HASH;
-
-    if (options.encrypt && options.recipientPublicKey) {
-      // Get encryption key for ECDH
-      const encryptionKey = await this.keyManager.getCurrentEncryptionKey(event.sourceAgent);
-      if (!encryptionKey) {
+    if (options.encrypt) {
+      if (!(await this.keyManager.getCurrentEncryptionKey(event.sourceAgent))) {
         throw new Error(`No encryption key found for agent ${event.sourceAgent}`);
       }
+    }
 
-      // Encrypt payload per VES-ENC-1
-      const encrypted = encryptPayload(
+    const { payloadKind, payloadEncrypted, payloadPlainHash, payloadCipherHash } =
+      this._encryptPayloadForProfile(
         event.payload,
         {
           vesVersion,
@@ -315,15 +596,11 @@ export class Outbox {
           sourceAgentId: event.sourceAgent,
           agentKeyId: signingKey.keyId,
           createdAt,
-          payloadPlainHash,
+          payloadPlainHash: initialPayloadPlainHash,
         },
-        [{ kid: signingKey.keyId, publicKey: options.recipientPublicKey }],
+        signingKey,
+        options,
       );
-
-      payloadKind = 1;
-      payloadEncrypted = encrypted.payloadEncrypted;
-      payloadCipherHash = encrypted.payloadCipherHash;
-    }
 
     // Compute event signing hash per VES v1.0
     const eventSigningHash = computeEventSigningHash({
@@ -361,8 +638,13 @@ export class Outbox {
       });
     }
 
-    // Sign the event
-    const agentSignature = signEventHash(eventSigningHash, signingKey.privateKey);
+    const { agentSignature, agentSignatureScheme, agentSignatureBundle } =
+      this._signEventForProfile(eventSigningHash, signingKey);
+
+    // Record key usage for rotation tracking (non-blocking)
+    this._recordKeyUsageAndCheckRotation(
+      event.sourceAgent, 'signing', signingKey.keyId, signingKey,
+    );
 
     const stmt = this.db.prepare(`
       INSERT INTO _ves_outbox (
@@ -370,9 +652,9 @@ export class Outbox {
         entity_type, entity_id, event_type,
         ves_version, payload, payload_kind, payload_encrypted,
         payload_plain_hash, payload_cipher_hash,
-        agent_key_id, agent_signature,
+        agent_key_id, agent_signature, agent_signature_scheme, agent_signature_bundle,
         base_version, source_agent, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -391,6 +673,8 @@ export class Outbox {
       bufferToHex(payloadCipherHash),
       signingKey.keyId,
       bufferToHex(agentSignature),
+      agentSignatureScheme,
+      agentSignatureBundle ? JSON.stringify(agentSignatureBundle) : null,
       event.baseVersion || null,
       event.sourceAgent,
       createdAt,
@@ -405,6 +689,8 @@ export class Outbox {
    * @param {Object} [options] - VES v1.0 options (applied to all events)
    * @param {boolean} [options.encrypt=false] - Whether to encrypt payloads
    * @param {Buffer} [options.recipientPublicKey] - X25519 public key for encryption
+   * @param {Object} [options.recipientPublicKeyBundle] - Hybrid recipient public key bundle
+   * @param {number} [options.recipientKeyId] - Recipient key identifier
    * @param {number} [options.vesVersion=1] - VES protocol version
    * @returns {Promise<Array<number>>} Local sequence numbers
    */
@@ -417,7 +703,6 @@ export class Outbox {
     // Pre-fetch signing keys for all unique agents
     const agentIds = [...new Set(events.map((e) => e.sourceAgent))];
     const signingKeys = new Map();
-    const encryptionKeys = new Map();
 
     for (const agentId of agentIds) {
       const signingKey = await this.keyManager.getCurrentSigningKey(agentId);
@@ -426,12 +711,10 @@ export class Outbox {
       }
       signingKeys.set(agentId, signingKey);
 
-      if (options.encrypt && options.recipientPublicKey) {
-        const encryptionKey = await this.keyManager.getCurrentEncryptionKey(agentId);
-        if (!encryptionKey) {
+      if (options.encrypt) {
+        if (!(await this.keyManager.getCurrentEncryptionKey(agentId))) {
           throw new Error(`No encryption key found for agent ${agentId}`);
         }
-        encryptionKeys.set(agentId, encryptionKey);
       }
     }
 
@@ -441,9 +724,9 @@ export class Outbox {
         entity_type, entity_id, event_type,
         ves_version, payload, payload_kind, payload_encrypted,
         payload_plain_hash, payload_cipher_hash,
-        agent_key_id, agent_signature,
+        agent_key_id, agent_signature, agent_signature_scheme, agent_signature_bundle,
         base_version, source_agent, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const results = [];
@@ -454,16 +737,11 @@ export class Outbox {
         const signingKey = signingKeys.get(event.sourceAgent);
 
         // Compute plaintext hash
-        const payloadPlainHash = computePayloadPlainHash(event.payload);
+        const initialPayloadPlainHash = computePayloadPlainHash(event.payload);
         const payloadJson = JSON.stringify(event.payload);
 
-        // Handle encryption
-        let payloadKind = 0;
-        let payloadEncrypted = null;
-        let payloadCipherHash = ZERO_HASH;
-
-        if (options.encrypt && options.recipientPublicKey) {
-          const encrypted = encryptPayload(
+        const { payloadKind, payloadEncrypted, payloadPlainHash, payloadCipherHash } =
+          this._encryptPayloadForProfile(
             event.payload,
             {
               vesVersion,
@@ -476,15 +754,11 @@ export class Outbox {
               sourceAgentId: event.sourceAgent,
               agentKeyId: signingKey.keyId,
               createdAt,
-              payloadPlainHash,
+              payloadPlainHash: initialPayloadPlainHash,
             },
-            [{ kid: signingKey.keyId, publicKey: options.recipientPublicKey }],
+            signingKey,
+            options,
           );
-
-          payloadKind = 1;
-          payloadEncrypted = encrypted.payloadEncrypted;
-          payloadCipherHash = encrypted.payloadCipherHash;
-        }
 
         // Compute event signing hash
         const eventSigningHash = computeEventSigningHash({
@@ -503,8 +777,8 @@ export class Outbox {
           payloadCipherHash,
         });
 
-        // Sign the event
-        const agentSignature = signEventHash(eventSigningHash, signingKey.privateKey);
+        const { agentSignature, agentSignatureScheme, agentSignatureBundle } =
+          this._signEventForProfile(eventSigningHash, signingKey);
 
         const result = stmt.run(
           eventId,
@@ -522,6 +796,8 @@ export class Outbox {
           bufferToHex(payloadCipherHash),
           signingKey.keyId,
           bufferToHex(agentSignature),
+          agentSignatureScheme,
+          agentSignatureBundle ? JSON.stringify(agentSignatureBundle) : null,
           event.baseVersion || null,
           event.sourceAgent,
           createdAt,
@@ -567,7 +843,7 @@ export class Outbox {
     `);
 
     const row = stmt.get(eventId);
-    return row ? this._rowToEvent(row) : null;
+    return row ? this._rowToEvent(row, 'outbox') : null;
   }
 
   /**
@@ -586,7 +862,108 @@ export class Outbox {
     `);
 
     const rows = stmt.all(entityType, entityId);
-    return rows.map(this._rowToEvent);
+    return rows.map((row) => this._rowToEvent(row, 'outbox'));
+  }
+
+  /**
+   * Get pulled events from remote storage.
+   * @param {number} [limit=1000] - Maximum events to return
+   * @returns {Array<OutboxEvent>}
+   */
+  getPulledEvents(limit = 1000) {
+    this.initialize();
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM _ves_pulled_events
+      ORDER BY sequence_number DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(limit);
+    return rows.map((row) => this._rowToEvent(row, 'pulled'));
+  }
+
+  /**
+   * Get pulled events for a specific entity from remote storage.
+   * @param {string} entityType
+   * @param {string} entityId
+   * @param {number} [limit=1000]
+   * @returns {Array<OutboxEvent>}
+   */
+  getPulledEventsByEntity(entityType, entityId, limit = 1000) {
+    this.initialize();
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM _ves_pulled_events
+      WHERE entity_type = ? AND entity_id = ?
+      ORDER BY sequence_number ASC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(entityType, entityId, limit);
+    return rows.map((row) => this._rowToEvent(row, 'pulled'));
+  }
+
+  /**
+   * Get a pulled event by event ID.
+   * @param {string} eventId
+   * @returns {OutboxEvent|null}
+   */
+  getPulledEventByEventId(eventId) {
+    this.initialize();
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM _ves_pulled_events WHERE event_id = ?
+    `);
+
+    const row = stmt.get(eventId);
+    return row ? this._rowToEvent(row, 'pulled') : null;
+  }
+
+  /**
+   * Get a pulled event by sequence number.
+   * @param {number} sequenceNumber
+   * @returns {OutboxEvent|null}
+   */
+  getPulledEventBySequence(sequenceNumber) {
+    this.initialize();
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM _ves_pulled_events WHERE sequence_number = ?
+    `);
+
+    const row = stmt.get(sequenceNumber);
+    return row ? this._rowToEvent(row, 'pulled') : null;
+  }
+
+  /**
+   * Find a stored sync event in the outbox or pulled-event store.
+   * @param {Object} params
+   * @param {string} [params.eventId]
+   * @param {number} [params.sequenceNumber]
+   * @param {'auto'|'outbox'|'pulled'} [params.source='auto']
+   * @returns {OutboxEvent|null}
+   */
+  findStoredEvent({ eventId, sequenceNumber, source = 'auto' }) {
+    this.initialize();
+
+    if (sequenceNumber !== undefined && sequenceNumber !== null) {
+      return this.getPulledEventBySequence(sequenceNumber);
+    }
+
+    if (!eventId) {
+      return null;
+    }
+
+    if (source === 'outbox') {
+      return this.getByEventId(eventId);
+    }
+
+    if (source === 'pulled') {
+      return this.getPulledEventByEventId(eventId);
+    }
+
+    return this.getByEventId(eventId) || this.getPulledEventByEventId(eventId);
   }
 
   /**
@@ -834,9 +1211,9 @@ export class Outbox {
         entity_type, entity_id, event_type,
         ves_version, payload, payload_kind, payload_encrypted,
         payload_plain_hash, payload_cipher_hash,
-        agent_key_id, agent_signature,
+        agent_key_id, agent_signature, agent_signature_scheme, agent_signature_bundle,
         base_version, created_at, sequenced_at, source_agent
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -856,6 +1233,8 @@ export class Outbox {
       event.payloadCipherHash,
       event.agentKeyId,
       event.agentSignature,
+      event.agentSignatureScheme || 0,
+      event.agentSignatureBundle ? JSON.stringify(event.agentSignatureBundle) : null,
       event.baseVersion || null,
       event.createdAt,
       event.sequencedAt,
@@ -877,9 +1256,9 @@ export class Outbox {
         entity_type, entity_id, event_type,
         ves_version, payload, payload_kind, payload_encrypted,
         payload_plain_hash, payload_cipher_hash,
-        agent_key_id, agent_signature,
+        agent_key_id, agent_signature, agent_signature_scheme, agent_signature_bundle,
         base_version, created_at, sequenced_at, source_agent
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const transaction = this.db.transaction(() => {
@@ -901,6 +1280,8 @@ export class Outbox {
           event.payloadCipherHash,
           event.agentKeyId,
           event.agentSignature,
+          event.agentSignatureScheme || 0,
+          event.agentSignatureBundle ? JSON.stringify(event.agentSignatureBundle) : null,
           event.baseVersion || null,
           event.createdAt,
           event.sequencedAt,
@@ -960,9 +1341,11 @@ export class Outbox {
    * Convert database row to OutboxEvent
    * @private
    */
-  _rowToEvent(row) {
+  _rowToEvent(row, source = 'outbox') {
     return {
+      source,
       localSeq: row.local_seq,
+      sequenceNumber: row.sequence_number ?? null,
       eventId: row.event_id,
       commandId: row.command_id,
       tenantId: row.tenant_id,
@@ -979,17 +1362,22 @@ export class Outbox {
       payloadCipherHash: row.payload_cipher_hash,
       agentKeyId: row.agent_key_id,
       agentSignature: row.agent_signature,
+      agentSignatureScheme: row.agent_signature_scheme ?? 0,
+      agentSignatureBundle: row.agent_signature_bundle
+        ? JSON.parse(row.agent_signature_bundle)
+        : null,
       // Metadata
       baseVersion: row.base_version,
       sourceAgent: row.source_agent,
-      createdAt: new Date(row.created_at),
+      createdAt: row.created_at ? new Date(row.created_at) : null,
+      sequencedAt: row.sequenced_at ? new Date(row.sequenced_at) : null,
       // Sync tracking
-      syncStatus: row.sync_status,
+      syncStatus: row.sync_status ?? null,
       remoteSequence: row.remote_sequence,
       syncedAt: row.synced_at ? new Date(row.synced_at) : null,
-      rejectionReason: row.rejection_reason,
-      retryCount: row.retry_count,
-      lastError: row.last_error,
+      rejectionReason: row.rejection_reason ?? null,
+      retryCount: row.retry_count ?? 0,
+      lastError: row.last_error ?? null,
     };
   }
 }
@@ -1000,6 +1388,7 @@ export class Outbox {
  * @param {Object} [options] - Configuration options
  * @param {string} [options.configDir='.stateset'] - Config directory for keys
  * @param {import('./keys.js').AgentKeyManager} [options.keyManager] - Key manager instance
+ * @param {'legacy' | 'hybrid' | 'pqc-strict'} [options.securityProfile='legacy'] - PQ migration profile
  * @returns {Outbox}
  */
 export function createOutbox(db, options = {}) {

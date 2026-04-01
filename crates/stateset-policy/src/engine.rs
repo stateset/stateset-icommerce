@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use serde::Serialize;
 use serde_json::Value;
+use smallvec::SmallVec;
 use uuid::Uuid;
 
 use crate::action::{ActionType, PolicyAction};
@@ -81,7 +82,7 @@ pub struct PolicyEngine {
 
 impl PolicyEngine {
     /// Create a new, empty policy engine.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             policy_sets: HashMap::new(),
@@ -92,7 +93,7 @@ impl PolicyEngine {
     }
 
     /// Builder: set unknown-domain behavior.
-    #[must_use] 
+    #[must_use]
     pub const fn with_unknown_domain_mode(mut self, mode: UnknownDomainMode) -> Self {
         self.unknown_domain_mode = mode;
         self
@@ -104,7 +105,7 @@ impl PolicyEngine {
     }
 
     /// Get the currently configured unknown-domain behavior.
-    #[must_use] 
+    #[must_use]
     pub const fn unknown_domain_mode(&self) -> UnknownDomainMode {
         self.unknown_domain_mode
     }
@@ -146,13 +147,13 @@ impl PolicyEngine {
     }
 
     /// Get a policy set by its UUID.
-    #[must_use] 
+    #[must_use]
     pub fn get_policy_set(&self, id: &Uuid) -> Option<&PolicySet> {
         self.policy_sets.get(id)
     }
 
     /// Get all policy sets for a domain.
-    #[must_use] 
+    #[must_use]
     pub fn get_policies_for_domain(&self, domain: &str) -> Vec<&PolicySet> {
         self.domain_index
             .get(domain)
@@ -161,19 +162,19 @@ impl PolicyEngine {
     }
 
     /// List all registered policy sets.
-    #[must_use] 
+    #[must_use]
     pub fn list_policy_sets(&self) -> Vec<&PolicySet> {
         self.policy_sets.values().collect()
     }
 
     /// Total number of registered policy sets.
-    #[must_use] 
+    #[must_use]
     pub fn policy_set_count(&self) -> usize {
         self.policy_sets.len()
     }
 
     /// Total number of rules across all policy sets.
-    #[must_use] 
+    #[must_use]
     pub fn total_rule_count(&self) -> usize {
         self.policy_sets.values().map(|ps| ps.rules.len()).sum()
     }
@@ -212,16 +213,18 @@ impl PolicyEngine {
     }
 
     /// Evaluate without recording history (dry-run mode).
-    #[must_use] 
+    #[must_use]
     pub fn evaluate_dry_run(&self, domain: &str, context: &Value) -> PolicyEvaluation {
         self.evaluate_inner(domain, context, true)
     }
 
     /// Internal evaluation logic shared by `evaluate` and `evaluate_dry_run`.
     fn evaluate_inner(&self, domain: &str, context: &Value, dry_run: bool) -> PolicyEvaluation {
-        let policy_sets = self.get_policies_for_domain(domain);
+        // Look up domain index directly to avoid allocating a Vec<&PolicySet>.
+        let set_ids = self.domain_index.get(domain);
+        let is_empty = set_ids.is_none_or(Vec::is_empty);
 
-        if policy_sets.is_empty() {
+        if is_empty {
             let unknown_domain_action = match self.unknown_domain_mode {
                 UnknownDomainMode::Allow => PolicyAction::allow(),
                 UnknownDomainMode::Deny => PolicyAction::deny_simple(format!(
@@ -241,32 +244,50 @@ impl PolicyEngine {
             };
         }
 
-        let mut all_results: Vec<PolicySetEvaluation> = Vec::new();
-        let mut all_actions: Vec<PolicyAction> = Vec::new();
-        let mut all_explanations: Vec<PolicyExplanation> = Vec::new();
+        let ids = set_ids.expect("checked non-empty above");
 
-        for ps in &policy_sets {
+        // SmallVec avoids heap allocation for typical policy counts (<=4 sets).
+        let mut all_results: SmallVec<[PolicySetEvaluation; 4]> = SmallVec::new();
+        let mut all_actions: SmallVec<[PolicyAction; 8]> = SmallVec::new();
+        let mut all_explanations: SmallVec<[PolicyExplanation; 4]> = SmallVec::new();
+
+        // Track deny/allow during iteration to avoid a second scan.
+        let mut has_deny = false;
+        let mut has_allow = false;
+
+        for id in ids {
+            let Some(ps) = self.policy_sets.get(id) else {
+                continue;
+            };
             let eval_result = ps.evaluate(context);
 
             if eval_result.matched {
-                all_actions.extend(eval_result.actions.clone());
-                all_explanations.extend(eval_result.explanations.clone());
+                for action in &eval_result.actions {
+                    match action.action_type {
+                        ActionType::Deny => has_deny = true,
+                        ActionType::Allow => has_allow = true,
+                        _ => {}
+                    }
+                }
+                all_actions.extend(eval_result.actions.iter().cloned());
+                all_explanations.extend(eval_result.explanations.iter().cloned());
             } else if eval_result.default_applied {
+                match ps.default_action.action_type {
+                    ActionType::Deny => has_deny = true,
+                    ActionType::Allow => has_allow = true,
+                    _ => {}
+                }
                 all_actions.push(ps.default_action.clone());
             }
 
             all_results.push(eval_result);
         }
 
-        // Deny-overrides precedence (matches JS behavior)
-        let has_deny = all_actions.iter().any(|a| a.action_type == ActionType::Deny);
-        let has_allow = all_actions.iter().any(|a| a.action_type == ActionType::Allow);
-
         PolicyEvaluation {
             domain: domain.to_owned(),
-            results: all_results,
-            actions: all_actions,
-            explanations: all_explanations,
+            results: all_results.into_vec(),
+            actions: all_actions.into_vec(),
+            explanations: all_explanations.into_vec(),
             should_allow: !has_deny && has_allow,
             should_deny: has_deny,
             dry_run,
@@ -301,19 +322,19 @@ impl PolicyEngine {
     }
 
     /// Get the evaluation history.
-    #[must_use] 
+    #[must_use]
     pub const fn get_history(&self) -> &VecDeque<EvaluationRecord> {
         &self.history
     }
 
     /// Get the last `n` history entries.
-    #[must_use] 
+    #[must_use]
     pub fn get_recent_history(&self, n: usize) -> Vec<&EvaluationRecord> {
         self.history.iter().rev().take(n).collect()
     }
 
     /// Get history entries filtered by domain.
-    #[must_use] 
+    #[must_use]
     pub fn get_history_for_domain(&self, domain: &str) -> Vec<&EvaluationRecord> {
         self.history.iter().filter(|r| r.domain == domain).collect()
     }
@@ -324,7 +345,7 @@ impl PolicyEngine {
     }
 
     /// Get a summary of the engine status.
-    #[must_use] 
+    #[must_use]
     pub fn get_status(&self) -> EngineStatus {
         let mut by_domain: HashMap<String, usize> = HashMap::new();
         for ps in self.policy_sets.values() {

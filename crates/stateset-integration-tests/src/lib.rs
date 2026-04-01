@@ -32,7 +32,7 @@ use tempfile::TempDir;
 /// The temporary directory (and database) is cleaned up when the
 /// `TempDir` is dropped, so callers must keep it alive for the
 /// duration of the test.
-#[must_use] 
+#[must_use]
 pub fn create_test_commerce() -> (Commerce, TempDir) {
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("test.db");
@@ -44,7 +44,7 @@ pub fn create_test_commerce() -> (Commerce, TempDir) {
 ///
 /// Simpler than [`create_test_commerce`] but the database cannot be
 /// inspected on disk after the test.
-#[must_use] 
+#[must_use]
 pub fn create_in_memory_commerce() -> Commerce {
     Commerce::in_memory().expect("in-memory commerce")
 }

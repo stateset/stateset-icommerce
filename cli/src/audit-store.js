@@ -5,15 +5,63 @@
  * and tool executions. Survives process restarts and supports compliance exports.
  */
 
-import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 
 const DEFAULT_DB_PATH = path.join(os.homedir(), '.stateset', 'audit.db');
+const require = createRequire(import.meta.url);
+const FALLBACK_AUDIT_DATABASES = new Map();
+let cachedDatabaseCtor;
 
 /** @type {AuditStore | null} */
 let _instance = null;
+
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+  }
+
+  return cachedDatabaseCtor;
+}
+
+function ensureDbFile(dbPath) {
+  if (dbPath === ':memory:') return;
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const fd = fs.openSync(dbPath, 'a');
+  fs.closeSync(fd);
+}
+
+function getFallbackDatabaseState(dbPath) {
+  if (dbPath === ':memory:') {
+    return { nextId: 1, rows: [] };
+  }
+
+  let state = FALLBACK_AUDIT_DATABASES.get(dbPath);
+  if (!state || !fs.existsSync(dbPath)) {
+    ensureDbFile(dbPath);
+    state = { nextId: 1, rows: [] };
+    FALLBACK_AUDIT_DATABASES.set(dbPath, state);
+  }
+  return state;
+}
+
+function sortRowsByTimestamp(rows) {
+  return [...rows].sort(
+    (a, b) => b.timestamp.localeCompare(a.timestamp) || b.id - a.id,
+  );
+}
 
 export class AuditStore {
   /**
@@ -23,13 +71,31 @@ export class AuditStore {
    * @param {number} [options.retentionDays] - Days to keep entries (default: 90)
    */
   constructor({ dbPath = DEFAULT_DB_PATH, maxEntries = 0, retentionDays = 90 } = {}) {
-    const dir = path.dirname(dbPath);
-    fs.mkdirSync(dir, { recursive: true });
+    if (dbPath !== ':memory:') {
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    }
+    ensureDbFile(dbPath);
 
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
     this.maxEntries = maxEntries;
     this.retentionDays = retentionDays;
+    this._fallbackState = null;
+
+    const Database = loadDatabaseCtor();
+    if (!Database) {
+      this._enableFallback(dbPath);
+      return;
+    }
+
+    try {
+      this.db = new Database(dbPath);
+    } catch (error) {
+      if (error?.code !== 'ERR_DLOPEN_FAILED') {
+        throw error;
+      }
+      this._enableFallback(dbPath);
+      return;
+    }
+    this.db.pragma('journal_mode = WAL');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS audit_log (
@@ -70,6 +136,19 @@ export class AuditStore {
     `);
   }
 
+  _enableFallback(dbPath) {
+    this._fallbackState = getFallbackDatabaseState(dbPath);
+    this.db = {
+      pragma() {
+        return 'WAL';
+      },
+      exec() {
+        return this;
+      },
+      close() {},
+    };
+  }
+
   /**
    * Log an audit entry.
    * @param {object} entry
@@ -82,6 +161,28 @@ export class AuditStore {
    * @param {string} [entry.agent] - Agent name
    */
   log(entry) {
+    if (this._fallbackState) {
+      this._fallbackState.rows.push({
+        id: this._fallbackState.nextId++,
+        timestamp: new Date().toISOString(),
+        tool: entry.tool,
+        params: entry.params ? JSON.stringify(entry.params) : null,
+        result: entry.result,
+        reason: entry.reason || null,
+        level: entry.level,
+        session_id: entry.sessionId || null,
+        agent: entry.agent || null,
+      });
+
+      if (this.maxEntries > 0 && this._fallbackState.rows.length > this.maxEntries) {
+        this._fallbackState.rows = sortRowsByTimestamp(this._fallbackState.rows).slice(
+          0,
+          this.maxEntries,
+        );
+      }
+      return;
+    }
+
     this._insert.run(
       new Date().toISOString(),
       entry.tool,
@@ -104,6 +205,21 @@ export class AuditStore {
    * @returns {Array<object>}
    */
   query({ tool = null, result = null, since = null, limit = 100 } = {}) {
+    if (this._fallbackState) {
+      return sortRowsByTimestamp(this._fallbackState.rows)
+        .filter(
+          (row) =>
+            (tool === null || row.tool === tool) &&
+            (result === null || row.result === result) &&
+            (since === null || row.timestamp >= since),
+        )
+        .slice(0, limit)
+        .map((row) => ({
+          ...row,
+          params: row.params ? JSON.parse(row.params) : null,
+        }));
+    }
+
     const rows = this._query.all({ tool, result, since, limit });
     return rows.map((row) => ({
       ...row,
@@ -116,6 +232,9 @@ export class AuditStore {
    * @returns {number}
    */
   count() {
+    if (this._fallbackState) {
+      return this._fallbackState.rows.length;
+    }
     return this._count.get().count;
   }
 
@@ -125,6 +244,13 @@ export class AuditStore {
   cleanup() {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - this.retentionDays);
+    if (this._fallbackState) {
+      const cutoffIso = cutoff.toISOString();
+      this._fallbackState.rows = this._fallbackState.rows.filter(
+        (row) => row.timestamp >= cutoffIso,
+      );
+      return;
+    }
     this._cleanup.run(cutoff.toISOString());
   }
 

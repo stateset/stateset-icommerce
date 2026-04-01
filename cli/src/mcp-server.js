@@ -815,6 +815,7 @@ const sanitizeReplayValue = (value, depth = 4, seen = new Set()) => {
       ),
     };
   if (Buffer.isBuffer(value)) return `<Buffer ${value.length}>`;
+  if (Array.isArray(value)) return compactReplayValue(value, depth, seen);
 
   if (typeof value !== 'object') return String(value);
   if (depth <= 0 || seen.has(value)) return '[truncated]';

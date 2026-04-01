@@ -28,7 +28,8 @@ USAGE:
 
 OPTIONS:
   --dir <path>       Directory for new projects (default: current directory)
-  --apply            Enable write operations (create files, run commands)
+  --apply            Enable file writes (create or modify project files)
+  --allow-commands   Enable the restricted run_command tool for approved npm/git commands
   --model <model>    Claude model to use (default: see config.js)
   --verbose, -V      Enable verbose output with telemetry
   --stats            Show execution statistics
@@ -62,7 +63,8 @@ WORKFLOW:
 
 SAFETY:
   By default, all write operations are blocked (preview mode).
-  Use --apply to enable file creation and npm commands.
+  Use --apply to enable file creation.
+  Use --allow-commands together with --apply to enable the restricted npm/git command runner.
 `;
 
 async function main() {
@@ -70,6 +72,7 @@ async function main() {
     options: {
       dir: { type: 'string', default: process.cwd() },
       apply: { type: 'boolean', default: false },
+      'allow-commands': { type: 'boolean', default: false },
       model: { type: 'string', default: DEFAULT_MODEL },
       verbose: { type: 'boolean', short: 'V', default: false },
       stats: { type: 'boolean', default: false },
@@ -111,6 +114,9 @@ async function main() {
     console.log(
       `   ${output.dim('Mode:')}      ${values.apply ? output.green('Write enabled') : output.yellow('Preview only')}`,
     );
+    console.log(
+      `   ${output.dim('Commands:')}  ${values['allow-commands'] ? output.green('Restricted runner enabled') : output.yellow('Disabled')}`,
+    );
     if (values.verbose) {
       console.log(`   ${output.dim('Verbose:')}   ${output.cyan('Enabled')}`);
     }
@@ -125,6 +131,7 @@ async function main() {
   const mcpServer = createScaffoldMcpServer({
     workDir,
     allowWrite: values.apply,
+    allowCommandExecution: values.apply && values['allow-commands'],
   });
 
   // Get agent config
@@ -213,6 +220,7 @@ async function main() {
             request,
             workDir,
             allowWrite: values.apply,
+            allowCommands: values['allow-commands'],
             toolResults: toolResults.map((tr) => ({
               tool: tr.toolCall.name,
               input: tr.toolCall.input,

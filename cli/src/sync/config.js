@@ -7,6 +7,14 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import {
+  SECURITY_PROFILE_LEGACY,
+  assertSecureTransportForProfile,
+  isSecureSequencerProtocol,
+  resolveSecurityProfile,
+} from './pqc.js';
+import { hasNativeHybridPqcSupport } from './crypto.js';
+import { auditProfileChanged, auditProfileDowngradeBlocked } from './pqc-audit.js';
 
 /**
  * @typedef {Object} SyncConfig
@@ -44,6 +52,7 @@ import crypto from 'crypto';
  * @property {boolean} autoSync - Enable automatic background sync
  * @property {number} syncIntervalMs - Sync interval in milliseconds
  * @property {number} batchSize - Max events per push batch
+ * @property {'legacy' | 'hybrid' | 'pqc-strict'} securityProfile - PQ migration profile
  * @property {RetryPolicy} retryPolicy - Retry configuration
  */
 
@@ -86,6 +95,7 @@ const DEFAULT_CONFIG = {
     autoSync: false,
     syncIntervalMs: 30000,
     batchSize: 100,
+    securityProfile: SECURITY_PROFILE_LEGACY,
     retryPolicy: {
       maxRetries: 3,
       baseDelay: 1000,
@@ -231,6 +241,7 @@ export function saveSyncConfig(config, cwd = process.cwd()) {
  * @param {string} [options.dbPath] - Database path
  * @param {boolean} [options.autoGenerateKeys=true] - Auto-generate keys
  * @param {boolean} [options.encryptPayloads=false] - Enable payload encryption
+ * @param {'legacy' | 'hybrid' | 'pqc-strict'} [options.securityProfile='legacy'] - PQ migration profile
  * @param {string} [cwd] - Current working directory
  * @returns {SyncConfig}
  */
@@ -239,6 +250,17 @@ export function createSyncConfig(options, cwd = process.cwd()) {
     typeof options.sequencerUrl === 'string' ? options.sequencerUrl.trim() : options.sequencerUrl;
   const url = parseSequencerUrl(sequencerUrl);
   const isSecure = url.protocol === 'grpcs:' || url.protocol === 'https:';
+  const securityProfile = resolveSecurityProfile(
+    options.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+  );
+  assertSecureTransportForProfile(securityProfile, isSecure, 'Sequencer URL');
+
+  if (securityProfile !== SECURITY_PROFILE_LEGACY && !hasNativeHybridPqcSupport()) {
+    throw new Error(
+      `Security profile "${securityProfile}" requires native @stateset/embedded module with PQC support. ` +
+      'Install @stateset/embedded or use the "legacy" profile.',
+    );
+  }
 
   const config = {
     sequencer: {
@@ -259,6 +281,7 @@ export function createSyncConfig(options, cwd = process.cwd()) {
       autoSync: false,
       syncIntervalMs: 30000,
       batchSize: 100,
+      securityProfile,
       retryPolicy: {
         maxRetries: 3,
         baseDelay: 1000,
@@ -309,6 +332,46 @@ export function updateSyncConfig(updates, cwd = process.cwd()) {
     keys: { ...current.keys, ...updates.keys },
   };
 
+  const securityProfile = resolveSecurityProfile(
+    updated.sync?.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+  );
+
+  // Prevent profile downgrades (pqc-strict→hybrid→legacy) unless force flag is set
+  const currentProfile = resolveSecurityProfile(
+    current.sync?.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+  );
+  const PROFILE_STRENGTH = { legacy: 0, hybrid: 1, 'pqc-strict': 2 };
+  if (
+    (PROFILE_STRENGTH[securityProfile] ?? 0) < (PROFILE_STRENGTH[currentProfile] ?? 0) &&
+    !updates._forceProfileDowngrade
+  ) {
+    auditProfileDowngradeBlocked(currentProfile, securityProfile);
+    throw new Error(
+      `Security profile downgrade from "${currentProfile}" to "${securityProfile}" is not allowed. ` +
+      'Downgrading removes post-quantum protection from future events. ' +
+      'Pass _forceProfileDowngrade: true to override.',
+    );
+  }
+
+  if (securityProfile !== currentProfile) {
+    auditProfileChanged(currentProfile, securityProfile, !!updates._forceProfileDowngrade);
+  }
+
+  updated.sync.securityProfile = securityProfile;
+
+  if (updated.sequencer?.url) {
+    try {
+      const url = parseSequencerUrl(updated.sequencer.url);
+      assertSecureTransportForProfile(
+        securityProfile,
+        isSecureSequencerProtocol(url.protocol),
+        'Sequencer URL',
+      );
+    } catch (error) {
+      throw new Error(`Invalid sync configuration update: ${error.message}`);
+    }
+  }
+
   saveSyncConfig(updated, cwd);
   return updated;
 }
@@ -338,14 +401,36 @@ export function getJwtToken(config) {
  */
 export function validateSyncConfig(config) {
   const errors = [];
+  let parsedUrl = null;
+  let securityProfile = SECURITY_PROFILE_LEGACY;
 
   if (!config.sequencer?.url) {
     errors.push('Sequencer URL is required');
   } else {
     try {
-      parseSequencerUrl(config.sequencer.url);
+      parsedUrl = parseSequencerUrl(config.sequencer.url);
     } catch (error) {
       errors.push(`Invalid sequencer URL: ${error.message}`);
+    }
+  }
+
+  try {
+    securityProfile = resolveSecurityProfile(
+      config.sync?.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+    );
+  } catch (error) {
+    errors.push(error.message);
+  }
+
+  if (parsedUrl) {
+    try {
+      assertSecureTransportForProfile(
+        securityProfile,
+        isSecureSequencerProtocol(parsedUrl.protocol),
+        'Sequencer URL',
+      );
+    } catch (error) {
+      errors.push(error.message);
     }
   }
 
@@ -382,7 +467,17 @@ export class SyncConfig {
     this.sequencer = config.sequencer;
     this.identity = config.identity;
     this.auth = config.auth;
-    this.sync = config.sync;
+    this.sync = {
+      ...DEFAULT_CONFIG.sync,
+      ...(config.sync || {}),
+      securityProfile: resolveSecurityProfile(
+        config.sync?.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+      ),
+      retryPolicy: {
+        ...DEFAULT_CONFIG.sync.retryPolicy,
+        ...(config.sync?.retryPolicy || {}),
+      },
+    };
     this.local = config.local;
     this.keys = config.keys || DEFAULT_CONFIG.keys;
   }
@@ -452,6 +547,14 @@ export class SyncConfig {
    */
   get retryPolicy() {
     return this.sync.retryPolicy;
+  }
+
+  /**
+   * Get PQ migration profile
+   * @returns {'legacy' | 'hybrid' | 'pqc-strict'}
+   */
+  get securityProfile() {
+    return this.sync.securityProfile;
   }
 
   /**

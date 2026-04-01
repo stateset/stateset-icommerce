@@ -47,12 +47,12 @@ pub(crate) async fn create_order(
 ) -> Result<(axum::http::StatusCode, Json<OrderResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let currency = req
-        .currency
-        .as_deref()
-        .map(CurrencyCode::from_str)
-        .transpose()
-        .map_err(|error| HttpError::BadRequest(format!("Invalid currency: {error}. Valid values: USD, EUR, GBP, JPY, CAD, AUD, CHF, CNY")))?;
+    let currency =
+        req.currency.as_deref().map(CurrencyCode::from_str).transpose().map_err(|error| {
+            HttpError::BadRequest(format!(
+                "Invalid currency: {error}. Valid values: USD, EUR, GBP, JPY, CAD, AUD, CHF, CNY"
+            ))
+        })?;
 
     let input = CreateOrder {
         customer_id: req.customer_id,

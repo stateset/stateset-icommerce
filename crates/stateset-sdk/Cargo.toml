@@ -45,6 +45,8 @@ sync = ["dep:stateset-sync", "dep:serde", "dep:serde_json", "dep:uuid"]
 [dev-dependencies]
 async-trait = { workspace = true }
 tokio = { workspace = true }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
 
 [lints]
 workspace = true

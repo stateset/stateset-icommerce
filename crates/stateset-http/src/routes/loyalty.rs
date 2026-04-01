@@ -56,15 +56,13 @@ impl LoyaltyProgramFilterParams {
 
     /// Resolved limit with bounds checking.
     #[must_use]
-    pub fn resolved_limit(&self) -> u32 {
-        self.limit
-            .unwrap_or(Self::DEFAULT_LIMIT)
-            .clamp(1, Self::MAX_LIMIT)
+    pub(crate) fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(Self::DEFAULT_LIMIT).clamp(1, Self::MAX_LIMIT)
     }
 
     /// Resolved offset.
     #[must_use]
-    pub fn resolved_offset(&self) -> u32 {
+    pub(crate) fn resolved_offset(&self) -> u32 {
         self.offset.unwrap_or(0)
     }
 }
@@ -115,10 +113,7 @@ pub(crate) struct LoyaltyAccountResponse {
 /// Build the loyalty sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route(
-            "/loyalty/programs",
-            post(create_program).get(list_programs),
-        )
+        .route("/loyalty/programs", post(create_program).get(list_programs))
         .route("/loyalty/enroll", post(enroll_customer))
         .route("/loyalty/accounts/{id}", get(get_account))
 }
@@ -147,15 +142,12 @@ pub(crate) async fn create_program(
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
-    let program =
-        commerce
-            .loyalty()
-            .create_program(stateset_core::CreateLoyaltyProgram {
-                name: req.name,
-                description: req.description,
-                points_per_dollar: req.points_per_dollar.unwrap_or(1),
-                tiers: vec![],
-            })?;
+    let program = commerce.loyalty().create_program(stateset_core::CreateLoyaltyProgram {
+        name: req.name,
+        description: req.description,
+        points_per_dollar: req.points_per_dollar.unwrap_or(1),
+        tiers: vec![],
+    })?;
 
     Ok((StatusCode::CREATED, Json(program_to_response(program))))
 }
@@ -187,11 +179,8 @@ pub(crate) async fn list_programs(
     let all_programs = commerce.loyalty().list_programs()?;
     let total = all_programs.len();
 
-    let mut programs: Vec<_> = all_programs
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize + 1)
-        .collect();
+    let mut programs: Vec<_> =
+        all_programs.into_iter().skip(offset as usize).take(limit as usize + 1).collect();
     let has_more = programs.len() > limit as usize;
     if has_more {
         programs.truncate(limit as usize);
@@ -236,10 +225,8 @@ pub(crate) async fn enroll_customer(
         .parse()
         .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
 
-    let account = commerce.loyalty().enroll(stateset_core::EnrollCustomer {
-        customer_id,
-        program_id,
-    })?;
+    let account =
+        commerce.loyalty().enroll(stateset_core::EnrollCustomer { customer_id, program_id })?;
     Ok((StatusCode::CREATED, Json(account_to_response(account))))
 }
 

@@ -39,6 +39,33 @@ import {
 
 /**
  * Resolve a user-supplied sub-path within a base directory, preventing
+ * path traversal attacks, including symlink-based escapes.
+ * @param {string} targetPath
+ * @returns {string}
+ */
+function resolveRealPathCandidate(targetPath) {
+  const realpath = fs.realpathSync.native || fs.realpathSync;
+  const absolute = path.resolve(targetPath);
+  let probe = absolute;
+  const missingSegments = [];
+
+  while (!fs.existsSync(probe)) {
+    const parent = path.dirname(probe);
+    if (parent === probe) {
+      throw new Error(`Path does not have an existing ancestor: ${absolute}`);
+    }
+    missingSegments.unshift(path.basename(probe));
+    probe = parent;
+  }
+
+  const realExistingPath = realpath(probe);
+  return missingSegments.length === 0
+    ? realExistingPath
+    : path.join(realExistingPath, ...missingSegments);
+}
+
+/**
+ * Resolve a user-supplied sub-path within a base directory, preventing
  * path traversal attacks. Throws if the resolved path escapes baseDir.
  * @param {string} baseDir - Trusted base directory
  * @param {string} subPath - User-supplied relative path
@@ -47,10 +74,36 @@ import {
 function safePath(baseDir, subPath) {
   const resolved = path.resolve(baseDir, subPath);
   const base = path.resolve(baseDir);
-  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+  const baseReal = resolveRealPathCandidate(base);
+  const targetReal = resolveRealPathCandidate(resolved);
+  const relative = path.relative(baseReal, targetReal);
+  if (
+    relative &&
+    (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+  ) {
     throw new Error('Path traversal detected: path escapes the working directory');
   }
   return resolved;
+}
+
+const ALLOWED_EXECUTABLES = new Set(['git', 'npm']);
+const APPROVED_COMMANDS = Object.freeze([
+  'git add .',
+  'git init',
+  'git status',
+  'npm ci --ignore-scripts',
+  'npm install --ignore-scripts',
+  'npm run build',
+  'npm run dev',
+  'npm run lint',
+  'npm run test',
+  'npm run typecheck',
+]);
+const BACKGROUND_ALLOWED_COMMANDS = new Set(['npm run dev']);
+const SHELL_METACHAR_RE = /[;&|`$(){}!<>]/;
+
+function normalizeCommand(command) {
+  return command.trim().split(/\s+/).filter(Boolean).join(' ');
 }
 
 // ============================================================================
@@ -99,8 +152,13 @@ function errorResult(message) {
  * @param {Object} options
  * @param {string} options.workDir - Working directory for file operations
  * @param {boolean} options.allowWrite - Whether to allow write operations
+ * @param {boolean} [options.allowCommandExecution=false] - Whether to allow the restricted command runner
  */
-export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = false }) {
+export function createScaffoldMcpServer({
+  workDir = process.cwd(),
+  allowWrite = false,
+  allowCommandExecution = false,
+}) {
   return createSdkMcpServer({
     name: 'stateset-scaffold',
     version: '1.0.0',
@@ -503,7 +561,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
 
       tool(
         'run_command',
-        'Run a shell command in the project directory (npm install, npm run dev, etc.)',
+        'Run an approved project command in the project directory',
         {
           command: z.string().describe('Command to run'),
           background: z.boolean().optional().describe('Run in background'),
@@ -517,27 +575,43 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             });
           }
 
-          // Allowlist: only permit safe scaffold commands.
-          // We match the executable exactly and reject shell metacharacters
-          // to prevent command chaining (e.g. "npm install && rm -rf /").
-          const ALLOWED_EXECUTABLES = new Set(['npm', 'npx', 'node', 'git', 'ls', 'cat', 'mkdir']);
-          const SHELL_METACHAR_RE = /[;&|`$(){}!<>]/;
-          const trimmed = command.trim();
-          const executable = trimmed.split(/\s+/)[0];
+          const normalizedCommand = normalizeCommand(command);
+          const executable = normalizedCommand.split(' ')[0];
+
+          if (!allowCommandExecution) {
+            return result({
+              success: false,
+              preview: true,
+              message:
+                'Command execution is disabled. Re-run stateset-create with --allow-commands to enable the restricted command runner.',
+              approvedCommands: APPROVED_COMMANDS,
+            });
+          }
+
           if (!ALLOWED_EXECUTABLES.has(executable)) {
             return errorResult(
               `Command not allowed. Permitted executables: ${[...ALLOWED_EXECUTABLES].join(', ')}`,
             );
           }
-          if (SHELL_METACHAR_RE.test(trimmed)) {
+          if (SHELL_METACHAR_RE.test(command)) {
             return errorResult(
               'Command contains disallowed shell metacharacters. Remove ;, &, |, `, $, etc.',
+            );
+          }
+          if (!APPROVED_COMMANDS.includes(normalizedCommand)) {
+            return errorResult(
+              `Command not allowed. Approved commands: ${APPROVED_COMMANDS.join('; ')}`,
+            );
+          }
+          if (background && !BACKGROUND_ALLOWED_COMMANDS.has(normalizedCommand)) {
+            return errorResult(
+              `Background execution is only allowed for: ${[...BACKGROUND_ALLOWED_COMMANDS].join(', ')}`,
             );
           }
 
           try {
             // Use execFile (no shell) to prevent injection via metacharacters.
-            const args = trimmed.split(/\s+/).slice(1);
+            const args = normalizedCommand.split(' ').slice(1);
             if (background) {
               const child = spawn(executable, args, {
                 cwd: workDir,

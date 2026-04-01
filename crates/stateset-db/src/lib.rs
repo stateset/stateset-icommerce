@@ -82,11 +82,8 @@ use stateset_core::{
 };
 #[cfg(feature = "postgres")]
 use unsupported_repositories::{
-    UnsupportedFraudRepository, UnsupportedGiftCardRepository, UnsupportedLoyaltyProgramRepository,
-    UnsupportedReviewRepository, UnsupportedRewardRepository, UnsupportedSearchConfigRepository,
-    UnsupportedSegmentRepository, UnsupportedShippingZoneRepository,
-    UnsupportedStoreCreditRepository, UnsupportedWishlistRepository,
-    UnsupportedZoneShippingMethodRepository,
+    UnsupportedGiftCardRepository, UnsupportedReviewRepository, UnsupportedStoreCreditRepository,
+    UnsupportedWishlistRepository,
 };
 
 // ============================================================================
@@ -505,15 +502,15 @@ impl NewDomainRepositoryFactory for PostgresDatabase {
     }
 
     fn segments_repo(&self) -> Box<dyn SegmentRepository + '_> {
-        Box::new(UnsupportedSegmentRepository::new("postgres"))
+        Box::new(self.segments())
     }
 
     fn shipping_zones_repo(&self) -> Box<dyn ShippingZoneRepository + '_> {
-        Box::new(UnsupportedShippingZoneRepository::new("postgres"))
+        Box::new(self.shipping_zones())
     }
 
     fn zone_shipping_methods_repo(&self) -> Box<dyn ZoneShippingMethodRepository + '_> {
-        Box::new(UnsupportedZoneShippingMethodRepository::new("postgres"))
+        Box::new(self.zone_shipping_methods())
     }
 
     fn reviews_repo(&self) -> Box<dyn ReviewRepository + '_> {
@@ -525,19 +522,19 @@ impl NewDomainRepositoryFactory for PostgresDatabase {
     }
 
     fn loyalty_programs_repo(&self) -> Box<dyn LoyaltyProgramRepository + '_> {
-        Box::new(UnsupportedLoyaltyProgramRepository::new("postgres"))
+        Box::new(self.loyalty())
     }
 
     fn rewards_repo(&self) -> Box<dyn RewardRepository + '_> {
-        Box::new(UnsupportedRewardRepository::new("postgres"))
+        Box::new(self.rewards())
     }
 
     fn fraud_repo(&self) -> Box<dyn FraudRepository + '_> {
-        Box::new(UnsupportedFraudRepository::new("postgres"))
+        Box::new(self.fraud())
     }
 
     fn search_configs_repo(&self) -> Box<dyn SearchConfigRepository + '_> {
-        Box::new(UnsupportedSearchConfigRepository::new("postgres"))
+        Box::new(self.search_configs())
     }
 }
 
@@ -769,17 +766,17 @@ macro_rules! impl_database_accessors {
     }};
     (@supports_capability PostgresDatabase, $capability:expr) => {{
         match $capability {
-            DatabaseCapability::GiftCards
-            | DatabaseCapability::StoreCredits
-            | DatabaseCapability::Segments
+            DatabaseCapability::Segments
             | DatabaseCapability::ShippingZones
             | DatabaseCapability::ZoneShippingMethods
-            | DatabaseCapability::Reviews
-            | DatabaseCapability::Wishlists
-            | DatabaseCapability::LoyaltyPrograms
             | DatabaseCapability::Rewards
-            | DatabaseCapability::Fraud
-            | DatabaseCapability::SearchConfigs => false,
+            | DatabaseCapability::SearchConfigs
+            | DatabaseCapability::LoyaltyPrograms
+            | DatabaseCapability::Fraud => true,
+            DatabaseCapability::GiftCards
+            | DatabaseCapability::StoreCredits
+            | DatabaseCapability::Reviews
+            | DatabaseCapability::Wishlists => false,
         }
     }};
 }
@@ -808,18 +805,19 @@ impl Default for DatabaseConfig {
 
 impl DatabaseConfig {
     /// Create config for SQLite with path
-    #[must_use] 
+    #[must_use]
     pub fn sqlite(path: &str) -> Self {
         Self { url: path.to_string(), max_connections: 5 }
     }
 
     /// Create config for in-memory SQLite (useful for testing)
-    #[must_use] 
+    #[must_use]
     pub fn in_memory() -> Self {
         Self {
             url: ":memory:".to_string(),
             // Use multiple connections with FULL_MUTEX mode for serialized access.
-            // This avoids connection pool exhaustion while preventing SQLITE_LOCKED errors.
+            // This avoids connection pool exhaustion in flows that legitimately need more
+            // than one connection, such as nested repository calls in tests.
             max_connections: 4,
         }
     }
@@ -830,7 +828,7 @@ impl DatabaseConfig {
     /// ```ignore
     /// let config = DatabaseConfig::postgres("postgres://user:pass@localhost/stateset");
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn postgres(connection_string: &str) -> Self {
         Self { url: connection_string.to_string(), max_connections: 10 }
     }

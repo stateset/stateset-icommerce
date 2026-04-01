@@ -210,14 +210,14 @@ impl A2APayment {
     }
 
     /// Set network
-    #[must_use] 
+    #[must_use]
     pub const fn with_network(mut self, network: X402Network) -> Self {
         self.network = network;
         self
     }
 
     /// Set reference
-    #[must_use] 
+    #[must_use]
     pub const fn with_reference(mut self, ref_type: A2AReferenceType, ref_id: Uuid) -> Self {
         self.reference_type = Some(ref_type);
         self.reference_id = Some(ref_id);
@@ -457,14 +457,14 @@ impl PaymentRequest {
     }
 
     /// Set expiry
-    #[must_use] 
+    #[must_use]
     pub const fn with_expiry(mut self, expires_at: DateTime<Utc>) -> Self {
         self.expires_at = expires_at;
         self
     }
 
     /// Allow partial payments
-    #[must_use] 
+    #[must_use]
     pub const fn with_partial(mut self, minimum: Option<u64>) -> Self {
         self.allow_partial = true;
         self.minimum_amount = minimum;
@@ -472,13 +472,13 @@ impl PaymentRequest {
     }
 
     /// Check if expired
-    #[must_use] 
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.expires_at
     }
 
     /// Check if fully paid
-    #[must_use] 
+    #[must_use]
     pub const fn is_fully_paid(&self) -> bool {
         self.amount_paid >= self.amount
     }
@@ -840,7 +840,7 @@ impl A2AQuote {
     }
 
     /// Check if expired
-    #[must_use] 
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.expires_at
     }
@@ -857,14 +857,14 @@ impl A2AQuote {
     // =========================================================================
 
     /// Set maximum negotiation rounds.
-    #[must_use] 
+    #[must_use]
     pub const fn with_max_rounds(mut self, max_rounds: u32) -> Self {
         self.max_rounds = max_rounds;
         self
     }
 
     /// Link this quote to an escrow.
-    #[must_use] 
+    #[must_use]
     pub const fn with_escrow(mut self, escrow_id: Uuid) -> Self {
         self.escrow_id = Some(escrow_id);
         self
@@ -973,7 +973,7 @@ impl A2AQuoteItem {
     }
 
     /// Calculate total for this line item
-    #[must_use] 
+    #[must_use]
     pub const fn total(&self) -> u64 {
         self.unit_price * self.quantity as u64
     }

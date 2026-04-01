@@ -139,13 +139,13 @@ impl std::fmt::Debug for EventSystem {
 
 impl EventSystem {
     /// Create a new event system with default configuration
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::with_config(EventConfig::default())
     }
 
     /// Create a new event system with custom configuration
-    #[must_use] 
+    #[must_use]
     pub fn with_config(config: EventConfig) -> Self {
         let config = EventConfig {
             channel_capacity: config.channel_capacity.max(1),
@@ -382,7 +382,7 @@ pub mod filters {
     use stateset_core::CommerceEvent;
 
     /// Filter for order events only
-    #[must_use] 
+    #[must_use]
     pub const fn orders_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -397,7 +397,7 @@ pub mod filters {
     }
 
     /// Filter for inventory events only
-    #[must_use] 
+    #[must_use]
     pub const fn inventory_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -411,7 +411,7 @@ pub mod filters {
     }
 
     /// Filter for customer events only
-    #[must_use] 
+    #[must_use]
     pub const fn customers_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -423,7 +423,7 @@ pub mod filters {
     }
 
     /// Filter for product events only
-    #[must_use] 
+    #[must_use]
     pub const fn products_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -436,7 +436,7 @@ pub mod filters {
     }
 
     /// Filter for return events only
-    #[must_use] 
+    #[must_use]
     pub const fn returns_only(event: &CommerceEvent) -> bool {
         matches!(
             event,
@@ -450,7 +450,7 @@ pub mod filters {
     }
 
     /// Filter for low stock alerts
-    #[must_use] 
+    #[must_use]
     pub const fn low_stock_alerts(event: &CommerceEvent) -> bool {
         matches!(event, CommerceEvent::LowStockAlert { .. })
     }

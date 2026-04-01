@@ -1811,7 +1811,6 @@ export async function* runAgentStream({
   const effectivePolicyStorePath = resolvePolicyStorePath(dbPath, policyStorePath);
   const resolvedSettings = loadAgentSettings(settings || {});
   const watchdogSettings = { ...resolvedSettings.watchdog };
-  const memorySettings = { ...resolvedSettings.memory };
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
   const eventRedact = privacySettings.redactLogs;
   const redactEventText = (text) => (eventRedact ? redactSensitive(text, privacySettings) : text);
@@ -2808,7 +2807,7 @@ export function createAgentStreamSession(options = {}) {
   let lastPromptReport = null;
   let lastTurnResult = null;
   let activeWatchdog = null;
-  let conversationHistory = Array.isArray(initialConversationHistory)
+  const conversationHistory = Array.isArray(initialConversationHistory)
     ? initialConversationHistory.map((entry) => ({ ...entry }))
     : [];
   const seededConversationHistoryLength = conversationHistory.length;

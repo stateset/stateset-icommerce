@@ -52,16 +52,8 @@ impl SqliteStoreCreditRepository {
                 "store_credit",
                 "currency",
             )?,
-            status: parse_enum_row(
-                &row.get::<_, String>("status")?,
-                "store_credit",
-                "status",
-            )?,
-            reason: parse_enum_row(
-                &row.get::<_, String>("reason")?,
-                "store_credit",
-                "reason",
-            )?,
+            status: parse_enum_row(&row.get::<_, String>("status")?, "store_credit", "status")?,
+            reason: parse_enum_row(&row.get::<_, String>("reason")?, "store_credit", "reason")?,
             reference_id: row.get("reference_id")?,
             note: row.get("note")?,
             expires_at: {
@@ -227,12 +219,11 @@ impl StoreCreditRepository for SqliteStoreCreditRepository {
         let now_str = Utc::now().to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
-            let current_balance_str: String = tx
-                .query_row(
-                    "SELECT current_balance FROM store_credits WHERE id = ?",
-                    [&id_str],
-                    |row| row.get(0),
-                )?;
+            let current_balance_str: String = tx.query_row(
+                "SELECT current_balance FROM store_credits WHERE id = ?",
+                [&id_str],
+                |row| row.get(0),
+            )?;
 
             let current_balance =
                 parse_decimal_row(&current_balance_str, "store_credit", "current_balance")?;
@@ -286,12 +277,11 @@ impl StoreCreditRepository for SqliteStoreCreditRepository {
         let now_str = Utc::now().to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
-            let current_balance_str: String = tx
-                .query_row(
-                    "SELECT current_balance FROM store_credits WHERE id = ?",
-                    [&id_str],
-                    |row| row.get(0),
-                )?;
+            let current_balance_str: String = tx.query_row(
+                "SELECT current_balance FROM store_credits WHERE id = ?",
+                [&id_str],
+                |row| row.get(0),
+            )?;
 
             let current_balance =
                 parse_decimal_row(&current_balance_str, "store_credit", "current_balance")?;
@@ -358,8 +348,8 @@ impl StoreCreditRepository for SqliteStoreCreditRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{CurrencyCode, CustomerId, StoreCreditReason, StoreCreditTransactionType};
 
@@ -436,9 +426,7 @@ mod tests {
             })
             .expect("create");
 
-        let txn = repo
-            .apply(sc.id, dec!(30.00), Some("ORD-123".into()))
-            .expect("apply");
+        let txn = repo.apply(sc.id, dec!(30.00), Some("ORD-123".into())).expect("apply");
         assert_eq!(txn.amount, dec!(-30.00));
         assert_eq!(txn.balance_after, dec!(70.00));
         assert_eq!(txn.transaction_type, StoreCreditTransactionType::Apply);

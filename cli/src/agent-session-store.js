@@ -3,14 +3,20 @@
  *
  * Persists model/provider/think-level metadata per Claude session ID.
  * Also stores recent summaries to keep context stable across runs.
+ *
+ * Uses better-sqlite3 when available, and falls back to an in-process store
+ * when the native module is unavailable.
  */
 
-import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 
 export const DEFAULT_DB_PATH = path.join(os.homedir(), '.stateset', 'agent-sessions.db');
+const require = createRequire(import.meta.url);
+const FALLBACK_SESSION_DATABASES = new Map();
+let cachedDatabaseCtor;
 
 const SESSION_COLUMNS = [
   { name: 'session_id', sql: 'TEXT PRIMARY KEY' },
@@ -48,14 +54,81 @@ const UPSERT_ASSIGNMENTS = UPSERT_COLUMNS.filter(
   .map((column) => `${column} = excluded.${column}`)
   .join(',\n        ');
 
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+  }
+
+  return cachedDatabaseCtor;
+}
+
+function ensureDbFile(dbPath) {
+  if (dbPath === ':memory:') return;
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const fd = fs.openSync(dbPath, 'a');
+  fs.closeSync(fd);
+}
+
+function getFallbackDatabaseState(dbPath) {
+  if (dbPath === ':memory:') {
+    return { rows: new Map() };
+  }
+
+  let state = FALLBACK_SESSION_DATABASES.get(dbPath);
+  if (!state || !fs.existsSync(dbPath)) {
+    ensureDbFile(dbPath);
+    state = { rows: new Map() };
+    FALLBACK_SESSION_DATABASES.set(dbPath, state);
+  }
+  return state;
+}
+
+function sortRowsByRecency(rows) {
+  return [...rows].sort(
+    (a, b) =>
+      b.updated_at - a.updated_at ||
+      b.created_at - a.created_at ||
+      String(b.session_id).localeCompare(String(a.session_id)),
+  );
+}
+
 export class AgentSessionStore {
   constructor({ dbPath = DEFAULT_DB_PATH, maxSummaries = 5 } = {}) {
-    const dir = path.dirname(dbPath);
-    fs.mkdirSync(dir, { recursive: true });
+    if (dbPath !== ':memory:') {
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    }
+    ensureDbFile(dbPath);
 
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
+    this._dbPath = dbPath;
     this.maxSummaries = maxSummaries;
+    this._fallbackState = null;
+
+    const Database = loadDatabaseCtor();
+    if (!Database) {
+      this._enableFallback();
+      return;
+    }
+
+    try {
+      this.db = new Database(dbPath);
+    } catch (error) {
+      if (error?.code !== 'ERR_DLOPEN_FAILED') {
+        throw error;
+      }
+      this._enableFallback();
+      return;
+    }
+    this.db.pragma('journal_mode = WAL');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -87,6 +160,19 @@ export class AgentSessionStore {
         ${UPSERT_ASSIGNMENTS}`,
     );
     this._delete = this.db.prepare(`DELETE FROM agent_sessions WHERE session_id = ?`);
+  }
+
+  _enableFallback() {
+    this._fallbackState = getFallbackDatabaseState(this._dbPath);
+    this.db = {
+      pragma() {
+        return 'WAL';
+      },
+      exec() {
+        return this;
+      },
+      close() {},
+    };
   }
 
   _ensureSchema() {
@@ -142,20 +228,40 @@ export class AgentSessionStore {
 
   get(sessionId) {
     if (!sessionId) return null;
+    if (this._fallbackState) {
+      return this._hydrateRow(this._fallbackState.rows.get(sessionId) || null);
+    }
     return this._hydrateRow(this._get.get(sessionId));
   }
 
   count() {
+    if (this._fallbackState) {
+      return this._fallbackState.rows.size;
+    }
     return this._count.get().count;
   }
 
   listRecent(limit = 5) {
     const safeLimit = normalizePositiveLimit(limit);
+    if (this._fallbackState) {
+      return sortRowsByRecency(this._fallbackState.rows.values())
+        .slice(0, safeLimit)
+        .map((row) => this._hydrateRow(row));
+    }
     return this._listRecent.all(safeLimit).map((row) => this._hydrateRow(row));
   }
 
   listRecentFailures(limit = 5) {
     const safeLimit = normalizePositiveLimit(limit);
+    if (this._fallbackState) {
+      return sortRowsByRecency(this._fallbackState.rows.values())
+        .filter(
+          (row) =>
+            row.last_error !== null || row.last_error_code !== null || row.aborted_last_run === 1,
+        )
+        .slice(0, safeLimit)
+        .map((row) => this._hydrateRow(row));
+    }
     return this._listRecentFailures.all(safeLimit).map((row) => this._hydrateRow(row));
   }
 
@@ -175,34 +281,67 @@ export class AgentSessionStore {
     const totalTokens = hasOwn(data, 'totalTokens')
       ? normalizeInteger(data.totalTokens)
       : (computeTotalTokens(inputTokens, outputTokens) ?? normalizeInteger(existing?.totalTokens));
+    const row = {
+      session_id: sessionId,
+      provider: resolveValue(data, 'provider', existing?.provider),
+      model: resolveValue(data, 'model', existing?.model),
+      think_level: resolveValue(data, 'thinkLevel', existing?.thinkLevel),
+      sla_level: resolveValue(data, 'slaLevel', existing?.slaLevel),
+      agent: resolveValue(data, 'agent', existing?.agent),
+      summaries: JSON.stringify(summaries),
+      last_request: resolveValue(data, 'lastRequest', existing?.lastRequest),
+      last_response: resolveValue(data, 'lastResponse', existing?.lastResponse),
+      prompt_report: resolveJson(data, 'promptReport', existing?.promptReport),
+      session_refresh: resolveJson(data, 'sessionRefresh', existing?.sessionRefresh),
+      last_error: resolveValue(data, 'lastError', existing?.lastError),
+      last_error_code: resolveValue(data, 'lastErrorCode', existing?.lastErrorCode),
+      last_error_at: resolveInteger(data, 'lastErrorAt', existing?.lastErrorAt),
+      aborted_last_run: resolveBoolean(data, 'abortedLastRun', existing?.abortedLastRun),
+      last_run_ms: resolveInteger(data, 'lastRunMs', existing?.lastRunMs),
+      last_cost_usd: resolveNumber(data, 'lastCostUsd', existing?.lastCostUsd),
+      total_cost_usd: resolveNumber(data, 'totalCostUsd', existing?.totalCostUsd),
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: totalTokens,
+      cache_read_tokens: resolveInteger(data, 'cacheReadTokens', existing?.cacheReadTokens),
+      cache_write_tokens: resolveInteger(data, 'cacheWriteTokens', existing?.cacheWriteTokens),
+      compaction_count: resolveInteger(data, 'compactionCount', existing?.compactionCount) ?? 0,
+      created_at: createdAt,
+      updated_at: Date.now(),
+    };
+
+    if (this._fallbackState) {
+      this._fallbackState.rows.set(sessionId, row);
+      return this._hydrateRow(row);
+    }
 
     this._upsert.run(
-      sessionId,
-      resolveValue(data, 'provider', existing?.provider),
-      resolveValue(data, 'model', existing?.model),
-      resolveValue(data, 'thinkLevel', existing?.thinkLevel),
-      resolveValue(data, 'slaLevel', existing?.slaLevel),
-      resolveValue(data, 'agent', existing?.agent),
-      JSON.stringify(summaries),
-      resolveValue(data, 'lastRequest', existing?.lastRequest),
-      resolveValue(data, 'lastResponse', existing?.lastResponse),
-      resolveJson(data, 'promptReport', existing?.promptReport),
-      resolveJson(data, 'sessionRefresh', existing?.sessionRefresh),
-      resolveValue(data, 'lastError', existing?.lastError),
-      resolveValue(data, 'lastErrorCode', existing?.lastErrorCode),
-      resolveInteger(data, 'lastErrorAt', existing?.lastErrorAt),
-      resolveBoolean(data, 'abortedLastRun', existing?.abortedLastRun),
-      resolveInteger(data, 'lastRunMs', existing?.lastRunMs),
-      resolveNumber(data, 'lastCostUsd', existing?.lastCostUsd),
-      resolveNumber(data, 'totalCostUsd', existing?.totalCostUsd),
-      inputTokens,
-      outputTokens,
-      totalTokens,
-      resolveInteger(data, 'cacheReadTokens', existing?.cacheReadTokens),
-      resolveInteger(data, 'cacheWriteTokens', existing?.cacheWriteTokens),
-      resolveInteger(data, 'compactionCount', existing?.compactionCount) ?? 0,
-      createdAt,
-      Date.now(),
+      row.session_id,
+      row.provider,
+      row.model,
+      row.think_level,
+      row.sla_level,
+      row.agent,
+      row.summaries,
+      row.last_request,
+      row.last_response,
+      row.prompt_report,
+      row.session_refresh,
+      row.last_error,
+      row.last_error_code,
+      row.last_error_at,
+      row.aborted_last_run,
+      row.last_run_ms,
+      row.last_cost_usd,
+      row.total_cost_usd,
+      row.input_tokens,
+      row.output_tokens,
+      row.total_tokens,
+      row.cache_read_tokens,
+      row.cache_write_tokens,
+      row.compaction_count,
+      row.created_at,
+      row.updated_at,
     );
 
     return this.get(sessionId);
@@ -242,6 +381,9 @@ export class AgentSessionStore {
   }
 
   delete(sessionId) {
+    if (this._fallbackState) {
+      return this._fallbackState.rows.delete(sessionId);
+    }
     return this._delete.run(sessionId).changes > 0;
   }
 

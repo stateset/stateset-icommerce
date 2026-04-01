@@ -33,25 +33,25 @@ pub struct CommerceHealth {
 
 impl Commerce {
     /// Get the underlying database (for advanced use cases).
-    #[must_use] 
+    #[must_use]
     pub fn database(&self) -> &dyn Database {
         &*self.db
     }
 
     /// Get the active database backend kind.
-    #[must_use] 
+    #[must_use]
     pub const fn backend(&self) -> CommerceBackend {
         self.backend
     }
 
     /// Access engine metrics handle.
-    #[must_use] 
+    #[must_use]
     pub const fn metrics(&self) -> &Metrics {
         &self.metrics
     }
 
     /// Capture a point-in-time metrics snapshot.
-    #[must_use] 
+    #[must_use]
     pub fn metrics_snapshot(&self) -> MetricsSnapshot {
         self.metrics.snapshot()
     }
@@ -60,7 +60,7 @@ impl Commerce {
     ///
     /// The database probe uses `orders().count(Default::default())` and does not
     /// mutate state.
-    #[must_use] 
+    #[must_use]
     pub fn health_check(&self) -> CommerceHealth {
         let probe = self.db.orders().count(OrderFilter::default());
         let metrics = self.metrics_snapshot();

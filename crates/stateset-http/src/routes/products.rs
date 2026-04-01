@@ -23,12 +23,7 @@ use std::str::FromStr;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/products", post(create_product).get(list_products))
-        .route(
-            "/products/{id}",
-            get(get_product)
-                .patch(update_product)
-                .delete(delete_product),
-        )
+        .route("/products/{id}", get(get_product).patch(update_product).delete(delete_product))
 }
 
 /// `POST /api/v1/products`
@@ -492,9 +487,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::delete(format!("/products/{}", product.id))
-                    .body(Body::empty())
-                    .unwrap(),
+                Request::delete(format!("/products/{}", product.id)).body(Body::empty()).unwrap(),
             )
             .await
             .unwrap();

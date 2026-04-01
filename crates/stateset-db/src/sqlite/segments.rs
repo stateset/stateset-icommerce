@@ -103,11 +103,7 @@ impl SegmentRepository for SqliteSegmentRepository {
                 ],
             )?;
 
-            tx.query_row(
-                "SELECT * FROM segments WHERE id = ?",
-                [&id_str],
-                Self::row_to_segment,
-            )
+            tx.query_row("SELECT * FROM segments WHERE id = ?", [&id_str], Self::row_to_segment)
         })
     }
 
@@ -142,9 +138,9 @@ impl SegmentRepository for SqliteSegmentRepository {
             }
             if let Some(ref rules) = input.rules {
                 let rules_json = serde_json::to_string(rules).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::DatabaseError(e.to_string()),
-                    ))
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        e.to_string(),
+                    )))
                 })?;
                 sets.push("rules = ?".into());
                 params.push(Box::new(rules_json));
@@ -157,11 +153,7 @@ impl SegmentRepository for SqliteSegmentRepository {
                 params.iter().map(|p| p.as_ref()).collect();
             tx.execute(&sql, param_refs.as_slice())?;
 
-            tx.query_row(
-                "SELECT * FROM segments WHERE id = ?",
-                [&id_str],
-                Self::row_to_segment,
-            )
+            tx.query_row("SELECT * FROM segments WHERE id = ?", [&id_str], Self::row_to_segment)
         })
     }
 
@@ -312,8 +304,8 @@ impl SegmentRepository for SqliteSegmentRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use stateset_core::SegmentType;
 
     fn test_repo() -> SqliteSegmentRepository {

@@ -87,12 +87,12 @@ pub(crate) async fn list_shipments(
         .map(ShipmentStatus::from_str)
         .transpose()
         .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: pending, processing, shipped, in_transit, delivered, failed, cancelled")))?;
-    let carrier = params
-        .carrier
-        .as_deref()
-        .map(ShippingCarrier::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid carrier: {e}. Valid values: fedex, ups, usps, dhl, other")))?;
+    let carrier =
+        params.carrier.as_deref().map(ShippingCarrier::from_str).transpose().map_err(|e| {
+            HttpError::BadRequest(format!(
+                "Invalid carrier: {e}. Valid values: fedex, ups, usps, dhl, other"
+            ))
+        })?;
 
     // Count total matching records (without pagination)
     let count_filter = ShipmentFilter {
@@ -145,12 +145,12 @@ pub(crate) async fn create_shipment(
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
-    let carrier = req
-        .carrier
-        .as_deref()
-        .map(ShippingCarrier::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid carrier: {e}. Valid values: fedex, ups, usps, dhl, other")))?;
+    let carrier =
+        req.carrier.as_deref().map(ShippingCarrier::from_str).transpose().map_err(|e| {
+            HttpError::BadRequest(format!(
+                "Invalid carrier: {e}. Valid values: fedex, ups, usps, dhl, other"
+            ))
+        })?;
 
     let input = CreateShipment {
         order_id: req.order_id,

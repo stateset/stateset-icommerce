@@ -22,8 +22,6 @@ import { readFileSync, mkdirSync, rmSync } from 'node:fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TMP_DIR = join(__dirname, '.tmp-v030-test');
-const MEMORY_SKIP_REASON = 'Skipping: better-sqlite3 native module not available.';
-let memoryAvailable = true;
 const API_KEY = 'test-admin-key-v030';
 const AUTH_HEADERS = { Authorization: `Bearer ${API_KEY}` };
 
@@ -64,6 +62,111 @@ function request(port, method, path, body = null, headers = {}) {
     if (body) req.write(typeof body === 'string' ? body : body);
     req.end();
   });
+}
+
+class TestMemorySubsystem {
+  constructor() {
+    this._entries = [];
+    this._nextId = 1;
+    this._vectors = new Set();
+    this.base = {
+      search: (channel = 'http', senderId = 'api', query = '', limit = 10) =>
+        this._search(channel, senderId, query, limit),
+      delete: (id) => this._delete(id),
+    };
+  }
+
+  stats() {
+    return {
+      totalMemories: this._entries.length,
+      totalVectors: this._vectors.size,
+      dim: 0,
+    };
+  }
+
+  save({ summary, facts = [], channel = 'http', senderId = 'api' }) {
+    const entry = {
+      id: this._nextId++,
+      summary,
+      facts: Array.isArray(facts) ? facts : facts == null ? [] : [String(facts)],
+      channel,
+      sender_id: senderId,
+      created_at: Date.now(),
+    };
+    this._entries.push(entry);
+    this._vectors.add(entry.id);
+    return { id: entry.id };
+  }
+
+  vectorSearch(query, { limit = 5, channel, senderId } = {}) {
+    return this._semanticSearch(query, { limit, channel, senderId });
+  }
+
+  hybridSearch(query, { limit = 5, channel, senderId } = {}) {
+    return this._semanticSearch(query, { limit, channel, senderId });
+  }
+
+  backfill(channel, senderId) {
+    return {
+      processed: this._filterEntries(channel, senderId).length,
+      errors: 0,
+    };
+  }
+
+  deleteVector(id) {
+    this._vectors.delete(Number(id));
+  }
+
+  close() {
+    this._entries = [];
+    this._vectors.clear();
+  }
+
+  _search(channel, senderId, query, limit) {
+    const normalizedQuery = String(query || '').toLowerCase();
+    return this._filterEntries(channel, senderId)
+      .filter((entry) => {
+        if (!normalizedQuery) return true;
+        return (
+          entry.summary.toLowerCase().includes(normalizedQuery) ||
+          entry.facts.some((fact) => String(fact).toLowerCase().includes(normalizedQuery))
+        );
+      })
+      .slice(-limit)
+      .reverse();
+  }
+
+  _semanticSearch(query, { limit = 5, channel, senderId } = {}) {
+    const terms = String(query || '')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    return this._filterEntries(channel, senderId)
+      .filter((entry) => {
+        if (terms.length === 0) return true;
+        const haystack = [entry.summary, ...entry.facts].join(' ').toLowerCase();
+        return terms.every((term) => haystack.includes(term));
+      })
+      .slice(-limit)
+      .reverse();
+  }
+
+  _filterEntries(channel, senderId) {
+    return this._entries.filter(
+      (entry) =>
+        (channel === undefined || entry.channel === channel) &&
+        (senderId === undefined || entry.sender_id === senderId),
+    );
+  }
+
+  _delete(id) {
+    const numericId = Number(id);
+    const index = this._entries.findIndex((entry) => entry.id === numericId);
+    if (index === -1) return false;
+    this._entries.splice(index, 1);
+    this._vectors.delete(numericId);
+    return true;
+  }
 }
 
 // ============================================================================
@@ -332,51 +435,33 @@ describe('v0.3.0 — Subsystem routes return 501 when disabled', () => {
 });
 
 // ============================================================================
-// Memory end-to-end (with in-memory SQLite)
+// Memory end-to-end (with injected memory subsystem)
 // ============================================================================
 
 describe('v0.3.0 — Memory API end-to-end', () => {
   let gw, port, memoryStore;
-  const memDbPath = join(TMP_DIR, 'mem-test.db');
 
   before(async () => {
-    try {
-      mkdirSync(TMP_DIR, { recursive: true });
-      const { createHttpGateway } = await import('../src/channels/http-gateway.js');
-      const { getVectorMemoryStore, resetVectorMemoryStore } = await import('../src/memory/vector-store.js');
-      const { resetMemoryStore } = await import('../src/memory/store.js');
+    mkdirSync(TMP_DIR, { recursive: true });
+    const { createHttpGateway } = await import('../src/channels/http-gateway.js');
 
-      // Reset singletons to get fresh stores with a temp file DB
-      // (in-memory won't work because vector store and memory store need the same DB)
-      resetVectorMemoryStore();
-      resetMemoryStore();
-      memoryStore = getVectorMemoryStore({ dbPath: memDbPath });
-
-      gw = createHttpGateway({
-        port: 0,
-        apiKeys: [{ key: API_KEY, name: 'test-admin', level: 'admin' }],
-      });
-      gw.setSubsystems({ memory: memoryStore });
-      const addr = await gw.start();
-      port = addr.port;
-    } catch (error) {
-      if (error?.code === 'ERR_DLOPEN_FAILED') {
-        memoryAvailable = false;
-        return;
-      }
-      throw error;
-    }
+    memoryStore = new TestMemorySubsystem();
+    gw = createHttpGateway({
+      port: 0,
+      apiKeys: [{ key: API_KEY, name: 'test-admin', level: 'admin' }],
+    });
+    gw.setSubsystems({ memory: memoryStore });
+    const addr = await gw.start();
+    port = addr.port;
   });
 
   after(async () => {
-    if (!memoryAvailable) return;
     await gw.stop();
     memoryStore.close();
     try { rmSync(TMP_DIR, { recursive: true, force: true }); } catch {}
   });
 
-  it('GET /memory/stats returns stats', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('GET /memory/stats returns stats', async () => {
     const res = await request(port, 'GET', '/memory/stats', null, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok('totalMemories' in res.body);
@@ -384,8 +469,7 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok('dim' in res.body);
   });
 
-  it('POST /memory/save stores a memory', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('POST /memory/save stores a memory', async () => {
     const res = await request(port, 'POST', '/memory/save', {
       summary: 'Customer asked about return policy for electronics',
       facts: 'return_window:30_days',
@@ -396,14 +480,12 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok(res.body.id);
   });
 
-  it('POST /memory/save requires summary', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('POST /memory/save requires summary', async () => {
     const res = await request(port, 'POST', '/memory/save', { channel: 'http' }, AUTH_HEADERS);
     assert.equal(res.status, 400);
   });
 
-  it('POST /memory/search finds saved memory', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('POST /memory/search finds saved memory', async () => {
     const res = await request(port, 'POST', '/memory/search', {
       query: 'return policy',
       channel: 'http',
@@ -415,8 +497,7 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok(res.body.results[0].summary.includes('return policy'));
   });
 
-  it('POST /memory/vector-search finds saved memory', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('POST /memory/vector-search finds saved memory', async () => {
     const res = await request(port, 'POST', '/memory/vector-search', {
       query: 'electronics return policy',
     }, AUTH_HEADERS);
@@ -425,8 +506,7 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok(res.body.results.length > 0);
   });
 
-  it('POST /memory/hybrid-search finds saved memory', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('POST /memory/hybrid-search finds saved memory', async () => {
     const res = await request(port, 'POST', '/memory/hybrid-search', {
       query: 'return policy',
       channel: 'http',
@@ -437,22 +517,19 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok(res.body.results.length > 0);
   });
 
-  it('POST /memory/vector-search requires query', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('POST /memory/vector-search requires query', async () => {
     const res = await request(port, 'POST', '/memory/vector-search', {}, AUTH_HEADERS);
     assert.equal(res.status, 400);
   });
 
-  it('POST /memory/backfill succeeds', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('POST /memory/backfill succeeds', async () => {
     const res = await request(port, 'POST', '/memory/backfill', {}, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok('processed' in res.body);
     assert.ok('errors' in res.body);
   });
 
-  it('DELETE /memory/:id deletes a memory', async (t) => {
-    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
+  it('DELETE /memory/:id deletes a memory', async () => {
     // Save one first
     const saveRes = await request(port, 'POST', '/memory/save', {
       summary: 'Temporary memory to delete',

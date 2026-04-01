@@ -479,7 +479,7 @@ pub struct SupplierApSummary {
 // ============================================================================
 
 /// Generate a bill number.
-#[must_use] 
+#[must_use]
 pub fn generate_bill_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
@@ -487,7 +487,7 @@ pub fn generate_bill_number() -> String {
 }
 
 /// Generate a payment number.
-#[must_use] 
+#[must_use]
 pub fn generate_ap_payment_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
@@ -495,7 +495,7 @@ pub fn generate_ap_payment_number() -> String {
 }
 
 /// Generate a payment run number.
-#[must_use] 
+#[must_use]
 pub fn generate_payment_run_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..4].to_uppercase();

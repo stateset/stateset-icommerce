@@ -171,6 +171,7 @@ export class UnifiedSequencerClient extends EventEmitter {
       storeId: this.config.storeId,
       agentId: this.config.agentId,
       tls: url.protocol === 'grpcs:',
+      securityProfile: this.config.securityProfile ?? this.config.sync?.securityProfile,
       apiKey: creds.apiKey,
       jwtToken: creds.jwt,
       retryPolicy: this.config.retryPolicy,
@@ -376,6 +377,21 @@ export class UnifiedSequencerClient extends EventEmitter {
     // For gRPC, use the REST client's verification logic
     const restClient = new SequencerClient(this.config);
     return restClient.verifyInclusion(envelope, proof, expectedRoot);
+  }
+
+  /**
+   * Verify a receipt signature against a known sequencer public key.
+   * @param {Object} receipt - Receipt or sequenced event with receipt fields.
+   * @param {Buffer|string|Object} sequencerPublicKey - Sequencer public key or bundle.
+   * @returns {boolean}
+   */
+  verifyReceiptSignature(receipt, sequencerPublicKey) {
+    if (this._client?.verifyReceiptSignature) {
+      return this._client.verifyReceiptSignature(receipt, sequencerPublicKey);
+    }
+    // Fallback: create a REST client for verification logic
+    const restClient = new SequencerClient(this.config);
+    return restClient.verifyReceiptSignature(receipt, sequencerPublicKey);
   }
 
   // ===========================================================================

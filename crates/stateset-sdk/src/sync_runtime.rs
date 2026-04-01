@@ -237,7 +237,7 @@ impl SyncRuntime {
 
     /// Create a runtime from an existing engine and transport.
     #[must_use]
-    pub fn from_parts(engine: SyncEngine, transport: SequencerHttpTransport) -> Self {
+    pub const fn from_parts(engine: SyncEngine, transport: SequencerHttpTransport) -> Self {
         Self { engine, transport }
     }
 
@@ -270,18 +270,18 @@ impl SyncRuntime {
 
     /// Return the owned sync engine.
     #[must_use]
-    pub fn engine(&self) -> &SyncEngine {
+    pub const fn engine(&self) -> &SyncEngine {
         &self.engine
     }
 
     /// Return a mutable reference to the owned sync engine.
-    pub fn engine_mut(&mut self) -> &mut SyncEngine {
+    pub const fn engine_mut(&mut self) -> &mut SyncEngine {
         &mut self.engine
     }
 
     /// Return the configured HTTP transport.
     #[must_use]
-    pub fn transport(&self) -> &SequencerHttpTransport {
+    pub const fn transport(&self) -> &SequencerHttpTransport {
         &self.transport
     }
 

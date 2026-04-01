@@ -233,12 +233,11 @@ impl BackupManager {
     pub fn list_backups(&self) -> Result<Vec<BackupMetadata>, CommerceError> {
         let mut backups = Vec::new();
 
-        for entry in fs::read_dir(&self.backup_dir).map_err(|e| {
-            CommerceError::DatabaseError(format!("Failed to read backup dir: {e}"))
-        })? {
-            let entry = entry.map_err(|e| {
-                CommerceError::DatabaseError(format!("Failed to read entry: {e}"))
-            })?;
+        for entry in fs::read_dir(&self.backup_dir)
+            .map_err(|e| CommerceError::DatabaseError(format!("Failed to read backup dir: {e}")))?
+        {
+            let entry = entry
+                .map_err(|e| CommerceError::DatabaseError(format!("Failed to read entry: {e}")))?;
             let path = entry.path();
 
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("db") {
@@ -279,9 +278,9 @@ impl BackupManager {
 
         let mut buffer = vec![0; 8192];
         loop {
-            let n = file.read(&mut buffer).map_err(|e| {
-                CommerceError::DatabaseError(format!("Failed to read backup: {e}"))
-            })?;
+            let n = file
+                .read(&mut buffer)
+                .map_err(|e| CommerceError::DatabaseError(format!("Failed to read backup: {e}")))?;
             if n == 0 {
                 break;
             }

@@ -319,6 +319,7 @@ export function createBatchService(a2aService, store) {
         const escrowId = randomUUID();
         const network = e.network || DEFAULT_NETWORK;
         const asset = e.asset || getDefaultAssetForNetwork(network);
+        const defaultExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
         const escrowRecord = {
           id: escrowId,
           status: 'created',
@@ -329,6 +330,7 @@ export function createBatchService(a2aService, store) {
           asset,
           network,
           release_conditions: e.conditions || [],
+          expires_at: e.expiresAt || defaultExpiry,
           created_at: now,
           updated_at: now,
         };

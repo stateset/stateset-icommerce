@@ -101,7 +101,10 @@ macro_rules! static_assert_size {
 // If you intentionally add large variants, update the expected size here.
 #[cfg(target_pointer_width = "64")]
 mod _size_assertions {
-    use super::{CommerceError, DbError, OrderError, InventoryError, CustomerError, ProductError, ReturnError, PaymentError, ShippingError};
+    use super::{
+        CommerceError, CustomerError, DbError, InventoryError, OrderError, PaymentError,
+        ProductError, ReturnError, ShippingError,
+    };
     static_assert_size!(CommerceError, 80);
     static_assert_size!(DbError, 64);
     static_assert_size!(OrderError, 48);
@@ -478,7 +481,7 @@ pub mod result {
 
 impl CommerceError {
     /// Check if error is a not found error.
-    #[must_use] 
+    #[must_use]
     pub const fn is_not_found(&self) -> bool {
         match self {
             Self::NotFound
@@ -491,8 +494,9 @@ impl CommerceError {
             | Self::ReservationNotFound(_) => true,
             // Domain sub-errors
             Self::Order(OrderError::NotFound(_)) => true,
-            Self::Inventory(InventoryError::ItemNotFound(_) |
-InventoryError::ReservationNotFound(_)) => true,
+            Self::Inventory(
+                InventoryError::ItemNotFound(_) | InventoryError::ReservationNotFound(_),
+            ) => true,
             Self::Customer(CustomerError::NotFound(_)) => true,
             Self::Product(ProductError::NotFound(_) | ProductError::VariantNotFound(_)) => true,
             Self::Return(ReturnError::NotFound(_)) => true,
@@ -503,13 +507,13 @@ InventoryError::ReservationNotFound(_)) => true,
     }
 
     /// Check if error is a validation error.
-    #[must_use] 
+    #[must_use]
     pub const fn is_validation(&self) -> bool {
         matches!(self, Self::ValidationError(_) | Self::InvalidInput { .. })
     }
 
     /// Check if error is a conflict error.
-    #[must_use] 
+    #[must_use]
     pub const fn is_conflict(&self) -> bool {
         match self {
             Self::Conflict(_)
@@ -527,13 +531,13 @@ InventoryError::ReservationNotFound(_)) => true,
     }
 
     /// Check if error is a database error.
-    #[must_use] 
+    #[must_use]
     pub const fn is_database(&self) -> bool {
         matches!(self, Self::DatabaseError(_) | Self::Database(_))
     }
 
     /// Check if error is an external service error.
-    #[must_use] 
+    #[must_use]
     pub const fn is_external_service(&self) -> bool {
         matches!(self, Self::ExternalServiceError(_))
     }
@@ -545,7 +549,7 @@ InventoryError::ReservationNotFound(_)) => true,
     /// - Pool exhaustion
     /// - Transaction failures (some)
     /// - Optimistic lock failures
-    #[must_use] 
+    #[must_use]
     pub const fn is_retryable(&self) -> bool {
         match self {
             Self::OptimisticLockFailure => true,
@@ -563,7 +567,7 @@ InventoryError::ReservationNotFound(_)) => true,
     ///
     /// This is a superset of [`is_retryable`](Self::is_retryable) — it also includes
     /// external service failures which may recover after a delay.
-    #[must_use] 
+    #[must_use]
     pub const fn is_transient(&self) -> bool {
         self.is_retryable() || self.is_external_service()
     }
@@ -571,7 +575,7 @@ InventoryError::ReservationNotFound(_)) => true,
     /// Check if error is a client error (bad input from the caller).
     ///
     /// Client errors include not-found, validation, conflict, and permission errors.
-    #[must_use] 
+    #[must_use]
     pub const fn is_client_error(&self) -> bool {
         self.is_not_found() || self.is_validation() || self.is_conflict() || self.is_not_permitted()
     }
@@ -580,13 +584,13 @@ InventoryError::ReservationNotFound(_)) => true,
     ///
     /// Server errors include database errors, internal errors, and external service
     /// failures.
-    #[must_use] 
+    #[must_use]
     pub const fn is_server_error(&self) -> bool {
         self.is_database() || matches!(self, Self::Internal(_)) || self.is_external_service()
     }
 
     /// Check if this is a permission-denied error.
-    #[must_use] 
+    #[must_use]
     pub const fn is_not_permitted(&self) -> bool {
         matches!(self, Self::NotPermitted(_))
     }
@@ -606,7 +610,7 @@ InventoryError::ReservationNotFound(_)) => true,
     /// let err = CommerceError::ValidationError("bad".into());
     /// assert_eq!(err.suggested_status_code(), 400);
     /// ```
-    #[must_use] 
+    #[must_use]
     pub const fn suggested_status_code(&self) -> u16 {
         if self.is_not_found() {
             404
@@ -624,7 +628,7 @@ InventoryError::ReservationNotFound(_)) => true,
     }
 
     /// Get the underlying database error if this is a database error.
-    #[must_use] 
+    #[must_use]
     pub const fn as_db_error(&self) -> Option<&DbError> {
         match self {
             Self::Database(e) => Some(e),
@@ -633,7 +637,7 @@ InventoryError::ReservationNotFound(_)) => true,
     }
 
     /// Get the underlying order error if this is an order error.
-    #[must_use] 
+    #[must_use]
     pub const fn as_order_error(&self) -> Option<&OrderError> {
         match self {
             Self::Order(e) => Some(e),
@@ -642,7 +646,7 @@ InventoryError::ReservationNotFound(_)) => true,
     }
 
     /// Get the underlying inventory error if this is an inventory error.
-    #[must_use] 
+    #[must_use]
     pub const fn as_inventory_error(&self) -> Option<&InventoryError> {
         match self {
             Self::Inventory(e) => Some(e),
@@ -651,7 +655,7 @@ InventoryError::ReservationNotFound(_)) => true,
     }
 
     /// Get the underlying customer error if this is a customer error.
-    #[must_use] 
+    #[must_use]
     pub const fn as_customer_error(&self) -> Option<&CustomerError> {
         match self {
             Self::Customer(e) => Some(e),
@@ -660,7 +664,7 @@ InventoryError::ReservationNotFound(_)) => true,
     }
 
     /// Get the underlying product error if this is a product error.
-    #[must_use] 
+    #[must_use]
     pub const fn as_product_error(&self) -> Option<&ProductError> {
         match self {
             Self::Product(e) => Some(e),
@@ -670,7 +674,7 @@ InventoryError::ReservationNotFound(_)) => true,
 
     /// Create a database error from a typed `DbError`.
     #[track_caller]
-    #[must_use] 
+    #[must_use]
     pub const fn db(error: DbError) -> Self {
         Self::Database(error)
     }
@@ -773,7 +777,7 @@ pub struct BatchError {
 
 impl BatchError {
     /// Create a new `BatchError` from an index and `CommerceError`.
-    #[must_use] 
+    #[must_use]
     pub fn from_error(index: usize, id: Option<String>, err: &CommerceError) -> Self {
         Self { index, id, error: err.to_string(), code: BatchErrorCode::from(err) }
     }
@@ -796,7 +800,7 @@ pub struct BatchResult<T> {
 
 impl<T> BatchResult<T> {
     /// Create a new empty `BatchResult`.
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             succeeded: Vec::new(),
@@ -808,7 +812,7 @@ impl<T> BatchResult<T> {
     }
 
     /// Create a `BatchResult` with pre-allocated capacity.
-    #[must_use] 
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             succeeded: Vec::with_capacity(capacity),
@@ -834,25 +838,25 @@ impl<T> BatchResult<T> {
     }
 
     /// Check if all operations succeeded.
-    #[must_use] 
+    #[must_use]
     pub const fn all_succeeded(&self) -> bool {
         self.failure_count == 0
     }
 
     /// Check if all operations failed.
-    #[must_use] 
+    #[must_use]
     pub const fn all_failed(&self) -> bool {
         self.success_count == 0 && self.total_attempted > 0
     }
 
     /// Check if some operations succeeded and some failed.
-    #[must_use] 
+    #[must_use]
     pub const fn partial_success(&self) -> bool {
         self.success_count > 0 && self.failure_count > 0
     }
 
     /// Check if the batch was empty.
-    #[must_use] 
+    #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.total_attempted == 0
     }

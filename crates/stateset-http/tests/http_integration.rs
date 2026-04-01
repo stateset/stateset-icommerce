@@ -1825,10 +1825,8 @@ async fn e2e_create_inventory_items_then_list_inventory() {
 
 #[tokio::test]
 async fn deep_health_returns_database_latency_and_metrics() {
-    let resp = app()
-        .oneshot(Request::get("/health/deep").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
+    let resp =
+        app().oneshot(Request::get("/health/deep").body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
     assert_eq!(json["status"], "ok");
@@ -2080,7 +2078,7 @@ async fn create_invoice_returns_201() {
 /// This is the critical happy-path test for v1.0.0 readiness.
 #[tokio::test]
 async fn e2e_full_commerce_lifecycle() {
-    let (router, state) = app_with_state();
+    let (router, _state) = app_with_state();
 
     // Step 1: Create customer
     let body = json!({
@@ -2191,11 +2189,7 @@ async fn e2e_full_commerce_lifecycle() {
     // Step 6: Verify order is retrievable with all data
     let resp = router
         .clone()
-        .oneshot(
-            Request::get(format!("/api/v1/orders/{order_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get(format!("/api/v1/orders/{order_id}")).body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -2206,13 +2200,1462 @@ async fn e2e_full_commerce_lifecycle() {
     // Step 7: Verify customer is retrievable
     let resp = router
         .oneshot(
-            Request::get(format!("/api/v1/customers/{customer_id}"))
-                .body(Body::empty())
-                .unwrap(),
+            Request::get(format!("/api/v1/customers/{customer_id}")).body(Body::empty()).unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let final_customer = body_json(resp).await;
     assert_eq!(final_customer["email"], "e2e-buyer@test.com");
+}
+
+// ============================================================================
+// 9. E2E Order Lifecycle
+// ============================================================================
+
+/// Full order lifecycle: create customer -> create product -> create inventory ->
+/// create order -> ship order -> verify status transitions.
+#[tokio::test]
+async fn e2e_order_lifecycle_create_ship_verify() {
+    let (router, state) = app_with_state();
+
+    let body = json!({
+        "email": "lifecycle@example.com",
+        "first_name": "Life",
+        "last_name": "Cycle"
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let customer = body_json(resp).await;
+    let customer_id = customer["id"].as_str().unwrap().to_string();
+
+    let body = json!({ "name": "Lifecycle Widget", "description": "Widget for lifecycle testing" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/products")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let product = body_json(resp).await;
+    let product_id = product["id"].as_str().unwrap().to_string();
+
+    state
+        .commerce()
+        .inventory()
+        .create_item(stateset_core::CreateInventoryItem {
+            sku: "LIFECYCLE-SKU-001".into(),
+            name: "Lifecycle Widget".into(),
+            initial_quantity: Some(dec!(50)),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let body = json!({
+        "customer_id": customer_id,
+        "items": [{ "product_id": product_id, "sku": "LIFECYCLE-SKU-001", "name": "Lifecycle Widget", "quantity": 2, "unit_price": "29.99" }],
+        "currency": "USD"
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let order = body_json(resp).await;
+    let order_id = order["id"].as_str().unwrap().to_string();
+    assert_eq!(order["status"], "pending");
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{order_id}/ship")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let shipped = body_json(resp).await;
+    assert_eq!(shipped["status"], "shipped");
+
+    let resp = router
+        .oneshot(Request::get(format!("/api/v1/orders/{order_id}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let final_order = body_json(resp).await;
+    assert_eq!(final_order["status"], "shipped");
+    assert_eq!(final_order["customer_id"], customer_id);
+}
+
+/// Order lifecycle with cancellation path.
+#[tokio::test]
+async fn e2e_order_lifecycle_cancel() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+
+    let body = json!({
+        "customer_id": customer_id,
+        "items": [{ "product_id": product_id, "sku": "CANCEL-SKU-001", "name": "Cancel Widget", "quantity": 1, "unit_price": "15.00" }]
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let order = body_json(resp).await;
+    let order_id = order["id"].as_str().unwrap().to_string();
+    assert_eq!(order["status"], "pending");
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{order_id}/cancel"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cancelled = body_json(resp).await;
+    assert_eq!(cancelled["status"], "cancelled");
+
+    let resp = router
+        .oneshot(Request::get(format!("/api/v1/orders/{order_id}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let final_order = body_json(resp).await;
+    assert_eq!(final_order["status"], "cancelled");
+}
+
+// ============================================================================
+// 10. Return Processing E2E
+// ============================================================================
+
+/// Return processing E2E: create order -> ship -> create return -> approve.
+#[tokio::test]
+async fn e2e_return_processing_approve() {
+    let (router, state) = app_with_state();
+    let (order_id, item_id) = seed_order(&state);
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{order_id}/ship")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = json!({
+        "order_id": order_id, "reason": "defective", "reason_details": "Widget arrived cracked",
+        "items": [{"order_item_id": item_id, "quantity": 1}]
+    });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/returns")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let ret = body_json(resp).await;
+    let return_id = ret["id"].as_str().unwrap().to_string();
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/returns/{return_id}/approve"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let approved = body_json(resp).await;
+    assert_eq!(approved["status"], "approved");
+
+    let resp = router
+        .oneshot(Request::get(format!("/api/v1/returns/{return_id}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let fetched = body_json(resp).await;
+    assert_eq!(fetched["status"], "approved");
+    assert_eq!(fetched["reason"], "defective");
+}
+
+/// Return with multiple reasons using fresh state per iteration.
+#[tokio::test]
+async fn e2e_return_different_reasons() {
+    for reason in ["changed_mind", "wrong_item", "not_as_described"] {
+        let state = AppState::new(test_commerce());
+        let (order_id, item_id) = seed_order(&state);
+        let router = stateset_http::routes::api_router().with_state(state);
+        let body = json!({ "order_id": order_id, "reason": reason, "items": [{"order_item_id": item_id, "quantity": 1}] });
+        let resp = router
+            .oneshot(
+                Request::post("/api/v1/returns")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED, "Failed for reason: {reason}");
+        let ret = body_json(resp).await;
+        assert_eq!(ret["reason"], reason);
+    }
+}
+
+// ============================================================================
+// 11. Inventory Management E2E
+// ============================================================================
+
+#[tokio::test]
+async fn e2e_inventory_create_adjust_verify() {
+    let (router, state) = app_with_state();
+    state
+        .commerce()
+        .inventory()
+        .create_item(stateset_core::CreateInventoryItem {
+            sku: "INV-E2E-001".into(),
+            name: "E2E Inventory Widget".into(),
+            initial_quantity: Some(dec!(100)),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/inventory/INV-E2E-001").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let stock = body_json(resp).await;
+    assert_eq!(stock["sku"], "INV-E2E-001");
+
+    let body = json!({ "quantity": "25", "reason": "Restock shipment" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/inventory/INV-E2E-001/adjust")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = json!({ "quantity": "-10", "reason": "Damaged removal" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/inventory/INV-E2E-001/adjust")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let adjusted = body_json(resp).await;
+    assert_eq!(adjusted["sku"], "INV-E2E-001");
+    assert!(adjusted["total_on_hand"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn e2e_inventory_multiple_items_list() {
+    let (router, state) = app_with_state();
+    for (sku, name, qty) in [
+        ("MULTI-INV-A", "Alpha Gizmo", dec!(200)),
+        ("MULTI-INV-B", "Beta Gizmo", dec!(75)),
+        ("MULTI-INV-C", "Gamma Gizmo", dec!(10)),
+    ] {
+        state
+            .commerce()
+            .inventory()
+            .create_item(stateset_core::CreateInventoryItem {
+                sku: sku.into(),
+                name: name.into(),
+                initial_quantity: Some(qty),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let resp = router
+        .oneshot(Request::get("/api/v1/inventory").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list = body_json(resp).await;
+    assert_eq!(list["total"], 3);
+    assert_eq!(list["items"].as_array().unwrap().len(), 3);
+}
+
+// ============================================================================
+// 12. Multi-Entity Filtering & Pagination
+// ============================================================================
+
+#[tokio::test]
+async fn e2e_order_status_filtering() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    let mut order_ids = Vec::new();
+    for i in 0..3 {
+        let body = json!({ "customer_id": customer_id, "items": [{ "product_id": product_id, "sku": format!("FILTER-SKU-{i:03}"), "name": "Filter Widget", "quantity": 1, "unit_price": "10.00" }] });
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let order = body_json(resp).await;
+        order_ids.push(order["id"].as_str().unwrap().to_string());
+    }
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{}/ship", order_ids[0]))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/orders/{}/cancel", order_ids[1]))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders?status=pending").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 1);
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders?status=shipped").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 1);
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders?status=cancelled").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 1);
+
+    let resp =
+        router.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 3);
+}
+
+#[tokio::test]
+async fn e2e_order_pagination_limit_offset() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    for i in 0..5 {
+        let body = json!({ "customer_id": customer_id, "items": [{ "product_id": product_id, "sku": format!("PAGE-SKU-{i:03}"), "name": "Paginated Widget", "quantity": 1, "unit_price": "10.00" }] });
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders?limit=2&offset=0").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let p1 = body_json(resp).await;
+    assert_eq!(p1["total"], 5);
+    assert_eq!(p1["limit"], 2);
+    assert_eq!(p1["orders"].as_array().unwrap().len(), 2);
+    assert_eq!(p1["has_more"], true);
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders?limit=2&offset=2").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let p2 = body_json(resp).await;
+    assert_eq!(p2["orders"].as_array().unwrap().len(), 2);
+    assert_eq!(p2["has_more"], true);
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders?limit=2&offset=4").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let p3 = body_json(resp).await;
+    assert_eq!(p3["orders"].as_array().unwrap().len(), 1);
+    assert_eq!(p3["has_more"], false);
+
+    let resp = router
+        .oneshot(Request::get("/api/v1/orders?limit=2&offset=10").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["orders"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn e2e_order_cursor_pagination() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    for i in 0..4 {
+        let body = json!({ "customer_id": customer_id, "items": [{ "product_id": product_id, "sku": format!("CURSOR-SKU-{i:03}"), "name": "Cursor Widget", "quantity": 1, "unit_price": "5.00" }] });
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders?limit=2").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let page1 = body_json(resp).await;
+    assert_eq!(page1["orders"].as_array().unwrap().len(), 2);
+    assert_eq!(page1["has_more"], true);
+    let cursor = page1["next_cursor"].as_str().unwrap();
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/orders?limit=2&after={cursor}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let page2 = body_json(resp).await;
+    assert_eq!(page2["orders"].as_array().unwrap().len(), 2);
+
+    let p1_ids: Vec<&str> =
+        page1["orders"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap()).collect();
+    let p2_ids: Vec<&str> =
+        page2["orders"].as_array().unwrap().iter().map(|o| o["id"].as_str().unwrap()).collect();
+    for id in &p2_ids {
+        assert!(!p1_ids.contains(id), "Cursor pagination returned duplicate ID: {id}");
+    }
+}
+
+#[tokio::test]
+async fn e2e_customer_filtering_by_email() {
+    let state = AppState::new(test_commerce());
+    for (email, first) in [("alice-filter@test.com", "Alice"), ("bob-filter@test.com", "Bob")] {
+        let router = stateset_http::routes::api_router().with_state(state.clone());
+        let body = json!({ "email": email, "first_name": first, "last_name": "FilterTest" });
+        let resp = router
+            .oneshot(
+                Request::post("/api/v1/customers")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+    let router = stateset_http::routes::api_router().with_state(state);
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/customers?email=alice-filter@test.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list = body_json(resp).await;
+    assert_eq!(list["total"], 1);
+    assert_eq!(list["customers"].as_array().unwrap()[0]["email"], "alice-filter@test.com");
+}
+
+// ============================================================================
+// 13. Error Handling
+// ============================================================================
+
+#[tokio::test]
+async fn error_invalid_uuid_format_returns_400() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/orders/not-a-valid-uuid").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert!(resp.status().is_client_error());
+}
+
+#[tokio::test]
+async fn error_invalid_order_status_filter_returns_400() {
+    let resp = app()
+        .oneshot(
+            Request::get("/api/v1/orders?status=nonexistent_status").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(resp).await;
+    assert_eq!(json["error"]["code"], "bad_request");
+    assert!(json["error"]["message"].as_str().unwrap().contains("Invalid status"));
+}
+
+#[tokio::test]
+async fn error_invalid_payment_status_filter_returns_400() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/orders?payment_status=bogus").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn error_invalid_fulfillment_status_filter_returns_400() {
+    let resp = app()
+        .oneshot(
+            Request::get("/api/v1/orders?fulfillment_status=bogus").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn error_create_order_empty_items() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let body = json!({ "customer_id": customer_id, "items": [] });
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_client_error());
+}
+
+#[tokio::test]
+async fn error_create_customer_missing_all_required() {
+    let body = json!({});
+    let resp = app()
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_client_error());
+}
+
+#[tokio::test]
+async fn error_ship_nonexistent_order_returns_404() {
+    let id = OrderId::new();
+    let resp = app()
+        .oneshot(Request::patch(format!("/api/v1/orders/{id}/ship")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn error_cancel_nonexistent_order_returns_404() {
+    let id = OrderId::new();
+    let resp = app()
+        .oneshot(Request::patch(format!("/api/v1/orders/{id}/cancel")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn error_approve_nonexistent_return_returns_404() {
+    let id = ReturnId::new();
+    let resp = app()
+        .oneshot(
+            Request::patch(format!("/api/v1/returns/{id}/approve")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn error_complete_nonexistent_payment_returns_404() {
+    let id = PaymentId::new();
+    let resp = app()
+        .oneshot(
+            Request::post(format!("/api/v1/payments/{id}/complete")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn error_body_shape_is_consistent() {
+    let id = OrderId::new();
+    let resp = app()
+        .oneshot(Request::get(format!("/api/v1/orders/{id}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("application/json"));
+    let json = body_json(resp).await;
+    assert!(json["error"].is_object());
+    assert!(json["error"]["code"].is_string());
+    assert!(json["error"]["message"].is_string());
+}
+
+#[tokio::test]
+async fn error_invalid_cursor_returns_400() {
+    let resp = app()
+        .oneshot(
+            Request::get("/api/v1/orders?after=not-a-valid-base64!!!").body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_client_error());
+}
+
+// ============================================================================
+// 14. ETag / HTTP Caching
+// ============================================================================
+
+#[tokio::test]
+async fn etag_present_on_get_response() {
+    let resp =
+        app().oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers().get("etag");
+    assert!(etag.is_some(), "GET response must include ETag header");
+    let etag_str = etag.unwrap().to_str().unwrap();
+    assert!(etag_str.starts_with("W/\""), "ETag should be weak");
+    assert!(resp.headers().get("cache-control").is_some(), "Must include Cache-Control");
+}
+
+#[tokio::test]
+async fn etag_304_not_modified_on_match() {
+    let router = app();
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers().get("etag").unwrap().to_str().unwrap().to_string();
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("if-none-match", &etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+}
+
+#[tokio::test]
+async fn etag_200_on_mismatch() {
+    let resp = app()
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("if-none-match", "W/\"stale-etag\"")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().get("etag").is_some());
+}
+
+#[tokio::test]
+async fn cache_control_differs_by_endpoint_type() {
+    let router = ServerBuilder::new(test_commerce()).without_auth().build();
+    let body = json!({ "email": "cachetest@test.com", "first_name": "Cache", "last_name": "Test" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp).await;
+    let cid = created["id"].as_str().unwrap();
+
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/customers").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list_cc = resp
+        .headers()
+        .get("cache-control")
+        .expect("list cache-control")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let resp = router
+        .oneshot(Request::get(format!("/api/v1/customers/{cid}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let single_cc = resp
+        .headers()
+        .get("cache-control")
+        .expect("single cache-control")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    assert_ne!(list_cc, single_cc);
+    assert!(list_cc.contains("max-age=10"));
+    assert!(single_cc.contains("max-age=60"));
+}
+
+// ============================================================================
+// 15. Tenant Isolation
+// ============================================================================
+
+#[tokio::test]
+async fn e2e_tenant_isolation_orders() {
+    let tenant_dir =
+        std::env::temp_dir().join(format!("stateset-http-tenant-orders-{}", Uuid::new_v4()));
+    let router = ServerBuilder::new(test_commerce())
+        .without_auth()
+        .with_tenant_db_dir(tenant_dir.clone())
+        .build();
+
+    let body =
+        json!({ "email": "tenant-x@example.com", "first_name": "TenantX", "last_name": "User" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("content-type", "application/json")
+                .header("x-tenant-id", "tenant-x")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let cust = body_json(resp).await;
+    let cid = cust["id"].as_str().unwrap();
+
+    let body = json!({ "name": "Tenant X Widget" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/products")
+                .header("content-type", "application/json")
+                .header("x-tenant-id", "tenant-x")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let prod = body_json(resp).await;
+    let pid = prod["id"].as_str().unwrap();
+
+    let body = json!({ "customer_id": cid, "items": [{ "product_id": pid, "sku": "TX-001", "name": "Tenant X Widget", "quantity": 1, "unit_price": "25.00" }] });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/orders")
+                .header("content-type", "application/json")
+                .header("x-tenant-id", "tenant-x")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("x-tenant-id", "tenant-x")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 1);
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("x-tenant-id", "tenant-y")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 0);
+
+    let resp =
+        router.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let _ = fs::remove_dir_all(tenant_dir);
+}
+
+#[tokio::test]
+async fn e2e_tenant_isolation_returns() {
+    let tenant_dir =
+        std::env::temp_dir().join(format!("stateset-http-tenant-returns-{}", Uuid::new_v4()));
+    let router = ServerBuilder::new(test_commerce())
+        .without_auth()
+        .with_tenant_db_dir(tenant_dir.clone())
+        .build();
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/returns")
+                .header("x-tenant-id", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 0);
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/returns")
+                .header("x-tenant-id", "tenant-b")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 0);
+    let _ = fs::remove_dir_all(tenant_dir);
+}
+
+// ============================================================================
+// 16. Payment Lifecycle E2E
+// ============================================================================
+
+#[tokio::test]
+async fn e2e_payment_lifecycle_complete_and_refund() {
+    let (router, state) = app_with_state();
+    let (order_id, _) = seed_order(&state);
+
+    let body = json!({ "order_id": order_id, "amount": 19.98, "payment_method": "credit_card" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/payments")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let payment = body_json(resp).await;
+    let payment_id = payment["id"].as_str().unwrap().to_string();
+
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/payments/{payment_id}/complete"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["status"], "completed");
+
+    let body = json!({ "amount": 9.99, "reason": "Customer dissatisfied" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/payments/{payment_id}/refund"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = router
+        .oneshot(
+            Request::get(format!("/api/v1/payments/{payment_id}")).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["id"], payment_id);
+}
+
+// ============================================================================
+// 17. Concurrent Operations
+// ============================================================================
+
+#[tokio::test]
+async fn concurrent_requests_to_different_endpoints() {
+    let router = app();
+    let (r1, r2, r3) = tokio::join!(
+        router.clone().oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()),
+        router.clone().oneshot(Request::get("/api/v1/customers").body(Body::empty()).unwrap()),
+        router.clone().oneshot(Request::get("/api/v1/products").body(Body::empty()).unwrap()),
+    );
+    assert_eq!(r1.unwrap().status(), StatusCode::OK);
+    assert_eq!(r2.unwrap().status(), StatusCode::OK);
+    assert_eq!(r3.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn concurrent_order_creation() {
+    let (router, state) = app_with_state();
+    let customer_id = seed_customer(&state);
+    let product_id = seed_product(&state);
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let r = router.clone();
+        let cid = customer_id.clone();
+        let pid = product_id.clone();
+        handles.push(tokio::spawn(async move {
+            let body = json!({ "customer_id": cid, "items": [{ "product_id": pid, "sku": format!("CONC-SKU-{i:03}"), "name": "Concurrent Widget", "quantity": 1, "unit_price": "10.00" }] });
+            r.oneshot(Request::post("/api/v1/orders").header("content-type", "application/json").body(Body::from(serde_json::to_vec(&body).unwrap())).unwrap()).await.unwrap()
+        }));
+    }
+    let results: Vec<_> = futures::future::join_all(handles).await;
+    for result in &results {
+        assert_eq!(result.as_ref().unwrap().status(), StatusCode::CREATED);
+    }
+
+    let resp =
+        router.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 5);
+}
+
+#[tokio::test]
+async fn concurrent_customer_creation() {
+    let router = app();
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let r = router.clone();
+        handles.push(tokio::spawn(async move {
+            let body = json!({ "email": format!("concurrent-{i}@test.com"), "first_name": format!("C{i}"), "last_name": "User" });
+            r.oneshot(Request::post("/api/v1/customers").header("content-type", "application/json").body(Body::from(serde_json::to_vec(&body).unwrap())).unwrap()).await.unwrap()
+        }));
+    }
+    let results: Vec<_> = futures::future::join_all(handles).await;
+    for result in &results {
+        assert_eq!(result.as_ref().unwrap().status(), StatusCode::CREATED);
+    }
+
+    let resp = router
+        .oneshot(Request::get("/api/v1/customers").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["total"], 5);
+}
+
+// ============================================================================
+// 18. Additional Error & Edge Cases
+// ============================================================================
+
+#[tokio::test]
+async fn error_return_with_zero_quantity() {
+    let (router, state) = app_with_state();
+    let (order_id, item_id) = seed_order(&state);
+    let body = json!({ "order_id": order_id, "reason": "defective", "items": [{"order_item_id": item_id, "quantity": 0}] });
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/returns")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_client_error());
+}
+
+#[tokio::test]
+async fn pagination_limit_zero_clamped_to_one() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/orders?limit=0").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["limit"], 1);
+}
+
+#[tokio::test]
+async fn pagination_limit_above_max_is_clamped() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/orders?limit=999").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["limit"], PaginationParams::MAX_LIMIT);
+}
+
+// ============================================================================
+// 19. Request ID Propagation
+// ============================================================================
+
+#[tokio::test]
+async fn request_id_propagated_in_response() {
+    let router = ServerBuilder::new(test_commerce()).without_auth().with_request_id().build();
+    let resp = router.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let rid = resp.headers().get("x-request-id");
+    assert!(rid.is_some());
+    assert!(Uuid::parse_str(rid.unwrap().to_str().unwrap()).is_ok());
+}
+
+#[tokio::test]
+async fn request_id_client_supplied_preserved() {
+    let router = ServerBuilder::new(test_commerce()).without_auth().with_request_id().build();
+    let resp = router
+        .oneshot(
+            Request::get("/health")
+                .header("x-request-id", "my-custom-id-12345")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers().get("x-request-id").unwrap().to_str().unwrap(), "my-custom-id-12345");
+}
+
+// ============================================================================
+// 20. Rate Limiting
+// ============================================================================
+
+#[tokio::test]
+async fn rate_limiter_returns_429_on_exhaustion() {
+    let router = ServerBuilder::new(test_commerce()).without_auth().with_rate_limit(1, 2).build();
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = router
+        .clone()
+        .oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp =
+        router.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(resp.headers().get("retry-after").is_some());
+}
+
+// ============================================================================
+// 21. OpenAPI Spec
+// ============================================================================
+
+#[tokio::test]
+async fn openapi_spec_served_as_json() {
+    let resp = app()
+        .oneshot(Request::get("/api/v1/openapi.json").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("json"));
+    let json = body_json(resp).await;
+    assert!(json["openapi"].is_string());
+    assert!(json["paths"].is_object());
+}
+
+// ============================================================================
+// 22. Customer & Product CRUD Roundtrip
+// ============================================================================
+
+#[tokio::test]
+async fn e2e_customer_create_update_delete_roundtrip() {
+    let (router, _) = app_with_state();
+    let body =
+        json!({ "email": "roundtrip-del@test.com", "first_name": "Round", "last_name": "Trip" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let cid = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let body = json!({ "first_name": "Updated", "last_name": "Name" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/customers/{cid}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["first_name"], "Updated");
+
+    let resp = router
+        .clone()
+        .oneshot(Request::delete(format!("/api/v1/customers/{cid}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Soft delete: entity may still be accessible or return 404
+    let resp = router
+        .oneshot(Request::get(format!("/api/v1/customers/{cid}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert!(resp.status().is_success() || resp.status() == StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn e2e_product_create_update_delete_roundtrip() {
+    let (router, _) = app_with_state();
+    let body = json!({ "name": "Roundtrip Product", "description": "Will be updated and deleted" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/products")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let pid = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let body = json!({ "name": "Updated Product" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/products/{pid}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["name"], "Updated Product");
+
+    let resp = router
+        .clone()
+        .oneshot(Request::delete(format!("/api/v1/products/{pid}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let resp = router
+        .oneshot(Request::get(format!("/api/v1/products/{pid}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert!(resp.status().is_success() || resp.status() == StatusCode::NOT_FOUND);
+}
+
+// ============================================================================
+// OpenAPI Endpoint & Route Coverage Tests
+// ============================================================================
+
+#[tokio::test]
+async fn openapi_json_endpoint_returns_200() {
+    let (router, _state) = app_with_state();
+    let resp = router
+        .oneshot(Request::get("/api/v1/openapi.json").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn openapi_json_endpoint_returns_valid_json() {
+    let (router, _state) = app_with_state();
+    let resp = router
+        .oneshot(Request::get("/api/v1/openapi.json").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert!(json["openapi"].is_string(), "spec should have 'openapi' version field");
+    assert!(json["info"].is_object(), "spec should have 'info' block");
+    assert!(json["paths"].is_object(), "spec should have 'paths' block");
+}
+
+#[tokio::test]
+async fn openapi_json_has_json_content_type() {
+    let (router, _state) = app_with_state();
+    let resp = router
+        .oneshot(Request::get("/api/v1/openapi.json").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert!(
+        ct.contains("application/json"),
+        "openapi.json should return application/json, got: {ct}"
+    );
+}
+
+#[tokio::test]
+async fn docs_ui_endpoint_returns_html() {
+    let (router, _state) = app_with_state();
+    let resp =
+        router.oneshot(Request::get("/api/v1/docs").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert!(ct.contains("text/html"), "docs should return text/html, got: {ct}");
+}
+
+/// Verify that all GET list endpoints respond (not 404) and return JSON.
+#[tokio::test]
+async fn all_list_endpoints_respond_with_json() {
+    let (router, _state) = app_with_state();
+    let list_paths = [
+        "/api/v1/orders",
+        "/api/v1/customers",
+        "/api/v1/products",
+        "/api/v1/inventory",
+        "/api/v1/returns",
+        "/api/v1/shipments",
+        "/api/v1/payments",
+        "/api/v1/invoices",
+        "/api/v1/reviews",
+        "/api/v1/wishlists",
+        "/api/v1/gift-cards",
+        "/api/v1/loyalty/programs",
+    ];
+    for path in list_paths {
+        let resp =
+            router.clone().oneshot(Request::get(path).body(Body::empty()).unwrap()).await.unwrap();
+        assert_ne!(resp.status(), StatusCode::NOT_FOUND, "GET {path} should not be 404");
+        let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+        assert!(ct.contains("application/json"), "GET {path} should return JSON, got: {ct}");
+    }
+}
+
+/// Verify that invalid HTTP methods return 405 Method Not Allowed.
+#[tokio::test]
+async fn invalid_method_returns_405_on_get_only_routes() {
+    let (router, _state) = app_with_state();
+    // These routes only accept GET; POST/PUT/DELETE should be 405
+    let get_only_paths = ["/health", "/health/ready"];
+    for path in get_only_paths {
+        let resp = router
+            .clone()
+            .oneshot(Request::builder().method("DELETE").uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED, "DELETE {path} should be 405");
+    }
+}
+
+/// Verify PUT is not allowed on endpoints that only accept POST+GET.
+#[tokio::test]
+async fn put_not_allowed_on_collection_endpoints() {
+    let (router, _state) = app_with_state();
+    let collection_paths = [
+        "/api/v1/orders",
+        "/api/v1/customers",
+        "/api/v1/products",
+        "/api/v1/returns",
+        "/api/v1/shipments",
+        "/api/v1/payments",
+        "/api/v1/invoices",
+    ];
+    for path in collection_paths {
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED, "PUT {path} should be 405");
+    }
+}
+
+/// Verify POST on detail routes (get-only) returns 405.
+#[tokio::test]
+async fn post_not_allowed_on_detail_get_endpoints() {
+    let fake_id = Uuid::new_v4();
+    let (router, _state) = app_with_state();
+    let detail_paths = [
+        format!("/api/v1/orders/{fake_id}"),
+        format!("/api/v1/customers/{fake_id}"),
+        format!("/api/v1/inventory/FAKE-SKU"),
+    ];
+    for path in &detail_paths {
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path.as_str())
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Orders/{id} only has GET, so POST should be 405
+        // (unless there's a nested route catching it, in which case it may be 404)
+        assert!(
+            resp.status() == StatusCode::METHOD_NOT_ALLOWED
+                || resp.status() == StatusCode::NOT_FOUND,
+            "POST {} should be 405 or 404, got {}",
+            path,
+            resp.status()
+        );
+    }
+}
+
+/// Health endpoints return correct Content-Type.
+#[tokio::test]
+async fn health_endpoints_return_json_content_type() {
+    let (router, _state) = app_with_state();
+    let health_paths = ["/health", "/health/ready"];
+    for path in health_paths {
+        let resp =
+            router.clone().oneshot(Request::get(path).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+        assert!(ct.contains("application/json"), "GET {path} should return JSON, got: {ct}");
+    }
+}
+
+/// Verify nonexistent v1 API routes return 404 Not Found.
+#[tokio::test]
+async fn nonexistent_v1_route_returns_404() {
+    let (router, _state) = app_with_state();
+    let resp = router
+        .oneshot(Request::get("/api/v1/does-not-exist").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Verify the events stream endpoint is accessible (responds, not 404).
+#[tokio::test]
+async fn events_stream_endpoint_responds() {
+    let (router, _state) = app_with_state();
+    // SSE endpoint may return 200 and start streaming; we just check it's not 404/405
+    let resp = router
+        .oneshot(Request::get("/api/v1/events/stream").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), StatusCode::NOT_FOUND, "events/stream should not be 404");
+    assert_ne!(resp.status(), StatusCode::METHOD_NOT_ALLOWED, "events/stream should accept GET");
 }

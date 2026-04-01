@@ -29,18 +29,16 @@ pub struct SqliteSubscriptionRepository {
 impl SqliteSubscriptionRepository {
     const MAX_SUBSCRIPTION_NUMBER_RETRIES: usize = 8;
 
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
 
     fn is_subscription_number_unique_violation(err: &rusqlite::Error) -> bool {
         match err {
-            rusqlite::Error::SqliteFailure(_, message) => message
-                .as_deref()
-                .is_some_and(|msg| {
-                    msg.contains("UNIQUE constraint failed: subscriptions.subscription_number")
-                }),
+            rusqlite::Error::SqliteFailure(_, message) => message.as_deref().is_some_and(|msg| {
+                msg.contains("UNIQUE constraint failed: subscriptions.subscription_number")
+            }),
             _ => err
                 .to_string()
                 .contains("UNIQUE constraint failed: subscriptions.subscription_number"),
@@ -207,7 +205,8 @@ impl SqliteSubscriptionRepository {
                 .prepare(&sql)
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| self.row_to_plan(row))
@@ -688,7 +687,8 @@ impl SqliteSubscriptionRepository {
                 .prepare(&sql)
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| self.row_to_subscription(row))
@@ -1193,7 +1193,8 @@ impl SqliteSubscriptionRepository {
             .prepare(&sql)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_billing_cycle(row))

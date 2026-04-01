@@ -764,6 +764,32 @@ describe('proof-generator', () => {
       const result = pg.verifyEvent(event, pubBuf);
       assert.ok(result.signatureValid);
     });
+
+    it(
+      'verifies a hybrid signature bundle when given a hybrid public-key bundle',
+      { skip: !cryptoMod.hasNativeHybridPqcVerificationSupport() },
+      () => {
+        const hybrid = cryptoMod.generateHybridSigningKeypair();
+        const event = makeEvent(1);
+        const signatureBundle = cryptoMod.signEventHashHybrid(event.eventSigningHash, {
+          ed25519PrivateKey: hybrid.ed25519PrivateKey,
+          mlDsa65Seed: hybrid.mlDsa65Seed,
+        });
+
+        event.signature = signatureBundle.ed25519Signature.toString('hex');
+        event.signatureBundle = {
+          ed25519Signature: signatureBundle.ed25519Signature.toString('hex'),
+          mlDsa65Signature: signatureBundle.mlDsa65Signature.toString('hex'),
+        };
+
+        const result = pg.verifyEvent(event, {
+          ed25519PublicKey: hybrid.ed25519PublicKey.toString('hex'),
+          mlDsa65PublicKey: hybrid.mlDsa65PublicKey.toString('hex'),
+        });
+        assert.ok(result.signatureValid);
+        assert.ok(result.valid);
+      },
+    );
   });
 
   // =========================================================================

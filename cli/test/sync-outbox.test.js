@@ -43,11 +43,22 @@ import { Outbox, createOutbox } from '../src/sync/outbox.js';
 import {
   verifyEventSignature,
   computeEventSigningHash,
+  computePayloadAad,
   computePayloadPlainHash,
+  decryptPayload,
+  decryptPayloadHybrid,
+  generateHybridRecipientKeypair,
+  generateHybridSigningKeypair,
+  hasNativeHybridPqcDecryptionSupport,
+  hasNativeHybridPqcSupport,
   hexToBuffer,
   bufferToHex,
   ZERO_HASH,
 } from '../src/sync/crypto.js';
+import {
+  KEY_WRAP_SCHEME_X25519_ML_KEM_768,
+  SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+} from '../src/sync/pqc.js';
 
 // =============================================================================
 // Helpers
@@ -87,6 +98,43 @@ function makeMockKeyManager({ signingKey = null, encryptionKey = null } = {}) {
       keyId: 1,
       publicKey: ek.pubKey32,
       privateKey: ek.privKey32,
+      createdAt: new Date().toISOString(),
+    }),
+  };
+}
+
+/** Build a mock hybrid key manager backed by the native PQC bindings */
+function makeHybridMockKeyManager() {
+  const signing = generateHybridSigningKeypair();
+  const encryption = generateHybridRecipientKeypair(17);
+
+  return {
+    getCurrentSigningKey: async () => ({
+      keyId: 7,
+      publicKey: signing.ed25519PublicKey,
+      privateKey: signing.ed25519PrivateKey,
+      privateKeyBundle: {
+        ed25519PrivateKey: signing.ed25519PrivateKey,
+        mlDsa65Seed: signing.mlDsa65Seed,
+      },
+      publicKeyBundle: {
+        ed25519PublicKey: signing.ed25519PublicKey,
+        mlDsa65PublicKey: signing.mlDsa65PublicKey,
+      },
+      createdAt: new Date().toISOString(),
+    }),
+    getCurrentEncryptionKey: async () => ({
+      keyId: encryption.kid,
+      publicKey: encryption.x25519PublicKey,
+      privateKey: encryption.x25519PrivateKey,
+      privateKeyBundle: {
+        x25519PrivateKey: encryption.x25519PrivateKey,
+        mlKem768Seed: encryption.mlKem768Seed,
+      },
+      publicKeyBundle: {
+        x25519PublicKey: encryption.x25519PublicKey,
+        mlKem768PublicKey: encryption.mlKem768PublicKey,
+      },
       createdAt: new Date().toISOString(),
     }),
   };
@@ -533,6 +581,45 @@ describe('append (encrypted)', () => {
     assert.match(evt.payloadCipherHash, /^0x[0-9a-f]{64}$/);
   });
 
+  it('decrypts encrypted events back to the original payload', async () => {
+    const { outbox } = makeOutbox();
+    const { pubKey32: recipientPub, privKey32: recipientPriv } = generateX25519Raw();
+    const event = makeEvent({
+      payload: {
+        orderId: 'ord-encrypted-001',
+        total: 88.5,
+        notes: 'deliver before noon',
+      },
+    });
+
+    await outbox.append(event, { encrypt: true, recipientPublicKey: recipientPub });
+    const [evt] = outbox.getPending();
+    const payloadPlainHash = hexToBuffer(evt.payloadPlainHash);
+    const payloadAad = computePayloadAad({
+      vesVersion: evt.vesVersion,
+      tenantId: evt.tenantId,
+      storeId: evt.storeId,
+      eventId: evt.eventId,
+      sourceAgentId: evt.sourceAgent,
+      agentKeyId: evt.agentKeyId,
+      entityType: evt.entityType,
+      entityId: evt.entityId,
+      eventType: evt.eventType,
+      createdAt: evt.createdAt.toISOString(),
+      payloadPlainHash,
+    });
+
+    const decrypted = decryptPayload(
+      evt.payloadEncrypted,
+      payloadAad,
+      1,
+      recipientPriv,
+      payloadPlainHash,
+    );
+
+    assert.deepEqual(decrypted, event.payload);
+  });
+
   it('encrypted event has a valid Ed25519 signature', async () => {
     const { outbox, keyManager } = makeOutbox();
     const { pubKey32: recipientPub } = generateX25519Raw();
@@ -560,6 +647,170 @@ describe('append (encrypted)', () => {
     const valid = verifyEventSignature(signingHash, sig, keyManager._signingKey.pubKey32);
     assert.equal(valid, true);
   });
+});
+
+describe('append (hybrid profile)', () => {
+  it(
+    'stores hybrid signature metadata for plaintext events',
+    { skip: !hasNativeHybridPqcSupport() },
+    async () => {
+      const db = new Database(':memory:');
+      const outbox = createOutbox(db, {
+        keyManager: makeHybridMockKeyManager(),
+        securityProfile: 'hybrid',
+      });
+
+      await outbox.append(makeEvent());
+      const [evt] = outbox.getPending();
+
+      assert.equal(evt.agentSignatureScheme, SIGNATURE_SCHEME_ED25519_ML_DSA_65);
+      assert.ok(evt.agentSignatureBundle);
+      assert.equal(evt.agentSignatureBundle.ed25519Signature, evt.agentSignature);
+      assert.match(evt.agentSignatureBundle.mlDsa65Signature, /^0x[0-9a-f]+$/);
+    },
+  );
+
+  it(
+    'stores hybrid recipient wraps for encrypted events',
+    { skip: !hasNativeHybridPqcSupport() },
+    async () => {
+      const db = new Database(':memory:');
+      const hybridKeyManager = makeHybridMockKeyManager();
+      const outbox = createOutbox(db, {
+        keyManager: hybridKeyManager,
+        securityProfile: 'hybrid',
+      });
+      const recipientKey = await hybridKeyManager.getCurrentEncryptionKey(AGENT_ID);
+
+      await outbox.append(makeEvent(), {
+        encrypt: true,
+        recipientKeyId: recipientKey.keyId,
+        recipientPublicKeyBundle: recipientKey.publicKeyBundle,
+      });
+      const [evt] = outbox.getPending();
+
+      assert.equal(evt.payloadKind, 1);
+      assert.equal(evt.payloadEncrypted.keyWrapParams.scheme, KEY_WRAP_SCHEME_X25519_ML_KEM_768);
+      assert.equal(evt.payloadEncrypted.recipientWraps.length, 1);
+      assert.equal(
+        evt.payloadEncrypted.recipientWraps[0].wrapScheme,
+        KEY_WRAP_SCHEME_X25519_ML_KEM_768,
+      );
+      assert.ok(evt.payloadEncrypted.recipientWraps[0].mlKemCiphertext);
+      assert.ok(evt.payloadEncrypted.recipientWraps[0].x25519Enc);
+    },
+  );
+
+  it(
+    'decrypts hybrid-encrypted events back to the original payload',
+    {
+      skip:
+        !hasNativeHybridPqcSupport() ||
+        !hasNativeHybridPqcDecryptionSupport(),
+    },
+    async () => {
+      const db = new Database(':memory:');
+      const hybridKeyManager = makeHybridMockKeyManager();
+      const outbox = createOutbox(db, {
+        keyManager: hybridKeyManager,
+        securityProfile: 'hybrid',
+      });
+      const recipientKey = await hybridKeyManager.getCurrentEncryptionKey(AGENT_ID);
+      const event = makeEvent({
+        payload: {
+          orderId: 'ord-hybrid-001',
+          total: 149.95,
+          items: [{ sku: 'sku-123', quantity: 2 }],
+        },
+      });
+
+      await outbox.append(event, {
+        encrypt: true,
+        recipientKeyId: recipientKey.keyId,
+        recipientPublicKeyBundle: recipientKey.publicKeyBundle,
+      });
+      const [evt] = outbox.getPending();
+      const payloadPlainHash = hexToBuffer(evt.payloadPlainHash);
+      const payloadAad = computePayloadAad({
+        vesVersion: evt.vesVersion,
+        tenantId: evt.tenantId,
+        storeId: evt.storeId,
+        eventId: evt.eventId,
+        sourceAgentId: evt.sourceAgent,
+        agentKeyId: evt.agentKeyId,
+        entityType: evt.entityType,
+        entityId: evt.entityId,
+        eventType: evt.eventType,
+        createdAt: evt.createdAt.toISOString(),
+        payloadPlainHash,
+      });
+
+      const decrypted = decryptPayloadHybrid(
+        evt.payloadEncrypted,
+        payloadAad,
+        recipientKey.keyId,
+        recipientKey.privateKeyBundle,
+        payloadPlainHash,
+      );
+
+      assert.deepEqual(decrypted, event.payload);
+    },
+  );
+
+  it(
+    'rejects tampered hybrid-encrypted payloads',
+    {
+      skip:
+        !hasNativeHybridPqcSupport() ||
+        !hasNativeHybridPqcDecryptionSupport(),
+    },
+    async () => {
+      const db = new Database(':memory:');
+      const hybridKeyManager = makeHybridMockKeyManager();
+      const outbox = createOutbox(db, {
+        keyManager: hybridKeyManager,
+        securityProfile: 'hybrid',
+      });
+      const recipientKey = await hybridKeyManager.getCurrentEncryptionKey(AGENT_ID);
+
+      await outbox.append(makeEvent(), {
+        encrypt: true,
+        recipientKeyId: recipientKey.keyId,
+        recipientPublicKeyBundle: recipientKey.publicKeyBundle,
+      });
+      const [evt] = outbox.getPending();
+      const payloadPlainHash = hexToBuffer(evt.payloadPlainHash);
+      const payloadAad = computePayloadAad({
+        vesVersion: evt.vesVersion,
+        tenantId: evt.tenantId,
+        storeId: evt.storeId,
+        eventId: evt.eventId,
+        sourceAgentId: evt.sourceAgent,
+        agentKeyId: evt.agentKeyId,
+        entityType: evt.entityType,
+        entityId: evt.entityId,
+        eventType: evt.eventType,
+        createdAt: evt.createdAt.toISOString(),
+        payloadPlainHash,
+      });
+      const tampered = JSON.parse(JSON.stringify(evt.payloadEncrypted));
+      const lastChar = tampered.ciphertext_b64u.slice(-1);
+      tampered.ciphertext_b64u =
+        tampered.ciphertext_b64u.slice(0, -1) + (lastChar === 'A' ? 'B' : 'A');
+
+      assert.throws(
+        () =>
+          decryptPayloadHybrid(
+            tampered,
+            payloadAad,
+            recipientKey.keyId,
+            recipientKey.privateKeyBundle,
+            payloadPlainHash,
+          ),
+        /Hybrid payload decryption failed/,
+      );
+    },
+  );
 });
 
 // =============================================================================
@@ -1187,6 +1438,78 @@ describe('storePulledEvent', () => {
       .prepare('SELECT COUNT(*) as n FROM _ves_pulled_events')
       .get();
     assert.equal(count.n, 3);
+  });
+
+  it('round-trips pulled-event signature scheme metadata', () => {
+    const { outbox } = makeOutbox();
+    const evt = makePulledEvent({
+      sequenceNumber: 13,
+      agentSignatureScheme: SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+      agentSignatureBundle: {
+        ed25519Signature: '0x' + '11'.repeat(64),
+        mlDsa65Signature: '0x' + '22'.repeat(96),
+      },
+    });
+
+    outbox.storePulledEvent(evt);
+    const stored = outbox.getPulledEventBySequence(13);
+
+    assert.equal(stored.agentSignatureScheme, SIGNATURE_SCHEME_ED25519_ML_DSA_65);
+    assert.deepEqual(stored.agentSignatureBundle, evt.agentSignatureBundle);
+  });
+
+  it('getPulledEventByEventId returns stored pulled events', () => {
+    const { outbox } = makeOutbox();
+    const evt = makePulledEvent({ sequenceNumber: 14 });
+    outbox.storePulledEvent(evt);
+
+    const stored = outbox.getPulledEventByEventId(evt.eventId);
+    assert.equal(stored.source, 'pulled');
+    assert.equal(stored.sequenceNumber, 14);
+    assert.equal(stored.eventId, evt.eventId);
+    assert.deepEqual(stored.payload, evt.payload);
+  });
+
+  it('findStoredEvent locates pulled events by sequence number', () => {
+    const { outbox } = makeOutbox();
+    const evt = makePulledEvent({ sequenceNumber: 15 });
+    outbox.storePulledEvent(evt);
+
+    const stored = outbox.findStoredEvent({ sequenceNumber: 15, source: 'pulled' });
+    assert.equal(stored.source, 'pulled');
+    assert.equal(stored.sequenceNumber, 15);
+    assert.equal(stored.eventId, evt.eventId);
+  });
+
+  it('getPulledEventsByEntity returns entity-scoped history in ascending sequence order', () => {
+    const { outbox } = makeOutbox();
+    outbox.storePulledEvents([
+      makePulledEvent({
+        sequenceNumber: 18,
+        entityType: 'order',
+        entityId: 'ord-entity-1',
+        eventId: crypto.randomUUID(),
+      }),
+      makePulledEvent({
+        sequenceNumber: 16,
+        entityType: 'order',
+        entityId: 'ord-entity-1',
+        eventId: crypto.randomUUID(),
+      }),
+      makePulledEvent({
+        sequenceNumber: 17,
+        entityType: 'order',
+        entityId: 'ord-other',
+        eventId: crypto.randomUUID(),
+      }),
+    ]);
+
+    const events = outbox.getPulledEventsByEntity('order', 'ord-entity-1', 10);
+    assert.deepEqual(
+      events.map((event) => event.sequenceNumber),
+      [16, 18],
+    );
+    assert.ok(events.every((event) => event.entityId === 'ord-entity-1'));
   });
 
   it('storePulledEvents with INSERT OR REPLACE replaces duplicate event_id rows', () => {

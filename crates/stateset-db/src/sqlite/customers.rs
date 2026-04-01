@@ -24,7 +24,7 @@ pub struct SqliteCustomerRepository {
 }
 
 impl SqliteCustomerRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -179,22 +179,21 @@ impl CustomerRepository for SqliteCustomerRepository {
                                         accepts_marketing, email_verified, tags, metadata,
                                         created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )?.execute(
-                rusqlite::params![
-                    &id_str,
-                    &email,
-                    &first_name,
-                    &last_name,
-                    &phone,
-                    "active",
-                    i32::from(accepts_marketing),
-                    0,
-                    tags_json,
-                    metadata_json,
-                    &now_str,
-                    &now_str,
-                ],
-            )?;
+            )?
+            .execute(rusqlite::params![
+                &id_str,
+                &email,
+                &first_name,
+                &last_name,
+                &phone,
+                "active",
+                i32::from(accepts_marketing),
+                0,
+                tags_json,
+                metadata_json,
+                &now_str,
+                &now_str,
+            ])?;
 
             // Clone values for the return since Fn closure may be called multiple times
             Ok(Customer {
@@ -315,7 +314,8 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         let sql =
             format!("UPDATE customers SET {} WHERE id = ? AND version = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
         if rows_affected == 0 {
@@ -378,7 +378,8 @@ impl CustomerRepository for SqliteCustomerRepository {
             }
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let customers = stmt
@@ -732,7 +733,8 @@ impl CustomerRepository for SqliteCustomerRepository {
             params.push(Box::new(i32::from(*accepts_marketing)));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 

@@ -24,7 +24,7 @@ pub struct SqliteLotRepository {
 }
 
 impl SqliteLotRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -418,7 +418,8 @@ impl LotRepository for SqliteLotRepository {
         params.push(Box::new(id.to_string()));
 
         let sql = format!("UPDATE lots SET {} WHERE id = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         self.get(id)?.ok_or(CommerceError::NotFound)
@@ -461,7 +462,8 @@ impl LotRepository for SqliteLotRepository {
         params.push(Box::new(i64::from(limit)));
         params.push(Box::new(i64::from(offset)));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let lots = stmt
@@ -1430,7 +1432,8 @@ impl LotRepository for SqliteLotRepository {
 
         let sql = format!("SELECT COUNT(*) FROM lots WHERE {}", conditions.join(" AND "));
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         conn.query_row(&sql, params_refs.as_slice(), |row| row.get::<_, i64>(0))
             .map(|c| c as u64)

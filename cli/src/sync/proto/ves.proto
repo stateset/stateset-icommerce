@@ -14,6 +14,7 @@ option java_multiple_files = true;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
+import "google/protobuf/duration.proto";
 
 // =============================================================================
 // VES SEQUENCER SERVICE
@@ -56,6 +57,74 @@ service VesSequencer {
 
   // Subscribe to entity-specific events
   rpc SubscribeEntity(SubscribeEntityRequest) returns (stream SequencedEvent);
+}
+
+// =============================================================================
+// PQC COMPATIBILITY MESSAGES
+// =============================================================================
+
+// SignatureScheme identifies the signature profile used for an artifact.
+enum SignatureScheme {
+  SIGNATURE_SCHEME_UNSPECIFIED = 0;
+  SIGNATURE_SCHEME_ED25519 = 1;
+  SIGNATURE_SCHEME_ML_DSA_65 = 2;
+  SIGNATURE_SCHEME_ED25519_ML_DSA_65 = 3;
+}
+
+// SignatureBundle carries legacy, PQ, or hybrid signature material.
+message SignatureBundle {
+  bytes ed25519_signature = 1;
+  bytes ml_dsa_65_signature = 2;
+}
+
+// KeyAlgorithm identifies the concrete key algorithm or hybrid bundle.
+enum KeyAlgorithm {
+  KEY_ALGORITHM_UNSPECIFIED = 0;
+  KEY_ALGORITHM_ED25519 = 1;
+  KEY_ALGORITHM_X25519 = 2;
+  KEY_ALGORITHM_ML_DSA_65 = 3;
+  KEY_ALGORITHM_ML_KEM_768 = 4;
+  KEY_ALGORITHM_ED25519_ML_DSA_65 = 5;
+  KEY_ALGORITHM_X25519_ML_KEM_768 = 6;
+}
+
+// PublicKeyBundle carries algorithm-aware public key material.
+message PublicKeyBundle {
+  bytes ed25519_public_key = 1;
+  bytes ml_dsa_65_public_key = 2;
+  bytes x25519_public_key = 3;
+  bytes ml_kem_768_public_key = 4;
+}
+
+// ProofOfPossessionBundle carries proof-of-possession signatures for a key bundle.
+message ProofOfPossessionBundle {
+  bytes ed25519_pop = 1;
+  bytes ml_dsa_65_pop = 2;
+}
+
+// KeyWrapScheme identifies how a payload DEK is wrapped for a recipient.
+enum KeyWrapScheme {
+  KEY_WRAP_SCHEME_UNSPECIFIED = 0;
+  KEY_WRAP_SCHEME_X25519_HKDF_SHA256 = 1;
+  KEY_WRAP_SCHEME_ML_KEM_768 = 2;
+  KEY_WRAP_SCHEME_X25519_ML_KEM_768 = 3;
+}
+
+// KeyWrapParams generalizes payload key wrapping beyond legacy HPKE-only profiles.
+message KeyWrapParams {
+  KeyWrapScheme scheme = 1;
+  string kdf = 2;
+  string aead = 3;
+}
+
+// RecipientKeyWrap carries legacy, PQ, or hybrid key-wrap material.
+message RecipientKeyWrap {
+  uint32 recipient_kid = 1;
+  KeyWrapScheme wrap_scheme = 2;
+  bytes x25519_enc = 3;
+  bytes ml_kem_ciphertext = 4;
+  bytes wrap_nonce = 5;
+  bytes wrapped_key = 6;
 }
 
 // =============================================================================
@@ -139,6 +208,12 @@ message EventEnvelope {
 
   // Event creation timestamp (RFC 3339)
   google.protobuf.Timestamp created_at = 18;
+
+  // Optional PQ or hybrid signature profile for incremental migration.
+  SignatureScheme agent_signature_scheme = 19;
+
+  // Optional structured signature bundle carrying ML-DSA or hybrid material.
+  SignatureBundle agent_signature_bundle = 20;
 }
 
 // PayloadKind indicates whether the payload is plaintext or encrypted.
@@ -170,6 +245,12 @@ message EncryptedPayload {
 
   // Per-recipient wrapped keys
   repeated RecipientKey recipients = 7;
+
+  // Optional generalized key-wrap parameters for PQ or hybrid profiles.
+  KeyWrapParams key_wrap_params = 8;
+
+  // Optional PQ or hybrid recipient wraps.
+  repeated RecipientKeyWrap recipient_wraps = 9;
 }
 
 // HpkeParams defines the HPKE (Hybrid Public Key Encryption) configuration.
@@ -205,6 +286,10 @@ message SequencedEvent {
 
   // Optional receipt hash for verification
   bytes receipt_hash = 4;
+
+  // Optional PQ or hybrid receipt signature for per-event soft finality.
+  SignatureScheme receipt_signature_scheme = 5;
+  SignatureBundle receipt_signature_bundle = 6;
 }
 
 // =============================================================================
@@ -281,6 +366,10 @@ message BatchReceipt {
   string batch_id = 1;
   bytes receipt_hash = 2;  // SHA256(VES_RECEIPT_V1 || batch_data)
   google.protobuf.Timestamp timestamp = 3;
+
+  // Optional PQ or hybrid receipt signature metadata.
+  SignatureScheme receipt_signature_scheme = 4;
+  SignatureBundle receipt_signature_bundle = 5;
 }
 
 // PullEventsRequest retrieves events from the sequencer.
@@ -454,6 +543,15 @@ message RegisterAgentKeyRequest {
 
   // Proof of possession (signature over registration data)
   bytes proof_of_possession = 8;
+
+  // Concrete key algorithm or hybrid bundle profile.
+  KeyAlgorithm key_algorithm = 9;
+
+  // Optional structured public key bundle for PQ or hybrid keys.
+  PublicKeyBundle public_key_bundle = 10;
+
+  // Optional structured proof-of-possession bundle.
+  ProofOfPossessionBundle proof_of_possession_bundle = 11;
 }
 
 // KeyType distinguishes signing vs encryption keys.
@@ -497,6 +595,12 @@ message AgentKey {
   google.protobuf.Timestamp valid_from = 6;
   google.protobuf.Timestamp valid_to = 7;
   google.protobuf.Timestamp revoked_at = 8;
+
+  // Concrete key algorithm or hybrid bundle profile.
+  KeyAlgorithm key_algorithm = 9;
+
+  // Optional structured public key bundle for PQ or hybrid keys.
+  PublicKeyBundle public_key_bundle = 10;
 }
 
 // KeyStatus indicates key state.
@@ -516,6 +620,12 @@ message RevokeAgentKeyRequest {
 
   // Signature proving ownership (from current active key)
   bytes authorization_signature = 5;
+
+  // Optional PQ or hybrid authorization signature profile.
+  SignatureScheme authorization_signature_scheme = 6;
+
+  // Optional structured authorization signature bundle.
+  SignatureBundle authorization_signature_bundle = 7;
 }
 
 // RevokeAgentKeyResponse confirms revocation.

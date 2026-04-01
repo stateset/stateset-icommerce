@@ -91,7 +91,7 @@ pub fn canonical_span_name(operation: &str) -> String {
     conventions::operation_span_name(operation)
 }
 
-/// Initialize tracing with OpenTelemetry OTLP export.
+/// Initialize tracing with `OpenTelemetry` OTLP export.
 ///
 /// Sends traces to an OTLP-compatible collector (e.g. Jaeger, Tempo, Datadog).
 /// The endpoint defaults to `http://localhost:4317` and can be overridden via
@@ -151,7 +151,7 @@ pub fn init_tracing_otel(config: &TracingConfig) -> Result<()> {
     Ok(())
 }
 
-/// Flush and shut down the OpenTelemetry tracer provider.
+/// Flush and shut down the `OpenTelemetry` tracer provider.
 ///
 /// Call this during graceful shutdown to ensure all pending spans are exported.
 #[cfg(feature = "otel")]

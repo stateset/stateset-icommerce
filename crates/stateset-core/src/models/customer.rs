@@ -134,13 +134,13 @@ pub struct CustomerFilter {
 
 impl Customer {
     /// Get full name
-    #[must_use] 
+    #[must_use]
     pub fn full_name(&self) -> String {
         format!("{} {}", self.first_name, self.last_name)
     }
 
     /// Check if customer can receive marketing
-    #[must_use] 
+    #[must_use]
     pub fn can_receive_marketing(&self) -> bool {
         self.accepts_marketing && self.email_verified && self.status == CustomerStatus::Active
     }

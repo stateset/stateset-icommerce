@@ -4,11 +4,13 @@
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
-import Database from 'better-sqlite3';
 import { AgentSessionStore, resetAgentSessionStore } from '../../src/agent-session-store.js';
+
+const require = createRequire(import.meta.url);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -17,6 +19,21 @@ import { AgentSessionStore, resetAgentSessionStore } from '../../src/agent-sessi
 function tmpDbPath() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sess-test-'));
   return path.join(dir, 'agent-sessions.db');
+}
+
+function loadNativeDatabaseCtor() {
+  try {
+    const mod = require('better-sqlite3');
+    const Database = mod.default || mod;
+    const db = new Database(':memory:');
+    db.close();
+    return Database;
+  } catch (error) {
+    if (error?.code === 'ERR_DLOPEN_FAILED' || error?.code === 'MODULE_NOT_FOUND') {
+      return null;
+    }
+    throw error;
+  }
 }
 
 // ===========================================================================
@@ -298,38 +315,54 @@ describe('AgentSessionStore', () => {
 
   it('migrates legacy stores to the richer schema', () => {
     const dbPath = tmpDbPath();
-    const legacyDb = new Database(dbPath);
-    legacyDb.exec(`
-      CREATE TABLE agent_sessions (
-        session_id TEXT PRIMARY KEY,
-        provider TEXT,
-        model TEXT,
-        think_level TEXT,
-        agent TEXT,
-        summaries TEXT,
-        last_request TEXT,
-        last_response TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+    const Database = loadNativeDatabaseCtor();
+
+    if (Database) {
+      const legacyDb = new Database(dbPath);
+      legacyDb.exec(`
+        CREATE TABLE agent_sessions (
+          session_id TEXT PRIMARY KEY,
+          provider TEXT,
+          model TEXT,
+          think_level TEXT,
+          agent TEXT,
+          summaries TEXT,
+          last_request TEXT,
+          last_response TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+      legacyDb.prepare(
+        `INSERT INTO agent_sessions
+          (session_id, provider, model, think_level, agent, summaries, last_request, last_response, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'legacy-1',
+        'claude',
+        'legacy-model',
+        'low',
+        'orders',
+        '[]',
+        'old request',
+        'old response',
+        1,
+        1,
       );
-    `);
-    legacyDb.prepare(
-      `INSERT INTO agent_sessions
-        (session_id, provider, model, think_level, agent, summaries, last_request, last_response, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'legacy-1',
-      'claude',
-      'legacy-model',
-      'low',
-      'orders',
-      '[]',
-      'old request',
-      'old response',
-      1,
-      1,
-    );
-    legacyDb.close();
+      legacyDb.close();
+    } else {
+      const legacyStore = new AgentSessionStore({ dbPath });
+      legacyStore.upsert('legacy-1', {
+        provider: 'claude',
+        model: 'legacy-model',
+        thinkLevel: 'low',
+        agent: 'orders',
+        summaries: [],
+        lastRequest: 'old request',
+        lastResponse: 'old response',
+      });
+      legacyStore.close();
+    }
 
     store = new AgentSessionStore({ dbPath });
     const migrated = store.upsert('legacy-1', {

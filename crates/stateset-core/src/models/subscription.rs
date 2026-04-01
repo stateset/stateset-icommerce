@@ -54,7 +54,7 @@ pub enum BillingInterval {
 
 impl BillingInterval {
     /// Get the number of days in this interval
-    #[must_use] 
+    #[must_use]
     pub const fn days(&self) -> i64 {
         match self {
             Self::Weekly => 7,
@@ -784,7 +784,7 @@ pub struct BillingCycleFilter {
 // ============================================================================
 
 /// Generate a unique subscription number
-#[must_use] 
+#[must_use]
 pub fn generate_subscription_number() -> String {
     let timestamp_ms = Utc::now().timestamp_millis();
     let id = Uuid::new_v4();
@@ -794,7 +794,7 @@ pub fn generate_subscription_number() -> String {
 }
 
 /// Generate a unique plan code
-#[must_use] 
+#[must_use]
 pub fn generate_plan_code(name: &str) -> String {
     let slug: String = name
         .to_uppercase()
@@ -814,31 +814,31 @@ pub fn generate_plan_code(name: &str) -> String {
 
 impl Subscription {
     /// Check if subscription is in an active billing state
-    #[must_use] 
+    #[must_use]
     pub const fn is_active(&self) -> bool {
         matches!(self.status, SubscriptionStatus::Active | SubscriptionStatus::Trial)
     }
 
     /// Check if subscription can be paused
-    #[must_use] 
+    #[must_use]
     pub const fn can_pause(&self) -> bool {
         matches!(self.status, SubscriptionStatus::Active | SubscriptionStatus::Trial)
     }
 
     /// Check if subscription can be resumed
-    #[must_use] 
+    #[must_use]
     pub fn can_resume(&self) -> bool {
         self.status == SubscriptionStatus::Paused
     }
 
     /// Check if subscription can be cancelled
-    #[must_use] 
+    #[must_use]
     pub const fn can_cancel(&self) -> bool {
         !matches!(self.status, SubscriptionStatus::Cancelled | SubscriptionStatus::Expired)
     }
 
     /// Check if subscription is in trial period
-    #[must_use] 
+    #[must_use]
     pub fn is_in_trial(&self) -> bool {
         if self.status != SubscriptionStatus::Trial {
             return false;
@@ -852,7 +852,7 @@ impl Subscription {
     }
 
     /// Calculate remaining trial days
-    #[must_use] 
+    #[must_use]
     pub fn trial_days_remaining(&self) -> Option<i64> {
         if !self.is_in_trial() {
             return None;
@@ -865,13 +865,13 @@ impl Subscription {
     }
 
     /// Calculate total subscription value
-    #[must_use] 
+    #[must_use]
     pub fn calculate_total(&self) -> Decimal {
         self.items.iter().map(|item| item.line_total).sum()
     }
 
     /// Get next billing amount (after discounts)
-    #[must_use] 
+    #[must_use]
     pub fn next_billing_amount(&self) -> Decimal {
         let subtotal = self.calculate_total();
         let mut total = subtotal;
@@ -889,7 +889,7 @@ impl Subscription {
 
 impl SubscriptionItem {
     /// Calculate line total
-    #[must_use] 
+    #[must_use]
     pub fn calculate_total(quantity: i32, unit_price: Decimal) -> Decimal {
         unit_price * Decimal::from(quantity)
     }
@@ -897,13 +897,13 @@ impl SubscriptionItem {
 
 impl BillingCycle {
     /// Check if cycle can be refunded
-    #[must_use] 
+    #[must_use]
     pub fn can_refund(&self) -> bool {
         self.status == BillingCycleStatus::Paid
     }
 
     /// Check if cycle can be retried
-    #[must_use] 
+    #[must_use]
     pub fn can_retry(&self) -> bool {
         self.status == BillingCycleStatus::Failed
     }

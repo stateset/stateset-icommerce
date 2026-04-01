@@ -96,12 +96,12 @@ pub(crate) async fn list_invoices(
         .map(InvoiceStatus::from_str)
         .transpose()
         .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: draft, sent, viewed, paid, partially_paid, overdue, void, written_off")))?;
-    let invoice_type = params
-        .invoice_type
-        .as_deref()
-        .map(InvoiceType::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring")))?;
+    let invoice_type =
+        params.invoice_type.as_deref().map(InvoiceType::from_str).transpose().map_err(|e| {
+            HttpError::BadRequest(format!(
+                "Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring"
+            ))
+        })?;
     let from_date = params
         .from_date
         .map(|s| s.parse())
@@ -182,21 +182,19 @@ pub(crate) async fn create_invoice(
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
-    let invoice_type = req
-        .invoice_type
-        .as_deref()
-        .map(InvoiceType::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring")))?;
+    let invoice_type =
+        req.invoice_type.as_deref().map(InvoiceType::from_str).transpose().map_err(|e| {
+            HttpError::BadRequest(format!(
+                "Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring"
+            ))
+        })?;
 
     let input = CreateInvoice {
         customer_id: req.customer_id,
         order_id: req.order_id,
         invoice_type,
         payment_terms: req.payment_terms,
-        currency: req.currency.map(|c| {
-            c.parse().unwrap_or_default()
-        }),
+        currency: req.currency.map(|c| c.parse().unwrap_or_default()),
         notes: req.notes,
         ..Default::default()
     };

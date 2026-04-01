@@ -25,11 +25,6 @@ serde_json = { workspace = true }
 tokio = { version = "1.0", features = ["rt-multi-thread", "sync", "time"] }
 futures = "0.3"
 tracing = "0.1"
-opentelemetry = { version = "0.23", optional = true }
-opentelemetry-otlp = { version = "0.16", optional = true }
-opentelemetry_sdk = { version = "0.23", features = ["rt-tokio"], optional = true }
-tracing-opentelemetry = { version = "0.24", optional = true }
-prometheus = { workspace = true, optional = true }
 # This is only used when the `postgres` feature is enabled (for the async event store).
 # Keep it lean and avoid SQLx default features (notably `any`).
 sqlx = { workspace = true, optional = true, default-features = false, features = ["runtime-tokio", "postgres", "json", "uuid", "chrono", "rust_decimal", "tls-none"] }
@@ -54,7 +49,7 @@ sqlite = ["stateset-db/sqlite", "stateset-core/rusqlite"]
 postgres = ["stateset-db/postgres", "sqlx"]
 events = ["reqwest/rustls-tls", "reqwest/blocking", "hmac", "sha2", "hex"]
 sqlite-events = ["events", "r2d2", "r2d2_sqlite", "rusqlite"]
-otel = ["opentelemetry", "opentelemetry-otlp", "opentelemetry_sdk", "tracing-opentelemetry", "stateset-observability/otel"]
+otel = ["stateset-observability/otel"]
 vector = ["stateset-db/vector", "stateset-core/embeddings"]
 
 [dev-dependencies]

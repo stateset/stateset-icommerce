@@ -38,9 +38,7 @@ async fn event_stream(
     let stream = commerce
         .subscribe_events()
         .filter(move |event| {
-            filter
-                .as_deref()
-                .map_or(true, |pattern| matches_filter(event.event_type(), pattern))
+            filter.as_deref().is_none_or(|pattern| matches_filter(event.event_type(), pattern))
         })
         .map(|event| {
             let event_type = event.event_type();

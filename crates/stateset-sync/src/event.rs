@@ -144,7 +144,9 @@ impl SyncEvent {
     /// Compute the VES payload-plain hash of a JSON payload, hex-encoded.
     #[must_use]
     pub fn compute_hash(payload: &Value) -> String {
-        if let Ok(hash) = compute_payload_plain_hash(payload, None) { hex::encode(hash) } else {
+        if let Ok(hash) = compute_payload_plain_hash(payload, None) {
+            hex::encode(hash)
+        } else {
             let canonical = canonicalize_json(payload);
             let bytes = serde_json::to_vec(&canonical).unwrap_or_default();
             let mut hasher = Sha256::new();

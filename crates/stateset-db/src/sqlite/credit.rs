@@ -26,7 +26,7 @@ pub struct SqliteCreditRepository {
 }
 
 impl SqliteCreditRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -379,7 +379,8 @@ impl CreditRepository for SqliteCreditRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_credit_account(row))
@@ -474,15 +475,13 @@ impl CreditRepository for SqliteCreditRepository {
                     && acc.available_credit >= order_amount;
                 let reason = if approved {
                     None
+                } else if acc.status == CreditAccountStatus::Active {
+                    Some(format!(
+                        "Insufficient credit: available ${}, required ${}",
+                        acc.available_credit, order_amount
+                    ))
                 } else {
-                    if acc.status == CreditAccountStatus::Active {
-                        Some(format!(
-                            "Insufficient credit: available ${}, required ${}",
-                            acc.available_credit, order_amount
-                        ))
-                    } else {
-                        Some(format!("Account status: {}", acc.status))
-                    }
+                    Some(format!("Account status: {}", acc.status))
                 };
 
                 Ok(CreditCheckResult {
@@ -688,7 +687,8 @@ impl CreditRepository for SqliteCreditRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_credit_hold(row))
@@ -808,7 +808,8 @@ impl CreditRepository for SqliteCreditRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_credit_application(row))
@@ -956,7 +957,8 @@ impl CreditRepository for SqliteCreditRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_credit_transaction(row))

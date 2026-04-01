@@ -406,7 +406,7 @@ impl CurrencyOps {
     /// println!("{}", formatted); // "$99.99"
     /// # Ok::<(), CommerceError>(())
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn format(&self, amount: Decimal, currency: Currency) -> String {
         format!("{}{}", currency.symbol(), amount)
     }

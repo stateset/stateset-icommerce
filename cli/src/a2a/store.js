@@ -5,7 +5,7 @@
  * escrows, disputes, feedback, reputation, and services.
  */
 
-import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
@@ -749,6 +749,41 @@ CREATE INDEX IF NOT EXISTS idx_a2a_wf_steps_workflow ON a2a_workflow_steps(workf
 CREATE INDEX IF NOT EXISTS idx_a2a_wf_steps_status ON a2a_workflow_steps(status);
 `;
 
+const require = createRequire(import.meta.url);
+let cachedDatabaseCtor;
+let cachedDatabaseLoadError = null;
+
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+    cachedDatabaseLoadError = null;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+    cachedDatabaseLoadError = error;
+  }
+
+  return cachedDatabaseCtor;
+}
+
+function createSqliteUnavailableError(error = cachedDatabaseLoadError) {
+  const wrapped = new Error(
+    'better-sqlite3 is required to use A2AStore. Rebuild it with `npm --prefix cli rebuild better-sqlite3`.',
+  );
+  wrapped.code = 'A2A_STORE_SQLITE_UNAVAILABLE';
+  if (error) {
+    wrapped.cause = error;
+  }
+  return wrapped;
+}
+
 export function defaultA2ADbPath() {
   return path.join(os.homedir(), '.stateset', 'a2a.db');
 }
@@ -758,13 +793,28 @@ export function defaultA2ADbPath() {
  */
 export class A2AStore {
   constructor(options = {}) {
+    if (typeof options === 'string') {
+      options = { dbPath: options };
+    }
     this.dbPath = options.dbPath || defaultA2ADbPath();
     this.db = null;
   }
 
   init() {
     if (this.db) return;
-    this.db = new Database(this.dbPath);
+    const Database = loadDatabaseCtor();
+    if (!Database) {
+      throw createSqliteUnavailableError();
+    }
+
+    try {
+      this.db = new Database(this.dbPath);
+    } catch (error) {
+      if (error?.code === 'ERR_DLOPEN_FAILED' || error?.code === 'MODULE_NOT_FOUND') {
+        throw createSqliteUnavailableError(error);
+      }
+      throw error;
+    }
     this.db.pragma('journal_mode = WAL');
     this.db.exec(A2A_SCHEMA);
     this._migrateQuotes();
@@ -812,13 +862,8 @@ export class A2AStore {
     for (const [name, type] of columns) {
       try {
         this.db.exec(`ALTER TABLE a2a_quotes ADD COLUMN ${name} ${type}`);
-      } catch (err) {
-        console.debug(
-          '[a2a/store] Column',
-          name,
-          'already exists on a2a_quotes:',
-          err.message || err,
-        );
+      } catch {
+        // Column already exists — expected during idempotent migration
       }
     }
   }
@@ -2084,13 +2129,8 @@ export class A2AStore {
     for (const [name, type] of columns) {
       try {
         this.db.exec(`ALTER TABLE a2a_escrows ADD COLUMN ${name} ${type}`);
-      } catch (err) {
-        console.debug(
-          '[a2a/store] Column',
-          name,
-          'already exists on a2a_escrows:',
-          err.message || err,
-        );
+      } catch {
+        // Column already exists — expected during idempotent migration
       }
     }
   }
@@ -2100,13 +2140,8 @@ export class A2AStore {
     for (const [name, type] of columns) {
       try {
         this.db.exec(`ALTER TABLE agent_cards ADD COLUMN ${name} ${type}`);
-      } catch (err) {
-        console.debug(
-          '[a2a/store] Column',
-          name,
-          'already exists on agent_cards:',
-          err.message || err,
-        );
+      } catch {
+        // Column already exists — expected during idempotent migration
       }
     }
   }

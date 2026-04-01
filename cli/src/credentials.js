@@ -2,9 +2,10 @@
  * Credential Store for StateSet Providers
  *
  * SQLite-backed API key storage with WAL enabled for safe concurrent access.
+ * Falls back to an in-process store when the native SQLite binding is unavailable.
  */
 
-import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -22,6 +23,27 @@ const IV_SIZE_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 const PBKDF2_ITERATIONS = 200_000;
 const PBKDF2_DIGEST = 'sha256';
+const require = createRequire(import.meta.url);
+const FALLBACK_CREDENTIAL_DATABASES = new Map();
+let cachedDatabaseCtor;
+
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+  }
+
+  return cachedDatabaseCtor;
+}
 
 function setPermissionIfSupported(targetPath, mode) {
   try {
@@ -74,6 +96,68 @@ function resolveEncryptionKey(dir, dbPath) {
   return loadOrCreateLocalKey(dir);
 }
 
+function getFallbackCredentialDatabase(dbPath) {
+  let state = FALLBACK_CREDENTIAL_DATABASES.get(dbPath);
+  if (!state || !fs.existsSync(dbPath)) {
+    state = { rows: new Map() };
+    FALLBACK_CREDENTIAL_DATABASES.set(dbPath, state);
+  }
+  return state;
+}
+
+function createFallbackCredentialDb(state) {
+  return {
+    pragma() {
+      return 'WAL';
+    },
+    exec() {
+      return this;
+    },
+    prepare(sql) {
+      const normalizedSql = sql.trim().replace(/\s+/g, ' ').toUpperCase();
+      return {
+        get(provider) {
+          const row = state.rows.get(provider);
+          if (!row) return undefined;
+          if (normalizedSql.startsWith('SELECT API_KEY, UPDATED_AT FROM PROVIDER_CREDENTIALS')) {
+            return { api_key: row.api_key, updated_at: row.updated_at };
+          }
+          if (normalizedSql.startsWith('SELECT API_KEY FROM PROVIDER_CREDENTIALS')) {
+            return { api_key: row.api_key };
+          }
+          return undefined;
+        },
+        run(...params) {
+          if (normalizedSql.startsWith('INSERT INTO PROVIDER_CREDENTIALS')) {
+            const [provider, apiKey, updatedAt] = params;
+            state.rows.set(provider, {
+              provider,
+              api_key: apiKey,
+              updated_at: updatedAt,
+            });
+            return { changes: 1, lastInsertRowid: 1 };
+          }
+          if (normalizedSql.startsWith('DELETE FROM PROVIDER_CREDENTIALS')) {
+            const [provider] = params;
+            const existed = state.rows.delete(provider);
+            return { changes: existed ? 1 : 0, lastInsertRowid: 0 };
+          }
+          return { changes: 0, lastInsertRowid: 0 };
+        },
+        all() {
+          if (normalizedSql.startsWith('SELECT PROVIDER, UPDATED_AT FROM PROVIDER_CREDENTIALS')) {
+            return [...state.rows.values()]
+              .sort((a, b) => b.updated_at - a.updated_at)
+              .map((row) => ({ provider: row.provider, updated_at: row.updated_at }));
+          }
+          return [];
+        },
+      };
+    },
+    close() {},
+  };
+}
+
 export class CredentialStore {
   constructor({ dbPath = DEFAULT_DB_PATH } = {}) {
     const dir = path.dirname(dbPath);
@@ -86,7 +170,24 @@ export class CredentialStore {
     }
     setPermissionIfSupported(dbPath, FILE_MODE);
 
-    this.db = new Database(dbPath);
+    const Database = loadDatabaseCtor();
+    this._fallbackState = null;
+
+    if (!Database) {
+      this._fallbackState = getFallbackCredentialDatabase(dbPath);
+      this.db = createFallbackCredentialDb(this._fallbackState);
+    } else {
+      try {
+        this.db = new Database(dbPath);
+      } catch (error) {
+        if (error?.code !== 'ERR_DLOPEN_FAILED') {
+          throw error;
+        }
+        this._fallbackState = getFallbackCredentialDatabase(dbPath);
+        this.db = createFallbackCredentialDb(this._fallbackState);
+      }
+    }
+
     this.db.pragma('journal_mode = WAL');
     setPermissionIfSupported(dbPath, FILE_MODE);
     this.encryptionKey = resolveEncryptionKey(dir, dbPath);

@@ -103,11 +103,7 @@ impl WishlistRepository for SqliteWishlistRepository {
                 ],
             )?;
 
-            tx.query_row(
-                "SELECT * FROM wishlists WHERE id = ?",
-                [&id_str],
-                Self::row_to_wishlist,
-            )
+            tx.query_row("SELECT * FROM wishlists WHERE id = ?", [&id_str], Self::row_to_wishlist)
         })
     }
 
@@ -210,8 +206,7 @@ impl WishlistRepository for SqliteWishlistRepository {
         // Delete items first (foreign-key-like cleanup)
         conn.execute("DELETE FROM wishlist_items WHERE wishlist_id = ?", [&id_str])
             .map_err(map_db_error)?;
-        conn.execute("DELETE FROM wishlists WHERE id = ?", [&id_str])
-            .map_err(map_db_error)?;
+        conn.execute("DELETE FROM wishlists WHERE id = ?", [&id_str]).map_err(map_db_error)?;
         Ok(())
     }
 
@@ -222,15 +217,11 @@ impl WishlistRepository for SqliteWishlistRepository {
 
         with_immediate_transaction(&self.pool, |tx| {
             // Verify wishlist exists
-            tx.query_row(
-                "SELECT id FROM wishlists WHERE id = ?",
-                [&wl_id_str],
-                |row| row.get::<_, String>(0),
-            )
+            tx.query_row("SELECT id FROM wishlists WHERE id = ?", [&wl_id_str], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    rusqlite::Error::QueryReturnedNoRows
-                }
+                rusqlite::Error::QueryReturnedNoRows => rusqlite::Error::QueryReturnedNoRows,
                 other => other,
             })?;
 
@@ -239,13 +230,7 @@ impl WishlistRepository for SqliteWishlistRepository {
             tx.execute(
                 "INSERT INTO wishlist_items (id, wishlist_id, product_id, added_at, notes)
                  VALUES (?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    &item_id,
-                    &wl_id_str,
-                    &product_id_str,
-                    &now_str,
-                    &item.note,
-                ],
+                rusqlite::params![&item_id, &wl_id_str, &product_id_str, &now_str, &item.note,],
             )?;
 
             // Update wishlist updated_at
@@ -254,11 +239,7 @@ impl WishlistRepository for SqliteWishlistRepository {
                 rusqlite::params![&now_str, &wl_id_str],
             )?;
 
-            tx.query_row(
-                "SELECT * FROM wishlist_items WHERE id = ?",
-                [&item_id],
-                Self::row_to_item,
-            )
+            tx.query_row("SELECT * FROM wishlist_items WHERE id = ?", [&item_id], Self::row_to_item)
         })
     }
 
@@ -288,8 +269,8 @@ impl WishlistRepository for SqliteWishlistRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use stateset_core::CustomerId;
 
     fn test_repo() -> SqliteWishlistRepository {
@@ -322,11 +303,7 @@ mod tests {
         let repo = test_repo();
         let customer_id = CustomerId::new();
         let wishlist = repo
-            .create(CreateWishlist {
-                customer_id,
-                name: "Birthday Ideas".into(),
-                is_public: true,
-            })
+            .create(CreateWishlist { customer_id, name: "Birthday Ideas".into(), is_public: true })
             .expect("create");
 
         assert_eq!(wishlist.name, "Birthday Ideas");

@@ -13,13 +13,17 @@ import crypto from 'crypto';
 import { syncTools } from '../../src/tools/sync.js';
 import {
   computeEventSigningHash,
+  generateHybridSigningKeypair,
+  hasNativeHybridPqcVerificationSupport,
   signEventHash,
+  signEventHashHybrid,
   verifyEventSignature,
   hexToBuffer,
   bufferToHex,
   computeNodeHash,
   ZERO_HASH,
 } from '../../src/sync/crypto.js';
+import { SIGNATURE_SCHEME_ED25519_ML_DSA_65 } from '../../src/sync/pqc.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -86,6 +90,43 @@ function buildSignedEnvelope(keyPair) {
     payloadCipherHash: bufferToHex(payloadCipherHash),
     agentSignature: bufferToHex(signature),
     vesVersion: 1,
+  };
+}
+
+function buildHybridSignedEnvelope(keyPair) {
+  const envelope = buildSignedEnvelope({
+    publicKey: keyPair.ed25519PublicKey,
+    privateKey: keyPair.ed25519PrivateKey,
+  });
+  const signingHash = computeEventSigningHash({
+    vesVersion: envelope.vesVersion,
+    tenantId: envelope.tenantId,
+    storeId: envelope.storeId,
+    eventId: envelope.eventId,
+    sourceAgentId: envelope.sourceAgent,
+    agentKeyId: envelope.agentKeyId,
+    entityType: envelope.entityType,
+    entityId: envelope.entityId,
+    eventType: envelope.eventType,
+    createdAt: envelope.createdAt,
+    payloadKind: 0,
+    payloadPlainHash: hexToBuffer(envelope.payloadPlainHash),
+    payloadCipherHash: hexToBuffer(envelope.payloadCipherHash),
+  });
+
+  const signatureBundle = signEventHashHybrid(signingHash, {
+    ed25519PrivateKey: keyPair.ed25519PrivateKey,
+    mlDsa65Seed: keyPair.mlDsa65Seed,
+  });
+
+  return {
+    ...envelope,
+    agentSignatureScheme: SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+    agentSignature: bufferToHex(signatureBundle.ed25519Signature),
+    agentSignatureBundle: {
+      ed25519Signature: bufferToHex(signatureBundle.ed25519Signature),
+      mlDsa65Signature: bufferToHex(signatureBundle.mlDsa65Signature),
+    },
   };
 }
 
@@ -248,6 +289,54 @@ describe('sync_verify_receipt — Handler', () => {
     assert.ok('entityType' in result);
     assert.ok('entityId' in result);
   });
+
+  it(
+    'returns valid=true for a correctly signed hybrid envelope',
+    { skip: !hasNativeHybridPqcVerificationSupport() },
+    async () => {
+      const hybridKeyPair = generateHybridSigningKeypair();
+      const hybridEnvelope = buildHybridSignedEnvelope(hybridKeyPair);
+      const tool = findTool('sync_verify_receipt');
+      const result = await tool.handler({
+        params: {
+          envelope: hybridEnvelope,
+          publicKeyBundle: {
+            ed25519PublicKey: bufferToHex(hybridKeyPair.ed25519PublicKey),
+            mlDsa65PublicKey: bufferToHex(hybridKeyPair.mlDsa65PublicKey),
+          },
+        },
+      });
+      assert.equal(result.valid, true);
+    },
+  );
+
+  it(
+    'returns valid=false when the ML-DSA component of a hybrid envelope is tampered',
+    { skip: !hasNativeHybridPqcVerificationSupport() },
+    async () => {
+      const hybridKeyPair = generateHybridSigningKeypair();
+      const hybridEnvelope = buildHybridSignedEnvelope(hybridKeyPair);
+      const tamperedEnvelope = {
+        ...hybridEnvelope,
+        agentSignatureBundle: {
+          ...hybridEnvelope.agentSignatureBundle,
+          mlDsa65Signature: bufferToHex(crypto.randomBytes(32)),
+        },
+      };
+
+      const tool = findTool('sync_verify_receipt');
+      const result = await tool.handler({
+        params: {
+          envelope: tamperedEnvelope,
+          publicKeyBundle: {
+            ed25519PublicKey: bufferToHex(hybridKeyPair.ed25519PublicKey),
+            mlDsa65PublicKey: bufferToHex(hybridKeyPair.mlDsa65PublicKey),
+          },
+        },
+      });
+      assert.equal(result.valid, false);
+    },
+  );
 });
 
 // ===========================================================================

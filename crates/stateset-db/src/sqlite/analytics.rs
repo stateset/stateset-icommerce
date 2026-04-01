@@ -22,7 +22,7 @@ pub struct SqliteAnalyticsRepository {
 }
 
 impl SqliteAnalyticsRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }

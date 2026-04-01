@@ -14,6 +14,8 @@ use std::sync::Arc;
 #[cfg(feature = "postgres")]
 use stateset_core::CommerceError;
 use stateset_db::Database;
+#[cfg(feature = "postgres")]
+use stateset_db::PostgresDatabase;
 use stateset_observability::Metrics;
 
 #[cfg(feature = "events")]
@@ -26,34 +28,71 @@ pub use builder::CommerceBuilder;
 pub use introspection::CommerceHealth;
 
 #[cfg(feature = "postgres")]
-fn block_on_postgres<T, Fut, MakeFut>(make_fut: MakeFut) -> Result<T, CommerceError>
-where
-    T: Send + 'static,
-    Fut: std::future::Future<Output = Result<T, CommerceError>> + Send + 'static,
-    MakeFut: FnOnce() -> Fut + Send + 'static,
-{
-    let new_runtime = || {
-        tokio::runtime::Runtime::new()
-            .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {e}")))
-    };
+fn new_postgres_runtime() -> Result<tokio::runtime::Runtime, CommerceError> {
+    tokio::runtime::Runtime::new()
+        .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {e}")))
+}
 
+#[cfg(feature = "postgres")]
+fn block_on_postgres_connect(url: String) -> Result<PostgresDatabase, CommerceError> {
     match tokio::runtime::Handle::try_current() {
         Ok(handle)
             if matches!(handle.runtime_flavor(), tokio::runtime::RuntimeFlavor::MultiThread) =>
         {
-            tokio::task::block_in_place(|| handle.block_on(make_fut()))
+            tokio::task::block_in_place(|| handle.block_on(PostgresDatabase::connect(url)))
         }
         Ok(_) => std::thread::spawn(move || {
-            let rt = new_runtime()?;
-            rt.block_on(make_fut())
+            let rt = new_postgres_runtime()?;
+            rt.block_on(PostgresDatabase::connect(url))
         })
         .join()
         .map_err(|_| {
             CommerceError::Internal("PostgreSQL initialization thread panicked".to_string())
         })?,
         Err(_) => {
-            let rt = new_runtime()?;
-            rt.block_on(make_fut())
+            let rt = new_postgres_runtime()?;
+            rt.block_on(PostgresDatabase::connect(url))
+        }
+    }
+}
+
+#[cfg(feature = "postgres")]
+fn block_on_postgres_connect_with_options(
+    url: String,
+    max_connections: u32,
+    acquire_timeout_secs: u64,
+) -> Result<PostgresDatabase, CommerceError> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle)
+            if matches!(handle.runtime_flavor(), tokio::runtime::RuntimeFlavor::MultiThread) =>
+        {
+            tokio::task::block_in_place(|| {
+                handle.block_on(PostgresDatabase::connect_with_options(
+                    url,
+                    max_connections,
+                    acquire_timeout_secs,
+                ))
+            })
+        }
+        Ok(_) => std::thread::spawn(move || {
+            let rt = new_postgres_runtime()?;
+            rt.block_on(PostgresDatabase::connect_with_options(
+                url,
+                max_connections,
+                acquire_timeout_secs,
+            ))
+        })
+        .join()
+        .map_err(|_| {
+            CommerceError::Internal("PostgreSQL initialization thread panicked".to_string())
+        })?,
+        Err(_) => {
+            let rt = new_postgres_runtime()?;
+            rt.block_on(PostgresDatabase::connect_with_options(
+                url,
+                max_connections,
+                acquire_timeout_secs,
+            ))
         }
     }
 }

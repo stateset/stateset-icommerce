@@ -58,14 +58,14 @@ impl RfqResponse {
     }
 
     /// Set the reputation score.
-    #[must_use] 
+    #[must_use]
     pub const fn with_reputation(mut self, score: Decimal) -> Self {
         self.reputation_score = Some(score);
         self
     }
 
     /// Set the response time.
-    #[must_use] 
+    #[must_use]
     pub const fn with_response_time(mut self, ms: u64) -> Self {
         self.response_time_ms = Some(ms);
         self

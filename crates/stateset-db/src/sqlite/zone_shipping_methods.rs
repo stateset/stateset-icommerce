@@ -9,8 +9,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
     CommerceError, CreateZoneShippingMethod, Result, ShippingCondition, ShippingMethodId,
-    ZoneShippingMethod, ZoneShippingMethodFilter, ZoneShippingMethodRepository,
-    ZoneShippingRate, ZoneShippingRateRequest,
+    ZoneShippingMethod, ZoneShippingMethodFilter, ZoneShippingMethodRepository, ZoneShippingRate,
+    ZoneShippingRateRequest,
 };
 
 #[derive(Debug)]
@@ -34,12 +34,7 @@ impl SqliteZoneShippingMethodRepository {
             parse_json_row(&conditions_json, "zone_shipping_method", "conditions")?;
 
         Ok(ZoneShippingMethod {
-            id: parse_uuid_row(
-                &row.get::<_, String>("id")?,
-                "zone_shipping_method",
-                "id",
-            )?
-            .into(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "zone_shipping_method", "id")?.into(),
             zone_id: parse_uuid_row(
                 &row.get::<_, String>("zone_id")?,
                 "zone_shipping_method",
@@ -218,8 +213,8 @@ impl ZoneShippingMethodRepository for SqliteZoneShippingMethodRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{CurrencyCode, ShippingMethodType, ShippingZoneId};
 

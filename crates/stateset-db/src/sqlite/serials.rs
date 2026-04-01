@@ -27,7 +27,7 @@ pub struct SqliteSerialRepository {
 }
 
 impl SqliteSerialRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -423,8 +423,11 @@ impl SerialRepository for SqliteSerialRepository {
 
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)))
-                .map_err(map_db_error)?;
+            conn.execute(
+                &sql,
+                rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)),
+            )
+            .map_err(map_db_error)?;
         }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
@@ -1489,9 +1492,11 @@ impl SerialRepository for SqliteSerialRepository {
         let sql = format!("SELECT COUNT(*) FROM serial_numbers {where_clause}");
 
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)), |row| {
-                row.get(0)
-            })
+            .query_row(
+                &sql,
+                rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)),
+                |row| row.get(0),
+            )
             .map_err(map_db_error)?;
 
         Ok(count as u64)

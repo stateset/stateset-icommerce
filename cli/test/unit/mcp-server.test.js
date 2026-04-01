@@ -67,11 +67,12 @@ describe('mcp-server', () => {
     mockCommerce = {
       customers: {
         list: async () => [],
+        count: async () => 0,
         get: async () => null,
         create: async (data) => ({ id: 'cust-1', ...data }),
       },
-      orders: { list: async () => [], get: async () => null },
-      products: { list: async () => [], get: async () => null },
+      orders: { list: async () => [], count: async () => 0, get: async () => null },
+      products: { list: async () => [], count: async () => 0, get: async () => null },
       inventory: { getStock: async () => null },
     };
   });

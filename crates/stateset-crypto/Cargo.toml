@@ -12,19 +12,25 @@ description = "VES v1.0 cryptographic operations for StateSet Commerce"
 [lints]
 workspace = true
 
+[features]
+default = ["pqc"]
+pqc = ["dep:ml-kem", "dep:ml-dsa"]
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 once_cell = { workspace = true }
 ed25519-dalek = { workspace = true }
-hex = { workspace = true }
+hex = { workspace = true, features = ["serde"] }
 base64 = { workspace = true }
 uuid = { workspace = true }
 serde_jcs = { workspace = true }
 aes-gcm = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 hkdf = "0.12"
+ml-kem = { version = "0.3.0-rc.1", features = ["zeroize"], optional = true }
+ml-dsa = { version = "0.1.0-rc.8", features = ["zeroize"], optional = true }
 rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 subtle = "2"

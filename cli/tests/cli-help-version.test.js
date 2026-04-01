@@ -14,6 +14,7 @@ function runCli(bin, args = []) {
 
 const HELP_TARGETS = [
   { bin: 'stateset.js', label: 'stateset' },
+  { bin: 'stateset-create.js', label: 'stateset-create' },
   { bin: 'stateset-orders.js', label: 'stateset-orders' },
   { bin: 'stateset-inventory.js', label: 'stateset-inventory' },
   { bin: 'stateset-returns.js', label: 'stateset-returns' },
@@ -27,6 +28,7 @@ const HELP_TARGETS = [
 
 const VERSION_TARGETS = [
   { bin: 'stateset.js', label: 'stateset' },
+  { bin: 'stateset-create.js', label: 'stateset-create' },
   { bin: 'stateset-orders.js', label: 'stateset-orders' },
   { bin: 'stateset-inventory.js', label: 'stateset-inventory' },
   { bin: 'stateset-returns.js', label: 'stateset-returns' },
@@ -36,6 +38,7 @@ const VERSION_TARGETS = [
 
 const REQUEST_REQUIRED_TARGETS = [
   { bin: 'stateset.js', label: 'stateset' },
+  { bin: 'stateset-create.js', label: 'stateset-create' },
   { bin: 'stateset-orders.js', label: 'stateset-orders' },
   { bin: 'stateset-inventory.js', label: 'stateset-inventory' },
   { bin: 'stateset-returns.js', label: 'stateset-returns' },
@@ -78,4 +81,24 @@ describe('CLI missing request handling', () => {
       assert.ok(/usage:/i.test(output), `${target.label} missing usage hint`);
     });
   }
+});
+
+describe('stateset-create help contract', () => {
+  it('documents file writes separately from the restricted command runner', () => {
+    const result = runCli('stateset-create.js', ['--help']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const output = result.stdout;
+    const applyLine = output
+      .split('\n')
+      .find((line) => line.includes('--apply'));
+
+    assert.ok(applyLine, 'stateset-create --help missing --apply flag');
+    assert.match(applyLine, /Enable file writes/i);
+    assert.doesNotMatch(applyLine, /run commands/i);
+    assert.match(
+      output,
+      /--allow-commands\s+Enable the restricted run_command tool for approved npm\/git commands/i,
+    );
+  });
 });

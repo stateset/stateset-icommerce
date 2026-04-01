@@ -23,7 +23,7 @@ pub struct SqliteReturnRepository {
 }
 
 impl SqliteReturnRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -435,7 +435,8 @@ impl ReturnRepository for SqliteReturnRepository {
         params.push(Box::new(id.to_string()));
 
         let sql = format!("UPDATE returns SET {} WHERE id = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -546,7 +547,8 @@ impl ReturnRepository for SqliteReturnRepository {
             }
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let returns = stmt
@@ -664,7 +666,8 @@ impl ReturnRepository for SqliteReturnRepository {
             params.push(Box::new(status.to_string()));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 

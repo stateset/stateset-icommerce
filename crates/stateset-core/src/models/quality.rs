@@ -571,25 +571,25 @@ impl Default for CompleteInspection {
 
 impl Inspection {
     /// Check if inspection can be started
-    #[must_use] 
+    #[must_use]
     pub const fn can_start(&self) -> bool {
         matches!(self.status, InspectionStatus::Pending | InspectionStatus::Scheduled)
     }
 
     /// Check if inspection can be completed
-    #[must_use] 
+    #[must_use]
     pub const fn can_complete(&self) -> bool {
         matches!(self.status, InspectionStatus::InProgress)
     }
 
     /// Check if all items have been inspected
-    #[must_use] 
+    #[must_use]
     pub fn all_items_inspected(&self) -> bool {
         self.items.iter().all(|item| item.result != InspectionResult::Pending)
     }
 
     /// Get overall pass rate
-    #[must_use] 
+    #[must_use]
     pub fn pass_rate(&self) -> Option<Decimal> {
         let total_inspected: Decimal = self.items.iter().map(|i| i.quantity_inspected).sum();
         if total_inspected > Decimal::ZERO {
@@ -601,7 +601,7 @@ impl Inspection {
     }
 
     /// Calculate overall result based on items
-    #[must_use] 
+    #[must_use]
     pub fn calculate_overall_result(&self) -> InspectionStatus {
         if self.items.is_empty() || self.items.iter().any(|i| i.result == InspectionResult::Pending)
         {
@@ -625,7 +625,7 @@ impl Inspection {
 
 impl NonConformance {
     /// Check if NCR can be closed
-    #[must_use] 
+    #[must_use]
     pub const fn can_close(&self) -> bool {
         matches!(
             self.status,
@@ -634,13 +634,13 @@ impl NonConformance {
     }
 
     /// Check if NCR requires immediate action based on severity
-    #[must_use] 
+    #[must_use]
     pub const fn requires_immediate_action(&self) -> bool {
         matches!(self.severity, Severity::Critical)
     }
 
     /// Check if disposition has been set
-    #[must_use] 
+    #[must_use]
     pub const fn has_disposition(&self) -> bool {
         self.disposition.is_some()
     }
@@ -648,13 +648,13 @@ impl NonConformance {
 
 impl QualityHold {
     /// Check if hold is active
-    #[must_use] 
+    #[must_use]
     pub const fn is_active(&self) -> bool {
         self.released_at.is_none()
     }
 
     /// Check if hold has expired
-    #[must_use] 
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
             Utc::now() > expires_at && self.released_at.is_none()

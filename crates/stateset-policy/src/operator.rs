@@ -1,9 +1,47 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Maximum regex pattern length to prevent regex denial-of-service attacks (matches JS behavior).
 const MAX_REGEX_PATTERN_LEN: usize = 200;
+
+/// Maximum number of cached regex patterns per thread.
+const MAX_REGEX_CACHE_SIZE: usize = 64;
+
+thread_local! {
+    /// Thread-local cache for compiled regex patterns.
+    /// Avoids recompiling the same pattern on every policy evaluation.
+    static REGEX_CACHE: RefCell<HashMap<String, Option<regex::Regex>>> =
+        RefCell::new(HashMap::with_capacity(16));
+}
+
+/// Look up or compile a regex, returning whether `haystack` matches.
+fn cached_regex_match(pattern: &str, haystack: &str) -> bool {
+    REGEX_CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(cached) = map.get(pattern) {
+            return cached.as_ref().is_some_and(|re| re.is_match(haystack));
+        }
+        if map.len() >= MAX_REGEX_CACHE_SIZE {
+            map.clear();
+        }
+        match regex::Regex::new(pattern) {
+            Ok(re) => {
+                let result = re.is_match(haystack);
+                map.insert(pattern.to_owned(), Some(re));
+                result
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "Policy engine regex match failed");
+                map.insert(pattern.to_owned(), None);
+                false
+            }
+        }
+    })
+}
 
 /// The 20 comparison operators supported by the policy engine.
 ///
@@ -73,21 +111,21 @@ pub enum Operator {
     DivisibleBy,
 }
 
-/// Set of operators that do not require a comparison value (unary).
-const UNARY_OPERATORS: &[Operator] = &[
-    Operator::IsEmpty,
-    Operator::IsNotEmpty,
-    Operator::IsNull,
-    Operator::IsNotNull,
-    Operator::IsTrue,
-    Operator::IsFalse,
-];
-
 impl Operator {
     /// Returns `true` if this operator does not need a comparison value.
-    #[must_use] 
-    pub fn is_unary(self) -> bool {
-        UNARY_OPERATORS.contains(&self)
+    ///
+    /// Uses a `match` for O(1) dispatch instead of scanning a slice.
+    #[must_use]
+    pub const fn is_unary(self) -> bool {
+        matches!(
+            self,
+            Self::IsEmpty
+                | Self::IsNotEmpty
+                | Self::IsNull
+                | Self::IsNotNull
+                | Self::IsTrue
+                | Self::IsFalse
+        )
     }
 
     /// Evaluate this operator with the given field value and comparison value.
@@ -130,13 +168,7 @@ impl Operator {
                 if pattern.len() > MAX_REGEX_PATTERN_LEN {
                     return false;
                 }
-                match regex::Regex::new(&pattern) {
-                    Ok(re) => re.is_match(&value_to_string(field_value)),
-                    Err(e) => {
-                        tracing::debug!(error = %e, "Policy engine regex match failed");
-                        false
-                    }
-                }
+                cached_regex_match(&pattern, &value_to_string(field_value))
             }
 
             // -- Collection --
@@ -267,7 +299,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Number(_), Value::Number(_)) => as_decimal(a) == as_decimal(b),
         (Value::String(x), Value::String(y)) => x == y,
-        // Cross-type: number vs string — try numeric comparison (like JS loose behavior
+        // Cross-type: number vs string -- try numeric comparison (like JS loose behavior
         // for policy values where "100" should match 100)
         (Value::Number(_), Value::String(_)) | (Value::String(_), Value::Number(_)) => {
             as_decimal(a) == as_decimal(b)

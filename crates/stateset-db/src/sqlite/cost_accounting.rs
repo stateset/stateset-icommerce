@@ -25,7 +25,7 @@ pub struct SqliteCostAccountingRepository {
 }
 
 impl SqliteCostAccountingRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -448,7 +448,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_item_cost(row))
@@ -613,7 +614,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_cost_layer(row))
@@ -825,7 +827,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_cost_transaction(row))
@@ -918,7 +921,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_cost_variance(row))
@@ -1022,7 +1026,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_cost_adjustment(row))

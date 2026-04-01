@@ -47,7 +47,7 @@ pub enum TaxType {
 
 impl TaxType {
     /// Return the canonical string representation
-    #[must_use] 
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::SalesTax => "sales_tax",
@@ -151,7 +151,7 @@ pub enum ProductTaxCategory {
 
 impl ProductTaxCategory {
     /// Return the canonical string representation
-    #[must_use] 
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Standard => "standard",
@@ -735,7 +735,7 @@ pub struct UsStateTaxInfo {
 }
 
 /// Pre-configured US state tax data
-#[must_use] 
+#[must_use]
 pub fn get_us_state_tax_info(state_code: &str) -> Option<UsStateTaxInfo> {
     match state_code.to_uppercase().as_str() {
         "AL" => Some(UsStateTaxInfo {
@@ -901,7 +901,7 @@ pub struct EuVatInfo {
 }
 
 /// Get EU VAT information for a country
-#[must_use] 
+#[must_use]
 pub fn get_eu_vat_info(country_code: &str) -> Option<EuVatInfo> {
     match country_code.to_uppercase().as_str() {
         "AT" => Some(EuVatInfo {
@@ -995,7 +995,7 @@ pub const EU_MEMBER_STATES: &[&str] = &[
 ];
 
 /// Check if a country is in the EU
-#[must_use] 
+#[must_use]
 pub fn is_eu_member(country_code: &str) -> bool {
     EU_MEMBER_STATES.contains(&country_code.to_uppercase().as_str())
 }
@@ -1017,7 +1017,7 @@ pub struct CanadianTaxInfo {
 }
 
 /// Get Canadian tax information for a province
-#[must_use] 
+#[must_use]
 pub fn get_canadian_tax_info(province_code: &str) -> Option<CanadianTaxInfo> {
     let gst = Decimal::new(5, 2); // Federal GST is 5%
 

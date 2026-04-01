@@ -2,7 +2,7 @@
  * Tests for A2A Store column whitelist validation.
  *
  * These tests exercise the _validateUpdateKeys logic without requiring
- * better-sqlite3 (which has a pre-existing native module version mismatch).
+ * better-sqlite3 to initialize successfully.
  * We import the UPDATABLE_COLUMNS constant indirectly by testing the
  * validation method on a stub store instance.
  */
@@ -10,14 +10,14 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-// We can't instantiate A2AStore.init() due to better-sqlite3 native module mismatch.
-// Instead, test the validation logic by creating a minimal stub that has the same method.
-
-// Import the module to get access to the class (constructor doesn't need sqlite)
+// Import the module to get access to the class. The constructor stays sqlite-free
+// until init() so constructor and validation coverage can run in isolation.
 let A2AStore;
+let defaultA2ADbPath;
 try {
   const mod = await import('../../src/a2a/store.js');
   A2AStore = mod.A2AStore;
+  defaultA2ADbPath = mod.defaultA2ADbPath;
 } catch {
   // If import fails entirely, skip gracefully
 }
@@ -29,6 +29,26 @@ describe('A2AStore column whitelist', { skip: !A2AStore && 'A2AStore not availab
   beforeEach(() => {
     // Constructor does NOT call init(), so no sqlite needed
     store = new A2AStore({ dbPath: ':memory:' });
+  });
+
+  describe('constructor', () => {
+    it('accepts a string dbPath', () => {
+      store = new A2AStore(':memory:');
+      assert.equal(store.dbPath, ':memory:');
+      assert.equal(store.db, null);
+    });
+
+    it('accepts an options object dbPath', () => {
+      store = new A2AStore({ dbPath: ':memory:' });
+      assert.equal(store.dbPath, ':memory:');
+      assert.equal(store.db, null);
+    });
+
+    it('uses the default A2A path when omitted', () => {
+      store = new A2AStore();
+      assert.equal(store.dbPath, defaultA2ADbPath());
+      assert.equal(store.db, null);
+    });
   });
 
   // ---------------------------------------------------------------------------

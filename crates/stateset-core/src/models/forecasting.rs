@@ -615,7 +615,7 @@ impl ForecastingEngine {
     }
 
     /// Generate forecast using Holt's linear trend method
-    #[must_use] 
+    #[must_use]
     pub fn holt_forecast(
         values: &[Decimal],
         alpha: Decimal,

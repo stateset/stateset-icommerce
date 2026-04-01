@@ -4,12 +4,13 @@
  * SQLite-backed conversation memory store. Persists summaries, facts, and
  * context from past conversations so agents can recall earlier interactions.
  *
- * Uses better-sqlite3 (already a CLI dependency).
+ * Uses better-sqlite3 when available, and falls back to an in-process store
+ * when the native module is unavailable.
  */
 
-import Database from 'better-sqlite3';
-import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 // ============================================================================
@@ -36,6 +37,50 @@ CREATE INDEX IF NOT EXISTS idx_memory_search
   ON conversation_memory(summary);
 `;
 
+const require = createRequire(import.meta.url);
+const FALLBACK_DATABASES = new Map();
+let cachedDatabaseCtor;
+
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+  }
+
+  return cachedDatabaseCtor;
+}
+
+function ensureDbFile(dbPath) {
+  mkdirSync(dirname(dbPath), { recursive: true });
+  closeSync(openSync(dbPath, 'a'));
+}
+
+function getFallbackDatabase(dbPath) {
+  let state = FALLBACK_DATABASES.get(dbPath);
+  if (!state || !existsSync(dbPath)) {
+    ensureDbFile(dbPath);
+    state = {
+      nextId: 1,
+      rows: [],
+    };
+    FALLBACK_DATABASES.set(dbPath, state);
+  }
+  return state;
+}
+
+function sortRowsByRecency(rows) {
+  return [...rows].sort((a, b) => b.created_at - a.created_at || b.id - a.id);
+}
+
 // ============================================================================
 // Default path
 // ============================================================================
@@ -61,7 +106,23 @@ export class MemoryStore {
    */
   constructor(opts = {}) {
     this._dbPath = opts.dbPath || defaultDbPath();
-    this._db = new Database(this._dbPath);
+    const Database = loadDatabaseCtor();
+    this._fallbackState = null;
+
+    if (!Database) {
+      this._enableFallback();
+      return;
+    }
+
+    try {
+      this._db = new Database(this._dbPath);
+    } catch (error) {
+      if (error?.code === 'ERR_DLOPEN_FAILED') {
+        this._enableFallback();
+        return;
+      }
+      throw error;
+    }
     this._db.pragma('journal_mode = WAL');
     this._db.exec(SCHEMA);
 
@@ -138,6 +199,20 @@ export class MemoryStore {
     agent = null,
     tokenCount = 0,
   }) {
+    if (this._fallbackState) {
+      const row = this._insertFallbackRow({
+        channel,
+        senderId,
+        sessionId,
+        summary,
+        facts,
+        agent,
+        createdAt: Date.now(),
+        tokenCount,
+      });
+      return { id: row.id };
+    }
+
     const result = this._insertStmt.run(
       channel,
       senderId,
@@ -159,6 +234,11 @@ export class MemoryStore {
    * @returns {Object[]}
    */
   getRecent(channel = 'cli', senderId = 'local', limit = 5) {
+    if (this._fallbackState) {
+      return sortRowsByRecency(this._fallbackRows(channel, senderId))
+        .slice(0, limit)
+        .map((row) => this._deserialize(row));
+    }
     return this._recentStmt.all(channel, senderId, limit).map(this._deserialize);
   }
 
@@ -171,6 +251,12 @@ export class MemoryStore {
    * @returns {Object[]}
    */
   search(channel = 'cli', senderId = 'local', query = '', limit = 5) {
+    if (this._fallbackState) {
+      return sortRowsByRecency(this._fallbackRows(channel, senderId))
+        .filter((row) => row.summary.includes(query))
+        .slice(0, limit)
+        .map((row) => this._deserialize(row));
+    }
     return this._searchStmt.all(channel, senderId, `%${query}%`, limit).map(this._deserialize);
   }
 
@@ -189,6 +275,16 @@ export class MemoryStore {
    */
   searchByEntity(channel = 'cli', senderId = 'local', entityType, entityId, limit = 5) {
     if (!entityId) return [];
+    if (this._fallbackState) {
+      return sortRowsByRecency(this._fallbackRows(channel, senderId))
+        .filter((row) => {
+          const facts = row.facts ? JSON.parse(row.facts) : [];
+          return row.summary.includes(entityId) || facts.some((fact) => String(fact).includes(entityId));
+        })
+        .slice(0, limit)
+        .map((row) => this._deserialize(row))
+        .map((row) => ({ ...row, entityType, entityId }));
+    }
     // Escape LIKE wildcards in the entity ID itself so literal % or _ are matched safely
     const escaped = entityId.replace(/[%_\\]/g, (c) => `\\${c}`);
     const pattern = `%${escaped}%`;
@@ -204,6 +300,11 @@ export class MemoryStore {
    * @returns {Object[]}
    */
   getAllRecent(limit = 20) {
+    if (this._fallbackState) {
+      return sortRowsByRecency(this._fallbackState.rows)
+        .slice(0, limit)
+        .map((row) => this._deserialize(row));
+    }
     return this._allRecentStmt.all(limit).map(this._deserialize);
   }
 
@@ -214,6 +315,11 @@ export class MemoryStore {
    */
   prune(maxAgeMs = 30 * 24 * 60 * 60 * 1000) {
     const cutoff = Date.now() - maxAgeMs;
+    if (this._fallbackState) {
+      const before = this._fallbackState.rows.length;
+      this._fallbackState.rows = this._fallbackState.rows.filter((row) => row.created_at >= cutoff);
+      return before - this._fallbackState.rows.length;
+    }
     return this._deleteOldStmt.run(cutoff).changes;
   }
 
@@ -223,6 +329,13 @@ export class MemoryStore {
    * @returns {boolean}
    */
   delete(id) {
+    if (this._fallbackState) {
+      const numericId = Number(id);
+      const index = this._fallbackState.rows.findIndex((row) => row.id === numericId);
+      if (index === -1) return false;
+      this._fallbackState.rows.splice(index, 1);
+      return true;
+    }
     return this._deleteByIdStmt.run(id).changes > 0;
   }
 
@@ -231,6 +344,9 @@ export class MemoryStore {
    * @returns {number}
    */
   count() {
+    if (this._fallbackState) {
+      return this._fallbackState.rows.length;
+    }
     return this._countStmt.get().cnt;
   }
 
@@ -242,6 +358,59 @@ export class MemoryStore {
       this._db.close();
       this._db = null;
     }
+  }
+
+  /** @private */
+  _fallbackRows(channel, senderId) {
+    return this._fallbackState.rows.filter(
+      (row) => row.channel === channel && row.sender_id === senderId,
+    );
+  }
+
+  /** @private */
+  _enableFallback() {
+    this._fallbackState = getFallbackDatabase(this._dbPath);
+    this._insertStmt = {
+      run: (channel, senderId, sessionId, summary, facts, agent, createdAt, tokenCount) => {
+        const row = this._insertFallbackRow({
+          channel,
+          senderId,
+          sessionId,
+          summary,
+          facts: JSON.parse(facts),
+          agent,
+          createdAt,
+          tokenCount,
+        });
+        return { lastInsertRowid: row.id };
+      },
+    };
+  }
+
+  /** @private */
+  _insertFallbackRow({
+    channel,
+    senderId,
+    sessionId,
+    summary,
+    facts = [],
+    agent,
+    createdAt,
+    tokenCount,
+  }) {
+    const row = {
+      id: this._fallbackState.nextId++,
+      channel,
+      sender_id: senderId,
+      session_id: sessionId,
+      summary,
+      facts: JSON.stringify(facts),
+      agent,
+      created_at: createdAt,
+      token_count: tokenCount,
+    };
+    this._fallbackState.rows.push(row);
+    return row;
   }
 
   /** @private */

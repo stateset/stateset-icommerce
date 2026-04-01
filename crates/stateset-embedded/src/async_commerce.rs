@@ -458,6 +458,19 @@ use stateset_core::{
     CreateCustomObject, CreateCustomObjectType, CustomObject, CustomObjectFilter, CustomObjectType,
     CustomObjectTypeFilter, UpdateCustomObject, UpdateCustomObjectType,
 };
+
+macro_rules! impl_opaque_debug {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl std::fmt::Debug for $name {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.debug_struct(stringify!($name)).finish_non_exhaustive()
+                }
+            }
+        )+
+    };
+}
+
 /// Async commerce interface for PostgreSQL.
 ///
 /// This provides a fully async API for PostgreSQL users who want to avoid
@@ -488,7 +501,7 @@ impl AsyncCommerce {
     ///
     /// # Arguments
     ///
-    /// * `url` - PostgreSQL connection string (e.g., "postgres://user:pass@localhost/db")
+    /// * `url` - PostgreSQL connection string (e.g., `<postgres://user:pass@localhost/db>`)
     pub async fn connect(url: &str) -> Result<Self> {
         let db = PostgresDatabase::connect(url).await?;
         Ok(Self { db: Arc::new(db), metrics: init_metrics(MetricsConfig::default()) })
@@ -511,7 +524,7 @@ impl AsyncCommerce {
         Ok(Self { db: Arc::new(db), metrics: init_metrics(MetricsConfig::default()) })
     }
 
-    /// Create from an existing PostgresDatabase instance.
+    /// Create from an existing `PostgresDatabase` instance.
     pub fn from_database(db: Arc<PostgresDatabase>) -> Self {
         Self { db, metrics: init_metrics(MetricsConfig::default()) }
     }
@@ -678,7 +691,7 @@ impl AsyncCommerce {
 
     /// Access async x402 and A2A operations.
     pub fn x402(&self) -> AsyncX402 {
-        AsyncX402::new(self.db.clone(), self.metrics.clone())
+        AsyncX402::new(self.db.clone())
     }
 
     /// Get the underlying database for advanced operations.
@@ -687,7 +700,7 @@ impl AsyncCommerce {
     }
 
     /// Access async metrics handle.
-    pub fn metrics(&self) -> &Metrics {
+    pub const fn metrics(&self) -> &Metrics {
         &self.metrics
     }
 
@@ -708,7 +721,7 @@ pub struct AsyncOrders {
 }
 
 impl AsyncOrders {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -843,7 +856,7 @@ pub struct AsyncInventory {
 }
 
 impl AsyncInventory {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -958,7 +971,7 @@ pub struct AsyncCustomers {
 }
 
 impl AsyncCustomers {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -1021,7 +1034,7 @@ pub struct AsyncProducts {
 }
 
 impl AsyncProducts {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -1111,7 +1124,7 @@ pub struct AsyncCustomObjects {
 }
 
 impl AsyncCustomObjects {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -1206,7 +1219,7 @@ pub struct AsyncReturns {
 }
 
 impl AsyncReturns {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -1269,7 +1282,7 @@ pub struct AsyncShipments {
 }
 
 impl AsyncShipments {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -1412,7 +1425,7 @@ pub struct AsyncPayments {
 }
 
 impl AsyncPayments {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -1546,7 +1559,7 @@ pub struct AsyncWarranties {
 }
 
 impl AsyncWarranties {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -1684,7 +1697,7 @@ pub struct AsyncBom {
 }
 
 impl AsyncBom {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -1762,7 +1775,7 @@ pub struct AsyncWorkOrders {
 }
 
 impl AsyncWorkOrders {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -1892,7 +1905,7 @@ pub struct AsyncPurchaseOrders {
 }
 
 impl AsyncPurchaseOrders {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -2062,7 +2075,7 @@ pub struct AsyncInvoices {
 }
 
 impl AsyncInvoices {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -2183,7 +2196,7 @@ pub struct AsyncCarts {
 }
 
 impl AsyncCarts {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -2365,7 +2378,7 @@ pub struct AsyncAnalytics {
 }
 
 impl AsyncAnalytics {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -2467,7 +2480,7 @@ pub struct AsyncCurrency {
 }
 
 impl AsyncCurrency {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -2525,7 +2538,7 @@ pub struct AsyncTax {
 }
 
 impl AsyncTax {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -2625,7 +2638,7 @@ pub struct AsyncPromotions {
 }
 
 impl AsyncPromotions {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -2721,7 +2734,7 @@ pub struct AsyncSubscriptions {
 }
 
 impl AsyncSubscriptions {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
         Self { db, metrics }
     }
 
@@ -2871,7 +2884,7 @@ pub struct AsyncQuality {
 }
 
 impl AsyncQuality {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -3013,7 +3026,7 @@ pub struct AsyncLots {
 }
 
 impl AsyncLots {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -3148,7 +3161,7 @@ pub struct AsyncSerials {
 }
 
 impl AsyncSerials {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -3291,7 +3304,7 @@ pub struct AsyncWarehouse {
 }
 
 impl AsyncWarehouse {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -3451,7 +3464,7 @@ pub struct AsyncReceiving {
 }
 
 impl AsyncReceiving {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -3565,7 +3578,7 @@ pub struct AsyncFulfillment {
 }
 
 impl AsyncFulfillment {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -3773,7 +3786,7 @@ pub struct AsyncAccountsPayable {
 }
 
 impl AsyncAccountsPayable {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -3938,7 +3951,7 @@ pub struct AsyncCostAccounting {
 }
 
 impl AsyncCostAccounting {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -4102,7 +4115,7 @@ pub struct AsyncCredit {
 }
 
 impl AsyncCredit {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -4300,7 +4313,7 @@ pub struct AsyncBackorder {
 }
 
 impl AsyncBackorder {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -4405,7 +4418,7 @@ pub struct AsyncAccountsReceivable {
 }
 
 impl AsyncAccountsReceivable {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -4562,7 +4575,7 @@ pub struct AsyncGeneralLedger {
 }
 
 impl AsyncGeneralLedger {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -4769,12 +4782,11 @@ impl AsyncGeneralLedger {
 /// Async x402 and A2A operations.
 pub struct AsyncX402 {
     db: Arc<PostgresDatabase>,
-    metrics: Metrics,
 }
 
 impl AsyncX402 {
-    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
-        Self { db, metrics }
+    pub(crate) const fn new(db: Arc<PostgresDatabase>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -5240,3 +5252,39 @@ impl AsyncX402 {
         self.db.a2a_purchases().count_purchases_async(filter).await
     }
 }
+
+impl_opaque_debug!(
+    AsyncCommerce,
+    AsyncOrders,
+    AsyncInventory,
+    AsyncCustomers,
+    AsyncProducts,
+    AsyncCustomObjects,
+    AsyncReturns,
+    AsyncShipments,
+    AsyncPayments,
+    AsyncWarranties,
+    AsyncBom,
+    AsyncWorkOrders,
+    AsyncPurchaseOrders,
+    AsyncInvoices,
+    AsyncCarts,
+    AsyncAnalytics,
+    AsyncCurrency,
+    AsyncTax,
+    AsyncPromotions,
+    AsyncSubscriptions,
+    AsyncQuality,
+    AsyncLots,
+    AsyncSerials,
+    AsyncWarehouse,
+    AsyncReceiving,
+    AsyncFulfillment,
+    AsyncAccountsPayable,
+    AsyncCostAccounting,
+    AsyncCredit,
+    AsyncBackorder,
+    AsyncAccountsReceivable,
+    AsyncGeneralLedger,
+    AsyncX402,
+);

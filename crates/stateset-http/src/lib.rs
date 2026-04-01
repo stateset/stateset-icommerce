@@ -53,10 +53,10 @@
 //! ```
 
 mod dto;
-pub mod etag;
 mod error;
+pub mod etag;
 mod middleware;
-mod openapi;
+pub mod openapi;
 pub mod routes;
 mod server;
 mod state;
@@ -71,3 +71,4 @@ pub use state::{AppState, IpCidr, MetricsHeaderLimits};
 pub use routes::api_router;
 
 use http as _;
+use tower as _;

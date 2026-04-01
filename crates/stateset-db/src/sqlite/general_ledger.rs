@@ -52,7 +52,7 @@ fn parse_decimal_required(value: String, column: usize) -> rusqlite::Result<Deci
 }
 
 impl SqliteGeneralLedgerRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -301,7 +301,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         if !updates.is_empty() {
             values.push(Box::new(id.to_string()));
             let sql = format!("UPDATE gl_accounts SET {} WHERE id = ?", updates.join(", "));
-            let params: Vec<&dyn rusqlite::ToSql> = values.iter().map(std::convert::AsRef::as_ref).collect();
+            let params: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(std::convert::AsRef::as_ref).collect();
             conn.execute(&sql, params.as_slice()).map_err(map_db_error)?;
         }
 
@@ -362,7 +363,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::map_account_row).map_err(map_db_error)?;
@@ -540,7 +542,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows =
             stmt.query_map(params_refs.as_slice(), Self::map_period_row).map_err(map_db_error)?;
@@ -840,7 +843,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(params_refs.as_slice(), Self::map_journal_entry_row)
@@ -1643,7 +1647,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(params_refs.as_slice(), Self::map_journal_entry_line_row)

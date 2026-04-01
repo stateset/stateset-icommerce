@@ -123,7 +123,9 @@ export class EventCapture {
    * @param {Object} config - Sync configuration
    */
   constructor(db, config) {
-    this.outbox = createOutbox(db);
+    this.outbox = createOutbox(db, {
+      securityProfile: config?.securityProfile ?? config?.sync?.securityProfile,
+    });
     this.config = config;
     this.enabled = true;
   }

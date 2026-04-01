@@ -310,9 +310,11 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Commerce, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, VectorSearch } = nativeBinding
+const { Commerce, Events, CommerceEventSubscription, Customers, Orders, Products, CustomObjects, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger, X402, VectorSearch, jcsCanonicalize, domainHash, ed25519Sign, ed25519Verify, vesHybridGenerateSigningKeypair, vesHybridSignEventHash, vesHybridVerifyEventSignature, vesHybridGenerateRecipientKeypair, vesHybridEncryptPayload, vesHybridDecryptPayload, vesStrictGenerateSigningKeypair, vesStrictSignEventHash, vesStrictVerifyEventSignature, vesStrictGenerateRecipientKeypair, vesStrictEncryptPayload, vesStrictDecryptPayload, vesHybridGenerateSigningPop, vesHybridVerifySigningPop, vesStrictGenerateSigningPop, vesStrictVerifySigningPop, aesGcmEncrypt, aesGcmDecrypt, merkleRoot } = nativeBinding
 
 module.exports.Commerce = Commerce
+module.exports.Events = Events
+module.exports.CommerceEventSubscription = CommerceEventSubscription
 module.exports.Customers = Customers
 module.exports.Orders = Orders
 module.exports.Products = Products
@@ -344,4 +346,28 @@ module.exports.CostAccounting = CostAccounting
 module.exports.Credit = Credit
 module.exports.Backorders = Backorders
 module.exports.GeneralLedger = GeneralLedger
+module.exports.X402 = X402
 module.exports.VectorSearch = VectorSearch
+module.exports.jcsCanonicalize = jcsCanonicalize
+module.exports.domainHash = domainHash
+module.exports.ed25519Sign = ed25519Sign
+module.exports.ed25519Verify = ed25519Verify
+module.exports.vesHybridGenerateSigningKeypair = vesHybridGenerateSigningKeypair
+module.exports.vesHybridSignEventHash = vesHybridSignEventHash
+module.exports.vesHybridVerifyEventSignature = vesHybridVerifyEventSignature
+module.exports.vesHybridGenerateRecipientKeypair = vesHybridGenerateRecipientKeypair
+module.exports.vesHybridEncryptPayload = vesHybridEncryptPayload
+module.exports.vesHybridDecryptPayload = vesHybridDecryptPayload
+module.exports.vesStrictGenerateSigningKeypair = vesStrictGenerateSigningKeypair
+module.exports.vesStrictSignEventHash = vesStrictSignEventHash
+module.exports.vesStrictVerifyEventSignature = vesStrictVerifyEventSignature
+module.exports.vesStrictGenerateRecipientKeypair = vesStrictGenerateRecipientKeypair
+module.exports.vesStrictEncryptPayload = vesStrictEncryptPayload
+module.exports.vesStrictDecryptPayload = vesStrictDecryptPayload
+module.exports.vesHybridGenerateSigningPop = vesHybridGenerateSigningPop
+module.exports.vesHybridVerifySigningPop = vesHybridVerifySigningPop
+module.exports.vesStrictGenerateSigningPop = vesStrictGenerateSigningPop
+module.exports.vesStrictVerifySigningPop = vesStrictVerifySigningPop
+module.exports.aesGcmEncrypt = aesGcmEncrypt
+module.exports.aesGcmDecrypt = aesGcmDecrypt
+module.exports.merkleRoot = merkleRoot

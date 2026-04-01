@@ -139,13 +139,14 @@ async fn postgres_core_crud_smoke() {
         .await
         .expect("create order");
 
-    let fetched = db.orders().get_async(order.id).await.expect("get order").expect("order row");
+    let fetched =
+        db.orders().get_async(order.id.into()).await.expect("get order").expect("order row");
     assert_eq!(fetched.items.len(), 1);
 
     let updated = db
         .orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder {
                 status: Some(OrderStatus::Confirmed),
                 payment_status: None,
@@ -160,7 +161,7 @@ async fn postgres_core_crud_smoke() {
         .expect("update order");
     assert_eq!(updated.status, OrderStatus::Confirmed);
 
-    db.orders().delete_async(order.id).await.expect("delete order");
+    db.orders().delete_async(order.id.into()).await.expect("delete order");
     db.products().delete_async(product.id).await.expect("delete product");
     db.customers().delete_async(customer.id).await.expect("delete customer");
 }

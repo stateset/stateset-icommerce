@@ -17,8 +17,12 @@ import {
   computeNodeHash,
   computePayloadPlainHash,
   computeEventSigningHash,
+  generateHybridSigningKeypair,
+  hasNativeHybridPqcVerificationSupport,
   hexToBuffer,
+  signEventHashHybrid,
 } from '../../src/sync/crypto.js';
+import { SIGNATURE_SCHEME_ED25519_ML_DSA_65 } from '../../src/sync/pqc.js';
 
 // =============================================================================
 // Helpers
@@ -57,6 +61,7 @@ function makeConfig({
   url = 'https://seq.example.com',
   apiKey = null,
   jwt = null,
+  securityProfile = 'legacy',
   tenantId = '550e8400-e29b-41d4-a716-446655440001',
   storeId = '550e8400-e29b-41d4-a716-446655440002',
   maxRetries = 3,
@@ -65,6 +70,7 @@ function makeConfig({
 } = {}) {
   return {
     sequencerUrl: url,
+    securityProfile,
     tenantId,
     storeId,
     getCredentials: () => ({ apiKey, jwt }),
@@ -192,6 +198,13 @@ describe('SequencerClient — constructor', () => {
     assert.throws(
       () => new SequencerClient(makeConfig({ url: 'ws://seq.example.com' })),
       /Unsupported sequencer protocol/,
+    );
+  });
+
+  it('rejects insecure transport for hybrid profile', () => {
+    assert.throws(
+      () => new SequencerClient(makeConfig({ url: 'http://seq.example.com', securityProfile: 'hybrid' })),
+      /must use TLS for hybrid sync profile/,
     );
   });
 
@@ -453,6 +466,92 @@ describe('SequencerClient — push', () => {
     assert.strictEqual(ev.payload_kind, 0);
     assert.strictEqual(ev.agent_key_id, envelope.agentKeyId);
     assert.strictEqual(ev.agent_signature, envelope.agentSignature);
+  });
+
+  it('includes PQ signature bundle fields when provided', async () => {
+    let capturedBody;
+    mockFetch((_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 });
+    });
+
+    const envelope = makeEnvelope({
+      agentSignatureScheme: 3,
+      agentSignatureBundle: {
+        ed25519Signature: 'aa'.repeat(64),
+        mlDsa65Signature: 'bb'.repeat(32),
+      },
+    });
+    const client = new SequencerClient(makeConfig());
+    await client.push({ agentId: UUID1, events: [envelope] });
+
+    const ev = capturedBody.events[0];
+    assert.strictEqual(ev.agent_signature_scheme, 3);
+    assert.deepStrictEqual(ev.agent_signature_bundle, {
+      ed25519_signature: 'aa'.repeat(64),
+      ml_dsa_65_signature: 'bb'.repeat(32),
+    });
+  });
+
+  it('derives generalized recipient wrap fields from legacy encrypted recipients', async () => {
+    let capturedBody;
+    mockFetch((_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return okResponse({ batchId: 'B-1', eventsAccepted: 1, headSequence: 1 });
+    });
+
+    const envelope = makeEnvelope({
+      payloadKind: 1,
+      payload: { secret: 'data' },
+      payloadEncrypted: {
+        enc_version: 1,
+        aead: 'AES-256-GCM',
+        nonce_b64u: 'bm9uY2U',
+        ciphertext_b64u: 'Y2lwaGVydGV4dA',
+        tag_b64u: 'dGFn',
+        hpke: {
+          mode: 'base',
+          kem: 'X25519-HKDF-SHA256',
+          kdf: 'HKDF-SHA256',
+          aead: 'AES-256-GCM',
+        },
+        recipients: [
+          {
+            recipient_kid: 9,
+            enc_b64u: 'ZW5j',
+            ct_b64u: 'd3JhcHBlZA',
+          },
+        ],
+      },
+    });
+    const client = new SequencerClient(makeConfig());
+    await client.push({ agentId: UUID1, events: [envelope] });
+
+    const ev = capturedBody.events[0];
+    assert.deepStrictEqual(ev.payload_encrypted.key_wrap_params, {
+      scheme: 1,
+      kdf: 'HKDF-SHA256',
+      aead: 'AES-256-GCM',
+    });
+    assert.deepStrictEqual(ev.payload_encrypted.recipient_wraps, [
+      {
+        recipient_kid: 9,
+        wrap_scheme: 1,
+        x25519_enc_b64u: 'ZW5j',
+        ml_kem_ciphertext_b64u: null,
+        wrap_nonce_b64u: null,
+        wrapped_key_b64u: 'd3JhcHBlZA',
+      },
+    ]);
+  });
+
+  it('rejects legacy-only signatures under hybrid profile', async () => {
+    const client = new SequencerClient(makeConfig({ securityProfile: 'hybrid' }));
+
+    await assert.rejects(
+      () => client.push({ agentId: UUID1, events: [makeEnvelope()] }),
+      /Hybrid profile requires SIGNATURE_SCHEME_ED25519_ML_DSA_65/,
+    );
   });
 
   it('sends payload for plaintext events (payload_kind=0)', async () => {
@@ -1099,6 +1198,62 @@ describe('SequencerClient — registerAgentKey', () => {
     assert.strictEqual(capturedBody.valid_to, '2025-01-01T00:00:00Z');
   });
 
+  it('sends bundle-aware PQ key registration fields when provided', async () => {
+    let capturedBody;
+    mockFetch((_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return okResponse({ success: true });
+    });
+
+    const client = new SequencerClient(makeConfig({ tenantId: UUID2 }));
+    await client.registerAgentKey({
+      agentId: UUID1,
+      keyId: 4,
+      keyType: 1,
+      keyAlgorithm: 5,
+      publicKey: 'legacy-ed25519-key',
+      publicKeyBundle: {
+        ed25519PublicKey: 'aa'.repeat(32),
+        mlDsa65PublicKey: 'bb'.repeat(64),
+      },
+      proofOfPossession: 'cc'.repeat(64),
+      proofOfPossessionBundle: {
+        ed25519Pop: 'dd'.repeat(64),
+        mlDsa65Pop: 'ee'.repeat(32),
+      },
+    });
+
+    assert.strictEqual(capturedBody.key_type, 1);
+    assert.strictEqual(capturedBody.key_algorithm, 5);
+    assert.deepStrictEqual(capturedBody.public_key_bundle, {
+      ed25519_public_key: 'aa'.repeat(32),
+      ml_dsa_65_public_key: 'bb'.repeat(64),
+      x25519_public_key: null,
+      ml_kem_768_public_key: null,
+    });
+    assert.strictEqual(capturedBody.proof_of_possession, 'cc'.repeat(64));
+    assert.deepStrictEqual(capturedBody.proof_of_possession_bundle, {
+      ed25519_pop: 'dd'.repeat(64),
+      ml_dsa_65_pop: 'ee'.repeat(32),
+    });
+  });
+
+  it('rejects legacy key registration under hybrid profile', async () => {
+    const client = new SequencerClient(makeConfig({ securityProfile: 'hybrid' }));
+
+    await assert.rejects(
+      () =>
+        client.registerAgentKey({
+          agentId: UUID1,
+          keyId: 1,
+          keyType: 1,
+          keyAlgorithm: 1,
+          publicKey: 'legacy-ed25519-key',
+        }),
+      /Hybrid profile requires KEY_ALGORITHM_ED25519_ML_DSA_65/,
+    );
+  });
+
   it('returns { success: true } when response.success is truthy', async () => {
     mockFetch(() => okResponse({ success: true }));
 
@@ -1167,6 +1322,41 @@ describe('SequencerClient — getAgentKeys', () => {
     assert.strictEqual(keys[0].createdAt, '2024-01-01T00:00:00Z');
     assert.strictEqual(keys[0].validFrom, '2024-01-01T00:00:00Z');
     assert.strictEqual(keys[0].validTo, '2025-01-01T00:00:00Z');
+  });
+
+  it('maps PQ key bundle fields to camelCase', async () => {
+    mockFetch(() =>
+      okResponse({
+        keys: [
+          {
+            key_id: 7,
+            key_type: 1,
+            key_algorithm: 5,
+            public_key: 'legacy-pk',
+            public_key_bundle: {
+              ed25519_public_key: 'aa'.repeat(32),
+              ml_dsa_65_public_key: 'bb'.repeat(64),
+              x25519_public_key: null,
+              ml_kem_768_public_key: null,
+            },
+            status: 'active',
+            created_at: '2024-01-01T00:00:00Z',
+          },
+        ],
+      }),
+    );
+
+    const client = new SequencerClient(makeConfig());
+    const keys = await client.getAgentKeys(UUID1);
+
+    assert.strictEqual(keys[0].keyType, 1);
+    assert.strictEqual(keys[0].keyAlgorithm, 5);
+    assert.deepStrictEqual(keys[0].publicKeyBundle, {
+      ed25519PublicKey: 'aa'.repeat(32),
+      mlDsa65PublicKey: 'bb'.repeat(64),
+      x25519PublicKey: null,
+      mlKem768PublicKey: null,
+    });
   });
 
   it('returns empty array when no keys registered', async () => {
@@ -1478,4 +1668,107 @@ describe('SequencerClient — verifyEventSignature', () => {
     const result = client.verifyEventSignature(envelope, rawPublicKey);
     assert.strictEqual(result, false);
   });
+
+  it(
+    'returns true for a valid hybrid signature when given a hybrid public-key bundle',
+    { skip: !hasNativeHybridPqcVerificationSupport() },
+    () => {
+      const client = new SequencerClient(makeConfig());
+      const hybrid = generateHybridSigningKeypair();
+
+      const payloadPlainHash = computePayloadPlainHash({ amount: 123 });
+      const zeroCipherHash = Buffer.alloc(32, 0);
+      const envelope = makeEnvelope({
+        payloadPlainHash: payloadPlainHash.toString('hex'),
+        payloadCipherHash: zeroCipherHash.toString('hex'),
+        agentSignatureScheme: SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+      });
+
+      const signingHash = computeEventSigningHash({
+        vesVersion: envelope.vesVersion,
+        tenantId: envelope.tenantId,
+        storeId: envelope.storeId,
+        eventId: envelope.eventId,
+        commandId: null,
+        sourceAgentId: envelope.sourceAgent,
+        agentKeyId: envelope.agentKeyId,
+        entityType: envelope.entityType,
+        entityId: envelope.entityId,
+        eventType: envelope.eventType,
+        baseVersion: null,
+        createdAt: envelope.createdAt,
+        payloadPlainHash,
+        payloadCipherHash: zeroCipherHash,
+      });
+
+      const signatureBundle = signEventHashHybrid(signingHash, {
+        ed25519PrivateKey: hybrid.ed25519PrivateKey,
+        mlDsa65Seed: hybrid.mlDsa65Seed,
+      });
+      envelope.agentSignature = signatureBundle.ed25519Signature.toString('hex');
+      envelope.agentSignatureBundle = {
+        ed25519Signature: signatureBundle.ed25519Signature.toString('hex'),
+        mlDsa65Signature: signatureBundle.mlDsa65Signature.toString('hex'),
+      };
+
+      const result = client.verifyEventSignature(envelope, {
+        ed25519PublicKey: hybrid.ed25519PublicKey.toString('hex'),
+        mlDsa65PublicKey: hybrid.mlDsa65PublicKey.toString('hex'),
+      });
+      assert.strictEqual(result, true);
+    },
+  );
+
+  it(
+    'returns false when the ML-DSA component of a hybrid signature is tampered',
+    { skip: !hasNativeHybridPqcVerificationSupport() },
+    () => {
+      const client = new SequencerClient(makeConfig());
+      const hybrid = generateHybridSigningKeypair();
+
+      const payloadPlainHash = computePayloadPlainHash({ amount: 321 });
+      const zeroCipherHash = Buffer.alloc(32, 0);
+      const envelope = makeEnvelope({
+        payloadPlainHash: payloadPlainHash.toString('hex'),
+        payloadCipherHash: zeroCipherHash.toString('hex'),
+        agentSignatureScheme: SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+      });
+
+      const signingHash = computeEventSigningHash({
+        vesVersion: envelope.vesVersion,
+        tenantId: envelope.tenantId,
+        storeId: envelope.storeId,
+        eventId: envelope.eventId,
+        commandId: null,
+        sourceAgentId: envelope.sourceAgent,
+        agentKeyId: envelope.agentKeyId,
+        entityType: envelope.entityType,
+        entityId: envelope.entityId,
+        eventType: envelope.eventType,
+        baseVersion: null,
+        createdAt: envelope.createdAt,
+        payloadPlainHash,
+        payloadCipherHash: zeroCipherHash,
+      });
+
+      const signatureBundle = signEventHashHybrid(signingHash, {
+        ed25519PrivateKey: hybrid.ed25519PrivateKey,
+        mlDsa65Seed: hybrid.mlDsa65Seed,
+      });
+      const tamperedMlDsa = Buffer.from(signatureBundle.mlDsa65Signature);
+      tamperedMlDsa[0] ^= 0xff;
+
+      envelope.agentSignature = signatureBundle.ed25519Signature.toString('hex');
+      envelope.agentSignatureBundle = {
+        ed25519Signature: signatureBundle.ed25519Signature.toString('hex'),
+        mlDsa65Signature: tamperedMlDsa.toString('hex'),
+      };
+
+      const result = client.verifyEventSignature(envelope, {
+        ed25519PublicKey: hybrid.ed25519PublicKey.toString('hex'),
+        mlDsa65PublicKey: hybrid.mlDsa65PublicKey.toString('hex'),
+      });
+      assert.strictEqual(result, false);
+    },
+  );
 });

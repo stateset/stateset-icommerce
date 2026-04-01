@@ -4,7 +4,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::{get, post},
+    routing::post,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::error::{ErrorBody, HttpError};
+use crate::error::HttpError;
 use crate::state::AppState;
 
 type MsgStore = Arc<RwLock<MessageQueue>>;
@@ -22,17 +22,24 @@ type MsgStore = Arc<RwLock<MessageQueue>>;
 pub fn router() -> Router<AppState> {
     let store: MsgStore = Arc::new(RwLock::new(MessageQueue::new()));
     Router::new()
-        .route("/a2a/messages", post({
-            let s = store.clone();
-            move |state, headers, body| send_message(state, headers, body, s)
-        }).get({
-            let s = store.clone();
-            move |state, headers, query| list_messages(state, headers, query, s)
-        }))
-        .route("/a2a/messages/{id}/acknowledge", post({
-            let s = store.clone();
-            move |state, headers, path| acknowledge_message(state, headers, path, s)
-        }))
+        .route(
+            "/a2a/messages",
+            post({
+                let s = store.clone();
+                move |state, headers, body| send_message(state, headers, body, s)
+            })
+            .get({
+                let s = store.clone();
+                move |state, headers, query| list_messages(state, headers, query, s)
+            }),
+        )
+        .route(
+            "/a2a/messages/{id}/acknowledge",
+            post({
+                let s = store;
+                move |state, headers, path| acknowledge_message(state, headers, path, s)
+            }),
+        )
 }
 
 /// Request body for sending an A2A message.
@@ -99,15 +106,20 @@ async fn send_message(
         other => MessageType::Custom(other.to_string()),
     };
 
-    let conversation_id = req.conversation_id
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(Uuid::new_v4);
+    let conversation_id =
+        req.conversation_id.and_then(|s| s.parse().ok()).unwrap_or_else(Uuid::new_v4);
 
     let msg = A2AMessage {
         id: Uuid::new_v4(),
         conversation_id,
-        from_agent_id: req.from_agent_id.parse().map_err(|_| HttpError::BadRequest("Invalid from_agent_id UUID".into()))?,
-        to_agent_id: req.to_agent_id.parse().map_err(|_| HttpError::BadRequest("Invalid to_agent_id UUID".into()))?,
+        from_agent_id: req
+            .from_agent_id
+            .parse()
+            .map_err(|_| HttpError::BadRequest("Invalid from_agent_id UUID".into()))?,
+        to_agent_id: req
+            .to_agent_id
+            .parse()
+            .map_err(|_| HttpError::BadRequest("Invalid to_agent_id UUID".into()))?,
         message_type: msg_type,
         payload: serde_json::to_string(&req.payload).unwrap_or_default(),
         status: MessageStatus::Pending,

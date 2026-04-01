@@ -30,7 +30,7 @@ pub struct SqliteCartRepository {
 }
 
 impl SqliteCartRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -559,7 +559,8 @@ impl CartRepository for SqliteCartRepository {
         params.push(Box::new(id.to_string()));
 
         let sql = format!("UPDATE carts SET {} WHERE id = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         {
             let conn = self.conn()?;
             conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
@@ -613,7 +614,8 @@ impl CartRepository for SqliteCartRepository {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let carts = stmt
@@ -705,7 +707,8 @@ impl CartRepository for SqliteCartRepository {
         params.push(Box::new(item_id.to_string()));
 
         let sql = format!("UPDATE cart_items SET {} WHERE id = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Recalculate item total
@@ -1339,7 +1342,8 @@ impl CartRepository for SqliteCartRepository {
             params.push(Box::new(status.to_string()));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 

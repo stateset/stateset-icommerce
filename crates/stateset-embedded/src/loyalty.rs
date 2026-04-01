@@ -45,7 +45,7 @@ impl Loyalty {
     }
 
     /// Whether loyalty programs and rewards are supported by the active backend.
-    #[must_use] 
+    #[must_use]
     pub fn is_supported(&self) -> bool {
         self.db.supports_capability(DatabaseCapability::LoyaltyPrograms)
             && self.db.supports_capability(DatabaseCapability::Rewards)

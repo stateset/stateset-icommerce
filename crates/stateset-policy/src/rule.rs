@@ -80,49 +80,49 @@ impl PolicyRule {
     }
 
     /// Builder: set the priority.
-    #[must_use] 
+    #[must_use]
     pub const fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
 
     /// Builder: set the conditions.
-    #[must_use] 
+    #[must_use]
     pub fn with_conditions(mut self, conditions: ConditionGroup) -> Self {
         self.conditions = conditions;
         self
     }
 
     /// Builder: set the action.
-    #[must_use] 
+    #[must_use]
     pub fn with_action(mut self, action: PolicyAction) -> Self {
         self.action = action;
         self
     }
 
     /// Builder: enable `stop_on_match`.
-    #[must_use] 
+    #[must_use]
     pub const fn with_stop_on_match(mut self) -> Self {
         self.stop_on_match = true;
         self
     }
 
     /// Builder: set metadata.
-    #[must_use] 
+    #[must_use]
     pub fn with_metadata(mut self, metadata: Value) -> Self {
         self.metadata = metadata;
         self
     }
 
     /// Builder: set a specific ID (useful for testing or deserialization).
-    #[must_use] 
+    #[must_use]
     pub const fn with_id(mut self, id: Uuid) -> Self {
         self.id = id;
         self
     }
 
     /// Builder: disable this rule.
-    #[must_use] 
+    #[must_use]
     pub const fn disabled(mut self) -> Self {
         self.enabled = false;
         self
@@ -131,7 +131,7 @@ impl PolicyRule {
     /// Check if this rule's conditions match the given context.
     ///
     /// Returns `false` if the rule is disabled.
-    #[must_use] 
+    #[must_use]
     pub fn matches(&self, context: &Value) -> bool {
         if !self.enabled {
             return false;
@@ -143,7 +143,7 @@ impl PolicyRule {
     ///
     /// Returns `(matched, condition_details)`. If the rule is disabled,
     /// returns `(false, [])`.
-    #[must_use] 
+    #[must_use]
     pub fn matches_with_detail(&self, context: &Value) -> (bool, Vec<ConditionDetail>) {
         if !self.enabled {
             return (false, Vec::new());

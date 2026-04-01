@@ -180,7 +180,7 @@ pub struct Invoice {
 
 impl Invoice {
     /// Check if the invoice is overdue
-    #[must_use] 
+    #[must_use]
     pub fn is_overdue(&self) -> bool {
         if self.status == InvoiceStatus::Paid || self.status == InvoiceStatus::Voided {
             return false;
@@ -189,13 +189,13 @@ impl Invoice {
     }
 
     /// Get days until due (negative if overdue)
-    #[must_use] 
+    #[must_use]
     pub fn days_until_due(&self) -> i64 {
         (self.due_date - Utc::now()).num_days()
     }
 
     /// Calculate the balance due
-    #[must_use] 
+    #[must_use]
     pub fn calculate_balance(&self) -> Decimal {
         self.total - self.amount_paid
     }
@@ -413,7 +413,7 @@ pub struct InvoiceFilter {
 }
 
 /// Generate a unique invoice number
-#[must_use] 
+#[must_use]
 pub fn generate_invoice_number() -> String {
     let now = chrono::Utc::now();
     let short_id = &uuid::Uuid::new_v4().simple().to_string()[..8];

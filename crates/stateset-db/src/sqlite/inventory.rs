@@ -1,10 +1,10 @@
 //! SQLite inventory repository implementation
 
 use super::{
-    MAX_RETRIES, build_in_clause, i64_params, map_db_error, params_refs, parse_datetime_opt_row,
-    parse_datetime_row, parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict,
-    parse_enum_row, parse_uuid, parse_uuid_row, string_params, with_immediate_transaction,
-    with_retry,
+    INITIAL_BACKOFF_MS, MAX_BACKOFF_MS, MAX_RETRIES, build_in_clause, i64_params, map_db_error,
+    params_refs, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid, parse_uuid_row,
+    string_params, with_immediate_transaction, with_retry,
 };
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
@@ -16,6 +16,7 @@ use stateset_core::{
     InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
     TransactionType, validate_batch_size, validate_quantity, validate_sku,
 };
+use std::cell::Cell;
 use uuid::Uuid;
 
 /// SQLite implementation of `InventoryRepository`
@@ -30,8 +31,56 @@ pub(crate) enum ReservationConfirmOutcome {
     Expired,
 }
 
+thread_local! {
+    static INVENTORY_RETRY_SEED: Cell<u64> = const { Cell::new(0x9E37_79B9_7F4A_7C15) };
+}
+
+fn inventory_retry_delay_ms(backoff_ms: u64, retry: u32) -> u64 {
+    let jitter = INVENTORY_RETRY_SEED.with(|seed| {
+        let mut state = seed.get().wrapping_add(u64::from(retry) + 1);
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        seed.set(state);
+        state % 50
+    });
+
+    backoff_ms.min(MAX_BACKOFF_MS) + jitter
+}
+
+fn should_retry_inventory_error(err: &CommerceError) -> bool {
+    match err {
+        CommerceError::VersionConflict { entity, .. } => entity == "inventory_balance",
+        CommerceError::DatabaseError(message) => {
+            message.contains("database is locked") || message.contains("database table is locked")
+        }
+        _ => false,
+    }
+}
+
+fn with_inventory_retry<T, F>(mut operation: F) -> Result<T>
+where
+    F: FnMut() -> Result<T>,
+{
+    let mut retries = 0;
+    let mut backoff_ms = INITIAL_BACKOFF_MS;
+
+    loop {
+        match operation() {
+            Ok(result) => return Ok(result),
+            Err(err) if should_retry_inventory_error(&err) && retries < MAX_RETRIES => {
+                retries += 1;
+                let delay_ms = inventory_retry_delay_ms(backoff_ms, retries);
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 impl SqliteInventoryRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -1025,12 +1074,15 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn reserve(&self, input: ReserveInventory) -> Result<InventoryReservation> {
-        with_immediate_transaction(&self.pool, |tx| Self::reserve_in_tx(tx, &input)).map_err(|e| {
-            // Check if it's not found
-            if e.is_not_found() {
-                return CommerceError::InventoryItemNotFound(input.sku.clone());
-            }
-            e
+        with_inventory_retry(|| {
+            with_immediate_transaction(&self.pool, |tx| Self::reserve_in_tx(tx, &input)).map_err(
+                |e| {
+                    if e.is_not_found() {
+                        return CommerceError::InventoryItemNotFound(input.sku.clone());
+                    }
+                    e
+                },
+            )
         })
     }
 
@@ -1080,14 +1132,18 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        with_immediate_transaction(&self.pool, |tx| {
-            Self::release_reservation_in_tx(tx, reservation_id)
+        with_inventory_retry(|| {
+            with_immediate_transaction(&self.pool, |tx| {
+                Self::release_reservation_in_tx(tx, reservation_id)
+            })
         })
     }
 
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        let outcome = with_immediate_transaction(&self.pool, |tx| {
-            Self::confirm_reservation_in_tx(tx, reservation_id)
+        let outcome = with_inventory_retry(|| {
+            with_immediate_transaction(&self.pool, |tx| {
+                Self::confirm_reservation_in_tx(tx, reservation_id)
+            })
         })?;
 
         match outcome {
@@ -1177,7 +1233,8 @@ impl InventoryRepository for SqliteInventoryRepository {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let items = stmt

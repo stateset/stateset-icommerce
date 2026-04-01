@@ -426,7 +426,7 @@ impl SyncEngine {
                     }
                     Resolution::Merge(merged) => {
                         drop_local_ids.insert(local_event.id);
-                        events_to_buffer.push(merged);
+                        events_to_buffer.push(*merged);
                         keep_remote = false;
                     }
                 }

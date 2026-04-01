@@ -20,8 +20,12 @@ describe('a2aObservabilityTools', () => {
       isRunning() {
         return true;
       },
-      getBudget() {
-        return { daily: 1, monthly: 5, perTransaction: 0.5, spentToday: 0.1 };
+      getBudget(scope) {
+        const base = { daily: 1, monthly: 5, perTransaction: 0.5, spentToday: 0.1 };
+        if (scope && (scope.asset || scope.network)) {
+          return { ...base, asset: scope.asset || null, network: scope.network || null };
+        }
+        return base;
       },
       getDefaultPaymentConfig() {
         return { asset: 'BTC', network: 'bitcoin' };
@@ -204,8 +208,12 @@ describe('a2aObservabilityTools', () => {
       isRunning() {
         return false;
       },
-      getBudget() {
-        return { daily: 2, monthly: 10, perTransaction: 1, spentToday: 0.2 };
+      getBudget(scope) {
+        const base = { daily: 2, monthly: 10, perTransaction: 1, spentToday: 0.2 };
+        if (scope && (scope.asset || scope.network)) {
+          return { ...base, asset: scope.asset || null, network: scope.network || null };
+        }
+        return base;
       },
       getDefaultPaymentConfig() {
         return { asset: 'ZEC', network: 'zcash' };

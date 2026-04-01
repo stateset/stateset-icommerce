@@ -1,0 +1,11 @@
+{
+  "repo": "/home/dom/stateset-icommerce",
+  "state_dir": ".autoresearch",
+  "metric_name": "throughput_score",
+  "goal": "max",
+  "eval_cmd": "/home/dom/karpathy/autoresearch/targets/icommerce-engine-eval.sh /home/dom/stateset-icommerce",
+  "metric_regex": "^throughput_score:\\s*([0-9.]+)$",
+  "timeout_seconds": 900,
+  "branch": "autoresearch/mar25-engine",
+  "base_ref": null
+}

@@ -14,10 +14,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded            # Python
-npm install @stateset/embedded           # Node.js
-npm install -g @stateset/cli             # CLI
-gem install stateset_embedded            # Ruby
+pip install stateset-embedded==0.9.2     # Python
+npm install @stateset/embedded@0.9.2     # Node.js
+npm install -g @stateset/cli@0.9.2       # CLI
+gem install stateset_embedded -v 0.9.2   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -109,7 +109,7 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/cli@0.8.1 @stateset/embedded@0.8.1
+npm install @stateset/cli@0.9.2 @stateset/embedded@0.9.2
 ```
 
 ```javascript
@@ -164,41 +164,30 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.9.1
+## What's New in v0.9.2
 
-**Agentic Commerce Infrastructure** — AI agents can now discover, negotiate, transact, pay, and resolve disputes autonomously.
+**Post-Quantum Security Release** - `0.9.2` introduces hybrid and strict PQC support across VES, `stateset-sync`, the native Node bindings, and release documentation.
 
-### Performance (~3x All Benchmarks)
-- Fat LTO, codegen-units=1, target-cpu=native, SHA256 hardware acceleration
-- Lock-free atomics, mmap I/O, WAL tuning, prepared statement caching
-- Gzip response compression, 30-second request timeouts
+### PQC Security Profiles
+- `legacy`: existing Ed25519 and X25519 compatibility mode
+- `hybrid`: `ed25519+mldsa65` event signatures and `x25519+mlkem768` recipient wrapping
+- `pqc-strict`: `mldsa65` signatures and `mlkem768` recipient wrapping only
+- Native Rust helpers now cover key generation, signing, verification, payload encryption/decryption, and signing proof-of-possession for both hybrid and strict modes
 
-### 53+ REST Endpoints
-- Full CRUD for all entities: orders, customers, products, inventory, returns
-- Financial lifecycle: payments (create/complete/refund), invoices (create/send/record-payment), shipments (create/deliver)
-- V4 entities: reviews, wishlists, gift cards, loyalty programs
-- Agentic: autonomous price negotiation (create/counter-offer/accept/reject)
-- 100% OpenAPI 3.1 coverage with all schemas
+### Sync and Key Management
+- `stateset-sync` config now validates `securityProfile`, requires secure transport for PQC-enabled profiles, and blocks silent downgrades unless explicitly forced
+- Agent key management now supports hybrid and `pqc-strict` signing/encryption keys, export flows, rotation paths, and proof-of-possession generation
+- Sync clients, outbox flows, and receipt verification now validate profile-compatible signatures, key registrations, recipient wraps, and VES receipts
 
-### Agentic Commerce (New)
-- **Negotiation engine**: multi-round price negotiation with auto-accept/reject thresholds
-- **A2A messaging**: reliable delivery with exponential backoff retry
-- **Credit terms**: net 15/30/60/90 payment between trusted agents
-- **Inventory commitments**: stock locks on quote acceptance with auto-expiry
-- **Dispute rules engine**: priority-based auto-resolution
+### Bindings, Tooling, and Specs
+- The native Node binding now exposes hybrid and strict PQC APIs for signing, verification, recipient key generation, payload encryption/decryption, and signing PoP verification
+- Added PQC audit events for profile changes and key lifecycle operations, plus per-profile observability counters for signature and encryption usage
+- Added the initial PQC migration design doc in `docs/PQC_INITIAL_SPEC.md`
 
-### Production Hardening
-- Atomic inventory reservation (race condition fix)
-- Idempotent checkout (3 unique constraints)
-- Financial rounding (round_dp(2) per line + total)
-- Audit log, webhook dead letter queue, graceful DB shutdown
-- Health check with DB latency + metrics, slow query logging
-
-### Code Quality
-- 11/11 V4 entity stubs eliminated — zero stubs remaining
-- Clippy pedantic clean across 174 files
-- 9 database migrations (V1-V9), 12 composite indexes
-- 4,000+ Rust tests, ~16,000+ total including CLI
+### Validation and Benchmarks
+- Added cross-language Node/Rust PQC coverage for hybrid signing and recipient-wrap flows
+- Added strict-profile sync tests for key generation, signing, encryption/decryption, PoP, metrics, and cross-profile rejection
+- Added expanded Rust PQC coverage and Criterion PQC benchmarks for signing, KEM wrapping, and payload encryption
 
 ---
 
@@ -1342,7 +1331,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.8.1"
+stateset-embedded = "0.9.2"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1392,14 +1381,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.8.1</version>
+    <version>0.9.2</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.8.1'
+implementation 'com.stateset:embedded:0.9.2'
 ```
 
 ### Kotlin (Gradle)
@@ -1407,7 +1396,7 @@ implementation 'com.stateset:embedded:0.8.1'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.8.1")
+    implementation("com.stateset:embedded-kotlin:0.9.2")
 }
 ```
 
@@ -1416,32 +1405,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.8.1")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.2")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.8.1'
+pod 'StateSet', '~> 0.9.2'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.8.1
+dotnet add package StateSet.Embedded --version 0.9.2
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.8.1" />
+<PackageReference Include="StateSet.Embedded" Version="0.9.2" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@latest
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.2
 ```
 
 ### CLI

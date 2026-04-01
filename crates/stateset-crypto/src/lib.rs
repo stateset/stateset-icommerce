@@ -9,12 +9,16 @@
 //! - Ed25519 signing for agent signatures
 //! - AES-256-GCM payload encryption (VES-ENC-1)
 //! - X25519 ECDH key wrapping
+//! - Hybrid Ed25519 + ML-DSA-65 signatures
+//! - Hybrid X25519 + ML-KEM-768 key wrapping
 //! - Merkle tree hashing
 
 pub mod canonicalize;
 pub mod encrypt;
 pub mod hash;
 pub mod merkle;
+#[cfg(feature = "pqc")]
+pub mod pqc;
 pub mod sign;
 
 mod encoding;

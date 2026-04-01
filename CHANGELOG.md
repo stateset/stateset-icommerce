@@ -6,6 +6,20 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-04-01
+
+### Added
+- Native post-quantum VES cryptography in `stateset-crypto` for hybrid `ed25519+mldsa65` and `x25519+mlkem768` flows, plus `pqc-strict` `mldsa65` and `mlkem768` modes for key generation, signing, verification, recipient wrapping, payload encryption/decryption, and proof-of-possession.
+- Sync-layer PQC security profiles (`legacy`, `hybrid`, `pqc-strict`) across config validation, key management, outbox signing/encryption, pulled-event decryption, and sequencer receipt verification.
+- Native Node binding exports for hybrid and strict PQC operations, including signing, verification, payload encryption/decryption, recipient key generation, and signing proof-of-possession helpers.
+- PQC audit and observability coverage, including profile-change audit events, key-generation/rotation logging, and per-profile signature/encryption counters.
+- PQC validation assets: cross-language Node/Rust test vectors, strict-profile tests, expanded Rust crypto coverage, Criterion PQC benches, and the initial migration spec in `docs/PQC_INITIAL_SPEC.md`.
+
+### Changed
+- Enforced TLS for PQC-enabled sync profiles and blocked unforced profile downgrades so future events cannot silently lose post-quantum protection.
+- Bumped workspace and cross-language package metadata from `0.9.1` to `0.9.2`.
+- Synced docs, examples, templates, and lockfiles to the `0.9.2` release.
+
 ## [0.9.1] - 2026-03-26
 
 ### Added

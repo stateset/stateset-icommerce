@@ -42,6 +42,63 @@ function nextPow2(n) {
 export function createProofGenerator(cryptoModule) {
   const crypto = cryptoModule;
 
+  function normalizeHybridPublicKeyBundle(publicKey) {
+    if (
+      !publicKey ||
+      Buffer.isBuffer(publicKey) ||
+      publicKey instanceof Uint8Array ||
+      typeof publicKey === 'string'
+    ) {
+      return null;
+    }
+
+    return {
+      ed25519PublicKey:
+        publicKey.ed25519PublicKey ?? publicKey.ed25519_public_key ?? publicKey.publicKey ?? null,
+      mlDsa65PublicKey: publicKey.mlDsa65PublicKey ?? publicKey.ml_dsa_65_public_key ?? null,
+    };
+  }
+
+  function verifyEventSignatureMaterial(eventSigningHash, signature, signatureBundle, publicKey) {
+    const publicKeyBundle = normalizeHybridPublicKeyBundle(publicKey);
+    const toBuffer = (value) => {
+      if (Buffer.isBuffer(value)) {
+        return value;
+      }
+      if (typeof value === 'string' && typeof crypto.hexToBuffer === 'function') {
+        return crypto.hexToBuffer(value);
+      }
+      return Buffer.from(value, 'hex');
+    };
+
+    if (
+      signatureBundle &&
+      publicKeyBundle?.ed25519PublicKey &&
+      publicKeyBundle?.mlDsa65PublicKey &&
+      typeof crypto.verifyEventSignatureHybrid === 'function'
+    ) {
+      try {
+        return crypto.verifyEventSignatureHybrid(eventSigningHash, signatureBundle, publicKeyBundle);
+      } catch {
+        return false;
+      }
+    }
+
+    if (!signature || !publicKey) {
+      return null;
+    }
+
+    const sigBuf = toBuffer(signature);
+    const pubMaterial = publicKeyBundle?.ed25519PublicKey ?? publicKey;
+    const pubBuf = toBuffer(pubMaterial);
+
+    try {
+      return crypto.verifyEventSignature(eventSigningHash, sigBuf, pubBuf);
+    } catch {
+      return false;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Internal: Merkle proof construction
   // -------------------------------------------------------------------------
@@ -264,25 +321,21 @@ export function createProofGenerator(cryptoModule) {
       });
     }
 
-    // Check 3: signature verification (if signature + publicKey present)
-    if (bundle.event.signature && publicKey) {
-      const sigBuf = Buffer.isBuffer(bundle.event.signature)
-        ? bundle.event.signature
-        : Buffer.from(bundle.event.signature, 'hex');
+    // Check 3: signature verification (legacy or hybrid)
+    if ((bundle.event.signature || bundle.event.signatureBundle) && publicKey) {
       const hashBuf = Buffer.isBuffer(bundle.event.eventSigningHash)
         ? bundle.event.eventSigningHash
         : Buffer.from(bundle.event.eventSigningHash, 'hex');
-      const pubBuf = Buffer.isBuffer(publicKey) ? publicKey : Buffer.from(publicKey, 'hex');
 
-      let sigValid = false;
-      try {
-        sigValid = crypto.verifyEventSignature(hashBuf, sigBuf, pubBuf);
-      } catch {
-        sigValid = false;
-      }
+      const sigValid = verifyEventSignatureMaterial(
+        hashBuf,
+        bundle.event.signature,
+        bundle.event.signatureBundle || null,
+        publicKey,
+      );
       checks.push({
         check: 'signature',
-        passed: sigValid,
+        passed: Boolean(sigValid),
         detail: sigValid ? 'Event signature is valid' : 'Signature verification failed',
       });
     }
@@ -374,28 +427,27 @@ export function createProofGenerator(cryptoModule) {
    * Verify an individual event's signature and hash integrity.
    *
    * @param {object} event — event with `.eventSigningHash` and optionally `.signature`
-   * @param {Buffer|string} [publicKey] — Ed25519 public key (hex or Buffer)
+   * @param {Buffer|string|Object} [publicKey] — Ed25519 key or hybrid public-key bundle
    * @returns {{ valid: boolean, signatureValid: boolean|null, hashValid: boolean }}
    */
   function verifyEvent(event, publicKey) {
     // Hash validity: check that eventSigningHash is a plausible 32-byte hash
     const hashBuf = Buffer.isBuffer(event.eventSigningHash)
       ? event.eventSigningHash
-      : Buffer.from(event.eventSigningHash, 'hex');
+      : typeof crypto.hexToBuffer === 'function'
+        ? crypto.hexToBuffer(event.eventSigningHash)
+        : Buffer.from(event.eventSigningHash, 'hex');
     const hashValid = hashBuf.length === 32;
 
     // Signature verification
     let signatureValid = null;
-    if (event.signature && publicKey) {
-      const sigBuf = Buffer.isBuffer(event.signature)
-        ? event.signature
-        : Buffer.from(event.signature, 'hex');
-      const pubBuf = Buffer.isBuffer(publicKey) ? publicKey : Buffer.from(publicKey, 'hex');
-      try {
-        signatureValid = crypto.verifyEventSignature(hashBuf, sigBuf, pubBuf);
-      } catch {
-        signatureValid = false;
-      }
+    if ((event.signature || event.signatureBundle) && publicKey) {
+      signatureValid = verifyEventSignatureMaterial(
+        hashBuf,
+        event.signature,
+        event.signatureBundle || null,
+        publicKey,
+      );
     }
 
     const valid = hashValid && (signatureValid === null || signatureValid);

@@ -1,5 +1,5 @@
 #[cfg(feature = "postgres")]
-use super::block_on_postgres;
+use super::block_on_postgres_connect_with_options;
 use super::{Commerce, CommerceBackend};
 
 use std::sync::Arc;
@@ -13,9 +13,6 @@ use crate::events::{EventConfig, EventSystem};
 
 #[cfg(feature = "sqlite")]
 use stateset_db::SqliteDatabase;
-
-#[cfg(feature = "postgres")]
-use stateset_db::PostgresDatabase;
 
 /// Builder for creating a Commerce instance with custom configuration.
 #[derive(Default)]
@@ -94,7 +91,7 @@ impl CommerceBuilder {
 
     /// Set the acquire timeout for PostgreSQL connections.
     #[cfg(feature = "postgres")]
-    pub fn acquire_timeout_secs(mut self, secs: u64) -> Self {
+    pub const fn acquire_timeout_secs(mut self, secs: u64) -> Self {
         self.acquire_timeout_secs = Some(secs);
         self
     }
@@ -155,10 +152,8 @@ impl CommerceBuilder {
         if let Some(url) = self.postgres_url {
             let max_connections = self.max_connections.unwrap_or(10);
             let acquire_timeout_secs = self.acquire_timeout_secs.unwrap_or(30);
-            let db = block_on_postgres(move || async move {
-                PostgresDatabase::connect_with_options(&url, max_connections, acquire_timeout_secs)
-                    .await
-            })?;
+            let db =
+                block_on_postgres_connect_with_options(url, max_connections, acquire_timeout_secs)?;
             let db: Arc<dyn Database> = Arc::new(db);
 
             return Ok(Commerce {

@@ -1,0 +1,7 @@
+timestamp	commit	metric	status	description	log_file
+20260325T091000Z	e43b990	155.490000	keep	baseline: unmodified engine	-
+20260325T094000Z	d0746b6	180.800000	keep	round-1: PRAGMA tuning, prepare_cached, EventBus lazy alloc, merkle double-buf	-
+20260325T094500Z	a540fe8	173.410000	keep	round-2: inline hints, EXISTS check, deferred FK	-
+20260325T095500Z	aca763a	173.410000	keep	round-3: SHA256 asm, pad leaf memoization	-
+20260325T103000Z	d150bc1	175.380000	keep	round-4: string alloc caching, atomic order number, prepare_cached inventory	-
+20260325T110000Z	60e57b8	180.021273	keep	round-5+6: hasher reuse, EventBus inline+defer	-

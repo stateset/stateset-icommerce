@@ -318,9 +318,7 @@ impl NegotiationEngine {
         if negotiation.rounds > negotiation.max_rounds {
             negotiation.status = NegotiationStatus::Rejected;
             negotiation.updated_at = now;
-            return Err(A2AError::NegotiationLimitExceeded {
-                max_rounds: negotiation.max_rounds,
-            });
+            return Err(A2AError::NegotiationLimitExceeded { max_rounds: negotiation.max_rounds });
         }
 
         let from_agent_id = from_agent.into();
@@ -341,8 +339,7 @@ impl NegotiationEngine {
         negotiation.updated_at = now;
 
         // Evaluate auto-rules.
-        let decision =
-            Self::evaluate_auto_rules(&negotiation, &from_agent_id, amount);
+        let decision = Self::evaluate_auto_rules(&negotiation, &from_agent_id, amount);
 
         match decision {
             AutoDecision::Accept => {
@@ -398,10 +395,7 @@ impl NegotiationEngine {
     ///
     /// Returns [`A2AError::InvalidTransition`] if the negotiation cannot transition
     /// to `Rejected` from its current status.
-    pub fn reject(
-        mut negotiation: Negotiation,
-        _reason: Option<String>,
-    ) -> A2AResult<Negotiation> {
+    pub fn reject(mut negotiation: Negotiation, _reason: Option<String>) -> A2AResult<Negotiation> {
         if !negotiation.status.can_transition_to(NegotiationStatus::Rejected) {
             let allowed: Vec<&str> = negotiation
                 .status
@@ -556,13 +550,8 @@ mod tests {
         let neg = sample_negotiation();
 
         // Buyer counter-offers 130 (>= 120) → auto-accept.
-        let neg = NegotiationEngine::counter_offer(
-            neg,
-            "buyer_agent_1",
-            dec!(130),
-            None,
-        )
-        .expect("counter offer should succeed");
+        let neg = NegotiationEngine::counter_offer(neg, "buyer_agent_1", dec!(130), None)
+            .expect("counter offer should succeed");
 
         assert_eq!(neg.status, NegotiationStatus::Accepted);
         assert_eq!(neg.current_offer, dec!(130));
@@ -576,13 +565,8 @@ mod tests {
         let neg = sample_negotiation();
 
         // Seller counter-offers 250 (>= 200) → auto-reject.
-        let neg = NegotiationEngine::counter_offer(
-            neg,
-            "seller_agent_1",
-            dec!(250),
-            None,
-        )
-        .expect("counter offer should succeed");
+        let neg = NegotiationEngine::counter_offer(neg, "seller_agent_1", dec!(250), None)
+            .expect("counter offer should succeed");
 
         assert_eq!(neg.status, NegotiationStatus::Rejected);
         assert_eq!(neg.current_offer, dec!(250));
@@ -729,8 +713,7 @@ mod tests {
     fn negotiation_serialization_round_trip() {
         let neg = sample_negotiation();
         let json = serde_json::to_string(&neg).expect("should serialize");
-        let deserialized: Negotiation =
-            serde_json::from_str(&json).expect("should deserialize");
+        let deserialized: Negotiation = serde_json::from_str(&json).expect("should deserialize");
 
         assert_eq!(deserialized.id, neg.id);
         assert_eq!(deserialized.buyer_agent_id, neg.buyer_agent_id);

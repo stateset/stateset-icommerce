@@ -1,6 +1,6 @@
-#[cfg(feature = "postgres")]
-use super::block_on_postgres;
 use super::{Commerce, CommerceBackend, CommerceBuilder};
+#[cfg(feature = "postgres")]
+use super::{block_on_postgres_connect, block_on_postgres_connect_with_options};
 
 use std::sync::Arc;
 
@@ -13,9 +13,6 @@ use crate::events::EventSystem;
 
 #[cfg(feature = "sqlite")]
 use stateset_db::SqliteDatabase;
-
-#[cfg(feature = "postgres")]
-use stateset_db::PostgresDatabase;
 
 impl Commerce {
     /// Create a new Commerce instance with a SQLite database.
@@ -152,7 +149,7 @@ impl Commerce {
     ///
     /// # Arguments
     ///
-    /// * `url` - PostgreSQL connection string (e.g., "postgres://user:pass@localhost/db")
+    /// * `url` - PostgreSQL connection string (e.g., `<postgres://user:pass@localhost/db>`)
     ///
     /// # Example
     ///
@@ -165,7 +162,7 @@ impl Commerce {
     #[cfg(feature = "postgres")]
     pub fn with_postgres(url: &str) -> Result<Self, CommerceError> {
         let url = url.to_owned();
-        let db = block_on_postgres(move || async move { PostgresDatabase::connect(&url).await })?;
+        let db = block_on_postgres_connect(url)?;
         let db: Arc<dyn Database> = Arc::new(db);
         let metrics = init_metrics(MetricsConfig::default());
 
@@ -207,10 +204,8 @@ impl Commerce {
         acquire_timeout_secs: u64,
     ) -> Result<Self, CommerceError> {
         let url = url.to_owned();
-        let db = block_on_postgres(move || async move {
-            PostgresDatabase::connect_with_options(&url, max_connections, acquire_timeout_secs)
-                .await
-        })?;
+        let db =
+            block_on_postgres_connect_with_options(url, max_connections, acquire_timeout_secs)?;
         let db: Arc<dyn Database> = Arc::new(db);
         let metrics = init_metrics(MetricsConfig::default());
 

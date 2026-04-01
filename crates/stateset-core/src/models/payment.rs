@@ -588,13 +588,13 @@ pub struct CreatePaymentMethod {
 }
 
 /// Generate a unique payment number
-#[must_use] 
+#[must_use]
 pub fn generate_payment_number() -> String {
     generate_number("PAY")
 }
 
 /// Generate a unique refund number
-#[must_use] 
+#[must_use]
 pub fn generate_refund_number() -> String {
     generate_number("REF")
 }

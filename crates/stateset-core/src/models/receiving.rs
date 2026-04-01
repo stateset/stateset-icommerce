@@ -319,7 +319,7 @@ pub type CreateReceiptLine = CreateReceiptItem;
 // ============================================================================
 
 /// Generate a receipt number.
-#[must_use] 
+#[must_use]
 pub fn generate_receipt_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();

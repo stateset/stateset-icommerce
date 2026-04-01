@@ -236,7 +236,7 @@ pub struct ArAgingSummary {
 
 impl ArAgingSummary {
     /// Create an empty aging summary as of now
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             current: Decimal::ZERO,
@@ -250,13 +250,13 @@ impl ArAgingSummary {
     }
 
     /// Returns the total overdue amount (everything except current)
-    #[must_use] 
+    #[must_use]
     pub fn total_overdue(&self) -> Decimal {
         self.days_1_30 + self.days_31_60 + self.days_61_90 + self.days_over_90
     }
 
     /// Returns percentage of total that is overdue
-    #[must_use] 
+    #[must_use]
     pub fn overdue_percentage(&self) -> Decimal {
         if self.total == Decimal::ZERO {
             Decimal::ZERO
@@ -291,13 +291,13 @@ pub struct CustomerArAging {
 
 impl CustomerArAging {
     /// Returns the total overdue amount
-    #[must_use] 
+    #[must_use]
     pub fn total_overdue(&self) -> Decimal {
         self.days_1_30 + self.days_31_60 + self.days_61_90 + self.days_over_90
     }
 
     /// Returns the worst aging bucket with a balance
-    #[must_use] 
+    #[must_use]
     pub fn worst_aging_bucket(&self) -> AgingBucket {
         if self.days_over_90 > Decimal::ZERO {
             AgingBucket::DaysOver90
@@ -351,7 +351,7 @@ pub struct WriteOff {
 
 impl WriteOff {
     /// Returns true if the write-off has been reversed
-    #[must_use] 
+    #[must_use]
     pub const fn is_reversed(&self) -> bool {
         self.reversed_at.is_some()
     }
@@ -378,7 +378,7 @@ pub struct CreditMemo {
 
 impl CreditMemo {
     /// Returns true if the credit memo can be applied to invoices
-    #[must_use] 
+    #[must_use]
     pub fn can_apply(&self) -> bool {
         self.status != CreditMemoStatus::Voided
             && self.status != CreditMemoStatus::FullyApplied
@@ -583,7 +583,7 @@ pub struct CreditMemoFilter {
 // ============================================================================
 
 /// Generate a write-off reference number
-#[must_use] 
+#[must_use]
 pub fn generate_write_off_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
@@ -591,7 +591,7 @@ pub fn generate_write_off_number() -> String {
 }
 
 /// Generate a credit memo reference number
-#[must_use] 
+#[must_use]
 pub fn generate_credit_memo_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
@@ -599,7 +599,7 @@ pub fn generate_credit_memo_number() -> String {
 }
 
 /// Calculate the aging bucket for a given due date
-#[must_use] 
+#[must_use]
 pub fn calculate_aging_bucket(due_date: DateTime<Utc>) -> AgingBucket {
     let now = Utc::now();
     let days_overdue = (now - due_date).num_days();
@@ -618,7 +618,7 @@ pub fn calculate_aging_bucket(due_date: DateTime<Utc>) -> AgingBucket {
 }
 
 /// Get the suggested dunning letter type based on aging
-#[must_use] 
+#[must_use]
 pub const fn suggest_dunning_letter(bucket: AgingBucket) -> Option<DunningLetterType> {
     match bucket {
         AgingBucket::Current => None,

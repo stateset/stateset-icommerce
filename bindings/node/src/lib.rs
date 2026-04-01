@@ -12297,6 +12297,65 @@ impl VectorSearch {
 // VES v1.0 Cryptographic Operations (stateset-crypto)
 // =============================================================================
 
+#[napi(object)]
+pub struct HybridSigningKeypairOutput {
+    pub ed25519_public_key: Buffer,
+    pub ed25519_private_key: Buffer,
+    pub ml_dsa_65_public_key: Buffer,
+    pub ml_dsa_65_seed: Buffer,
+}
+
+#[napi(object)]
+pub struct HybridSignatureBundleOutput {
+    pub ed25519_signature: Buffer,
+    pub ml_dsa_65_signature: Buffer,
+}
+
+#[napi(object)]
+pub struct HybridRecipientKeypairOutput {
+    pub kid: u32,
+    pub x25519_public_key: Buffer,
+    pub x25519_private_key: Buffer,
+    pub ml_kem_768_public_key: Buffer,
+    pub ml_kem_768_seed: Buffer,
+}
+
+#[napi(object)]
+pub struct HybridPayloadAadParamsInput {
+    pub ves_version: u32,
+    pub tenant_id: String,
+    pub store_id: String,
+    pub event_id: String,
+    pub source_agent_id: String,
+    pub agent_key_id: u32,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub event_type: String,
+    pub created_at: String,
+    pub payload_plain_hash: Buffer,
+}
+
+#[napi(object)]
+pub struct HybridRecipientPublicKeyInput {
+    pub kid: u32,
+    pub x25519_public_key: Buffer,
+    pub ml_kem_768_public_key: Buffer,
+}
+
+#[napi(object)]
+pub struct HybridRecipientPrivateKeyInput {
+    pub x25519_private_key: Buffer,
+    pub ml_kem_768_seed: Buffer,
+}
+
+#[napi(object)]
+pub struct HybridEncryptionResultOutput {
+    pub payload_encrypted_json: String,
+    pub salt: Buffer,
+    pub payload_plain_hash: Buffer,
+    pub payload_cipher_hash: Buffer,
+}
+
 /// Canonicalize a JSON string per RFC 8785 JCS
 #[napi]
 pub fn jcs_canonicalize(json_str: String) -> Result<String> {
@@ -12373,6 +12432,525 @@ pub fn ed25519_verify(hash: Buffer, signature: Buffer, public_key: Buffer) -> Re
     key_arr.copy_from_slice(public_key.as_ref());
 
     Ok(stateset_crypto::sign::verify_event_signature(&hash_arr, &sig_arr, &key_arr))
+}
+
+/// Generate a hybrid `Ed25519 + ML-DSA-65` signing keypair.
+#[napi]
+pub fn ves_hybrid_generate_signing_keypair() -> Result<HybridSigningKeypairOutput> {
+    let keypair = stateset_crypto::pqc::generate_hybrid_signing_keypair()
+        .map_err(|e| Error::from_reason(format!("Hybrid signing key generation failed: {}", e)))?;
+
+    Ok(HybridSigningKeypairOutput {
+        ed25519_public_key: Buffer::from(keypair.public.ed25519_public_key.as_slice()),
+        ed25519_private_key: Buffer::from(keypair.private.ed25519_private_key.as_slice()),
+        ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
+        ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+    })
+}
+
+/// Sign a 32-byte hash with the hybrid `Ed25519 + ML-DSA-65` profile.
+#[napi]
+pub fn ves_hybrid_sign_event_hash(
+    hash: Buffer,
+    ed25519_private_key: Buffer,
+    ml_dsa_65_seed: Buffer,
+) -> Result<HybridSignatureBundleOutput> {
+    if hash.len() != 32 {
+        return Err(Error::from_reason("Hash must be 32 bytes"));
+    }
+    if ed25519_private_key.len() != 32 {
+        return Err(Error::from_reason("Ed25519 private key must be 32 bytes"));
+    }
+    if ml_dsa_65_seed.len() != 32 {
+        return Err(Error::from_reason("ML-DSA-65 seed must be 32 bytes"));
+    }
+
+    let mut hash_arr = [0u8; 32];
+    hash_arr.copy_from_slice(hash.as_ref());
+    let mut ed25519_private_key_arr = [0u8; 32];
+    ed25519_private_key_arr.copy_from_slice(ed25519_private_key.as_ref());
+    let mut ml_dsa_65_seed_arr = [0u8; 32];
+    ml_dsa_65_seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
+
+    let signature = stateset_crypto::pqc::hybrid_sign_event_hash(
+        &hash_arr,
+        &stateset_crypto::pqc::HybridSigningPrivateKey {
+            ed25519_private_key: ed25519_private_key_arr,
+            ml_dsa_65_seed: ml_dsa_65_seed_arr,
+        },
+    )
+    .map_err(|e| Error::from_reason(format!("Hybrid signing failed: {}", e)))?;
+
+    Ok(HybridSignatureBundleOutput {
+        ed25519_signature: Buffer::from(signature.ed25519_signature.as_slice()),
+        ml_dsa_65_signature: Buffer::from(signature.ml_dsa_65_signature.as_slice()),
+    })
+}
+
+/// Verify a 32-byte hash with the hybrid `Ed25519 + ML-DSA-65` profile.
+#[napi]
+pub fn ves_hybrid_verify_event_signature(
+    hash: Buffer,
+    ed25519_signature: Buffer,
+    ml_dsa_65_signature: Buffer,
+    ed25519_public_key: Buffer,
+    ml_dsa_65_public_key: Buffer,
+) -> Result<bool> {
+    if hash.len() != 32 || ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
+        return Ok(false);
+    }
+
+    let mut hash_arr = [0u8; 32];
+    hash_arr.copy_from_slice(hash.as_ref());
+    let mut ed25519_signature_arr = [0u8; 64];
+    ed25519_signature_arr.copy_from_slice(ed25519_signature.as_ref());
+    let mut ed25519_public_key_arr = [0u8; 32];
+    ed25519_public_key_arr.copy_from_slice(ed25519_public_key.as_ref());
+
+    Ok(stateset_crypto::pqc::hybrid_verify_event_signature(
+        &hash_arr,
+        &stateset_crypto::pqc::HybridSignatureBundle {
+            ed25519_signature: ed25519_signature_arr,
+            ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
+        },
+        &stateset_crypto::pqc::HybridSigningPublicKey {
+            ed25519_public_key: ed25519_public_key_arr,
+            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+        },
+    ))
+}
+
+/// Generate a hybrid `X25519 + ML-KEM-768` recipient keypair.
+#[napi]
+pub fn ves_hybrid_generate_recipient_keypair(kid: u32) -> Result<HybridRecipientKeypairOutput> {
+    let keypair = stateset_crypto::pqc::generate_hybrid_recipient_keypair(kid).map_err(|e| {
+        Error::from_reason(format!("Hybrid recipient key generation failed: {}", e))
+    })?;
+
+    Ok(HybridRecipientKeypairOutput {
+        kid: keypair.public.kid,
+        x25519_public_key: Buffer::from(keypair.public.x25519_public_key.as_slice()),
+        x25519_private_key: Buffer::from(keypair.private.x25519_private_key.as_slice()),
+        ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
+        ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+    })
+}
+
+/// Encrypt a JSON payload using hybrid `X25519 + ML-KEM-768` recipient wrapping.
+#[napi]
+pub fn ves_hybrid_encrypt_payload(
+    payload_json: String,
+    aad_params: HybridPayloadAadParamsInput,
+    recipients: Vec<HybridRecipientPublicKeyInput>,
+) -> Result<HybridEncryptionResultOutput> {
+    if aad_params.payload_plain_hash.len() != 32 {
+        return Err(Error::from_reason("payload_plain_hash must be 32 bytes"));
+    }
+
+    let payload: serde_json::Value = serde_json::from_str(&payload_json)
+        .map_err(|e| Error::from_reason(format!("Invalid payload JSON: {}", e)))?;
+
+    let mut payload_plain_hash = [0u8; 32];
+    payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
+
+    let recipient_keys = recipients
+        .into_iter()
+        .map(|recipient| {
+            let mut x25519_public_key = [0u8; 32];
+            if recipient.x25519_public_key.len() != 32 {
+                return Err(Error::from_reason(
+                    "x25519_public_key must be 32 bytes".to_string(),
+                ));
+            }
+            x25519_public_key.copy_from_slice(recipient.x25519_public_key.as_ref());
+
+            Ok(stateset_crypto::pqc::HybridRecipientPublicKey {
+                kid: recipient.kid,
+                x25519_public_key,
+                ml_kem_768_public_key: recipient.ml_kem_768_public_key.as_ref().to_vec(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let aad = stateset_crypto::hash::PayloadAadParams {
+        ves_version: aad_params.ves_version,
+        tenant_id: &aad_params.tenant_id,
+        store_id: &aad_params.store_id,
+        event_id: &aad_params.event_id,
+        source_agent_id: &aad_params.source_agent_id,
+        agent_key_id: aad_params.agent_key_id,
+        entity_type: &aad_params.entity_type,
+        entity_id: &aad_params.entity_id,
+        event_type: &aad_params.event_type,
+        created_at: &aad_params.created_at,
+        payload_plain_hash: &payload_plain_hash,
+    };
+
+    let encrypted = stateset_crypto::pqc::encrypt_payload_hybrid(&payload, &aad, &recipient_keys)
+        .map_err(|e| Error::from_reason(format!("Hybrid payload encryption failed: {}", e)))?;
+
+    Ok(HybridEncryptionResultOutput {
+        payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted).map_err(
+            |e| Error::from_reason(format!("Failed to serialize encrypted payload: {}", e)),
+        )?,
+        salt: Buffer::from(encrypted.salt.as_slice()),
+        payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
+        payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
+    })
+}
+
+/// Decrypt a JSON payload using hybrid `X25519 + ML-KEM-768` recipient wrapping.
+#[napi]
+pub fn ves_hybrid_decrypt_payload(
+    payload_encrypted_json: String,
+    payload_aad: Buffer,
+    recipient_kid: u32,
+    recipient_private_key: HybridRecipientPrivateKeyInput,
+    expected_plain_hash: Buffer,
+) -> Result<String> {
+    if payload_aad.len() != 32 {
+        return Err(Error::from_reason("payload_aad must be 32 bytes"));
+    }
+    if recipient_private_key.x25519_private_key.len() != 32 {
+        return Err(Error::from_reason("x25519_private_key must be 32 bytes"));
+    }
+    if recipient_private_key.ml_kem_768_seed.len() != 64 {
+        return Err(Error::from_reason("ml_kem_768_seed must be 64 bytes"));
+    }
+    if expected_plain_hash.len() != 32 {
+        return Err(Error::from_reason("expected_plain_hash must be 32 bytes"));
+    }
+
+    let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
+        .map_err(|e| Error::from_reason(format!("Invalid encrypted payload JSON: {}", e)))?;
+
+    let mut payload_aad_arr = [0u8; 32];
+    payload_aad_arr.copy_from_slice(payload_aad.as_ref());
+    let mut x25519_private_key = [0u8; 32];
+    x25519_private_key.copy_from_slice(recipient_private_key.x25519_private_key.as_ref());
+    let mut ml_kem_768_seed = [0u8; 64];
+    ml_kem_768_seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
+    let mut expected_plain_hash_arr = [0u8; 32];
+    expected_plain_hash_arr.copy_from_slice(expected_plain_hash.as_ref());
+
+    let decrypted = stateset_crypto::pqc::decrypt_payload_hybrid(
+        &payload_encrypted,
+        &payload_aad_arr,
+        recipient_kid,
+        &stateset_crypto::pqc::HybridRecipientPrivateKey {
+            x25519_private_key,
+            ml_kem_768_seed,
+        },
+        &expected_plain_hash_arr,
+    )
+    .map_err(|e| Error::from_reason(format!("Hybrid payload decryption failed: {}", e)))?;
+
+    serde_json::to_string(&decrypted)
+        .map_err(|e| Error::from_reason(format!("Failed to serialize decrypted payload: {}", e)))
+}
+
+// =============================================================================
+// PQC-Strict Operations (ML-DSA-65 only, ML-KEM-768 only)
+// =============================================================================
+
+#[napi(object)]
+pub struct StrictSigningKeypairOutput {
+    pub ml_dsa_65_public_key: Buffer,
+    pub ml_dsa_65_seed: Buffer,
+}
+
+#[napi(object)]
+pub struct StrictRecipientKeypairOutput {
+    pub kid: u32,
+    pub ml_kem_768_public_key: Buffer,
+    pub ml_kem_768_seed: Buffer,
+}
+
+#[napi(object)]
+pub struct StrictRecipientPrivateKeyInput {
+    pub ml_kem_768_seed: Buffer,
+}
+
+#[napi(object)]
+pub struct StrictRecipientPublicKeyInput {
+    pub kid: u32,
+    pub ml_kem_768_public_key: Buffer,
+}
+
+#[napi(object)]
+pub struct StrictEncryptionResultOutput {
+    pub payload_encrypted_json: String,
+    pub salt: Buffer,
+    pub payload_plain_hash: Buffer,
+    pub payload_cipher_hash: Buffer,
+}
+
+/// Generate an ML-DSA-65-only signing keypair for PQC-strict mode.
+#[napi]
+pub fn ves_strict_generate_signing_keypair() -> Result<StrictSigningKeypairOutput> {
+    let keypair = stateset_crypto::pqc::generate_strict_signing_keypair()
+        .map_err(|e| Error::from_reason(format!("Strict signing key generation failed: {}", e)))?;
+
+    Ok(StrictSigningKeypairOutput {
+        ml_dsa_65_public_key: Buffer::from(keypair.public.ml_dsa_65_public_key.as_slice()),
+        ml_dsa_65_seed: Buffer::from(keypair.private.ml_dsa_65_seed.as_slice()),
+    })
+}
+
+/// Sign a 32-byte hash with ML-DSA-65 only (PQC-strict mode).
+#[napi]
+pub fn ves_strict_sign_event_hash(hash: Buffer, ml_dsa_65_seed: Buffer) -> Result<Buffer> {
+    if hash.len() != 32 {
+        return Err(Error::from_reason("Hash must be 32 bytes"));
+    }
+    if ml_dsa_65_seed.len() != 32 {
+        return Err(Error::from_reason("ML-DSA-65 seed must be 32 bytes"));
+    }
+
+    let mut hash_arr = [0u8; 32];
+    hash_arr.copy_from_slice(hash.as_ref());
+    let mut seed_arr = [0u8; 32];
+    seed_arr.copy_from_slice(ml_dsa_65_seed.as_ref());
+
+    let signature = stateset_crypto::pqc::strict_sign_event_hash(
+        &hash_arr,
+        &stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed_arr },
+    )
+    .map_err(|e| Error::from_reason(format!("Strict signing failed: {}", e)))?;
+
+    Ok(Buffer::from(signature))
+}
+
+/// Verify a 32-byte hash with ML-DSA-65 only (PQC-strict mode).
+#[napi]
+pub fn ves_strict_verify_event_signature(
+    hash: Buffer,
+    ml_dsa_65_signature: Buffer,
+    ml_dsa_65_public_key: Buffer,
+) -> Result<bool> {
+    if hash.len() != 32 {
+        return Ok(false);
+    }
+
+    let mut hash_arr = [0u8; 32];
+    hash_arr.copy_from_slice(hash.as_ref());
+
+    Ok(stateset_crypto::pqc::strict_verify_event_signature(
+        &hash_arr,
+        ml_dsa_65_signature.as_ref(),
+        &stateset_crypto::pqc::StrictSigningPublicKey {
+            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+        },
+    ))
+}
+
+/// Generate an ML-KEM-768-only recipient keypair for PQC-strict mode.
+#[napi]
+pub fn ves_strict_generate_recipient_keypair(kid: u32) -> Result<StrictRecipientKeypairOutput> {
+    let keypair = stateset_crypto::pqc::generate_strict_recipient_keypair(kid)
+        .map_err(|e| Error::from_reason(format!("Strict recipient key generation failed: {}", e)))?;
+
+    Ok(StrictRecipientKeypairOutput {
+        kid: keypair.public.kid,
+        ml_kem_768_public_key: Buffer::from(keypair.public.ml_kem_768_public_key.as_slice()),
+        ml_kem_768_seed: Buffer::from(keypair.private.ml_kem_768_seed.as_slice()),
+    })
+}
+
+/// Encrypt a JSON payload using ML-KEM-768-only recipient wrapping (PQC-strict).
+#[napi]
+pub fn ves_strict_encrypt_payload(
+    payload_json: String,
+    aad_params: HybridPayloadAadParamsInput,
+    recipients: Vec<StrictRecipientPublicKeyInput>,
+) -> Result<StrictEncryptionResultOutput> {
+    if aad_params.payload_plain_hash.len() != 32 {
+        return Err(Error::from_reason("payload_plain_hash must be 32 bytes"));
+    }
+
+    let payload: serde_json::Value = serde_json::from_str(&payload_json)
+        .map_err(|e| Error::from_reason(format!("Invalid payload JSON: {}", e)))?;
+
+    let mut payload_plain_hash = [0u8; 32];
+    payload_plain_hash.copy_from_slice(aad_params.payload_plain_hash.as_ref());
+
+    let recipient_keys: Vec<stateset_crypto::pqc::StrictRecipientPublicKey> = recipients
+        .into_iter()
+        .map(|r| stateset_crypto::pqc::StrictRecipientPublicKey {
+            kid: r.kid,
+            ml_kem_768_public_key: r.ml_kem_768_public_key.as_ref().to_vec(),
+        })
+        .collect();
+
+    let aad = stateset_crypto::hash::PayloadAadParams {
+        ves_version: aad_params.ves_version,
+        tenant_id: &aad_params.tenant_id,
+        store_id: &aad_params.store_id,
+        event_id: &aad_params.event_id,
+        source_agent_id: &aad_params.source_agent_id,
+        agent_key_id: aad_params.agent_key_id,
+        entity_type: &aad_params.entity_type,
+        entity_id: &aad_params.entity_id,
+        event_type: &aad_params.event_type,
+        created_at: &aad_params.created_at,
+        payload_plain_hash: &payload_plain_hash,
+    };
+
+    let encrypted = stateset_crypto::pqc::encrypt_payload_strict(&payload, &aad, &recipient_keys)
+        .map_err(|e| Error::from_reason(format!("Strict payload encryption failed: {}", e)))?;
+
+    Ok(StrictEncryptionResultOutput {
+        payload_encrypted_json: serde_json::to_string(&encrypted.payload_encrypted)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize: {}", e)))?,
+        salt: Buffer::from(encrypted.salt.as_slice()),
+        payload_plain_hash: Buffer::from(encrypted.payload_plain_hash.as_slice()),
+        payload_cipher_hash: Buffer::from(encrypted.payload_cipher_hash.as_slice()),
+    })
+}
+
+/// Decrypt a JSON payload using ML-KEM-768-only recipient wrapping (PQC-strict).
+#[napi]
+pub fn ves_strict_decrypt_payload(
+    payload_encrypted_json: String,
+    payload_aad: Buffer,
+    recipient_kid: u32,
+    recipient_private_key: StrictRecipientPrivateKeyInput,
+    expected_plain_hash: Buffer,
+) -> Result<String> {
+    if payload_aad.len() != 32 {
+        return Err(Error::from_reason("payload_aad must be 32 bytes"));
+    }
+    if recipient_private_key.ml_kem_768_seed.len() != 64 {
+        return Err(Error::from_reason("ml_kem_768_seed must be 64 bytes"));
+    }
+    if expected_plain_hash.len() != 32 {
+        return Err(Error::from_reason("expected_plain_hash must be 32 bytes"));
+    }
+
+    let payload_encrypted: serde_json::Value = serde_json::from_str(&payload_encrypted_json)
+        .map_err(|e| Error::from_reason(format!("Invalid encrypted payload JSON: {}", e)))?;
+
+    let mut aad_arr = [0u8; 32];
+    aad_arr.copy_from_slice(payload_aad.as_ref());
+    let mut seed = [0u8; 64];
+    seed.copy_from_slice(recipient_private_key.ml_kem_768_seed.as_ref());
+    let mut hash_arr = [0u8; 32];
+    hash_arr.copy_from_slice(expected_plain_hash.as_ref());
+
+    let decrypted = stateset_crypto::pqc::decrypt_payload_strict(
+        &payload_encrypted,
+        &aad_arr,
+        recipient_kid,
+        &stateset_crypto::pqc::StrictRecipientPrivateKey { ml_kem_768_seed: seed },
+        &hash_arr,
+    )
+    .map_err(|e| Error::from_reason(format!("Strict payload decryption failed: {}", e)))?;
+
+    serde_json::to_string(&decrypted)
+        .map_err(|e| Error::from_reason(format!("Failed to serialize: {}", e)))
+}
+
+/// Generate a hybrid signing proof-of-possession bundle.
+#[napi]
+pub fn ves_hybrid_generate_signing_pop(
+    ed25519_private_key: Buffer,
+    ml_dsa_65_seed: Buffer,
+    ed25519_public_key: Buffer,
+    ml_dsa_65_public_key: Buffer,
+) -> Result<HybridSignatureBundleOutput> {
+    if ed25519_private_key.len() != 32 || ml_dsa_65_seed.len() != 32 || ed25519_public_key.len() != 32 {
+        return Err(Error::from_reason("Key sizes invalid"));
+    }
+
+    let mut ed_priv = [0u8; 32];
+    ed_priv.copy_from_slice(ed25519_private_key.as_ref());
+    let mut ml_seed = [0u8; 32];
+    ml_seed.copy_from_slice(ml_dsa_65_seed.as_ref());
+    let mut ed_pub = [0u8; 32];
+    ed_pub.copy_from_slice(ed25519_public_key.as_ref());
+
+    let keypair = stateset_crypto::pqc::HybridSigningKeypair {
+        public: stateset_crypto::pqc::HybridSigningPublicKey {
+            ed25519_public_key: ed_pub,
+            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+        },
+        private: stateset_crypto::pqc::HybridSigningPrivateKey {
+            ed25519_private_key: ed_priv,
+            ml_dsa_65_seed: ml_seed,
+        },
+    };
+
+    let pop = stateset_crypto::pqc::generate_hybrid_signing_pop(&keypair)
+        .map_err(|e| Error::from_reason(format!("PoP generation failed: {}", e)))?;
+
+    Ok(HybridSignatureBundleOutput {
+        ed25519_signature: Buffer::from(pop.ed25519_signature.as_slice()),
+        ml_dsa_65_signature: Buffer::from(pop.ml_dsa_65_signature.as_slice()),
+    })
+}
+
+/// Verify a hybrid signing proof-of-possession bundle.
+#[napi]
+pub fn ves_hybrid_verify_signing_pop(
+    ed25519_signature: Buffer,
+    ml_dsa_65_signature: Buffer,
+    ed25519_public_key: Buffer,
+    ml_dsa_65_public_key: Buffer,
+) -> Result<bool> {
+    if ed25519_signature.len() != 64 || ed25519_public_key.len() != 32 {
+        return Ok(false);
+    }
+
+    let mut ed_sig = [0u8; 64];
+    ed_sig.copy_from_slice(ed25519_signature.as_ref());
+    let mut ed_pub = [0u8; 32];
+    ed_pub.copy_from_slice(ed25519_public_key.as_ref());
+
+    Ok(stateset_crypto::pqc::verify_hybrid_signing_pop(
+        &stateset_crypto::pqc::HybridSignatureBundle {
+            ed25519_signature: ed_sig,
+            ml_dsa_65_signature: ml_dsa_65_signature.as_ref().to_vec(),
+        },
+        &stateset_crypto::pqc::HybridSigningPublicKey {
+            ed25519_public_key: ed_pub,
+            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+        },
+    ))
+}
+
+/// Generate a PQC-strict signing proof-of-possession.
+#[napi]
+pub fn ves_strict_generate_signing_pop(ml_dsa_65_seed: Buffer, ml_dsa_65_public_key: Buffer) -> Result<Buffer> {
+    if ml_dsa_65_seed.len() != 32 {
+        return Err(Error::from_reason("ML-DSA-65 seed must be 32 bytes"));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(ml_dsa_65_seed.as_ref());
+
+    let keypair = stateset_crypto::pqc::StrictSigningKeypair {
+        public: stateset_crypto::pqc::StrictSigningPublicKey {
+            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+        },
+        private: stateset_crypto::pqc::StrictSigningPrivateKey { ml_dsa_65_seed: seed },
+    };
+
+    let pop = stateset_crypto::pqc::generate_strict_signing_pop(&keypair)
+        .map_err(|e| Error::from_reason(format!("Strict PoP generation failed: {}", e)))?;
+    Ok(Buffer::from(pop))
+}
+
+/// Verify a PQC-strict signing proof-of-possession.
+#[napi]
+pub fn ves_strict_verify_signing_pop(
+    ml_dsa_65_signature: Buffer,
+    ml_dsa_65_public_key: Buffer,
+) -> Result<bool> {
+    Ok(stateset_crypto::pqc::verify_strict_signing_pop(
+        ml_dsa_65_signature.as_ref(),
+        &stateset_crypto::pqc::StrictSigningPublicKey {
+            ml_dsa_65_public_key: ml_dsa_65_public_key.as_ref().to_vec(),
+        },
+    ))
 }
 
 /// Encrypt a buffer with AES-256-GCM

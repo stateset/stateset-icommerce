@@ -8,10 +8,24 @@
 import {
   computeEventSigningHash,
   verifyEventSignature,
+  verifyEventSignatureHybrid,
+  verifyEventSignatureStrict,
   computeLeafHash,
   computeNodeHash,
   hexToBuffer,
 } from './crypto.js';
+import {
+  KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
+  SIGNATURE_SCHEME_ED25519,
+  SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+  SIGNATURE_SCHEME_ML_DSA_65,
+  assertEventMatchesSecurityProfile,
+  assertKeyRegistrationMatchesSecurityProfile,
+  assertReceiptMatchesSecurityProfile,
+  assertSecureTransportForProfile,
+  isSecureSequencerProtocol,
+  resolveSecurityProfile,
+} from './pqc.js';
 
 /**
  * @typedef {Object} EventEnvelope
@@ -30,6 +44,8 @@ import {
  * @property {string} payloadCipherHash - SHA-256 of ciphertext or zero hash (hex)
  * @property {number} agentKeyId - Key ID used for signing
  * @property {string} agentSignature - Ed25519 signature (hex)
+ * @property {number} [agentSignatureScheme] - PQ or hybrid signature scheme identifier
+ * @property {Object} [agentSignatureBundle] - PQ or hybrid signature bundle
  * @property {number} [baseVersion] - OCC version
  * @property {string} createdAt - ISO timestamp
  * @property {string} sourceAgent - Agent UUID
@@ -102,6 +118,261 @@ function parseSequencerUrl(url) {
   return parsed;
 }
 
+function toSnakeCaseSignatureBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519_signature: bundle.ed25519Signature ?? bundle.ed25519_signature ?? null,
+    ml_dsa_65_signature: bundle.mlDsa65Signature ?? bundle.ml_dsa_65_signature ?? null,
+  };
+}
+
+function fromSnakeCaseSignatureBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519Signature: bundle.ed25519_signature ?? bundle.ed25519Signature ?? null,
+    mlDsa65Signature: bundle.ml_dsa_65_signature ?? bundle.mlDsa65Signature ?? null,
+  };
+}
+
+function toSnakeCasePublicKeyBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519_public_key: bundle.ed25519PublicKey ?? bundle.ed25519_public_key ?? null,
+    ml_dsa_65_public_key: bundle.mlDsa65PublicKey ?? bundle.ml_dsa_65_public_key ?? null,
+    x25519_public_key: bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null,
+    ml_kem_768_public_key:
+      bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
+  };
+}
+
+function fromSnakeCasePublicKeyBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519PublicKey: bundle.ed25519_public_key ?? bundle.ed25519PublicKey ?? null,
+    mlDsa65PublicKey: bundle.ml_dsa_65_public_key ?? bundle.mlDsa65PublicKey ?? null,
+    x25519PublicKey: bundle.x25519_public_key ?? bundle.x25519PublicKey ?? null,
+    mlKem768PublicKey: bundle.ml_kem_768_public_key ?? bundle.mlKem768PublicKey ?? null,
+  };
+}
+
+function normalizeVerificationPublicKeyBundle(publicKey) {
+  if (
+    !publicKey ||
+    Buffer.isBuffer(publicKey) ||
+    publicKey instanceof Uint8Array ||
+    typeof publicKey === 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    ed25519PublicKey:
+      publicKey.ed25519PublicKey ?? publicKey.ed25519_public_key ?? publicKey.publicKey ?? null,
+    mlDsa65PublicKey: publicKey.mlDsa65PublicKey ?? publicKey.ml_dsa_65_public_key ?? null,
+  };
+}
+
+function toSnakeCaseProofOfPossessionBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519_pop: bundle.ed25519Pop ?? bundle.ed25519_pop ?? null,
+    ml_dsa_65_pop: bundle.mlDsa65Pop ?? bundle.ml_dsa_65_pop ?? null,
+  };
+}
+
+function toSnakeCaseKeyWrapParams(params) {
+  if (!params) {
+    return null;
+  }
+
+  return {
+    scheme: Number(params.scheme ?? params.wrapScheme ?? params.wrap_scheme ?? 0),
+    kdf: params.kdf ?? null,
+    aead: params.aead ?? null,
+  };
+}
+
+function fromSnakeCaseKeyWrapParams(params) {
+  if (!params) {
+    return null;
+  }
+
+  return {
+    scheme: Number(params.scheme ?? params.wrapScheme ?? params.wrap_scheme ?? 0),
+    kdf: params.kdf ?? null,
+    aead: params.aead ?? null,
+  };
+}
+
+function toSnakeCaseRecipientWrap(wrap) {
+  if (!wrap) {
+    return null;
+  }
+
+  const wrappedKey =
+    wrap.wrappedKey ??
+    wrap.wrapped_key ??
+    wrap.wrapped_key_b64u ??
+    wrap.ct_b64u ??
+    null;
+
+  return {
+    recipient_kid: Number(wrap.recipientKid ?? wrap.recipient_kid ?? 0),
+    wrap_scheme: Number(wrap.wrapScheme ?? wrap.wrap_scheme ?? 0),
+    x25519_enc_b64u:
+      wrap.x25519Enc ??
+      wrap.x25519_enc ??
+      wrap.x25519_enc_b64u ??
+      null,
+    ml_kem_ciphertext_b64u:
+      wrap.mlKemCiphertext ??
+      wrap.ml_kem_ciphertext ??
+      wrap.ml_kem_ciphertext_b64u ??
+      wrap.mlkem_ct_b64u ??
+      null,
+    wrap_nonce_b64u:
+      wrap.wrapNonce ??
+      wrap.wrap_nonce ??
+      wrap.wrap_nonce_b64u ??
+      null,
+    wrapped_key_b64u: wrappedKey,
+  };
+}
+
+function fromSnakeCaseRecipientWrap(wrap) {
+  if (!wrap) {
+    return null;
+  }
+
+  const wrappedKey =
+    wrap.wrapped_key_b64u ??
+    wrap.wrappedKey ??
+    wrap.wrapped_key ??
+    wrap.ct_b64u ??
+    null;
+
+  return {
+    recipientKid: Number(wrap.recipient_kid ?? wrap.recipientKid ?? 0),
+    wrapScheme: Number(wrap.wrap_scheme ?? wrap.wrapScheme ?? 0),
+    x25519Enc: wrap.x25519_enc_b64u ?? wrap.x25519Enc ?? wrap.x25519_enc ?? null,
+    mlKemCiphertext:
+      wrap.ml_kem_ciphertext_b64u ??
+      wrap.mlKemCiphertext ??
+      wrap.ml_kem_ciphertext ??
+      wrap.mlkem_ct_b64u ??
+      null,
+    wrapNonce: wrap.wrap_nonce_b64u ?? wrap.wrapNonce ?? wrap.wrap_nonce ?? null,
+    wrappedKey,
+  };
+}
+
+function toSnakeCaseRecipientWraps(recipientWraps) {
+  if (!Array.isArray(recipientWraps)) {
+    return null;
+  }
+
+  return recipientWraps
+    .map((wrap) => toSnakeCaseRecipientWrap(wrap))
+    .filter(Boolean);
+}
+
+function fromSnakeCaseRecipientWraps(recipientWraps) {
+  if (!Array.isArray(recipientWraps)) {
+    return null;
+  }
+
+  return recipientWraps
+    .map((wrap) => fromSnakeCaseRecipientWrap(wrap))
+    .filter(Boolean);
+}
+
+function deriveKeyWrapParams(payloadEncrypted) {
+  if (!Array.isArray(payloadEncrypted?.recipients) || payloadEncrypted.recipients.length === 0) {
+    return null;
+  }
+
+  return {
+    scheme: KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
+    kdf: payloadEncrypted.hpke?.kdf ?? 'HKDF-SHA256',
+    aead: payloadEncrypted.hpke?.aead ?? payloadEncrypted.aead ?? 'AES-256-GCM',
+  };
+}
+
+function deriveRecipientWrapsFromLegacyRecipients(payloadEncrypted) {
+  if (!Array.isArray(payloadEncrypted?.recipients)) {
+    return null;
+  }
+
+  return payloadEncrypted.recipients.map((recipient) => ({
+    recipient_kid: Number(recipient.recipient_kid ?? recipient.recipientKid ?? 0),
+    wrap_scheme: KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
+    x25519_enc_b64u:
+      recipient.enc_b64u ??
+      recipient.encB64u ??
+      null,
+    ml_kem_ciphertext_b64u: null,
+    wrap_nonce_b64u: null,
+    wrapped_key_b64u:
+      recipient.wrapped_key_b64u ??
+      recipient.wrappedKeyB64u ??
+      recipient.ct_b64u ??
+      null,
+  }));
+}
+
+function normalizePayloadEncryptedForWire(payloadEncrypted) {
+  if (!payloadEncrypted) {
+    return null;
+  }
+
+  const normalized = { ...payloadEncrypted };
+  const keyWrapParams =
+    toSnakeCaseKeyWrapParams(payloadEncrypted.keyWrapParams ?? payloadEncrypted.key_wrap_params) ??
+    deriveKeyWrapParams(payloadEncrypted);
+  const recipientWraps =
+    toSnakeCaseRecipientWraps(payloadEncrypted.recipientWraps ?? payloadEncrypted.recipient_wraps) ??
+    deriveRecipientWrapsFromLegacyRecipients(payloadEncrypted);
+
+  if (keyWrapParams) {
+    normalized.key_wrap_params = keyWrapParams;
+  }
+  if (recipientWraps) {
+    normalized.recipient_wraps = recipientWraps;
+  }
+
+  return normalized;
+}
+
+function normalizePayloadEncryptedFromWire(payloadEncrypted) {
+  if (!payloadEncrypted) {
+    return null;
+  }
+
+  const normalized = { ...payloadEncrypted };
+  if (payloadEncrypted.key_wrap_params) {
+    normalized.keyWrapParams = fromSnakeCaseKeyWrapParams(payloadEncrypted.key_wrap_params);
+  }
+  if (payloadEncrypted.recipient_wraps) {
+    normalized.recipientWraps = fromSnakeCaseRecipientWraps(payloadEncrypted.recipient_wraps);
+  }
+  return normalized;
+}
+
 export class SequencerClient {
   /**
    * @param {import('./config.js').SyncConfig} config
@@ -109,9 +380,17 @@ export class SequencerClient {
   constructor(config) {
     this.config = config;
     this._connected = false;
+    this.securityProfile = resolveSecurityProfile(
+      config.securityProfile ?? config.sync?.securityProfile,
+    );
 
     // Parse URL to determine REST endpoint
     const url = parseSequencerUrl(config.sequencerUrl);
+    assertSecureTransportForProfile(
+      this.securityProfile,
+      isSecureSequencerProtocol(url.protocol),
+      `Sequencer URL ${config.sequencerUrl}`,
+    );
     if (url.protocol === 'grpc:' || url.protocol === 'grpcs:') {
       // Convert gRPC URL to REST
       const restProtocol = url.protocol === 'grpcs:' ? 'https:' : 'http:';
@@ -212,6 +491,10 @@ export class SequencerClient {
    * @returns {Promise<IngestReceipt>}
    */
   async push(batch) {
+    for (const event of batch.events) {
+      assertEventMatchesSecurityProfile(event, this.securityProfile);
+    }
+
     // Build VES v1.0 request
     // Top-level uses camelCase (VesIngestRequest), event envelope uses snake_case (VesEventEnvelope)
     const payload = {
@@ -229,12 +512,14 @@ export class SequencerClient {
         ves_version: e.vesVersion || 1,
         payload: e.payloadKind === 0 ? e.payload : null,
         payload_kind: e.payloadKind || 0,
-        payload_encrypted: e.payloadEncrypted || null,
+        payload_encrypted: normalizePayloadEncryptedForWire(e.payloadEncrypted),
         payload_plain_hash: e.payloadPlainHash,
         payload_cipher_hash: e.payloadCipherHash,
         // VES v1.0 signature fields
         agent_key_id: e.agentKeyId,
         agent_signature: e.agentSignature,
+        agent_signature_scheme: e.agentSignatureScheme || 0,
+        agent_signature_bundle: toSnakeCaseSignatureBundle(e.agentSignatureBundle),
         source_agent_id: e.sourceAgent,
         // Metadata
         base_version: e.baseVersion || null,
@@ -317,7 +602,7 @@ export class SequencerClient {
         payload: e.envelope.payload,
         vesVersion: e.envelope.ves_version || 1,
         payloadKind: e.envelope.payload_kind || 0,
-        payloadEncrypted: e.envelope.payload_encrypted,
+        payloadEncrypted: normalizePayloadEncryptedFromWire(e.envelope.payload_encrypted),
         // Backwards compat: use payload_hash if payload_plain_hash not present
         payloadPlainHash: e.envelope.payload_plain_hash || e.envelope.payload_hash,
         payloadCipherHash:
@@ -328,6 +613,8 @@ export class SequencerClient {
         agentSignature:
           e.envelope.agent_signature ||
           '0000000000000000000000000000000000000000000000000000000000000000',
+        agentSignatureScheme: e.envelope.agent_signature_scheme || 0,
+        agentSignatureBundle: fromSnakeCaseSignatureBundle(e.envelope.agent_signature_bundle),
         // Metadata
         baseVersion: e.envelope.base_version,
         createdAt: e.envelope.created_at,
@@ -336,6 +623,8 @@ export class SequencerClient {
       sequenceNumber: e.envelope.sequence_number,
       sequencedAt: e.sequenced_at,
       receiptHash: e.receipt_hash,
+      receiptSignatureScheme: e.receipt_signature_scheme || 0,
+      receiptSignatureBundle: fromSnakeCaseSignatureBundle(e.receipt_signature_bundle),
     }));
 
     const maxSeq =
@@ -447,7 +736,7 @@ export class SequencerClient {
         payload: e.payload,
         vesVersion: e.ves_version || 1,
         payloadKind: e.payload_kind || 0,
-        payloadEncrypted: e.payload_encrypted,
+        payloadEncrypted: normalizePayloadEncryptedFromWire(e.payload_encrypted),
         payloadPlainHash: e.payload_plain_hash,
         payloadCipherHash: e.payload_cipher_hash,
         // VES v1.0 signature fields
@@ -518,7 +807,7 @@ export class SequencerClient {
   /**
    * Verify event signature (VES v1.0)
    * @param {EventEnvelope} envelope - The event envelope
-   * @param {Buffer} publicKey - Agent's Ed25519 public key (32 bytes)
+   * @param {Buffer|string|Object} publicKey - Agent Ed25519 key or hybrid public-key bundle
    * @returns {boolean}
    */
   verifyEventSignature(envelope, publicKey) {
@@ -540,9 +829,114 @@ export class SequencerClient {
       payloadCipherHash: hexToBuffer(envelope.payloadCipherHash),
     });
 
-    // Verify the signature
-    const signature = hexToBuffer(envelope.agentSignature);
-    return verifyEventSignature(eventSigningHash, signature, publicKey);
+    const publicKeyBundle = normalizeVerificationPublicKeyBundle(publicKey);
+    const signatureBundle = envelope.agentSignatureBundle || null;
+
+    if (
+      Number(envelope.agentSignatureScheme || 0) === SIGNATURE_SCHEME_ED25519_ML_DSA_65 &&
+      signatureBundle &&
+      publicKeyBundle?.ed25519PublicKey &&
+      publicKeyBundle?.mlDsa65PublicKey
+    ) {
+      try {
+        return verifyEventSignatureHybrid(eventSigningHash, signatureBundle, publicKeyBundle);
+      } catch (error) {
+        console.debug('[sync-client] Hybrid signature verification failed:', error?.message || error);
+      }
+    }
+
+    // Fall back to verifying the classical Ed25519 component when a full
+    // hybrid bundle is unavailable to the caller.
+    const signatureHex =
+      envelope.agentSignature || signatureBundle?.ed25519Signature || null;
+    if (!signatureHex) {
+      return false;
+    }
+    const ed25519PublicKey = publicKeyBundle?.ed25519PublicKey ?? publicKey;
+    if (!ed25519PublicKey) {
+      return false;
+    }
+    const signature = hexToBuffer(signatureHex);
+    return verifyEventSignature(
+      eventSigningHash,
+      signature,
+      typeof ed25519PublicKey === 'string' ? hexToBuffer(ed25519PublicKey) : ed25519PublicKey,
+    );
+  }
+
+  /**
+   * Verify a receipt signature against a known sequencer public key.
+   *
+   * Supports legacy (Ed25519), hybrid (Ed25519 + ML-DSA-65), and
+   * PQC-strict (ML-DSA-65) receipt signatures per VES-RECEIPT-2.
+   *
+   * @param {Object} receipt - Receipt or sequenced event with receipt fields.
+   * @param {Buffer|string} receipt.receiptHash - 32-byte receipt hash.
+   * @param {number} [receipt.receiptSignatureScheme] - Signature scheme identifier.
+   * @param {Object} [receipt.receiptSignatureBundle] - Signature bundle.
+   * @param {Buffer|string|Object} sequencerPublicKey - Sequencer public key or bundle.
+   * @returns {boolean} True if the receipt signature is valid.
+   */
+  verifyReceiptSignature(receipt, sequencerPublicKey) {
+    const receiptHash = typeof receipt.receiptHash === 'string'
+      ? hexToBuffer(receipt.receiptHash)
+      : receipt.receiptHash;
+    if (!receiptHash || receiptHash.length !== 32) {
+      return false;
+    }
+
+    const scheme = Number(receipt.receiptSignatureScheme || 0);
+    const bundle = receipt.receiptSignatureBundle || null;
+
+    // Validate receipt matches the active security profile (informational)
+    try {
+      assertReceiptMatchesSecurityProfile(
+        { signatureScheme: scheme, signatureBundle: bundle },
+        this.securityProfile,
+      );
+    } catch {
+      // Profile mismatch — still attempt verification but log
+      // istanbul ignore next
+      if (typeof console !== 'undefined' && console.debug) {
+        console.debug('[sync-client] Receipt profile mismatch for current security profile');
+      }
+    }
+
+    const publicKeyBundle = normalizeVerificationPublicKeyBundle(sequencerPublicKey);
+
+    // PQC-strict: ML-DSA-65 only
+    if (scheme === SIGNATURE_SCHEME_ML_DSA_65 && bundle?.mlDsa65Signature && publicKeyBundle?.mlDsa65PublicKey) {
+      try {
+        return verifyEventSignatureStrict(
+          receiptHash,
+          typeof bundle.mlDsa65Signature === 'string' ? hexToBuffer(bundle.mlDsa65Signature) : bundle.mlDsa65Signature,
+          publicKeyBundle,
+        );
+      } catch {
+        return false;
+      }
+    }
+
+    // Hybrid: Ed25519 + ML-DSA-65
+    if (scheme === SIGNATURE_SCHEME_ED25519_ML_DSA_65 && bundle && publicKeyBundle?.ed25519PublicKey && publicKeyBundle?.mlDsa65PublicKey) {
+      try {
+        return verifyEventSignatureHybrid(receiptHash, bundle, publicKeyBundle);
+      } catch {
+        return false;
+      }
+    }
+
+    // Legacy: Ed25519
+    const sigHex = bundle?.ed25519Signature || receipt.receiptSignature;
+    const ed25519Pk = publicKeyBundle?.ed25519PublicKey ?? sequencerPublicKey;
+    if (!sigHex || !ed25519Pk) {
+      return false;
+    }
+    return verifyEventSignature(
+      receiptHash,
+      typeof sigHex === 'string' ? hexToBuffer(sigHex) : sigHex,
+      typeof ed25519Pk === 'string' ? hexToBuffer(ed25519Pk) : ed25519Pk,
+    );
   }
 
   /**
@@ -551,18 +945,30 @@ export class SequencerClient {
    * @param {string} keyRegistration.agentId - Agent UUID
    * @param {number} keyRegistration.keyId - Key ID
    * @param {string} keyRegistration.publicKey - Ed25519 public key (hex)
+   * @param {number} [keyRegistration.keyType] - Signing or encryption key type
+   * @param {number} [keyRegistration.keyAlgorithm] - Concrete key algorithm or hybrid bundle
+   * @param {Object} [keyRegistration.publicKeyBundle] - PQ or hybrid key bundle
    * @param {string} [keyRegistration.validFrom] - Validity start (ISO)
    * @param {string} [keyRegistration.validTo] - Validity end (ISO)
    * @returns {Promise<{success: boolean}>}
    */
   async registerAgentKey(keyRegistration) {
+    assertKeyRegistrationMatchesSecurityProfile(keyRegistration, this.securityProfile);
+
     const payload = {
       tenant_id: this.config.tenantId,
       agent_id: keyRegistration.agentId,
       key_id: keyRegistration.keyId,
+      key_type: keyRegistration.keyType,
+      key_algorithm: keyRegistration.keyAlgorithm,
       public_key: keyRegistration.publicKey,
+      public_key_bundle: toSnakeCasePublicKeyBundle(keyRegistration.publicKeyBundle),
       valid_from: keyRegistration.validFrom,
       valid_to: keyRegistration.validTo,
+      proof_of_possession: keyRegistration.proofOfPossession,
+      proof_of_possession_bundle: toSnakeCaseProofOfPossessionBundle(
+        keyRegistration.proofOfPossessionBundle,
+      ),
     };
 
     const response = await this._request('POST', '/api/v1/agents/keys', payload);
@@ -584,7 +990,10 @@ export class SequencerClient {
 
     return (response.keys || []).map((k) => ({
       keyId: k.key_id,
+      keyType: k.key_type,
+      keyAlgorithm: k.key_algorithm,
       publicKey: k.public_key,
+      publicKeyBundle: fromSnakeCasePublicKeyBundle(k.public_key_bundle),
       status: k.status,
       createdAt: k.created_at,
       validFrom: k.valid_from,

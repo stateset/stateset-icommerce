@@ -450,25 +450,25 @@ pub struct CheckoutResult {
 
 impl Cart {
     /// Check if cart has items
-    #[must_use] 
+    #[must_use]
     pub fn has_items(&self) -> bool {
         !self.items.is_empty()
     }
 
     /// Get total item count
-    #[must_use] 
+    #[must_use]
     pub fn item_count(&self) -> i32 {
         self.items.iter().map(|i| i.quantity).sum()
     }
 
     /// Check if cart requires shipping
-    #[must_use] 
+    #[must_use]
     pub fn requires_shipping(&self) -> bool {
         self.items.iter().any(|i| i.requires_shipping)
     }
 
     /// Check if cart is ready for checkout
-    #[must_use] 
+    #[must_use]
     pub fn is_ready_for_checkout(&self) -> bool {
         if self.items.is_empty() {
             return false;
@@ -488,19 +488,19 @@ impl Cart {
     }
 
     /// Check if cart can be modified
-    #[must_use] 
+    #[must_use]
     pub const fn can_modify(&self) -> bool {
         matches!(self.status, CartStatus::Active)
     }
 
     /// Check if cart can be completed
-    #[must_use] 
+    #[must_use]
     pub const fn can_complete(&self) -> bool {
         matches!(self.status, CartStatus::ReadyForPayment | CartStatus::PaymentPending)
     }
 
     /// Check if cart can be cancelled
-    #[must_use] 
+    #[must_use]
     pub const fn can_cancel(&self) -> bool {
         matches!(
             self.status,
@@ -509,13 +509,13 @@ impl Cart {
     }
 
     /// Check if cart is abandoned
-    #[must_use] 
+    #[must_use]
     pub fn is_abandoned(&self) -> bool {
         self.status == CartStatus::Abandoned
     }
 
     /// Check if cart is expired
-    #[must_use] 
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at { Utc::now() > expires_at } else { false }
     }
@@ -534,7 +534,7 @@ impl Cart {
 
 impl CartItem {
     /// Calculate item total
-    #[must_use] 
+    #[must_use]
     pub fn calculate_total(
         quantity: i32,
         unit_price: Decimal,

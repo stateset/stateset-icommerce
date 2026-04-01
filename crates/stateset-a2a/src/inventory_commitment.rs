@@ -63,7 +63,7 @@ pub fn create_commitment(
 }
 
 /// Fulfill a commitment when purchase completes.
-pub fn fulfill(commitment: &mut InventoryCommitment, purchase_id: Uuid) {
+pub const fn fulfill(commitment: &mut InventoryCommitment, purchase_id: Uuid) {
     commitment.purchase_id = Some(purchase_id);
     commitment.status = CommitmentStatus::Fulfilled;
 }
@@ -128,7 +128,8 @@ mod tests {
 
     #[test]
     fn expire_past_deadline() {
-        let mut c = create_commitment(Uuid::new_v4(), "SKU-003", 3, "agent-2", Duration::seconds(-1));
+        let mut c =
+            create_commitment(Uuid::new_v4(), "SKU-003", 3, "agent-2", Duration::seconds(-1));
         assert!(expire_if_needed(&mut c));
         assert_eq!(c.status, CommitmentStatus::Expired);
     }

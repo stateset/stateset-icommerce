@@ -183,6 +183,7 @@ pub struct CreditTerms {
 ///
 /// All methods consume and return owned values so the caller controls
 /// persistence (database, in-memory store, etc.).
+#[derive(Debug)]
 pub struct CreditManager;
 
 impl CreditManager {
@@ -308,9 +309,7 @@ impl CreditManager {
         if transaction.paid_at.is_some() {
             return false;
         }
-        transaction
-            .due_date
-            .is_some_and(|due| Utc::now() > due)
+        transaction.due_date.is_some_and(|due| Utc::now() > due)
     }
 
     /// Return all overdue (unpaid and past-due) transactions from a list.
@@ -319,10 +318,7 @@ impl CreditManager {
         let now = Utc::now();
         transactions
             .iter()
-            .filter(|tx| {
-                tx.paid_at.is_none()
-                    && tx.due_date.is_some_and(|due| now > due)
-            })
+            .filter(|tx| tx.paid_at.is_none() && tx.due_date.is_some_and(|due| now > due))
             .collect()
     }
 
@@ -419,8 +415,7 @@ mod tests {
             "trusted",
         );
 
-        CreditManager::charge(&mut terms, dec!(4000), None)
-            .expect("charge should succeed");
+        CreditManager::charge(&mut terms, dec!(4000), None).expect("charge should succeed");
         assert_eq!(terms.outstanding_balance, dec!(4000));
 
         let tx = CreditManager::record_payment(&mut terms, dec!(1500), Some("pay_001".into()))
@@ -444,17 +439,13 @@ mod tests {
             "verified",
         );
 
-        CreditManager::charge(&mut terms, dec!(100), None)
-            .expect("charge should succeed");
+        CreditManager::charge(&mut terms, dec!(100), None).expect("charge should succeed");
 
         let result = CreditManager::close(&mut terms);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert!(
-            matches!(err, A2AError::Validation(_)),
-            "expected Validation error, got: {err}",
-        );
+        assert!(matches!(err, A2AError::Validation(_)), "expected Validation error, got: {err}",);
         // Status should remain unchanged after failed close.
         assert_ne!(terms.status, CreditStatus::Closed);
     }

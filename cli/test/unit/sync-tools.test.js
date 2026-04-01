@@ -2,7 +2,7 @@
  * Sync Tools Test Suite
  *
  * Tests for tool definitions, schemas, permissions, and "not configured" paths
- * in src/tools/sync.js (10 tools).
+ * in src/tools/sync.js.
  *
  * sync.js imports isSyncConfigured at module level. isSyncConfigured() checks
  * for .stateset/sync.json relative to process.cwd(). When the config exists,
@@ -53,7 +53,7 @@ function expectPass(schema, data, msg) {
 }
 
 // ---------------------------------------------------------------------------
-// All 18 tool names
+// All tool names
 // ---------------------------------------------------------------------------
 
 const ALL_TOOL_NAMES = [
@@ -61,6 +61,8 @@ const ALL_TOOL_NAMES = [
   'sync_push',
   'sync_pull',
   'sync_outbox',
+  'sync_pulled_events',
+  'sync_decrypt_event',
   'sync_retry_failed',
   'sync_entity_history',
   'sync_full',
@@ -82,8 +84,8 @@ const ALL_TOOL_NAMES = [
 // ---------------------------------------------------------------------------
 
 describe('Sync Tools — definitions', () => {
-  it('exports exactly 18 tools', () => {
-    assert.strictEqual(syncTools.length, 18);
+  it('exports exactly 20 tools', () => {
+    assert.strictEqual(syncTools.length, 20);
   });
 
   for (const name of ALL_TOOL_NAMES) {
@@ -104,6 +106,8 @@ describe('Sync Tools — permissions', () => {
     'sync_status',
     'sync_pull',
     'sync_outbox',
+    'sync_pulled_events',
+    'sync_decrypt_event',
     'sync_entity_history',
     'sync_conflicts',
   ];
@@ -162,6 +166,36 @@ describe('Sync Tools — sync_entity_history schema', () => {
   it('accepts valid entity history params', () => {
     expectPass(getSchema('sync_entity_history'), { entityType: 'order', entityId: 'ord-123' });
   });
+
+  it('accepts local history options', () => {
+    expectPass(getSchema('sync_entity_history'), {
+      entityType: 'order',
+      entityId: 'ord-123',
+      source: 'local',
+      limit: 25,
+      includePayloads: true,
+      decryptPayloads: true,
+      keyId: 7,
+    });
+  });
+
+  it('rejects invalid local history option types', () => {
+    expectFail(getSchema('sync_entity_history'), {
+      entityType: 'order',
+      entityId: 'ord-123',
+      source: 'cache',
+    });
+    expectFail(getSchema('sync_entity_history'), {
+      entityType: 'order',
+      entityId: 'ord-123',
+      includePayloads: 'yes',
+    });
+    expectFail(getSchema('sync_entity_history'), {
+      entityType: 'order',
+      entityId: 'ord-123',
+      decryptPayloads: 'yes',
+    });
+  });
 });
 
 describe('Sync Tools — sync_resolve schema', () => {
@@ -212,6 +246,41 @@ describe('Sync Tools — sync_outbox schema', () => {
   });
 });
 
+describe('Sync Tools — sync_decrypt_event schema', () => {
+  it('accepts eventId lookup', () => {
+    expectPass(getSchema('sync_decrypt_event'), { eventId: 'evt-123' });
+  });
+
+  it('accepts sequenceNumber lookup', () => {
+    expectPass(getSchema('sync_decrypt_event'), { sequenceNumber: 42, source: 'pulled' });
+  });
+
+  it('source is constrained to known values', () => {
+    expectPass(getSchema('sync_decrypt_event'), { eventId: 'evt-123', source: 'auto' });
+    expectPass(getSchema('sync_decrypt_event'), { eventId: 'evt-123', source: 'outbox' });
+    expectPass(getSchema('sync_decrypt_event'), { eventId: 'evt-123', source: 'pulled' });
+    expectFail(getSchema('sync_decrypt_event'), { eventId: 'evt-123', source: 'remote' });
+  });
+});
+
+describe('Sync Tools — sync_pulled_events schema', () => {
+  it('accepts empty params', () => {
+    expectPass(getSchema('sync_pulled_events'), {});
+  });
+
+  it('accepts limit and boolean payload flags', () => {
+    expectPass(getSchema('sync_pulled_events'), { limit: 50 });
+    expectPass(getSchema('sync_pulled_events'), { includePayloads: true });
+    expectPass(getSchema('sync_pulled_events'), { decryptPayloads: true });
+    expectPass(getSchema('sync_pulled_events'), { keyId: 7 });
+  });
+
+  it('rejects invalid payload flag types', () => {
+    expectFail(getSchema('sync_pulled_events'), { includePayloads: 'yes' });
+    expectFail(getSchema('sync_pulled_events'), { decryptPayloads: 'yes' });
+  });
+});
+
 describe('Sync Tools — sync_pull schema', () => {
   it('accepts empty params', () => {
     expectPass(getSchema('sync_pull'), {});
@@ -223,6 +292,19 @@ describe('Sync Tools — sync_pull schema', () => {
 
   it('limit is optional number', () => {
     expectPass(getSchema('sync_pull'), { limit: 500 });
+  });
+
+  it('accepts pulled-event response options', () => {
+    expectPass(getSchema('sync_pull'), { includeEvents: true });
+    expectPass(getSchema('sync_pull'), { includePayloads: true });
+    expectPass(getSchema('sync_pull'), { decryptPayloads: true });
+    expectPass(getSchema('sync_pull'), { keyId: 7 });
+  });
+
+  it('rejects invalid pulled-event response option types', () => {
+    expectFail(getSchema('sync_pull'), { includeEvents: 'yes' });
+    expectFail(getSchema('sync_pull'), { includePayloads: 'yes' });
+    expectFail(getSchema('sync_pull'), { decryptPayloads: 'yes' });
   });
 });
 
@@ -264,6 +346,8 @@ describe('Sync Tools — "not configured" handler path', () => {
     'sync_push',
     'sync_pull',
     'sync_outbox',
+    'sync_pulled_events',
+    'sync_decrypt_event',
     'sync_retry_failed',
     'sync_entity_history',
     'sync_full',

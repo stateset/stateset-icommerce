@@ -25,7 +25,7 @@ pub enum SagaError {
     AlreadyCompleted,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SagaStatus {
     Pending,
     Running,
@@ -35,23 +35,23 @@ pub enum SagaStatus {
 }
 
 impl SagaStatus {
-    fn as_str(&self) -> &'static str {
+    const fn as_str(&self) -> &'static str {
         match self {
-            SagaStatus::Pending => "pending",
-            SagaStatus::Running => "running",
-            SagaStatus::Failed => "failed",
-            SagaStatus::Completed => "completed",
-            SagaStatus::RolledBack => "rolled_back",
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Failed => "failed",
+            Self::Completed => "completed",
+            Self::RolledBack => "rolled_back",
         }
     }
 
     fn from_str(raw: &str) -> Result<Self, SagaError> {
         match raw {
-            "pending" => Ok(SagaStatus::Pending),
-            "running" => Ok(SagaStatus::Running),
-            "failed" => Ok(SagaStatus::Failed),
-            "completed" => Ok(SagaStatus::Completed),
-            "rolled_back" => Ok(SagaStatus::RolledBack),
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "failed" => Ok(Self::Failed),
+            "completed" => Ok(Self::Completed),
+            "rolled_back" => Ok(Self::RolledBack),
             other => Err(SagaError::StepExecutionFailed(format!("Unknown saga status: {other}"))),
         }
     }
@@ -172,12 +172,13 @@ impl SagaStepDbRow {
     }
 }
 
+#[derive(Debug)]
 pub struct SagaCoordinator {
     db: std::sync::Arc<PostgresDatabase>,
 }
 
 impl SagaCoordinator {
-    pub fn new(db: std::sync::Arc<PostgresDatabase>) -> Self {
+    pub const fn new(db: std::sync::Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 

@@ -23,7 +23,7 @@ pub struct SqliteProductRepository {
 }
 
 impl SqliteProductRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -300,7 +300,8 @@ impl ProductRepository for SqliteProductRepository {
 
         let sql =
             format!("UPDATE products SET {} WHERE id = ? AND version = ?", updates.join(", "));
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
         if rows_affected == 0 {
@@ -372,10 +373,8 @@ impl ProductRepository for SqliteProductRepository {
                 params.push(Box::new(category));
             } else {
                 sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
-                params
-                    .push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
-                params
-                    .push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
+                params.push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
+                params.push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
             }
         }
         if let Some(in_stock) = in_stock {
@@ -412,7 +411,8 @@ impl ProductRepository for SqliteProductRepository {
             }
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let products = stmt
@@ -703,10 +703,8 @@ impl ProductRepository for SqliteProductRepository {
                 params.push(Box::new(category));
             } else {
                 sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
-                params
-                    .push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
-                params
-                    .push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
+                params.push(Box::new(format!("%\"name\":\"category\",\"value\":\"{category}\"%")));
+                params.push(Box::new(format!("%\"value\":\"{category}\",\"group\":\"category\"%")));
             }
         }
         if let Some(in_stock) = in_stock {
@@ -721,7 +719,8 @@ impl ProductRepository for SqliteProductRepository {
             ));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let ids = stmt
             .query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))

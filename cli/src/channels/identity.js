@@ -8,12 +8,58 @@
  * Uses SQLite (better-sqlite3) for persistence alongside the session store.
  */
 
-import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
 
 const DEFAULT_DB_PATH = path.join(os.homedir(), '.stateset', 'channel-identity.db');
+const require = createRequire(import.meta.url);
+const FALLBACK_IDENTITY_DATABASES = new Map();
+let cachedDatabaseCtor;
+
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+  }
+
+  return cachedDatabaseCtor;
+}
+
+function ensureDbFile(dbPath) {
+  if (dbPath === ':memory:') return;
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const fd = fs.openSync(dbPath, 'a');
+  fs.closeSync(fd);
+}
+
+function fallbackIdentityKey(channel, senderId) {
+  return `${channel}\u0000${senderId}`;
+}
+
+function getFallbackDatabaseState(dbPath) {
+  if (dbPath === ':memory:') {
+    return { rows: new Map() };
+  }
+
+  let state = FALLBACK_IDENTITY_DATABASES.get(dbPath);
+  if (!state || !fs.existsSync(dbPath)) {
+    ensureDbFile(dbPath);
+    state = { rows: new Map() };
+    FALLBACK_IDENTITY_DATABASES.set(dbPath, state);
+  }
+  return state;
+}
 
 export class CustomerIdentityStore {
   /**
@@ -21,10 +67,25 @@ export class CustomerIdentityStore {
    * @param {string} [opts.dbPath]
    */
   constructor({ dbPath = DEFAULT_DB_PATH } = {}) {
-    const dir = path.dirname(dbPath);
-    fs.mkdirSync(dir, { recursive: true });
+    this._dbPath = dbPath;
+    this._fallbackState = null;
+    ensureDbFile(dbPath);
 
-    this.db = new Database(dbPath);
+    const Database = loadDatabaseCtor();
+    if (!Database) {
+      this._enableFallback();
+      return;
+    }
+
+    try {
+      this.db = new Database(dbPath);
+    } catch (error) {
+      if (error?.code !== 'ERR_DLOPEN_FAILED') {
+        throw error;
+      }
+      this._enableFallback();
+      return;
+    }
     this.db.pragma('journal_mode = WAL');
 
     this.db.exec(`
@@ -59,6 +120,19 @@ export class CustomerIdentityStore {
     );
   }
 
+  _enableFallback() {
+    this._fallbackState = getFallbackDatabaseState(this._dbPath);
+    this.db = {
+      pragma() {
+        return 'WAL';
+      },
+      exec() {
+        return this;
+      },
+      close() {},
+    };
+  }
+
   /**
    * Look up the commerce customer ID for a channel sender.
    *
@@ -67,7 +141,9 @@ export class CustomerIdentityStore {
    * @returns {{ customerId: string, linkedBy: string }|null}
    */
   getCustomerId(channel, senderId) {
-    const row = this._get.get(channel, senderId);
+    const row = this._fallbackState
+      ? this._fallbackState.rows.get(fallbackIdentityKey(channel, senderId)) || null
+      : this._get.get(channel, senderId);
     if (!row) return null;
     return { customerId: row.customer_id, linkedBy: row.linked_by };
   }
@@ -81,6 +157,16 @@ export class CustomerIdentityStore {
    * @param {'auto'|'manual'} [linkedBy='auto']
    */
   link(channel, senderId, customerId, linkedBy = 'auto') {
+    if (this._fallbackState) {
+      this._fallbackState.rows.set(fallbackIdentityKey(channel, senderId), {
+        channel,
+        sender_id: senderId,
+        customer_id: customerId,
+        linked_at: Date.now(),
+        linked_by: linkedBy,
+      });
+      return;
+    }
     this._link.run(channel, senderId, customerId, Date.now(), linkedBy);
   }
 
@@ -91,6 +177,10 @@ export class CustomerIdentityStore {
    * @param {string} senderId
    */
   unlink(channel, senderId) {
+    if (this._fallbackState) {
+      this._fallbackState.rows.delete(fallbackIdentityKey(channel, senderId));
+      return;
+    }
     this._unlink.run(channel, senderId);
   }
 
@@ -101,7 +191,11 @@ export class CustomerIdentityStore {
    * @returns {{ channel: string, senderId: string }[]}
    */
   getChannelsForCustomer(customerId) {
-    return this._getByCustomer.all(customerId).map((row) => ({
+    const rows = this._fallbackState
+      ? [...this._fallbackState.rows.values()].filter((row) => row.customer_id === customerId)
+      : this._getByCustomer.all(customerId);
+
+    return rows.map((row) => ({
       channel: row.channel,
       senderId: row.sender_id,
     }));

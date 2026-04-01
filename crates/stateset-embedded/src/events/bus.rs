@@ -23,7 +23,7 @@ impl std::fmt::Debug for EventBus {
 
 impl EventBus {
     /// Create a new event bus with the specified channel capacity
-    #[must_use] 
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity);
         Self {

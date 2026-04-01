@@ -153,20 +153,24 @@ fn sqlite_ship_fails_when_reservation_expired() {
     set_status(&db, order.id, OrderStatus::Confirmed);
     set_status(&db, order.id, OrderStatus::Processing);
 
-    let conn = db.conn().expect("get sqlite connection");
-    let reservation_id: String = conn
-        .query_row(
-            "SELECT id FROM inventory_reservations WHERE reference_type = 'order' AND reference_id = ?",
-            params![order.id.to_string()],
-            |row| row.get(0),
-        )
-        .expect("get reservation id");
+    let reservation_id: String = {
+        let conn = db.conn().expect("get sqlite connection");
+        let reservation_id: String = conn
+            .query_row(
+                "SELECT id FROM inventory_reservations WHERE reference_type = 'order' AND reference_id = ?",
+                params![order.id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("get reservation id");
 
-    conn.execute(
-        "UPDATE inventory_reservations SET expires_at = datetime('now', '-1 hour') WHERE id = ?",
-        params![reservation_id],
-    )
-    .expect("expire reservation");
+        conn.execute(
+            "UPDATE inventory_reservations SET expires_at = datetime('now', '-1 hour') WHERE id = ?",
+            params![reservation_id],
+        )
+        .expect("expire reservation");
+
+        reservation_id
+    };
 
     let result = db
         .orders()
@@ -177,7 +181,9 @@ fn sqlite_ship_fails_when_reservation_expired() {
     let refreshed = db.orders().get(order.id).expect("get order").expect("order exists");
     assert_eq!(refreshed.status, OrderStatus::Processing);
 
-    let status: String = conn
+    let status: String = db
+        .conn()
+        .expect("get sqlite connection")
         .query_row(
             "SELECT status FROM inventory_reservations WHERE id = ?",
             params![reservation_id],
@@ -247,12 +253,14 @@ fn sqlite_ship_does_not_confirm_other_reservations_when_one_expired() {
     let expire_id = reservations[0].id;
     let keep_id = reservations[1].id;
 
-    let conn = db.conn().expect("get sqlite connection");
-    conn.execute(
-        "UPDATE inventory_reservations SET expires_at = datetime('now', '-1 hour') WHERE id = ?",
-        params![expire_id.to_string()],
-    )
-    .expect("expire reservation");
+    {
+        let conn = db.conn().expect("get sqlite connection");
+        conn.execute(
+            "UPDATE inventory_reservations SET expires_at = datetime('now', '-1 hour') WHERE id = ?",
+            params![expire_id.to_string()],
+        )
+        .expect("expire reservation");
+    }
 
     let result = db
         .orders()

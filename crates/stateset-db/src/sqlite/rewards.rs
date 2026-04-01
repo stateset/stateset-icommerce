@@ -83,11 +83,7 @@ impl RewardRepository for SqliteRewardRepository {
                 ],
             )?;
 
-            tx.query_row(
-                "SELECT * FROM rewards WHERE id = ?",
-                [&id_str],
-                Self::row_to_reward,
-            )
+            tx.query_row("SELECT * FROM rewards WHERE id = ?", [&id_str], Self::row_to_reward)
         })
     }
 
@@ -144,8 +140,7 @@ impl RewardRepository for SqliteRewardRepository {
 
     fn delete(&self, id: RewardId) -> Result<()> {
         let conn = self.conn()?;
-        conn.execute("DELETE FROM rewards WHERE id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
+        conn.execute("DELETE FROM rewards WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
         Ok(())
     }
 }
@@ -153,8 +148,8 @@ impl RewardRepository for SqliteRewardRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{LoyaltyProgramId, RewardType};
 

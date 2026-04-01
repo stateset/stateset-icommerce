@@ -157,7 +157,7 @@ pub struct Warranty {
 
 impl Warranty {
     /// Check if the warranty is currently valid
-    #[must_use] 
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         if self.status != WarrantyStatus::Active {
             return false;
@@ -185,7 +185,7 @@ impl Warranty {
     }
 
     /// Get remaining days of coverage
-    #[must_use] 
+    #[must_use]
     pub fn days_remaining(&self) -> Option<i64> {
         self.end_date.map(|end| {
             let now = Utc::now();
@@ -394,14 +394,14 @@ pub struct WarrantyClaimFilter {
 }
 
 /// Generate a unique warranty number
-#[must_use] 
+#[must_use]
 pub fn generate_warranty_number() -> String {
     let now = chrono::Utc::now();
     format!("WRN-{}", now.format("%Y%m%d%H%M%S%3f"))
 }
 
 /// Generate a unique claim number
-#[must_use] 
+#[must_use]
 pub fn generate_claim_number() -> String {
     let now = chrono::Utc::now();
     format!("CLM-{}", now.format("%Y%m%d%H%M%S%3f"))

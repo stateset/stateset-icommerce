@@ -44,20 +44,20 @@ pub struct BillOfMaterials {
 
 impl BillOfMaterials {
     /// Generate a BOM number based on timestamp
-    #[must_use] 
+    #[must_use]
     pub fn generate_bom_number() -> String {
         let now = Utc::now();
         format!("BOM-{}", now.format("%Y%m%d%H%M%S"))
     }
 
     /// Calculate total component count
-    #[must_use] 
+    #[must_use]
     pub fn total_component_count(&self) -> usize {
         self.components.len()
     }
 
     /// Calculate total material cost (sum of component quantities * unit costs if available)
-    #[must_use] 
+    #[must_use]
     pub fn total_quantity(&self) -> Decimal {
         self.components.iter().map(|c| c.quantity).sum()
     }
@@ -204,7 +204,7 @@ pub struct WorkOrder {
 
 impl WorkOrder {
     /// Generate a work order number based on timestamp
-    #[must_use] 
+    #[must_use]
     pub fn generate_work_order_number() -> String {
         let now = Utc::now();
         let suffix = Uuid::new_v4().simple().to_string();
@@ -212,13 +212,13 @@ impl WorkOrder {
     }
 
     /// Check if work order can be started
-    #[must_use] 
+    #[must_use]
     pub const fn can_start(&self) -> bool {
         matches!(self.status, WorkOrderStatus::Planned | WorkOrderStatus::OnHold)
     }
 
     /// Check if work order can be completed
-    #[must_use] 
+    #[must_use]
     pub fn can_complete(&self) -> bool {
         matches!(self.status, WorkOrderStatus::InProgress)
             && self.quantity_to_build > Decimal::ZERO
@@ -227,7 +227,7 @@ impl WorkOrder {
     }
 
     /// Calculate completion percentage
-    #[must_use] 
+    #[must_use]
     pub fn completion_percentage(&self) -> Decimal {
         if self.quantity_to_build.is_zero() {
             Decimal::ZERO
@@ -238,7 +238,7 @@ impl WorkOrder {
     }
 
     /// Check if work order is overdue
-    #[must_use] 
+    #[must_use]
     pub fn is_overdue(&self) -> bool {
         if let Some(scheduled_end) = self.scheduled_end {
             if !matches!(self.status, WorkOrderStatus::Completed | WorkOrderStatus::Cancelled) {
@@ -436,19 +436,19 @@ pub struct WorkOrderTask {
 
 impl WorkOrderTask {
     /// Check if task can be started
-    #[must_use] 
+    #[must_use]
     pub const fn can_start(&self) -> bool {
         matches!(self.status, TaskStatus::Pending)
     }
 
     /// Check if task can be completed
-    #[must_use] 
+    #[must_use]
     pub const fn can_complete(&self) -> bool {
         matches!(self.status, TaskStatus::InProgress)
     }
 
     /// Calculate efficiency (estimated vs actual hours)
-    #[must_use] 
+    #[must_use]
     pub fn efficiency(&self) -> Option<Decimal> {
         match (self.estimated_hours, self.actual_hours) {
             (Some(est), Some(act)) if !act.is_zero() => Some((est / act) * Decimal::from(100)),
@@ -541,13 +541,13 @@ pub struct WorkOrderMaterial {
 
 impl WorkOrderMaterial {
     /// Get remaining reserved quantity (reserved but not consumed)
-    #[must_use] 
+    #[must_use]
     pub fn remaining_reserved(&self) -> Decimal {
         (self.reserved_quantity - self.consumed_quantity).max(Decimal::ZERO)
     }
 
     /// Check if fully consumed
-    #[must_use] 
+    #[must_use]
     pub fn is_fully_consumed(&self) -> bool {
         self.consumed_quantity == self.reserved_quantity
     }

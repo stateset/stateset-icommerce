@@ -17,7 +17,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "1.0"
+//! stateset-sdk = "0.9.2"
 //! ```
 //!
 //! ```rust,ignore
@@ -39,7 +39,7 @@
 //! | `core` | Primitives + Core + DB + Embedded + Observability | Yes |
 //! | `crypto` | VES v1.0 cryptographic operations | No |
 //! | `policy` | Declarative policy engine | No |
-//! | `macros` | Proc macros (StateSetId, GenerateDto, JsonSchema) | No |
+//! | `macros` | Proc macros (`StateSetId`, `GenerateDto`, `JsonSchema`) | No |
 //! | `sync` | Outbox-driven sync engine and sequencer transport facade | No |
 //! | `full` | All features enabled | No |
 //!

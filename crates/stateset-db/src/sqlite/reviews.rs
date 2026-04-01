@@ -1,12 +1,14 @@
 //! SQLite implementation of product review repository
 
-use super::{map_db_error, parse_datetime_row, parse_enum_row, parse_uuid_row, with_immediate_transaction};
+use super::{
+    map_db_error, parse_datetime_row, parse_enum_row, parse_uuid_row, with_immediate_transaction,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
     CommerceError, CreateReview, ProductId, Result, Review, ReviewFilter, ReviewId,
-    ReviewRepository, ReviewStatus, ReviewSummary, UpdateReview,
+    ReviewRepository, ReviewSummary, UpdateReview,
 };
 
 #[derive(Debug)]
@@ -27,8 +29,18 @@ impl SqliteReviewRepository {
     fn row_to_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<Review> {
         Ok(Review {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "review", "id")?.into(),
-            product_id: parse_uuid_row(&row.get::<_, String>("product_id")?, "review", "product_id")?.into(),
-            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "review", "customer_id")?.into(),
+            product_id: parse_uuid_row(
+                &row.get::<_, String>("product_id")?,
+                "review",
+                "product_id",
+            )?
+            .into(),
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>("customer_id")?,
+                "review",
+                "customer_id",
+            )?
+            .into(),
             rating: row.get::<_, i32>("rating")? as u8,
             title: row.get("title")?,
             body: row.get("body")?,
@@ -36,8 +48,16 @@ impl SqliteReviewRepository {
             verified_purchase: row.get::<_, i32>("verified_purchase")? != 0,
             helpful_count: row.get::<_, i32>("helpful_count")? as u32,
             reported_count: row.get::<_, i32>("reported")? as u32,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "review", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "review", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "review",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "review",
+                "updated_at",
+            )?,
         })
     }
 }
@@ -112,7 +132,8 @@ impl ReviewRepository for SqliteReviewRepository {
             let sql = format!("UPDATE reviews SET {} WHERE id = ?", sets.join(", "));
             params.push(Box::new(id_str.clone()));
 
-            let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
             tx.execute(&sql, param_refs.as_slice())?;
 
             tx.query_row("SELECT * FROM reviews WHERE id = ?", [&id_str], Self::row_to_review)
@@ -150,7 +171,8 @@ impl ReviewRepository for SqliteReviewRepository {
             sql.push_str(&format!(" OFFSET {offset}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let reviews = stmt
             .query_map(param_refs.as_slice(), Self::row_to_review)
@@ -162,8 +184,7 @@ impl ReviewRepository for SqliteReviewRepository {
 
     fn delete(&self, id: ReviewId) -> Result<()> {
         let conn = self.conn()?;
-        conn.execute("DELETE FROM reviews WHERE id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
+        conn.execute("DELETE FROM reviews WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
         Ok(())
     }
 
@@ -193,15 +214,11 @@ impl ReviewRepository for SqliteReviewRepository {
             .prepare("SELECT rating, COUNT(*) FROM reviews WHERE product_id = ? AND status = 'approved' GROUP BY rating")
             .map_err(map_db_error)?;
         let rows = stmt
-            .query_map([&pid], |row| {
-                Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?))
-            })
+            .query_map([&pid], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?)))
             .map_err(map_db_error)?;
-        for row in rows {
-            if let Ok((rating, count)) = row {
-                let idx = (rating - 1).clamp(0, 4) as usize;
-                distribution[idx] = count as u32;
-            }
+        for (rating, count) in rows.flatten() {
+            let idx = (rating - 1).clamp(0, 4) as usize;
+            distribution[idx] = count as u32;
         }
 
         Ok(ReviewSummary {
@@ -236,8 +253,8 @@ impl ReviewRepository for SqliteReviewRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use stateset_core::CustomerId;
 
     fn test_repo() -> SqliteReviewRepository {
@@ -304,9 +321,8 @@ mod tests {
             .unwrap();
         }
 
-        let reviews = repo
-            .list(ReviewFilter { product_id: Some(product_id), ..Default::default() })
-            .unwrap();
+        let reviews =
+            repo.list(ReviewFilter { product_id: Some(product_id), ..Default::default() }).unwrap();
         assert_eq!(reviews.len(), 3);
     }
 

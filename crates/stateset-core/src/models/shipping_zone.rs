@@ -223,7 +223,7 @@ pub struct ZoneShippingRate {
 
 impl ZoneShippingMethod {
     /// Calculate the shipping rate for the given conditions
-    #[must_use] 
+    #[must_use]
     pub fn calculate_rate(&self, weight: Option<Decimal>, order_total: Option<Decimal>) -> Decimal {
         match self.method_type {
             ShippingMethodType::Free => Decimal::ZERO,

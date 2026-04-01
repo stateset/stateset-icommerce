@@ -249,12 +249,10 @@ impl RateLimiter {
         let count = state.cleanup_and_count(rule.window, now) as u32;
 
         if count >= rule.max_requests {
-            let retry_after = state
-                .oldest()
-                .map_or(rule.window, |oldest| {
-                    let window_end = oldest + rule.window;
-                    window_end.saturating_duration_since(now)
-                });
+            let retry_after = state.oldest().map_or(rule.window, |oldest| {
+                let window_end = oldest + rule.window;
+                window_end.saturating_duration_since(now)
+            });
 
             RateLimitDecision::Exceeded { retry_after }
         } else {

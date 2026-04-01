@@ -136,10 +136,7 @@ impl Orders {
                 let minor = stateset_pricing::minor_units_for_currency(
                     &input.currency.unwrap_or_default().to_string(),
                 );
-                stateset_pricing::RoundingPolicy::new(
-                    stateset_pricing::RoundingMode::HalfUp,
-                    minor,
-                )
+                stateset_pricing::RoundingPolicy::new(stateset_pricing::RoundingMode::HalfUp, minor)
             },
         };
         let pricing_total = stateset_pricing::try_compute_order_total(&pricing_input).ok();

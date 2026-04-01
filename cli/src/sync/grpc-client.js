@@ -23,7 +23,23 @@
 import { EventEmitter } from 'events';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { computeLegacyPayloadHash } from './crypto.js';
+import {
+  computeLegacyPayloadHash,
+  hexToBuffer,
+  verifyEventSignature,
+  verifyEventSignatureHybrid,
+  verifyEventSignatureStrict,
+} from './crypto.js';
+import {
+  KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
+  SIGNATURE_SCHEME_ED25519_ML_DSA_65,
+  SIGNATURE_SCHEME_ML_DSA_65,
+  assertEventMatchesSecurityProfile,
+  assertKeyRegistrationMatchesSecurityProfile,
+  assertReceiptMatchesSecurityProfile,
+  assertSecureTransportForProfile,
+  resolveSecurityProfile,
+} from './pqc.js';
 
 // Dynamic imports for gRPC (optional dependency)
 let grpc = null;
@@ -55,6 +71,7 @@ const PROTO_PATH = path.join(__dirname, 'proto', 'sequencer_v2.proto');
 
 const DEFAULT_CONFIG = {
   tls: false, // Local development default
+  securityProfile: 'legacy',
   retryPolicy: {
     maxRetries: 5,
     baseDelayMs: 1000,
@@ -64,6 +81,292 @@ const DEFAULT_CONFIG = {
   batchSize: 100,
   streamBufferSize: 1000,
 };
+
+function toProtoSignatureBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519_signature: bundle.ed25519Signature ?? bundle.ed25519_signature ?? null,
+    ml_dsa_65_signature: bundle.mlDsa65Signature ?? bundle.ml_dsa_65_signature ?? null,
+  };
+}
+
+function fromProtoSignatureBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519Signature: bundle.ed25519_signature ?? bundle.ed25519Signature ?? null,
+    mlDsa65Signature: bundle.ml_dsa_65_signature ?? bundle.mlDsa65Signature ?? null,
+  };
+}
+
+function toProtoPublicKeyBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519_public_key: bundle.ed25519PublicKey ?? bundle.ed25519_public_key ?? null,
+    ml_dsa_65_public_key: bundle.mlDsa65PublicKey ?? bundle.ml_dsa_65_public_key ?? null,
+    x25519_public_key: bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null,
+    ml_kem_768_public_key:
+      bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
+  };
+}
+
+function fromProtoPublicKeyBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519PublicKey: bundle.ed25519_public_key ?? bundle.ed25519PublicKey ?? null,
+    mlDsa65PublicKey: bundle.ml_dsa_65_public_key ?? bundle.mlDsa65PublicKey ?? null,
+    x25519PublicKey: bundle.x25519_public_key ?? bundle.x25519PublicKey ?? null,
+    mlKem768PublicKey: bundle.ml_kem_768_public_key ?? bundle.mlKem768PublicKey ?? null,
+  };
+}
+
+function toProtoProofOfPossessionBundle(bundle) {
+  if (!bundle) {
+    return null;
+  }
+
+  return {
+    ed25519_pop: bundle.ed25519Pop ?? bundle.ed25519_pop ?? null,
+    ml_dsa_65_pop: bundle.mlDsa65Pop ?? bundle.ml_dsa_65_pop ?? null,
+  };
+}
+
+function fromHexOrBuffer(value) {
+  if (value === null || value === undefined) {
+    return Buffer.alloc(0);
+  }
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value);
+  }
+  if (typeof value === 'string') {
+    return hexToBuffer(value);
+  }
+  return Buffer.from(value);
+}
+
+function fromBase64UrlOrBuffer(value) {
+  if (value === null || value === undefined) {
+    return Buffer.alloc(0);
+  }
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value);
+  }
+  if (typeof value === 'string') {
+    return Buffer.from(value, 'base64url');
+  }
+  return Buffer.from(value);
+}
+
+function toBase64Url(value) {
+  if (!value) {
+    return '';
+  }
+  return Buffer.from(value).toString('base64url');
+}
+
+function toProtoKeyWrapParams(params) {
+  if (!params) {
+    return null;
+  }
+
+  return {
+    scheme: Number(params.scheme ?? params.wrapScheme ?? params.wrap_scheme ?? 0),
+    kdf: params.kdf ?? '',
+    aead: params.aead ?? '',
+  };
+}
+
+function fromProtoKeyWrapParams(params) {
+  if (!params) {
+    return null;
+  }
+
+  return {
+    scheme: Number(params.scheme ?? params.wrapScheme ?? params.wrap_scheme ?? 0),
+    kdf: params.kdf ?? null,
+    aead: params.aead ?? null,
+  };
+}
+
+function toProtoRecipientWrap(wrap) {
+  if (!wrap) {
+    return null;
+  }
+
+  return {
+    recipient_kid: Number(wrap.recipientKid ?? wrap.recipient_kid ?? 0),
+    wrap_scheme: Number(wrap.wrapScheme ?? wrap.wrap_scheme ?? 0),
+    x25519_enc: fromBase64UrlOrBuffer(
+      wrap.x25519Enc ?? wrap.x25519_enc ?? wrap.x25519_enc_b64u ?? null,
+    ),
+    ml_kem_ciphertext: fromBase64UrlOrBuffer(
+      wrap.mlKemCiphertext ??
+        wrap.ml_kem_ciphertext ??
+        wrap.ml_kem_ciphertext_b64u ??
+        wrap.mlkem_ct_b64u ??
+        null,
+    ),
+    wrap_nonce: fromBase64UrlOrBuffer(
+      wrap.wrapNonce ?? wrap.wrap_nonce ?? wrap.wrap_nonce_b64u ?? null,
+    ),
+    wrapped_key: fromBase64UrlOrBuffer(
+      wrap.wrappedKey ??
+        wrap.wrapped_key ??
+        wrap.wrapped_key_b64u ??
+        wrap.ct_b64u ??
+        null,
+    ),
+  };
+}
+
+function fromProtoRecipientWrap(wrap) {
+  if (!wrap) {
+    return null;
+  }
+
+  return {
+    recipientKid: Number(wrap.recipient_kid ?? wrap.recipientKid ?? 0),
+    wrapScheme: Number(wrap.wrap_scheme ?? wrap.wrapScheme ?? 0),
+    x25519Enc: wrap.x25519_enc?.length ? toBase64Url(wrap.x25519_enc) : null,
+    mlKemCiphertext:
+      wrap.ml_kem_ciphertext?.length ? toBase64Url(wrap.ml_kem_ciphertext) : null,
+    wrapNonce: wrap.wrap_nonce?.length ? toBase64Url(wrap.wrap_nonce) : null,
+    wrappedKey: wrap.wrapped_key?.length ? toBase64Url(wrap.wrapped_key) : null,
+  };
+}
+
+function deriveProtoKeyWrapParams(payloadEncrypted) {
+  if (!Array.isArray(payloadEncrypted?.recipients) || payloadEncrypted.recipients.length === 0) {
+    return null;
+  }
+
+  return {
+    scheme: KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
+    kdf: payloadEncrypted.hpke?.kdf ?? 'HKDF-SHA256',
+    aead: payloadEncrypted.hpke?.aead ?? payloadEncrypted.aead ?? 'AES-256-GCM',
+  };
+}
+
+function deriveProtoRecipientWraps(payloadEncrypted) {
+  if (!Array.isArray(payloadEncrypted?.recipients)) {
+    return null;
+  }
+
+  return payloadEncrypted.recipients.map((recipient) => ({
+    recipient_kid: Number(recipient.recipient_kid ?? recipient.recipientKid ?? 0),
+    wrap_scheme: KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
+    x25519_enc: fromBase64UrlOrBuffer(recipient.enc_b64u ?? recipient.encB64u ?? null),
+    ml_kem_ciphertext: Buffer.alloc(0),
+    wrap_nonce: Buffer.alloc(0),
+    wrapped_key: fromBase64UrlOrBuffer(
+      recipient.wrapped_key_b64u ?? recipient.wrappedKeyB64u ?? recipient.ct_b64u ?? null,
+    ),
+  }));
+}
+
+function toProtoEncryptedPayload(payloadEncrypted) {
+  if (!payloadEncrypted) {
+    return null;
+  }
+
+  const keyWrapParams =
+    toProtoKeyWrapParams(payloadEncrypted.keyWrapParams ?? payloadEncrypted.key_wrap_params) ??
+    deriveProtoKeyWrapParams(payloadEncrypted);
+  const recipientWraps =
+    (Array.isArray(payloadEncrypted.recipientWraps ?? payloadEncrypted.recipient_wraps)
+      ? (payloadEncrypted.recipientWraps ?? payloadEncrypted.recipient_wraps)
+          .map((wrap) => toProtoRecipientWrap(wrap))
+          .filter(Boolean)
+      : null) ?? deriveProtoRecipientWraps(payloadEncrypted);
+
+  return {
+    enc_version: payloadEncrypted.enc_version ?? payloadEncrypted.encVersion ?? 1,
+    aead: payloadEncrypted.aead ?? 'AES-256-GCM',
+    nonce: fromBase64UrlOrBuffer(payloadEncrypted.nonce_b64u ?? payloadEncrypted.nonce),
+    ciphertext: fromBase64UrlOrBuffer(
+      payloadEncrypted.ciphertext_b64u ?? payloadEncrypted.ciphertext,
+    ),
+    tag: fromBase64UrlOrBuffer(payloadEncrypted.tag_b64u ?? payloadEncrypted.tag),
+    hpke: payloadEncrypted.hpke || null,
+    recipients: Array.isArray(payloadEncrypted.recipients)
+      ? payloadEncrypted.recipients.map((recipient) => ({
+          recipient_kid: Number(recipient.recipient_kid ?? recipient.recipientKid ?? 0),
+          ephemeral_public_key: fromBase64UrlOrBuffer(
+            recipient.enc_b64u ?? recipient.encB64u ?? recipient.ephemeral_public_key ?? null,
+          ),
+          wrapped_dek: fromBase64UrlOrBuffer(
+            recipient.wrapped_key_b64u ??
+              recipient.wrappedKeyB64u ??
+              recipient.ct_b64u ??
+              recipient.wrapped_dek ??
+              null,
+          ),
+        }))
+      : [],
+    key_wrap_params: keyWrapParams,
+    recipient_wraps: recipientWraps || [],
+  };
+}
+
+function fromProtoEncryptedPayload(payloadEncrypted) {
+  if (!payloadEncrypted) {
+    return null;
+  }
+
+  const normalized = {
+    enc_version: payloadEncrypted.enc_version ?? 1,
+    aead: payloadEncrypted.aead ?? 'AES-256-GCM',
+    nonce_b64u: toBase64Url(payloadEncrypted.nonce),
+    ciphertext_b64u: toBase64Url(payloadEncrypted.ciphertext),
+    tag_b64u: toBase64Url(payloadEncrypted.tag),
+    hpke: payloadEncrypted.hpke || null,
+    recipients: Array.isArray(payloadEncrypted.recipients)
+      ? payloadEncrypted.recipients.map((recipient) => ({
+          recipient_kid: Number(recipient.recipient_kid ?? recipient.recipientKid ?? 0),
+          enc_b64u: toBase64Url(recipient.ephemeral_public_key),
+          ct_b64u: toBase64Url(recipient.wrapped_dek),
+        }))
+      : [],
+  };
+
+  if (payloadEncrypted.key_wrap_params) {
+    normalized.keyWrapParams = fromProtoKeyWrapParams(payloadEncrypted.key_wrap_params);
+    normalized.key_wrap_params = payloadEncrypted.key_wrap_params;
+  }
+
+  if (Array.isArray(payloadEncrypted.recipient_wraps) && payloadEncrypted.recipient_wraps.length > 0) {
+    normalized.recipientWraps = payloadEncrypted.recipient_wraps
+      .map((wrap) => fromProtoRecipientWrap(wrap))
+      .filter(Boolean);
+  }
+
+  return normalized;
+}
+
+function toProtoPayloadKind(payloadKind) {
+  return Number(payloadKind ?? 0) === 1 ? 2 : 1;
+}
+
+function fromProtoPayloadKind(payloadKind) {
+  return Number(payloadKind ?? 0) === 2 ? 1 : 0;
+}
 
 // =============================================================================
 // GRPC SEQUENCER CLIENT
@@ -87,7 +390,13 @@ export class GrpcSequencerClient extends EventEmitter {
    */
   constructor(config) {
     super();
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = {
+      ...DEFAULT_CONFIG,
+      ...config,
+      securityProfile: resolveSecurityProfile(
+        config?.securityProfile ?? DEFAULT_CONFIG.securityProfile,
+      ),
+    };
     this.connected = false;
     this.client = null;
     this.keyClient = null;
@@ -105,6 +414,11 @@ export class GrpcSequencerClient extends EventEmitter {
     if (!this.config.tenantId) throw new Error('tenantId is required');
     if (!this.config.storeId) throw new Error('storeId is required');
     if (!this.config.agentId) throw new Error('agentId is required');
+    assertSecureTransportForProfile(
+      this.config.securityProfile,
+      this.config.tls === true,
+      `gRPC sequencer transport ${this.config.url}`,
+    );
   }
 
   // ===========================================================================
@@ -305,6 +619,10 @@ export class GrpcSequencerClient extends EventEmitter {
       throw new Error('Not connected');
     }
 
+    for (const event of events) {
+      assertEventMatchesSecurityProfile(event, this.config.securityProfile);
+    }
+
     const request = {
       agent_id: this.config.agentId,
       tenant_id: this.config.tenantId,
@@ -337,13 +655,26 @@ export class GrpcSequencerClient extends EventEmitter {
    */
   _toProtoEvent(event) {
     const payload = event.payload || {};
+    const localPayloadKind = Number(event.payloadKind ?? event.payload_kind ?? 0);
+    const payloadKind = toProtoPayloadKind(localPayloadKind);
 
     // Compute legacy hash for gRPC compatibility (canonical JSON, no domain prefix)
     // The gRPC server validates using canonical_json_hash, not VES payload_plain_hash
-    const payloadHash = computeLegacyPayloadHash(payload);
+    const payloadHash =
+      event.payloadPlainHash !== undefined
+        ? fromHexOrBuffer(event.payloadPlainHash)
+        : computeLegacyPayloadHash(payload);
 
-    const payloadCipherHash = event.payloadCipherHash || Buffer.alloc(32);
-    const agentSignature = event.signature || Buffer.alloc(64);
+    const payloadCipherHash =
+      event.payloadCipherHash !== undefined
+        ? fromHexOrBuffer(event.payloadCipherHash)
+        : Buffer.alloc(32);
+    const agentSignature =
+      event.agentSignature !== undefined
+        ? fromHexOrBuffer(event.agentSignature)
+        : event.signature !== undefined
+          ? fromHexOrBuffer(event.signature)
+          : Buffer.alloc(64);
 
     return {
       event_id: event.eventId || event.event_id || crypto.randomUUID(),
@@ -355,12 +686,15 @@ export class GrpcSequencerClient extends EventEmitter {
       event_type: event.eventType || event.event_type,
       source_agent: this.config.agentId,
       ves_version: 1,
-      payload_kind: 0, // 0 = PLAINTEXT
-      payload: Buffer.from(JSON.stringify(payload)),
+      payload_kind: payloadKind,
+      payload: localPayloadKind === 1 ? Buffer.alloc(0) : Buffer.from(JSON.stringify(payload)),
+      payload_encrypted: toProtoEncryptedPayload(event.payloadEncrypted),
       payload_plain_hash: payloadHash,
       payload_cipher_hash: payloadCipherHash,
       agent_key_id: event.agentKeyId || 0,
       agent_signature: agentSignature,
+      agent_signature_scheme: event.agentSignatureScheme || 0,
+      agent_signature_bundle: toProtoSignatureBundle(event.agentSignatureBundle),
       base_version: event.baseVersion || event.base_version || 0,
       created_at: {
         seconds: Math.floor(
@@ -441,14 +775,28 @@ export class GrpcSequencerClient extends EventEmitter {
       eventType: envelope.event_type,
       sourceAgent: envelope.source_agent,
       vesVersion: envelope.ves_version,
-      payload: envelope.payload ? JSON.parse(Buffer.from(envelope.payload).toString()) : {},
+      payload:
+        fromProtoPayloadKind(envelope.payload_kind) === 1 || !envelope.payload?.length
+          ? {}
+          : JSON.parse(Buffer.from(envelope.payload).toString()),
+      payloadKind: fromProtoPayloadKind(envelope.payload_kind),
+      payloadEncrypted: fromProtoEncryptedPayload(envelope.payload_encrypted),
       payloadHash: envelope.payload_plain_hash,
+      payloadPlainHash: envelope.payload_plain_hash,
+      payloadCipherHash: envelope.payload_cipher_hash,
+      agentKeyId: envelope.agent_key_id,
+      agentSignature: envelope.agent_signature,
+      agentSignatureScheme: envelope.agent_signature_scheme || 0,
+      agentSignatureBundle: fromProtoSignatureBundle(envelope.agent_signature_bundle),
       baseVersion: envelope.base_version || null,
       createdAt: envelope.created_at ? new Date(Number(envelope.created_at.seconds) * 1000) : null,
       sequenceNumber: Number(protoEvent.sequence_number),
       sequencedAt: protoEvent.sequenced_at
         ? new Date(Number(protoEvent.sequenced_at.seconds) * 1000)
         : null,
+      receiptHash: protoEvent.receipt_hash || null,
+      receiptSignatureScheme: protoEvent.receipt_signature_scheme || 0,
+      receiptSignatureBundle: fromProtoSignatureBundle(protoEvent.receipt_signature_bundle),
     };
   }
 
@@ -851,13 +1199,20 @@ export class GrpcSequencerClient extends EventEmitter {
       throw new Error('Not connected');
     }
 
+    assertKeyRegistrationMatchesSecurityProfile(keyInfo, this.config.securityProfile);
+
     const request = {
       tenant_id: this.config.tenantId,
       agent_id: keyInfo.agentId || this.config.agentId,
       key_id: keyInfo.keyId,
       key_type: keyInfo.keyType, // 1 = SIGNING, 2 = ENCRYPTION
+      key_algorithm: keyInfo.keyAlgorithm || 0,
       public_key: keyInfo.publicKey,
+      public_key_bundle: toProtoPublicKeyBundle(keyInfo.publicKeyBundle),
       proof_of_possession: keyInfo.proofOfPossession || Buffer.alloc(0),
+      proof_of_possession_bundle: toProtoProofOfPossessionBundle(
+        keyInfo.proofOfPossessionBundle,
+      ),
     };
 
     if (keyInfo.validFrom) {
@@ -918,7 +1273,9 @@ export class GrpcSequencerClient extends EventEmitter {
             keys: response.keys.map((k) => ({
               keyId: k.key_id,
               keyType: k.key_type,
+              keyAlgorithm: k.key_algorithm,
               publicKey: k.public_key,
+              publicKeyBundle: fromProtoPublicKeyBundle(k.public_key_bundle),
               status: k.status,
               createdAt: k.created_at ? new Date(Number(k.created_at.seconds) * 1000) : null,
               validFrom: k.valid_from ? new Date(Number(k.valid_from.seconds) * 1000) : null,
@@ -965,6 +1322,67 @@ export class GrpcSequencerClient extends EventEmitter {
         }
       });
     });
+  }
+  /**
+   * Verify a receipt signature against a known sequencer public key.
+   *
+   * Supports legacy (Ed25519), hybrid (Ed25519 + ML-DSA-65), and
+   * PQC-strict (ML-DSA-65) receipt signatures per VES-RECEIPT-2.
+   *
+   * @param {Object} receipt - Receipt or sequenced event with receipt fields.
+   * @param {Buffer|string|Object} sequencerPublicKey - Sequencer public key or bundle.
+   * @returns {boolean}
+   */
+  verifyReceiptSignature(receipt, sequencerPublicKey) {
+    const receiptHash = typeof receipt.receiptHash === 'string'
+      ? hexToBuffer(receipt.receiptHash)
+      : receipt.receiptHash;
+    if (!receiptHash || receiptHash.length !== 32) {
+      return false;
+    }
+
+    const scheme = Number(receipt.receiptSignatureScheme || 0);
+    const bundle = receipt.receiptSignatureBundle || null;
+
+    try {
+      assertReceiptMatchesSecurityProfile(
+        { signatureScheme: scheme, signatureBundle: bundle },
+        this.config.securityProfile,
+      );
+    } catch {
+      // Profile mismatch — still attempt verification
+    }
+
+    const pk = typeof sequencerPublicKey === 'object' && !Buffer.isBuffer(sequencerPublicKey)
+      ? sequencerPublicKey
+      : { ed25519PublicKey: sequencerPublicKey };
+
+    if (scheme === SIGNATURE_SCHEME_ML_DSA_65 && bundle?.mlDsa65Signature && pk?.mlDsa65PublicKey) {
+      try {
+        const sig = typeof bundle.mlDsa65Signature === 'string'
+          ? hexToBuffer(bundle.mlDsa65Signature) : bundle.mlDsa65Signature;
+        return verifyEventSignatureStrict(receiptHash, sig, pk);
+      } catch {
+        return false;
+      }
+    }
+
+    if (scheme === SIGNATURE_SCHEME_ED25519_ML_DSA_65 && bundle && pk?.ed25519PublicKey && pk?.mlDsa65PublicKey) {
+      try {
+        return verifyEventSignatureHybrid(receiptHash, bundle, pk);
+      } catch {
+        return false;
+      }
+    }
+
+    const sigHex = bundle?.ed25519Signature;
+    const edPk = pk?.ed25519PublicKey ?? sequencerPublicKey;
+    if (!sigHex || !edPk) return false;
+    return verifyEventSignature(
+      receiptHash,
+      typeof sigHex === 'string' ? hexToBuffer(sigHex) : sigHex,
+      typeof edPk === 'string' ? hexToBuffer(edPk) : edPk,
+    );
   }
 }
 

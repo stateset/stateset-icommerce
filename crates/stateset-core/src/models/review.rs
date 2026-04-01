@@ -119,13 +119,13 @@ pub struct ReviewFilter {
 
 impl Review {
     /// Whether this review is publicly visible
-    #[must_use] 
+    #[must_use]
     pub fn is_visible(&self) -> bool {
         self.status == ReviewStatus::Approved
     }
 
     /// Validate that the rating is in the valid range (1-5)
-    #[must_use] 
+    #[must_use]
     pub fn is_valid_rating(rating: u8) -> bool {
         (1..=5).contains(&rating)
     }
@@ -133,7 +133,7 @@ impl Review {
 
 impl ReviewSummary {
     /// Create an empty summary for a product with no reviews
-    #[must_use] 
+    #[must_use]
     pub const fn empty(product_id: ProductId) -> Self {
         Self { product_id, average_rating: 0.0, total_reviews: 0, rating_distribution: [0; 5] }
     }

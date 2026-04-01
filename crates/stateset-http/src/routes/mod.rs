@@ -2,6 +2,7 @@
 
 pub mod a2a_credit;
 pub mod a2a_messaging;
+pub mod currency;
 pub mod customers;
 pub mod events;
 pub mod gift_cards;
@@ -13,9 +14,14 @@ pub mod negotiations;
 pub mod orders;
 pub mod payments;
 pub mod products;
+pub mod promotions;
 pub mod returns;
 pub mod reviews;
+pub mod segments;
 pub mod shipments;
+pub mod store_credits;
+pub mod subscriptions;
+pub mod warranties;
 pub mod wishlists;
 
 use axum::Router;
@@ -32,6 +38,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// This is the main entry point for route assembly. The returned [`Router`]
 /// includes gzip response compression and a 30-second request timeout.
+#[allow(deprecated)]
 pub fn api_router() -> Router<AppState> {
     Router::new()
         .merge(health::router())
@@ -58,6 +65,12 @@ fn v1_router() -> Router<AppState> {
         .merge(negotiations::router())
         .merge(a2a_messaging::router())
         .merge(a2a_credit::router())
+        .merge(subscriptions::router())
+        .merge(store_credits::router())
+        .merge(promotions::router())
+        .merge(currency::router())
+        .merge(warranties::router())
+        .merge(segments::router())
         .merge(events::router())
         .merge(crate::openapi::router())
 }

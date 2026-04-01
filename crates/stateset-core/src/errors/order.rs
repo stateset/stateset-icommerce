@@ -53,7 +53,7 @@ impl OrderError {
     /// Convenience constructor for `NotFound`.
     #[inline]
     #[track_caller]
-    #[must_use] 
+    #[must_use]
     pub const fn not_found(id: Uuid) -> Self {
         Self::NotFound(id)
     }

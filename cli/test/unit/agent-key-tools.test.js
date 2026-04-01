@@ -15,6 +15,11 @@ import path from 'path';
 // Import the tools
 import { syncTools } from '../../src/tools/sync.js';
 import { AgentKeyManager } from '../../src/sync/keys.js';
+import { hasNativeHybridPqcSupport } from '../../src/sync/crypto.js';
+import {
+  KEY_ALGORITHM_ED25519_ML_DSA_65,
+  KEY_ALGORITHM_X25519_ML_KEM_768,
+} from '../../src/sync/pqc.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -179,6 +184,28 @@ describe('agent_key_generate — Handler', () => {
     const k2 = await keyManager.generateSigningKey(agentIdLocal);
     assert.ok(k2.keyId > k1.keyId);
   });
+
+  it(
+    'generates hybrid signing and encryption keys when requested',
+    { skip: !hasNativeHybridPqcSupport() },
+    async () => {
+      const keyManager = new AgentKeyManager(tempDir, { securityProfile: 'hybrid' });
+      const hybridAgentId = 'test-agent-hybrid-gen';
+
+      const signingKey = await keyManager.generateSigningKey(hybridAgentId);
+      const encryptionKey = await keyManager.generateEncryptionKey(hybridAgentId);
+
+      assert.equal(signingKey.keyAlgorithm, KEY_ALGORITHM_ED25519_ML_DSA_65);
+      assert.equal(signingKey.securityProfile, 'hybrid');
+      assert.ok(signingKey.publicKeyBundle?.mlDsa65PublicKey);
+      assert.ok(signingKey.privateKeyBundle?.mlDsa65Seed);
+
+      assert.equal(encryptionKey.keyAlgorithm, KEY_ALGORITHM_X25519_ML_KEM_768);
+      assert.equal(encryptionKey.securityProfile, 'hybrid');
+      assert.ok(encryptionKey.publicKeyBundle?.mlKem768PublicKey);
+      assert.ok(encryptionKey.privateKeyBundle?.mlKem768Seed);
+    },
+  );
 });
 
 // ===========================================================================
@@ -421,4 +448,28 @@ describe('agent_key_export — Handler', () => {
     assert.ok(!('privateKey' in exported));
     assert.ok(!('privateKeyHex' in exported));
   });
+
+  it(
+    'exports hybrid public bundles with explicit key algorithm metadata',
+    { skip: !hasNativeHybridPqcSupport() },
+    async () => {
+      const hybridAgentId = 'test-agent-export-hybrid';
+      const km = new AgentKeyManager(tempDir, { securityProfile: 'hybrid' });
+      await km.generateSigningKey(hybridAgentId);
+      await km.generateEncryptionKey(hybridAgentId);
+
+      const signing = await km.exportSigningPublicKey(hybridAgentId);
+      const encryption = await km.exportEncryptionPublicKey(hybridAgentId);
+
+      assert.equal(signing.keyAlgorithm, KEY_ALGORITHM_ED25519_ML_DSA_65);
+      assert.equal(signing.securityProfile, 'hybrid');
+      assert.ok(signing.publicKeyBundle?.ed25519PublicKey);
+      assert.ok(signing.publicKeyBundle?.mlDsa65PublicKey);
+
+      assert.equal(encryption.keyAlgorithm, KEY_ALGORITHM_X25519_ML_KEM_768);
+      assert.equal(encryption.securityProfile, 'hybrid');
+      assert.ok(encryption.publicKeyBundle?.x25519PublicKey);
+      assert.ok(encryption.publicKeyBundle?.mlKem768PublicKey);
+    },
+  );
 });

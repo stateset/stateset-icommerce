@@ -157,7 +157,7 @@ function createMockSettlement(overrides = {}) {
   return {
     calls,
     service: {
-      get chainId() { return overrides.chainId || 'base'; },
+      get chainId() { return overrides.chainId || 'set_chain'; },
       get isSimulation() { return overrides.isSimulation || false; },
       get agentId() { return overrides.agentId || 'agent-1'; },
 
@@ -413,6 +413,8 @@ describe('Settlement Runtime Integration', () => {
       const { runtime } = setupBuyerWithQuotedQuote({
         total: 0.5,
         asset: 'BTC',
+        network: 'bitcoin',
+        acceptedNetworks: ['bitcoin'],
         settlement: mockSettlement,
         sellerAgentId: '11111111-1111-1111-1111-111111111111',
         quoteMetadata: {
@@ -500,7 +502,7 @@ describe('Settlement Runtime Integration', () => {
       const meta = JSON.parse(payment.metadata);
       assert.ok(meta.explorer_url);
       assert.equal(meta.confirmations, 5);
-      assert.equal(meta.chain_id, 'base');
+      assert.equal(meta.chain_id, 'set_chain');
 
       runtime.destroy();
     });
@@ -517,7 +519,7 @@ describe('Settlement Runtime Integration', () => {
       assert.equal(events[0].quoteId, quoteId);
       assert.equal(events[0].amount, 50);
       assert.equal(events[0].toAddress, WALLET_SELLER);
-      assert.equal(events[0].chainId, 'base');
+      assert.equal(events[0].chainId, 'set_chain');
       assert.ok(events[0].paymentId);
 
       runtime.destroy();
@@ -610,7 +612,7 @@ describe('Settlement Runtime Integration', () => {
       runtime.destroy();
     });
 
-    it('still processes quote as accepted even if settlement fails', async () => {
+    it('does not accept quote when settlement fails', async () => {
       const mock = createMockSettlement({
         settleResult: { success: false, error: 'tx reverted' },
       });
@@ -621,10 +623,11 @@ describe('Settlement Runtime Integration', () => {
       });
 
       const processed = await runtime.tick();
-      assert.equal(processed, 1);
+      // Settlement failure prevents the quote from being processed (acceptQuote throws)
+      assert.equal(processed, 0);
 
-      // Quote should still be accepted (payment was created)
-      assert.equal(quotes.get(quoteId).status, 'accepted');
+      // Quote remains in 'quoted' status because settlement threw before updateQuote
+      assert.equal(quotes.get(quoteId).status, 'quoted');
 
       runtime.destroy();
     });
@@ -635,7 +638,7 @@ describe('Settlement Runtime Integration', () => {
   // =========================================================================
 
   describe('event ordering', () => {
-    it('emits events in correct order: accepted → pending → confirmed', async () => {
+    it('emits events in correct order: pending → confirmed → accepted', async () => {
       const events = [];
       const { runtime } = setupBuyerWithQuotedQuote({ total: 50 });
 
@@ -645,12 +648,13 @@ describe('Settlement Runtime Integration', () => {
 
       await runtime.tick();
 
-      assert.deepEqual(events, ['accepted', 'pending', 'confirmed']);
+      // Settlement events fire inside pay() before tick() emits quote:accepted
+      assert.deepEqual(events, ['pending', 'confirmed', 'accepted']);
 
       runtime.destroy();
     });
 
-    it('emits accepted → pending → failed on failure', async () => {
+    it('emits pending → failed on settlement failure (no accepted)', async () => {
       const events = [];
       const mock = createMockSettlement({
         settleResult: { success: false, error: 'fail' },
@@ -663,7 +667,8 @@ describe('Settlement Runtime Integration', () => {
 
       await runtime.tick();
 
-      assert.deepEqual(events, ['accepted', 'pending', 'failed']);
+      // Settlement failure throws before acceptQuote completes, so no quote:accepted
+      assert.deepEqual(events, ['pending', 'failed']);
 
       runtime.destroy();
     });
@@ -687,7 +692,7 @@ describe('Settlement Runtime Integration', () => {
       });
 
       assert.equal(runtime.settlement, mock.service);
-      assert.equal(runtime.settlement.chainId, 'base');
+      assert.equal(runtime.settlement.chainId, 'set_chain');
       runtime.destroy();
     });
 

@@ -6,12 +6,28 @@ use axum::response::Html;
 use axum::{Json, Router, routing::get};
 use utoipa::OpenApi;
 
-use crate::dto::{CreateOrderRequest, CreateOrderItemRequest, AddressDto, CreateCustomerRequest, CreateProductRequest, InventoryAdjustRequest, CreateReturnRequest, CreateReturnItemRequest, UpdateCustomerRequest, UpdateProductRequest, CreateShipmentRequest, CreatePaymentRequest, CreateRefundRequest, CreateInvoiceRequest, RecordInvoicePaymentRequest, OrderResponse, OrderItemResponse, OrderListResponse, CustomerResponse, CustomerListResponse, ProductResponse, ProductListResponse, InventoryResponse, InventoryItemResponse, InventoryListResponse, ShipmentResponse, ShipmentListResponse, PaymentResponse, PaymentListResponse, InvoiceResponse, InvoiceListResponse, ReturnResponse, ReturnListResponse, HealthResponse, ReadyResponse, TenantCacheResponse};
-use crate::routes::reviews::{CreateReviewRequest, ReviewResponse, ReviewListResponse};
-use crate::routes::wishlists::{CreateWishlistRequest, AddWishlistItemRequest, WishlistResponse, WishlistItemResponse, WishlistListResponse};
-use crate::routes::gift_cards::{CreateGiftCardRequest, GiftCardResponse, GiftCardListResponse};
-use crate::routes::loyalty::{CreateLoyaltyProgramRequest, EnrollCustomerRequest, LoyaltyProgramResponse, LoyaltyProgramListResponse, LoyaltyAccountResponse};
+use crate::dto::{
+    AddressDto, CreateCustomerRequest, CreateInvoiceRequest, CreateOrderItemRequest,
+    CreateOrderRequest, CreatePaymentRequest, CreateProductRequest, CreateRefundRequest,
+    CreateReturnItemRequest, CreateReturnRequest, CreateShipmentRequest, CustomerListResponse,
+    CustomerResponse, HealthResponse, InventoryAdjustRequest, InventoryItemResponse,
+    InventoryListResponse, InventoryResponse, InvoiceListResponse, InvoiceResponse,
+    OrderItemResponse, OrderListResponse, OrderResponse, PaymentListResponse, PaymentResponse,
+    ProductListResponse, ProductResponse, ReadyResponse, RecordInvoicePaymentRequest,
+    ReturnListResponse, ReturnResponse, ShipmentListResponse, ShipmentResponse,
+    TenantCacheResponse, UpdateCustomerRequest, UpdateProductRequest,
+};
 use crate::error::ErrorBody;
+use crate::routes::gift_cards::{CreateGiftCardRequest, GiftCardListResponse, GiftCardResponse};
+use crate::routes::loyalty::{
+    CreateLoyaltyProgramRequest, EnrollCustomerRequest, LoyaltyAccountResponse,
+    LoyaltyProgramListResponse, LoyaltyProgramResponse,
+};
+use crate::routes::reviews::{CreateReviewRequest, ReviewListResponse, ReviewResponse};
+use crate::routes::wishlists::{
+    AddWishlistItemRequest, CreateWishlistRequest, WishlistItemResponse, WishlistListResponse,
+    WishlistResponse,
+};
 use crate::state::AppState;
 
 /// Auto-generated `OpenAPI` 3.1 specification for the StateSet Commerce API.
@@ -174,7 +190,8 @@ use crate::state::AppState;
         (name = "loyalty", description = "Loyalty program management"),
     )
 )]
-pub(crate) struct ApiDoc;
+#[derive(Debug)]
+pub struct ApiDoc;
 
 /// Build the `OpenAPI` spec router.
 pub(crate) fn router() -> Router<AppState> {

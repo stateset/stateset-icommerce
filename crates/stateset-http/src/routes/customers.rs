@@ -20,12 +20,7 @@ use std::str::FromStr;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/customers", post(create_customer).get(list_customers))
-        .route(
-            "/customers/{id}",
-            get(get_customer)
-                .patch(update_customer)
-                .delete(delete_customer),
-        )
+        .route("/customers/{id}", get(get_customer).patch(update_customer).delete(delete_customer))
 }
 
 /// `POST /api/v1/customers`
@@ -111,12 +106,12 @@ pub(crate) async fn list_customers(
     let offset = params.resolved_offset();
 
     // Parse filter parameters
-    let status = params
-        .status
-        .as_deref()
-        .map(CustomerStatus::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: active, inactive, suspended")))?;
+    let status =
+        params.status.as_deref().map(CustomerStatus::from_str).transpose().map_err(|e| {
+            HttpError::BadRequest(format!(
+                "Invalid status: {e}. Valid values: active, inactive, suspended"
+            ))
+        })?;
 
     // Decode cursor if provided
     let after_cursor = match &params.after {
@@ -188,12 +183,11 @@ pub(crate) async fn update_customer(
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
-    let status = req
-        .status
-        .as_deref()
-        .map(CustomerStatus::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: active, inactive, suspended")))?;
+    let status = req.status.as_deref().map(CustomerStatus::from_str).transpose().map_err(|e| {
+        HttpError::BadRequest(format!(
+            "Invalid status: {e}. Valid values: active, inactive, suspended"
+        ))
+    })?;
 
     let input = UpdateCustomer {
         email: req.email,
@@ -516,9 +510,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::delete(format!("/customers/{}", customer.id))
-                    .body(Body::empty())
-                    .unwrap(),
+                Request::delete(format!("/customers/{}", customer.id)).body(Body::empty()).unwrap(),
             )
             .await
             .unwrap();

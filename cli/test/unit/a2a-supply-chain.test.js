@@ -426,7 +426,7 @@ describe('Supply Chain — Value Flow', () => {
     });
     await seller.tick();
     await agent.a2a.acceptQuote(q1.quote.id);
-    agent.recordSpend(30, { quoteId: q1.quote.id });
+    // acceptQuote routes through the runtime's pay(), which calls recordSpend internally
 
     assert.equal(agent.getBudget().spentToday, 30);
     assert.equal(agent.getBudget().remainingDaily, 70);
@@ -438,7 +438,6 @@ describe('Supply Chain — Value Flow', () => {
     });
     await seller.tick();
     await agent.a2a.acceptQuote(q2.quote.id);
-    agent.recordSpend(30, { quoteId: q2.quote.id });
 
     assert.equal(agent.getBudget().spentToday, 60);
     assert.equal(agent.getBudget().remainingDaily, 40);

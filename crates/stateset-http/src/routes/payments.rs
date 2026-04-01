@@ -187,12 +187,12 @@ pub(crate) async fn create_payment(
     let tenant_id = tenant_id_from_headers(&headers);
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
-    let currency = req
-        .currency
-        .as_deref()
-        .map(CurrencyCode::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid currency: {e}. Valid values: USD, EUR, GBP, JPY, CAD, AUD, CHF, CNY")))?;
+    let currency =
+        req.currency.as_deref().map(CurrencyCode::from_str).transpose().map_err(|e| {
+            HttpError::BadRequest(format!(
+                "Invalid currency: {e}. Valid values: USD, EUR, GBP, JPY, CAD, AUD, CHF, CNY"
+            ))
+        })?;
 
     let payment_method = req
         .payment_method

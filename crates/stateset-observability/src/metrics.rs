@@ -204,6 +204,18 @@ pub struct MetricsSnapshot {
     pub webhook_deliveries: u64,
     /// Number of webhook delivery failures.
     pub webhook_failures: u64,
+    /// Number of legacy (Ed25519) signature operations.
+    pub pqc_legacy_signatures: u64,
+    /// Number of hybrid (Ed25519 + ML-DSA-65) signature operations.
+    pub pqc_hybrid_signatures: u64,
+    /// Number of PQC-strict (ML-DSA-65) signature operations.
+    pub pqc_strict_signatures: u64,
+    /// Number of legacy (X25519) encryption operations.
+    pub pqc_legacy_encryptions: u64,
+    /// Number of hybrid (X25519 + ML-KEM-768) encryption operations.
+    pub pqc_hybrid_encryptions: u64,
+    /// Number of PQC-strict (ML-KEM-768) encryption operations.
+    pub pqc_strict_encryptions: u64,
     /// Sum of recorded order amounts.
     pub order_amount_total: f64,
     /// Sum of recorded payment amounts.
@@ -367,6 +379,12 @@ struct MetricsInner {
     agent_registrations: AtomicU64,
     webhook_deliveries: AtomicU64,
     webhook_failures: AtomicU64,
+    pqc_legacy_signatures: AtomicU64,
+    pqc_hybrid_signatures: AtomicU64,
+    pqc_strict_signatures: AtomicU64,
+    pqc_legacy_encryptions: AtomicU64,
+    pqc_hybrid_encryptions: AtomicU64,
+    pqc_strict_encryptions: AtomicU64,
     requests_total: AtomicU64,
     request_errors_total: AtomicU64,
     request_duration_micros_total: AtomicU64,
@@ -413,7 +431,7 @@ impl Metrics {
     }
 
     /// Whether this metrics instance currently records values.
-    #[must_use] 
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.inner.enabled.load(Ordering::Relaxed)
     }
@@ -424,7 +442,7 @@ impl Metrics {
     }
 
     /// Return a point-in-time snapshot of current metrics values.
-    #[must_use] 
+    #[must_use]
     pub fn snapshot(&self) -> MetricsSnapshot {
         let totals = match self.inner.totals.lock() {
             Ok(guard) => guard,
@@ -461,9 +479,21 @@ impl Metrics {
             agent_registrations: self.inner.agent_registrations.load(Ordering::Relaxed),
             webhook_deliveries: self.inner.webhook_deliveries.load(Ordering::Relaxed),
             webhook_failures: self.inner.webhook_failures.load(Ordering::Relaxed),
-            order_amount_total: f64::from_bits(self.inner.order_amount_total_bits.load(Ordering::Relaxed)),
-            payment_amount_total: f64::from_bits(self.inner.payment_amount_total_bits.load(Ordering::Relaxed)),
-            inventory_delta_total: f64::from_bits(self.inner.inventory_delta_total_bits.load(Ordering::Relaxed)),
+            pqc_legacy_signatures: self.inner.pqc_legacy_signatures.load(Ordering::Relaxed),
+            pqc_hybrid_signatures: self.inner.pqc_hybrid_signatures.load(Ordering::Relaxed),
+            pqc_strict_signatures: self.inner.pqc_strict_signatures.load(Ordering::Relaxed),
+            pqc_legacy_encryptions: self.inner.pqc_legacy_encryptions.load(Ordering::Relaxed),
+            pqc_hybrid_encryptions: self.inner.pqc_hybrid_encryptions.load(Ordering::Relaxed),
+            pqc_strict_encryptions: self.inner.pqc_strict_encryptions.load(Ordering::Relaxed),
+            order_amount_total: f64::from_bits(
+                self.inner.order_amount_total_bits.load(Ordering::Relaxed),
+            ),
+            payment_amount_total: f64::from_bits(
+                self.inner.payment_amount_total_bits.load(Ordering::Relaxed),
+            ),
+            inventory_delta_total: f64::from_bits(
+                self.inner.inventory_delta_total_bits.load(Ordering::Relaxed),
+            ),
             red_global,
             red_by_operation,
         }
@@ -628,6 +658,36 @@ impl Metrics {
         }
     }
 
+    /// Record a PQC signature operation by security profile.
+    ///
+    /// `profile` should be `"legacy"`, `"hybrid"`, or `"pqc-strict"`.
+    pub fn record_pqc_signature(&self, profile: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        match profile {
+            "legacy" => self.inner.pqc_legacy_signatures.fetch_add(1, Ordering::Relaxed),
+            "hybrid" => self.inner.pqc_hybrid_signatures.fetch_add(1, Ordering::Relaxed),
+            "pqc-strict" => self.inner.pqc_strict_signatures.fetch_add(1, Ordering::Relaxed),
+            _ => 0,
+        };
+    }
+
+    /// Record a PQC encryption operation by security profile.
+    ///
+    /// `profile` should be `"legacy"`, `"hybrid"`, or `"pqc-strict"`.
+    pub fn record_pqc_encryption(&self, profile: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        match profile {
+            "legacy" => self.inner.pqc_legacy_encryptions.fetch_add(1, Ordering::Relaxed),
+            "hybrid" => self.inner.pqc_hybrid_encryptions.fetch_add(1, Ordering::Relaxed),
+            "pqc-strict" => self.inner.pqc_strict_encryptions.fetch_add(1, Ordering::Relaxed),
+            _ => 0,
+        };
+    }
+
     /// Record a request in RED metrics.
     ///
     /// `operation` is normalized to a low-cardinality label.
@@ -665,7 +725,7 @@ impl Metrics {
 }
 
 /// Initialize metrics and return a handle.
-#[must_use] 
+#[must_use]
 pub fn init_metrics(config: MetricsConfig) -> Metrics {
     Metrics {
         inner: Arc::new(MetricsInner {
@@ -690,6 +750,12 @@ pub fn init_metrics(config: MetricsConfig) -> Metrics {
             agent_registrations: AtomicU64::new(0),
             webhook_deliveries: AtomicU64::new(0),
             webhook_failures: AtomicU64::new(0),
+            pqc_legacy_signatures: AtomicU64::new(0),
+            pqc_hybrid_signatures: AtomicU64::new(0),
+            pqc_strict_signatures: AtomicU64::new(0),
+            pqc_legacy_encryptions: AtomicU64::new(0),
+            pqc_hybrid_encryptions: AtomicU64::new(0),
+            pqc_strict_encryptions: AtomicU64::new(0),
             requests_total: AtomicU64::new(0),
             request_errors_total: AtomicU64::new(0),
             request_duration_micros_total: AtomicU64::new(0),

@@ -109,6 +109,7 @@ required_version_snippets=(
   "docs/src/api/java.md|<version>${workspace_version}</version>"
   "docs/src/api/kotlin.md|implementation(\"com.stateset:stateset-embedded:${workspace_version}\")"
   "docs/src/api/swift.md|from: \"${workspace_version}\""
+  "docs/src/advanced/deployment.md|image: stateset/icommerce:${workspace_version}"
   "bindings/java/README.md|<version>${workspace_version}</version>"
   "bindings/swift/README.md|from: \"${workspace_version}\""
   "examples/node/package.json|\"version\": \"${workspace_version}\""

@@ -72,7 +72,7 @@ async fn postgres_order_item_changes_increment_version_and_total() {
     let added_item = db
         .orders()
         .add_item_async(
-            order.id,
+            order.id.into(),
             CreateOrderItem {
                 product_id: ProductId::new(),
                 sku: "VER-SKU-002".to_string(),
@@ -85,19 +85,19 @@ async fn postgres_order_item_changes_increment_version_and_total() {
         .await
         .expect("add order item");
     let after_add =
-        db.orders().get_async(order.id).await.expect("get order").expect("order exists");
+        db.orders().get_async(order.id.into()).await.expect("get order").expect("order exists");
 
     assert_eq!(after_add.version, initial_version + 1);
     assert_eq!(after_add.total_amount, after_add.calculate_total());
 
     db.orders()
-        .remove_item_async(order.id, added_item.id.into_uuid())
+        .remove_item_async(order.id.into(), added_item.id.into_uuid())
         .await
         .expect("remove order item");
 
     let after_remove = db
         .orders()
-        .get_async(order.id)
+        .get_async(order.id.into())
         .await
         .expect("get order after removal")
         .expect("order exists");
@@ -121,7 +121,7 @@ async fn postgres_order_status_update_increments_version() {
     let updated = db
         .orders()
         .update_async(
-            order.id,
+            order.id.into(),
             UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
         )
         .await

@@ -17,7 +17,11 @@ use uuid::Uuid;
 
 /// Setup test database with inventory
 fn setup_concurrent_test() -> Commerce {
-    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let commerce = Commerce::builder()
+        .database(":memory:")
+        .max_connections(1)
+        .build()
+        .expect("Failed to create commerce");
 
     // Create inventory with limited quantity
     let sku = "CONCURRENT-SKU-001".to_string();
@@ -49,59 +53,13 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
         .into_uuid()
 }
 
-// ============================================================================
-// Concurrent Reservation Tests
-// ============================================================================
-
-#[test]
-fn test_concurrent_reservations_same_quantity() {
+fn run_concurrent_reservation_attempts(thread_count: usize) -> (usize, usize, Vec<String>) {
     let commerce = Arc::new(setup_concurrent_test());
-
-    // Try to reserve the same item simultaneously from multiple threads
-    let barrier = Arc::new(Barrier::new(10));
+    let barrier = Arc::new(Barrier::new(thread_count));
     let mut handles = vec![];
     let sku = "CONCURRENT-SKU-001".to_string();
 
-    for _ in 0..10 {
-        let commerce_clone = commerce.clone();
-        let barrier_clone = barrier.clone();
-        let sku_clone = sku.clone();
-
-        let handle = thread::spawn(move || {
-            barrier_clone.wait();
-
-            let reference_id = Uuid::new_v4().to_string();
-            commerce_clone.inventory().reserve(
-                sku_clone.as_str(),
-                dec!(1),
-                "order",
-                &reference_id,
-                None,
-            )
-        });
-
-        handles.push(handle);
-    }
-
-    let successful: Vec<_> = handles
-        .into_iter()
-        .map(|h| h.join().expect("Thread panicked"))
-        .filter(|r| r.is_ok())
-        .collect();
-
-    assert_eq!(successful.len(), 10, "All 10 reservations should succeed (10 items total)");
-}
-
-#[test]
-fn test_concurrent_reservations_exceed_stock() {
-    let commerce = Arc::new(setup_concurrent_test());
-
-    let barrier = Arc::new(Barrier::new(15));
-    let mut handles = vec![];
-    let sku = "CONCURRENT-SKU-001".to_string();
-
-    // Try to reserve 15 items when only 10 are available
-    for _ in 0..15 {
+    for _ in 0..thread_count {
         let commerce_clone = commerce.clone();
         let barrier_clone = barrier.clone();
         let sku_clone = sku.clone();
@@ -125,9 +83,104 @@ fn test_concurrent_reservations_exceed_stock() {
     let results: Vec<_> = handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
     let successful = results.iter().filter(|r| r.is_ok()).count();
     let failed = results.iter().filter(|r| r.is_err()).count();
+    let errors: Vec<String> =
+        results.iter().filter_map(|r| r.as_ref().err().map(|err| format!("{err:?}"))).collect();
 
-    assert_eq!(successful, 10, "Only first 10 reservations should succeed");
-    assert_eq!(failed, 5, "Last 5 reservations should fail");
+    (successful, failed, errors)
+}
+
+fn run_concurrent_confirmation_attempt() -> Vec<String> {
+    let commerce = Arc::new(setup_concurrent_test());
+    let sku = "CONCURRENT-SKU-001".to_string();
+
+    let barrier = Arc::new(Barrier::new(5));
+    let mut handles = vec![];
+
+    for i in 0..5 {
+        let commerce_clone = commerce.clone();
+        let barrier_clone = barrier.clone();
+        let sku_clone = sku.clone();
+
+        let handle = thread::spawn(move || {
+            barrier_clone.wait();
+
+            let reference_id = format!("order-{}", i);
+            commerce_clone
+                .inventory()
+                .reserve(&sku_clone, dec!(1), "order", &reference_id, None)
+                .expect("Failed to reserve")
+        });
+
+        handles.push(handle);
+    }
+
+    let reservations: Vec<_> =
+        handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
+
+    assert_eq!(reservations.len(), 5);
+
+    let barrier2 = Arc::new(Barrier::new(5));
+    let mut confirm_handles = vec![];
+
+    for reservation in reservations {
+        let commerce_clone = commerce.clone();
+        let barrier_clone2 = barrier2.clone();
+
+        let handle = thread::spawn(move || {
+            barrier_clone2.wait();
+            commerce_clone.inventory().confirm_reservation(reservation.id)
+        });
+
+        confirm_handles.push(handle);
+    }
+
+    let results: Vec<_> =
+        confirm_handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
+
+    results.iter().filter_map(|r| r.as_ref().err().map(|err| format!("{err:?}"))).collect()
+}
+
+// ============================================================================
+// Concurrent Reservation Tests
+// ============================================================================
+
+#[test]
+fn test_concurrent_reservations_same_quantity() {
+    let (successful, failed, errors) = run_concurrent_reservation_attempts(10);
+
+    assert_eq!(
+        successful, 10,
+        "All 10 reservations should succeed (10 items total); errors: {errors:?}"
+    );
+    assert_eq!(failed, 0, "No reservations should fail when stock exactly matches demand");
+}
+
+#[test]
+fn test_concurrent_reservations_same_quantity_repeated() {
+    for iteration in 0..10 {
+        let (successful, failed, errors) = run_concurrent_reservation_attempts(10);
+
+        assert_eq!(
+            successful,
+            10,
+            "Iteration {} should reserve all 10 items; errors: {errors:?}",
+            iteration + 1
+        );
+        assert_eq!(
+            failed,
+            0,
+            "Iteration {} should not fail any reservations; errors: {errors:?}",
+            iteration + 1
+        );
+    }
+}
+
+#[test]
+fn test_concurrent_reservations_exceed_stock() {
+    let (successful, failed, errors) = run_concurrent_reservation_attempts(15);
+
+    assert_eq!(successful, 10, "Only first 10 reservations should succeed; errors: {errors:?}");
+    assert_eq!(failed, 5, "Last 5 reservations should fail; errors: {errors:?}");
 }
 
 #[test]
@@ -165,64 +218,21 @@ fn test_reservation_expiration_race() {
 
 #[test]
 fn test_concurrent_reservation_confirm() {
-    let commerce = Arc::new(setup_concurrent_test());
-    let sku = "CONCURRENT-SKU-001".to_string();
+    let errors = run_concurrent_confirmation_attempt();
 
-    let barrier = Arc::new(Barrier::new(5));
-    let mut handles = vec![];
-    let reservation_ids = Arc::new(std::sync::Mutex::new(vec![]));
+    assert!(errors.is_empty(), "All confirmations should succeed; errors: {errors:?}");
+}
 
-    // Create reservations
-    for i in 0..5 {
-        let commerce_clone = commerce.clone();
-        let barrier_clone = barrier.clone();
-        let sku_clone = sku.clone();
-        let reservation_ids_clone = reservation_ids.clone();
-
-        let handle = thread::spawn(move || {
-            barrier_clone.wait();
-
-            let reference_id = format!("order-{}", i);
-            let reservation = commerce_clone
-                .inventory()
-                .reserve(&sku_clone, dec!(1), "order", &reference_id, None)
-                .expect("Failed to reserve");
-
-            let mut ids = reservation_ids_clone.lock().unwrap();
-            ids.push(reservation.id);
-
-            reservation
-        });
-
-        handles.push(handle);
+#[test]
+fn test_concurrent_reservation_confirm_repeated() {
+    for iteration in 0..5 {
+        let errors = run_concurrent_confirmation_attempt();
+        assert!(
+            errors.is_empty(),
+            "Iteration {} should confirm all reservations; errors: {errors:?}",
+            iteration + 1
+        );
     }
-
-    let reservations: Vec<_> =
-        handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
-
-    assert_eq!(reservations.len(), 5);
-
-    // Confirm all reservations
-    let barrier2 = Arc::new(Barrier::new(5));
-    let mut confirm_handles = vec![];
-
-    for reservation in reservations {
-        let commerce_clone = commerce.clone();
-        let barrier_clone2 = barrier2.clone();
-
-        let handle = thread::spawn(move || {
-            barrier_clone2.wait();
-
-            commerce_clone.inventory().confirm_reservation(reservation.id)
-        });
-
-        confirm_handles.push(handle);
-    }
-
-    let results: Vec<_> =
-        confirm_handles.into_iter().map(|h| h.join().expect("Thread panicked")).collect();
-
-    assert!(results.iter().all(|r| r.is_ok()), "All confirmations should succeed");
 }
 
 // ============================================================================

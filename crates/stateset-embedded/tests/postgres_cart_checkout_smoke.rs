@@ -292,7 +292,7 @@ async fn postgres_cart_checkout_retry_completes_existing_order() {
                     unit_price: dec!(9.99),
                     ..Default::default()
                 }],
-                currency: Some(cart.currency.clone()),
+                currency: Some(cart.currency),
                 shipping_address: Some(test_address().into()),
                 billing_address: None,
                 notes: None,

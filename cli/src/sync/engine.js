@@ -10,6 +10,39 @@ import { createOutbox } from './outbox.js';
 import { createUnifiedClient } from './unified-client.js';
 import { SyncConfig, loadSyncConfig } from './config.js';
 import { createConflictResolver } from './conflict.js';
+import {
+  computePayloadAad,
+  decryptPayload,
+  decryptPayloadHybrid,
+  decryptPayloadStrict,
+  hexToBuffer,
+} from './crypto.js';
+import {
+  KEY_WRAP_SCHEME_ML_KEM_768,
+  KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
+  KEY_WRAP_SCHEME_X25519_ML_KEM_768,
+  getPayloadWrapScheme,
+} from './pqc.js';
+
+function collectRecipientKeyIds(payloadEncrypted) {
+  const keyIds = new Set();
+
+  for (const recipient of payloadEncrypted?.recipients || []) {
+    const recipientKid = Number(recipient?.recipient_kid ?? recipient?.recipientKid ?? 0);
+    if (Number.isInteger(recipientKid) && recipientKid > 0) {
+      keyIds.add(recipientKid);
+    }
+  }
+
+  for (const wrap of payloadEncrypted?.recipientWraps ?? payloadEncrypted?.recipient_wraps ?? []) {
+    const recipientKid = Number(wrap?.recipientKid ?? wrap?.recipient_kid ?? 0);
+    if (Number.isInteger(recipientKid) && recipientKid > 0) {
+      keyIds.add(recipientKid);
+    }
+  }
+
+  return Array.from(keyIds).sort((left, right) => left - right);
+}
 
 /**
  * @typedef {Object} PushResult
@@ -26,6 +59,7 @@ import { createConflictResolver } from './conflict.js';
  * @property {number} pulled - Events pulled
  * @property {number} applied - Events applied locally
  * @property {number} conflicts - Conflicts detected
+ * @property {number[]} [sequenceNumbers] - Pulled sequence numbers stored locally
  * @property {string} [error] - Error message
  */
 
@@ -64,6 +98,8 @@ export class SyncEngine extends EventEmitter {
     this.outbox = createOutbox(options.db, {
       configDir: options.configDir,
       keyManager: options.keyManager,
+      securityProfile:
+        options.config?.securityProfile ?? options.config?.sync?.securityProfile,
     });
     this.client = createUnifiedClient(options.config, {
       preferGrpc: options.preferGrpc !== false,
@@ -190,6 +226,8 @@ export class SyncEngine extends EventEmitter {
           payloadCipherHash: '0'.repeat(64), // Zero hash for plaintext
           agentKeyId: event.agentKeyId || 0,
           agentSignature: event.agentSignature || '',
+          agentSignatureScheme: event.agentSignatureScheme || 0,
+          agentSignatureBundle: event.agentSignatureBundle || null,
           baseVersion: event.baseVersion,
           createdAt:
             event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
@@ -268,6 +306,8 @@ export class SyncEngine extends EventEmitter {
         // VES v1.0 signature fields
         agentKeyId: e.agentKeyId,
         agentSignature: e.agentSignature,
+        agentSignatureScheme: e.agentSignatureScheme || 0,
+        agentSignatureBundle: e.agentSignatureBundle || null,
         // Metadata
         baseVersion: e.baseVersion,
         createdAt: e.createdAt.toISOString(),
@@ -355,6 +395,7 @@ export class SyncEngine extends EventEmitter {
           pulled: 0,
           applied: 0,
           conflicts: 0,
+          sequenceNumbers: options.includeEvents ? [] : undefined,
         };
       }
 
@@ -386,11 +427,43 @@ export class SyncEngine extends EventEmitter {
         payloadCipherHash: e.envelope.payloadCipherHash,
         agentKeyId: e.envelope.agentKeyId,
         agentSignature: e.envelope.agentSignature,
+        agentSignatureScheme: e.envelope.agentSignatureScheme || 0,
+        agentSignatureBundle: e.envelope.agentSignatureBundle || null,
         baseVersion: e.envelope.baseVersion,
         createdAt: e.envelope.createdAt,
         sequencedAt: e.sequencedAt,
         sourceAgent: e.envelope.sourceAgent,
       }));
+
+      // Verify receipt signatures when sequencer public key is configured
+      const sequencerPublicKey =
+        this.config?.sequencerPublicKey ?? this.config?.sync?.sequencerPublicKey;
+      if (sequencerPublicKey && this.client?.verifyReceiptSignature) {
+        let verified = 0;
+        let skipped = 0;
+        for (const event of result.events) {
+          if (event.receiptHash && event.receiptSignatureBundle) {
+            try {
+              const valid = this.client.verifyReceiptSignature(event, sequencerPublicKey);
+              if (valid) {
+                verified++;
+              } else {
+                this.emit('receipt-verification-failed', {
+                  sequenceNumber: event.sequenceNumber,
+                  eventId: event.envelope?.eventId,
+                });
+              }
+            } catch {
+              skipped++;
+            }
+          } else {
+            skipped++;
+          }
+        }
+        if (verified > 0 || skipped < result.events.length) {
+          this.emit('receipt-verification', { verified, skipped, total: result.events.length });
+        }
+      }
 
       this.outbox.storePulledEvents(eventsToStore);
 
@@ -412,6 +485,9 @@ export class SyncEngine extends EventEmitter {
         pulled: result.events.length,
         applied: result.events.length,
         conflicts: 0,
+        sequenceNumbers: options.includeEvents
+          ? eventsToStore.map((event) => event.sequenceNumber)
+          : undefined,
       };
     } catch (error) {
       this.emit('error', error);
@@ -509,12 +585,190 @@ export class SyncEngine extends EventEmitter {
    * @private
    */
   _getPulledEvents() {
-    const stmt = this.db.prepare(`
-      SELECT * FROM _ves_pulled_events
-      ORDER BY sequence_number DESC
-      LIMIT 1000
-    `);
-    return stmt.all();
+    return this.outbox.getPulledEvents(1000);
+  }
+
+  /**
+   * Get pulled events from local storage.
+   * @param {number} [limit=1000]
+   * @returns {Array<import('./outbox.js').OutboxEvent>}
+   */
+  getPulledEvents(limit = 1000) {
+    return this.outbox.getPulledEvents(limit);
+  }
+
+  /**
+   * Get pulled events for a specific entity from local storage.
+   * @param {string} entityType
+   * @param {string} entityId
+   * @param {number} [limit=1000]
+   * @returns {Array<import('./outbox.js').OutboxEvent>}
+   */
+  getPulledEventsForEntity(entityType, entityId, limit = 1000) {
+    return this.outbox.getPulledEventsByEntity(entityType, entityId, limit);
+  }
+
+  /**
+   * Get a stored sync event from the outbox or pulled-event store.
+   * @param {Object} params
+   * @param {string} [params.eventId]
+   * @param {number} [params.sequenceNumber]
+   * @param {'auto'|'outbox'|'pulled'} [params.source='auto']
+   * @returns {import('./outbox.js').OutboxEvent|null}
+   */
+  getStoredEvent(params) {
+    return this.outbox.findStoredEvent(params);
+  }
+
+  async _resolveRecipientDecryptionKey(payloadEncrypted, requestedKeyId) {
+    const candidateKeyIds = collectRecipientKeyIds(payloadEncrypted);
+
+    if (requestedKeyId !== undefined) {
+      if (candidateKeyIds.length > 0 && !candidateKeyIds.includes(requestedKeyId)) {
+        throw new Error(
+          `Encryption key ${requestedKeyId} is not listed as a recipient for this event`,
+        );
+      }
+      const key = await this.outbox.keyManager.getEncryptionKey(this.config.agentId, requestedKeyId);
+      if (!key) {
+        throw new Error(
+          `Encryption key ${requestedKeyId} not found for agent ${this.config.agentId}`,
+        );
+      }
+      return { key, keyId: key.keyId, candidateKeyIds };
+    }
+
+    const currentKey = await this.outbox.keyManager.getCurrentEncryptionKey(this.config.agentId);
+    if (
+      currentKey &&
+      (candidateKeyIds.length === 0 || candidateKeyIds.includes(currentKey.keyId))
+    ) {
+      return { key: currentKey, keyId: currentKey.keyId, candidateKeyIds };
+    }
+
+    if (candidateKeyIds.length === 1) {
+      const key = await this.outbox.keyManager.getEncryptionKey(
+        this.config.agentId,
+        candidateKeyIds[0],
+      );
+      if (!key) {
+        throw new Error(
+          `Encryption key ${candidateKeyIds[0]} not found for agent ${this.config.agentId}`,
+        );
+      }
+      return { key, keyId: key.keyId, candidateKeyIds };
+    }
+
+    if (candidateKeyIds.length > 1) {
+      throw new Error(
+        `Multiple recipient key IDs found (${candidateKeyIds.join(', ')}); specify keyId explicitly`,
+      );
+    }
+
+    throw new Error(`No local encryption key available for agent ${this.config.agentId}`);
+  }
+
+  /**
+   * Decrypt a stored encrypted sync event using local key material.
+   * @param {Object} params
+   * @param {string} [params.eventId]
+   * @param {number} [params.sequenceNumber]
+   * @param {'auto'|'outbox'|'pulled'} [params.source='auto']
+   * @param {number} [params.keyId]
+   * @returns {Promise<Object>}
+   */
+  async decryptStoredEvent({ eventId, sequenceNumber, source = 'auto', keyId } = {}) {
+    const event = this.getStoredEvent({ eventId, sequenceNumber, source });
+    if (!event) {
+      throw new Error('Stored sync event not found');
+    }
+
+    if (Number(event.payloadKind ?? 0) !== 1 || !event.payloadEncrypted) {
+      throw new Error('Event is not encrypted');
+    }
+
+    const payloadPlainHash = hexToBuffer(event.payloadPlainHash);
+    const payloadAad = computePayloadAad({
+      vesVersion: event.vesVersion,
+      tenantId: event.tenantId,
+      storeId: event.storeId,
+      eventId: event.eventId,
+      sourceAgentId: event.sourceAgent,
+      agentKeyId: event.agentKeyId,
+      entityType: event.entityType,
+      entityId: event.entityId,
+      eventType: event.eventType,
+      createdAt:
+        event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
+      payloadPlainHash,
+    });
+
+    const wrapScheme = getPayloadWrapScheme(event.payloadEncrypted);
+    const { key: encryptionKey, keyId: resolvedKeyId, candidateKeyIds } =
+      await this._resolveRecipientDecryptionKey(event.payloadEncrypted, keyId);
+
+    let payload = null;
+    let encryptionProfile = 'legacy';
+
+    if (wrapScheme === KEY_WRAP_SCHEME_X25519_ML_KEM_768) {
+      if (
+        !encryptionKey.privateKeyBundle?.x25519PrivateKey ||
+        !encryptionKey.privateKeyBundle?.mlKem768Seed
+      ) {
+        throw new Error(
+          `Encryption key ${resolvedKeyId} does not include hybrid private key material`,
+        );
+      }
+
+      payload = decryptPayloadHybrid(
+        event.payloadEncrypted,
+        payloadAad,
+        resolvedKeyId,
+        encryptionKey.privateKeyBundle,
+        payloadPlainHash,
+      );
+      encryptionProfile = 'hybrid';
+    } else if (wrapScheme === KEY_WRAP_SCHEME_X25519_HKDF_SHA256 || wrapScheme === 0) {
+      payload = decryptPayload(
+        event.payloadEncrypted,
+        payloadAad,
+        resolvedKeyId,
+        encryptionKey.privateKey,
+        payloadPlainHash,
+      );
+    } else if (wrapScheme === KEY_WRAP_SCHEME_ML_KEM_768) {
+      if (!encryptionKey.privateKeyBundle?.mlKem768Seed) {
+        throw new Error(
+          `Encryption key ${resolvedKeyId} does not include ML-KEM-768 private key material`,
+        );
+      }
+
+      payload = decryptPayloadStrict(
+        event.payloadEncrypted,
+        payloadAad,
+        resolvedKeyId,
+        encryptionKey.privateKeyBundle,
+        payloadPlainHash,
+      );
+      encryptionProfile = 'pqc-strict';
+    } else {
+      throw new Error(`Unsupported payload wrap scheme: ${wrapScheme}`);
+    }
+
+    return {
+      source: event.source,
+      eventId: event.eventId,
+      sequenceNumber: event.sequenceNumber,
+      localSeq: event.localSeq,
+      entityType: event.entityType,
+      entityId: event.entityId,
+      eventType: event.eventType,
+      encryptionProfile,
+      wrapScheme,
+      recipientKeyId: resolvedKeyId,
+      recipientKeyCandidates: candidateKeyIds,
+      payload,
+    };
   }
 
   /**

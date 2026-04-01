@@ -9,9 +9,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    CommerceError, CreateGiftCard, CurrencyCode, GiftCard, GiftCardFilter, GiftCardId,
-    GiftCardRepository, GiftCardStatus, GiftCardTransaction, GiftCardTransactionId, Result,
-    UpdateGiftCard,
+    CommerceError, CreateGiftCard, GiftCard, GiftCardFilter, GiftCardId, GiftCardRepository,
+    GiftCardStatus, GiftCardTransaction, GiftCardTransactionId, Result, UpdateGiftCard,
 };
 
 #[derive(Debug)]
@@ -43,20 +42,12 @@ impl SqliteGiftCardRepository {
                 "gift_card",
                 "current_balance",
             )?,
-            currency: parse_enum_row(
-                &row.get::<_, String>("currency")?,
-                "gift_card",
-                "currency",
-            )?,
+            currency: parse_enum_row(&row.get::<_, String>("currency")?, "gift_card", "currency")?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "gift_card", "status")?,
             recipient_email: row.get("customer_id")?,
             sender_name: row.get("issued_by")?,
             message: row.get("notes")?,
-            expires_at: parse_datetime_opt_row(
-                row.get("expires_at")?,
-                "gift_card",
-                "expires_at",
-            )?,
+            expires_at: parse_datetime_opt_row(row.get("expires_at")?, "gift_card", "expires_at")?,
             created_at: parse_datetime_row(
                 &row.get::<_, String>("created_at")?,
                 "gift_card",
@@ -79,11 +70,7 @@ impl SqliteGiftCardRepository {
                 "gift_card_id",
             )?
             .into(),
-            amount: parse_decimal_row(
-                &row.get::<_, String>("amount")?,
-                "gift_card_txn",
-                "amount",
-            )?,
+            amount: parse_decimal_row(&row.get::<_, String>("amount")?, "gift_card_txn", "amount")?,
             balance_after: parse_decimal_row(
                 &row.get::<_, String>("balance_after")?,
                 "gift_card_txn",
@@ -108,14 +95,8 @@ impl SqliteGiftCardRepository {
         let id = uuid::Uuid::new_v4();
         let hex = id.simple().to_string();
         let short = &hex[..16];
-        format!(
-            "{}-{}-{}-{}",
-            &short[0..4],
-            &short[4..8],
-            &short[8..12],
-            &short[12..16]
-        )
-        .to_uppercase()
+        format!("{}-{}-{}-{}", &short[0..4], &short[4..8], &short[8..12], &short[12..16])
+            .to_uppercase()
     }
 }
 
@@ -147,11 +128,7 @@ impl GiftCardRepository for SqliteGiftCardRepository {
                 ],
             )?;
 
-            tx.query_row(
-                "SELECT * FROM gift_cards WHERE id = ?",
-                [&id_str],
-                Self::row_to_gift_card,
-            )
+            tx.query_row("SELECT * FROM gift_cards WHERE id = ?", [&id_str], Self::row_to_gift_card)
         })
     }
 
@@ -209,11 +186,7 @@ impl GiftCardRepository for SqliteGiftCardRepository {
                 params.iter().map(|p| p.as_ref()).collect();
             tx.execute(&sql, param_refs.as_slice())?;
 
-            tx.query_row(
-                "SELECT * FROM gift_cards WHERE id = ?",
-                [&id_str],
-                Self::row_to_gift_card,
-            )
+            tx.query_row("SELECT * FROM gift_cards WHERE id = ?", [&id_str], Self::row_to_gift_card)
         })
     }
 
@@ -383,11 +356,7 @@ impl GiftCardRepository for SqliteGiftCardRepository {
                 rusqlite::params![&now_str, &id_str],
             )?;
 
-            tx.query_row(
-                "SELECT * FROM gift_cards WHERE id = ?",
-                [&id_str],
-                Self::row_to_gift_card,
-            )
+            tx.query_row("SELECT * FROM gift_cards WHERE id = ?", [&id_str], Self::row_to_gift_card)
         })
     }
 
@@ -410,9 +379,10 @@ impl GiftCardRepository for SqliteGiftCardRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use rust_decimal_macros::dec;
+    use stateset_core::CurrencyCode;
 
     fn test_repo() -> SqliteGiftCardRepository {
         let db = SqliteDatabase::new(&DatabaseConfig::in_memory()).unwrap();

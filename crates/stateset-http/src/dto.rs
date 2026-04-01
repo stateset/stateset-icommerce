@@ -74,7 +74,7 @@ pub fn encode_cursor(sort_key: &str, id: &str) -> String {
 }
 
 /// Decode a keyset cursor into `(sort_key, id)`.
-#[must_use] 
+#[must_use]
 pub fn decode_cursor(cursor: &str) -> Option<(String, String)> {
     let bytes = URL_SAFE_NO_PAD.decode(cursor).ok()?;
     let s = String::from_utf8(bytes).ok()?;

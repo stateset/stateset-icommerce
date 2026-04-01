@@ -54,6 +54,66 @@ service KeyManagement {
 }
 
 // ============================================================================
+// PQC Compatibility Messages
+// ============================================================================
+
+enum SignatureScheme {
+  SIGNATURE_SCHEME_UNSPECIFIED = 0;
+  SIGNATURE_SCHEME_ED25519 = 1;
+  SIGNATURE_SCHEME_ML_DSA_65 = 2;
+  SIGNATURE_SCHEME_ED25519_ML_DSA_65 = 3;
+}
+
+message SignatureBundle {
+  bytes ed25519_signature = 1;
+  bytes ml_dsa_65_signature = 2;
+}
+
+enum KeyAlgorithm {
+  KEY_ALGORITHM_UNSPECIFIED = 0;
+  KEY_ALGORITHM_ED25519 = 1;
+  KEY_ALGORITHM_X25519 = 2;
+  KEY_ALGORITHM_ML_DSA_65 = 3;
+  KEY_ALGORITHM_ML_KEM_768 = 4;
+  KEY_ALGORITHM_ED25519_ML_DSA_65 = 5;
+  KEY_ALGORITHM_X25519_ML_KEM_768 = 6;
+}
+
+message PublicKeyBundle {
+  bytes ed25519_public_key = 1;
+  bytes ml_dsa_65_public_key = 2;
+  bytes x25519_public_key = 3;
+  bytes ml_kem_768_public_key = 4;
+}
+
+message ProofOfPossessionBundle {
+  bytes ed25519_pop = 1;
+  bytes ml_dsa_65_pop = 2;
+}
+
+enum KeyWrapScheme {
+  KEY_WRAP_SCHEME_UNSPECIFIED = 0;
+  KEY_WRAP_SCHEME_X25519_HKDF_SHA256 = 1;
+  KEY_WRAP_SCHEME_ML_KEM_768 = 2;
+  KEY_WRAP_SCHEME_X25519_ML_KEM_768 = 3;
+}
+
+message KeyWrapParams {
+  KeyWrapScheme scheme = 1;
+  string kdf = 2;
+  string aead = 3;
+}
+
+message RecipientKeyWrap {
+  uint32 recipient_kid = 1;
+  KeyWrapScheme wrap_scheme = 2;
+  bytes x25519_enc = 3;
+  bytes ml_kem_ciphertext = 4;
+  bytes wrap_nonce = 5;
+  bytes wrapped_key = 6;
+}
+
+// ============================================================================
 // VES v1.0 Event Envelope
 // ============================================================================
 
@@ -93,6 +153,8 @@ message EventEnvelope {
   // === Metadata ===
   uint64 base_version = 17;               // OCC version (0 = not set)
   google.protobuf.Timestamp created_at = 18;
+  SignatureScheme agent_signature_scheme = 19;
+  SignatureBundle agent_signature_bundle = 20;
 }
 
 enum PayloadKind {
@@ -111,6 +173,8 @@ message EncryptedPayload {
 
   HpkeParams hpke = 6;
   repeated RecipientKey recipients = 7;
+  KeyWrapParams key_wrap_params = 8;
+  repeated RecipientKeyWrap recipient_wraps = 9;
 }
 
 message HpkeParams {
@@ -135,6 +199,10 @@ message SequencedEvent {
   uint64 sequence_number = 2;
   google.protobuf.Timestamp sequenced_at = 3;
   bytes receipt_hash = 4;                 // Empty = not set
+
+  // Optional PQ or hybrid receipt signature for per-event soft finality.
+  SignatureScheme receipt_signature_scheme = 5;
+  SignatureBundle receipt_signature_bundle = 6;
 }
 
 // ============================================================================
@@ -360,6 +428,9 @@ message RegisterKeyRequest {
   google.protobuf.Timestamp valid_from = 6;  // Null = immediately valid
   google.protobuf.Timestamp valid_to = 7;    // Null = no expiration
   bytes proof_of_possession = 8;          // Signature proving ownership
+  KeyAlgorithm key_algorithm = 9;
+  PublicKeyBundle public_key_bundle = 10;
+  ProofOfPossessionBundle proof_of_possession_bundle = 11;
 }
 
 enum KeyType {
@@ -394,6 +465,8 @@ message AgentKey {
   google.protobuf.Timestamp valid_from = 6;   // Null = always valid
   google.protobuf.Timestamp valid_to = 7;     // Null = no expiration
   google.protobuf.Timestamp revoked_at = 8;   // Null = not revoked
+  KeyAlgorithm key_algorithm = 9;
+  PublicKeyBundle public_key_bundle = 10;
 }
 
 enum KeyStatus {
@@ -409,6 +482,8 @@ message RevokeKeyRequest {
   uint32 key_id = 3;
   string reason = 4;
   bytes authorization_signature = 5;
+  SignatureScheme authorization_signature_scheme = 6;
+  SignatureBundle authorization_signature_bundle = 7;
 }
 
 message RevokeKeyResponse {

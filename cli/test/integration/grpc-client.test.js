@@ -181,10 +181,98 @@ describe('GrpcSequencerClient', () => {
     );
   });
 
+  it('should reject insecure transport for hybrid profile', () => {
+    assert.throws(
+      () =>
+        new GrpcSequencerClient({
+          ...TEST_CONFIG,
+          securityProfile: 'hybrid',
+          tls: false,
+        }),
+      /must use TLS for hybrid sync profile/,
+    );
+  });
+
   it('should have default retry policy', () => {
     const client = new GrpcSequencerClient(TEST_CONFIG);
     assert.strictEqual(client.config.retryPolicy.maxRetries, 5);
     assert.strictEqual(client.config.retryPolicy.baseDelayMs, 1000);
+  });
+
+  it('should map encrypted payloads into proto envelopes', () => {
+    const client = new GrpcSequencerClient({ ...TEST_CONFIG, tls: true });
+
+    const protoEvent = client._toProtoEvent({
+      eventId: 'evt-1',
+      entityType: 'order',
+      entityId: 'ORD-1',
+      eventType: 'created',
+      payloadKind: 1,
+      payload: { secret: true },
+      payloadEncrypted: {
+        enc_version: 1,
+        aead: 'AES-256-GCM',
+        nonce_b64u: 'bm9uY2U',
+        ciphertext_b64u: 'Y2lwaGVydGV4dA',
+        tag_b64u: 'dGFn',
+        hpke: {
+          mode: 'base',
+          kem: 'X25519-HKDF-SHA256',
+          kdf: 'HKDF-SHA256',
+          aead: 'AES-256-GCM',
+        },
+        recipients: [
+          {
+            recipient_kid: 11,
+            enc_b64u: 'ZW5j',
+            ct_b64u: 'd3JhcHBlZA',
+          },
+        ],
+      },
+      payloadPlainHash: 'aa'.repeat(32),
+      payloadCipherHash: 'bb'.repeat(32),
+      agentSignature: 'cc'.repeat(64),
+    });
+
+    assert.strictEqual(protoEvent.payload_kind, 2);
+    assert.strictEqual(protoEvent.payload.length, 0);
+    assert.ok(protoEvent.payload_encrypted);
+    assert.strictEqual(protoEvent.payload_encrypted.recipients.length, 1);
+    assert.strictEqual(protoEvent.payload_encrypted.key_wrap_params.scheme, 1);
+    assert.strictEqual(protoEvent.payload_encrypted.recipient_wraps.length, 1);
+    assert.strictEqual(protoEvent.payload_encrypted.recipient_wraps[0].wrap_scheme, 1);
+  });
+
+  it('should enforce hybrid signatures on pushEvents', async () => {
+    const client = new GrpcSequencerClient({
+      ...TEST_CONFIG,
+      tls: true,
+      securityProfile: 'hybrid',
+    });
+    client.connected = true;
+    client.client = {
+      push(_request, _metadata, callback) {
+        callback(null, {
+          sequence_end: 1,
+          events_accepted: 1,
+          events_rejected: 0,
+        });
+      },
+    };
+
+    await assert.rejects(
+      () =>
+        client.pushEvents([
+          {
+            eventId: 'evt-1',
+            entityType: 'order',
+            entityId: 'ORD-1',
+            eventType: 'created',
+            payload: { ok: true },
+          },
+        ]),
+      /Hybrid profile requires SIGNATURE_SCHEME_ED25519_ML_DSA_65/,
+    );
   });
 });
 

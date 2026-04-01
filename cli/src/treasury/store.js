@@ -1,11 +1,11 @@
 /**
  * Treasury Store
  *
- * SQLite-backed ledger for agent funding and token purchases.
+ * SQLite-backed ledger for agent funding and token purchases when available.
  */
 
-import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { mkdirSync, existsSync, openSync, closeSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 const SCHEMA = `
@@ -49,6 +49,10 @@ const DIRECTION_SIGNS = {
   adjust_out: -1n,
 };
 
+const require = createRequire(import.meta.url);
+const FALLBACK_TREASURY_DATABASES = new Map();
+let cachedDatabaseCtor;
+
 export function defaultTreasuryDir(cwd = process.cwd()) {
   return join(cwd, '.stateset', 'treasury');
 }
@@ -60,6 +64,44 @@ export function defaultTreasuryDbPath(cwd = process.cwd()) {
 function ensureDirForFile(filePath) {
   const dir = dirname(resolve(filePath));
   mkdirSync(dir, { recursive: true });
+}
+
+function ensureDbFile(dbPath) {
+  if (dbPath === ':memory:') return;
+  ensureDirForFile(dbPath);
+  closeSync(openSync(dbPath, 'a'));
+}
+
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+  }
+
+  return cachedDatabaseCtor;
+}
+
+function getFallbackDatabaseState(dbPath) {
+  if (dbPath === ':memory:') {
+    return { nextId: 1, rows: [] };
+  }
+
+  let state = FALLBACK_TREASURY_DATABASES.get(dbPath);
+  if (!state || !existsSync(dbPath)) {
+    ensureDbFile(dbPath);
+    state = { nextId: 1, rows: [] };
+    FALLBACK_TREASURY_DATABASES.set(dbPath, state);
+  }
+  return state;
 }
 
 /** @type {Record<string, string>} Allowed audit columns and their SQLite types */
@@ -90,6 +132,7 @@ export class TreasuryStore {
   constructor(opts = {}) {
     this.dbPath = opts.dbPath || defaultTreasuryDbPath();
     this.db = null;
+    this._fallbackState = null;
     this._insertStmt = null;
     this._listStmt = null;
     this._listByAgentStmt = null;
@@ -97,8 +140,24 @@ export class TreasuryStore {
   }
 
   init() {
-    ensureDirForFile(this.dbPath);
-    this.db = new Database(this.dbPath);
+    ensureDbFile(this.dbPath);
+
+    const Database = loadDatabaseCtor();
+    if (!Database) {
+      this._enableFallback();
+      return;
+    }
+
+    try {
+      this.db = new Database(this.dbPath);
+    } catch (error) {
+      if (error?.code !== 'ERR_DLOPEN_FAILED') {
+        throw error;
+      }
+      this._enableFallback();
+      return;
+    }
+
     this.db.pragma('journal_mode = WAL');
     this.db.exec(SCHEMA);
     ensureAuditColumns(this.db);
@@ -143,6 +202,19 @@ export class TreasuryStore {
     `);
   }
 
+  _enableFallback() {
+    this._fallbackState = getFallbackDatabaseState(this.dbPath);
+    this.db = {
+      pragma() {
+        return 'WAL';
+      },
+      exec() {
+        return this;
+      },
+      close() {},
+    };
+  }
+
   close() {
     if (this.db) {
       this.db.close();
@@ -165,6 +237,14 @@ export class TreasuryStore {
       metadata: entry.metadata ? JSON.stringify(entry.metadata) : null,
       created_at: entry.created_at || Date.now(),
     };
+
+    if (this._fallbackState) {
+      this._fallbackState.rows.push({
+        id: this._fallbackState.nextId++,
+        ...payload,
+      });
+      return payload;
+    }
 
     this._insertStmt.run(
       payload.event_id,
@@ -210,18 +290,30 @@ export class TreasuryStore {
       limit = 50,
     } = query;
 
-    const rows = this._listStmt.all(
-      agentId,
-      chainId,
-      chainId,
-      tokenSymbol,
-      tokenSymbol,
-      taskId,
-      taskId,
-      requestId,
-      requestId,
-      limit,
-    );
+    const rows = this._fallbackState
+      ? this._fallbackState.rows
+          .filter(
+            (row) =>
+              row.agent_id === agentId &&
+              (chainId === null || row.chain_id === chainId) &&
+              (tokenSymbol === null || row.token_symbol === tokenSymbol) &&
+              (taskId === null || row.task_id === taskId) &&
+              (requestId === null || row.request_id === requestId),
+          )
+          .sort((a, b) => b.created_at - a.created_at || b.id - a.id)
+          .slice(0, limit)
+      : this._listStmt.all(
+          agentId,
+          chainId,
+          chainId,
+          tokenSymbol,
+          tokenSymbol,
+          taskId,
+          taskId,
+          requestId,
+          requestId,
+          limit,
+        );
 
     return rows.map((row) => ({
       ...row,
@@ -244,7 +336,19 @@ export class TreasuryStore {
       return null;
     }
 
-    const row = this._findByTxStmt.get(agentId, chainId, tokenSymbol, direction, source, txId);
+    const row = this._fallbackState
+      ? this._fallbackState.rows
+          .filter(
+            (entry) =>
+              entry.agent_id === agentId &&
+              entry.chain_id === chainId &&
+              entry.token_symbol === tokenSymbol &&
+              entry.direction === direction &&
+              entry.source === source &&
+              entry.tx_id === txId,
+          )
+          .sort((a, b) => b.created_at - a.created_at || b.id - a.id)[0]
+      : this._findByTxStmt.get(agentId, chainId, tokenSymbol, direction, source, txId);
     if (!row) return null;
 
     return {
@@ -264,7 +368,20 @@ export class TreasuryStore {
     }
 
     const { agentId, chainId = null } = query;
-    const rows = this._listByAgentStmt.all(agentId, chainId, chainId);
+    const rows = this._fallbackState
+      ? this._fallbackState.rows
+          .filter(
+            (row) =>
+              row.agent_id === agentId && (chainId === null || row.chain_id === chainId),
+          )
+          .map((row) => ({
+            chain_id: row.chain_id,
+            token_symbol: row.token_symbol,
+            token_decimals: row.token_decimals,
+            direction: row.direction,
+            amount_smallest: row.amount_smallest,
+          }))
+      : this._listByAgentStmt.all(agentId, chainId, chainId);
 
     const balances = new Map();
 

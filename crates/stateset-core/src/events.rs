@@ -32,12 +32,15 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CartId, CustomerId, OrderId, OrderItemId, ProductId, ReturnId};
+use stateset_primitives::{
+    CartId, CurrencyCode, CustomerId, GiftCardId, InvoiceId, LoyaltyProgramId, OrderId,
+    OrderItemId, PaymentId, ProductId, ReturnId, ShipmentId, StoreCreditId, SubscriptionId,
+};
 use uuid::Uuid;
 
 use crate::models::{
-    CustomerStatus, FulfillmentStatus, OrderStatus, PaymentStatus, ReturnReason, ReturnStatus,
-    TrustLevel, X402Asset, X402Network,
+    CartStatus, CustomerStatus, FulfillmentStatus, InvoiceStatus, OrderStatus, PaymentStatus,
+    ReturnReason, ReturnStatus, SubscriptionStatus, TrustLevel, X402Asset, X402Network,
 };
 
 /// Commerce domain event
@@ -261,6 +264,144 @@ pub enum CommerceEvent {
         timestamp: DateTime<Utc>,
     },
 
+    // Cart events
+    CartCreated {
+        cart_id: CartId,
+        customer_id: Option<CustomerId>,
+        timestamp: DateTime<Utc>,
+    },
+    CartItemAdded {
+        cart_id: CartId,
+        product_id: ProductId,
+        sku: String,
+        quantity: i32,
+        timestamp: DateTime<Utc>,
+    },
+    CartStatusChanged {
+        cart_id: CartId,
+        from_status: CartStatus,
+        to_status: CartStatus,
+        timestamp: DateTime<Utc>,
+    },
+    CartCheckoutCompleted {
+        cart_id: CartId,
+        order_id: OrderId,
+        total_amount: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    // Payment events
+    PaymentCreated {
+        payment_id: PaymentId,
+        order_id: OrderId,
+        amount: Decimal,
+        currency: CurrencyCode,
+        timestamp: DateTime<Utc>,
+    },
+    PaymentStatusChanged {
+        payment_id: PaymentId,
+        from_status: PaymentStatus,
+        to_status: PaymentStatus,
+        timestamp: DateTime<Utc>,
+    },
+    PaymentCompleted {
+        payment_id: PaymentId,
+        order_id: OrderId,
+        amount: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    // Shipment events
+    ShipmentCreated {
+        shipment_id: ShipmentId,
+        order_id: OrderId,
+        carrier: String,
+        tracking_number: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    ShipmentDelivered {
+        shipment_id: ShipmentId,
+        order_id: OrderId,
+        timestamp: DateTime<Utc>,
+    },
+    // Invoice events
+    InvoiceCreated {
+        invoice_id: InvoiceId,
+        customer_id: CustomerId,
+        total_amount: Decimal,
+        currency: CurrencyCode,
+        timestamp: DateTime<Utc>,
+    },
+    InvoiceStatusChanged {
+        invoice_id: InvoiceId,
+        from_status: InvoiceStatus,
+        to_status: InvoiceStatus,
+        timestamp: DateTime<Utc>,
+    },
+    // Subscription events
+    SubscriptionCreated {
+        subscription_id: SubscriptionId,
+        customer_id: CustomerId,
+        plan_name: String,
+        price: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    SubscriptionStatusChanged {
+        subscription_id: SubscriptionId,
+        from_status: SubscriptionStatus,
+        to_status: SubscriptionStatus,
+        timestamp: DateTime<Utc>,
+    },
+    SubscriptionRenewed {
+        subscription_id: SubscriptionId,
+        billing_amount: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    SubscriptionCancelled {
+        subscription_id: SubscriptionId,
+        reason: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    // Gift card events
+    GiftCardCreated {
+        gift_card_id: GiftCardId,
+        initial_balance: Decimal,
+        currency: CurrencyCode,
+        timestamp: DateTime<Utc>,
+    },
+    GiftCardRedeemed {
+        gift_card_id: GiftCardId,
+        amount: Decimal,
+        order_id: Option<OrderId>,
+        timestamp: DateTime<Utc>,
+    },
+    // Store credit events
+    StoreCreditIssued {
+        store_credit_id: StoreCreditId,
+        customer_id: CustomerId,
+        amount: Decimal,
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
+    StoreCreditApplied {
+        store_credit_id: StoreCreditId,
+        order_id: OrderId,
+        amount: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    // Loyalty events
+    LoyaltyPointsEarned {
+        program_id: LoyaltyProgramId,
+        customer_id: CustomerId,
+        points: i64,
+        source: String,
+        timestamp: DateTime<Utc>,
+    },
+    LoyaltyPointsRedeemed {
+        program_id: LoyaltyProgramId,
+        customer_id: CustomerId,
+        points: i64,
+        timestamp: DateTime<Utc>,
+    },
+
     // x402 Payment Intent events
     X402IntentCreated {
         intent_id: Uuid,
@@ -372,7 +513,7 @@ pub enum CommerceEvent {
 
 impl CommerceEvent {
     /// Get event type as string
-    #[must_use] 
+    #[must_use]
     pub const fn event_type(&self) -> &'static str {
         match self {
             Self::OrderCreated { .. } => "order_created",
@@ -409,6 +550,28 @@ impl CommerceEvent {
             Self::ReturnRejected { .. } => "return_rejected",
             Self::ReturnCompleted { .. } => "return_completed",
             Self::RefundIssued { .. } => "refund_issued",
+            // Cart events
+            Self::CartCreated { .. } => "cart_created",
+            Self::CartItemAdded { .. } => "cart_item_added",
+            Self::CartStatusChanged { .. } => "cart_status_changed",
+            Self::CartCheckoutCompleted { .. } => "cart_checkout_completed",
+            Self::PaymentCreated { .. } => "payment_created",
+            Self::PaymentStatusChanged { .. } => "payment_status_changed",
+            Self::PaymentCompleted { .. } => "payment_completed",
+            Self::ShipmentCreated { .. } => "shipment_created",
+            Self::ShipmentDelivered { .. } => "shipment_delivered",
+            Self::InvoiceCreated { .. } => "invoice_created",
+            Self::InvoiceStatusChanged { .. } => "invoice_status_changed",
+            Self::SubscriptionCreated { .. } => "subscription_created",
+            Self::SubscriptionStatusChanged { .. } => "subscription_status_changed",
+            Self::SubscriptionRenewed { .. } => "subscription_renewed",
+            Self::SubscriptionCancelled { .. } => "subscription_cancelled",
+            Self::GiftCardCreated { .. } => "gift_card_created",
+            Self::GiftCardRedeemed { .. } => "gift_card_redeemed",
+            Self::StoreCreditIssued { .. } => "store_credit_issued",
+            Self::StoreCreditApplied { .. } => "store_credit_applied",
+            Self::LoyaltyPointsEarned { .. } => "loyalty_points_earned",
+            Self::LoyaltyPointsRedeemed { .. } => "loyalty_points_redeemed",
             // x402 events
             Self::X402IntentCreated { .. } => "x402_intent_created",
             Self::X402IntentSigned { .. } => "x402_intent_signed",
@@ -432,7 +595,7 @@ impl CommerceEvent {
     }
 
     /// Get timestamp from event
-    #[must_use] 
+    #[must_use]
     pub const fn timestamp(&self) -> DateTime<Utc> {
         match self {
             Self::OrderCreated { timestamp, .. }
@@ -469,6 +632,28 @@ impl CommerceEvent {
             | Self::ReturnRejected { timestamp, .. }
             | Self::ReturnCompleted { timestamp, .. }
             | Self::RefundIssued { timestamp, .. }
+            // New domain events
+            | Self::CartCreated { timestamp, .. }
+            | Self::CartItemAdded { timestamp, .. }
+            | Self::CartStatusChanged { timestamp, .. }
+            | Self::CartCheckoutCompleted { timestamp, .. }
+            | Self::PaymentCreated { timestamp, .. }
+            | Self::PaymentStatusChanged { timestamp, .. }
+            | Self::PaymentCompleted { timestamp, .. }
+            | Self::ShipmentCreated { timestamp, .. }
+            | Self::ShipmentDelivered { timestamp, .. }
+            | Self::InvoiceCreated { timestamp, .. }
+            | Self::InvoiceStatusChanged { timestamp, .. }
+            | Self::SubscriptionCreated { timestamp, .. }
+            | Self::SubscriptionStatusChanged { timestamp, .. }
+            | Self::SubscriptionRenewed { timestamp, .. }
+            | Self::SubscriptionCancelled { timestamp, .. }
+            | Self::GiftCardCreated { timestamp, .. }
+            | Self::GiftCardRedeemed { timestamp, .. }
+            | Self::StoreCreditIssued { timestamp, .. }
+            | Self::StoreCreditApplied { timestamp, .. }
+            | Self::LoyaltyPointsEarned { timestamp, .. }
+            | Self::LoyaltyPointsRedeemed { timestamp, .. }
             // x402 events
             | Self::X402IntentCreated { timestamp, .. }
             | Self::X402IntentSigned { timestamp, .. }

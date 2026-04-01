@@ -103,7 +103,7 @@ export function createChatTransport({
   runAgentLoopImpl = runAgentLoop,
 } = {}) {
   let persistentSession = null;
-  let persistentConsumer = null;
+  let _persistentConsumer = null;
   let persistentSessionKey = null;
   let persistentConversationHistory = [];
   let pendingTreasuryRefresh = false;
@@ -131,7 +131,7 @@ export function createChatTransport({
     }
 
     persistentSession = null;
-    persistentConsumer = null;
+    _persistentConsumer = null;
     persistentSessionKey = null;
     pendingTreasuryRefresh = false;
     if (clearHistory) {
@@ -231,7 +231,7 @@ export function createChatTransport({
     });
     persistentSessionKey = nextKey;
 
-    persistentConsumer = (async () => {
+    _persistentConsumer = (async () => {
       try {
         for await (const message of persistentSession.stream()) {
           if (message?.type !== 'result' || !activeTurn) continue;
@@ -264,7 +264,7 @@ export function createChatTransport({
         const pendingTurn = activeTurn;
         activeTurn = null;
         persistentSession = null;
-        persistentConsumer = null;
+        _persistentConsumer = null;
         persistentSessionKey = null;
         if (pendingTurn) {
           pendingTurn.reject(error);

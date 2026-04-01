@@ -328,3 +328,314 @@ proptest! {
         );
     }
 }
+
+// ===========================================================================
+// PQC property-based tests
+// ===========================================================================
+
+#[cfg(feature = "pqc")]
+mod pqc_proptests {
+    use super::*;
+    use stateset_crypto::pqc::*;
+
+    /// Generate an arbitrary small JSON object for encrypt/decrypt round-trips.
+    fn arb_pqc_json_payload() -> impl Strategy<Value = serde_json::Value> {
+        prop::collection::vec(
+            (
+                prop::string::string_regex("[a-z]{1,20}").unwrap(),
+                (0..1000i64),
+            ),
+            1..4,
+        )
+        .prop_map(|pairs| {
+            let mut map = serde_json::Map::new();
+            for (k, v) in pairs {
+                map.insert(k, serde_json::json!(v));
+            }
+            serde_json::Value::Object(map)
+        })
+    }
+
+    /// Generate arbitrary info bytes (1..=64) for DEK wrap tests.
+    fn arb_info_bytes() -> impl Strategy<Value = Vec<u8>> {
+        prop::collection::vec(any::<u8>(), 1..=64)
+    }
+
+    // -----------------------------------------------------------------------
+    // 12. Hybrid sign/verify round-trip
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn hybrid_sign_verify_roundtrip(message in arb_hash()) {
+            let keypair = generate_hybrid_signing_keypair()
+                .expect("hybrid keygen should succeed");
+            let signature = hybrid_sign_event_hash(&message, &keypair.private)
+                .expect("hybrid signing should succeed");
+            prop_assert!(
+                hybrid_verify_event_signature(&message, &signature, &keypair.public),
+                "hybrid signature should verify with the correct key",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 13. Hybrid sign/verify fails with wrong key
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn hybrid_sign_wrong_key_fails(message in arb_hash()) {
+            let keypair_a = generate_hybrid_signing_keypair()
+                .expect("hybrid keygen A should succeed");
+            let keypair_b = generate_hybrid_signing_keypair()
+                .expect("hybrid keygen B should succeed");
+            let signature = hybrid_sign_event_hash(&message, &keypair_a.private)
+                .expect("hybrid signing should succeed");
+            prop_assert!(
+                !hybrid_verify_event_signature(&message, &signature, &keypair_b.public),
+                "hybrid verification should fail with a different public key",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 14. Strict sign/verify round-trip
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn strict_sign_verify_roundtrip(message in arb_hash()) {
+            let keypair = generate_strict_signing_keypair()
+                .expect("strict keygen should succeed");
+            let signature = strict_sign_event_hash(&message, &keypair.private)
+                .expect("strict signing should succeed");
+            prop_assert!(
+                strict_verify_event_signature(&message, &signature, &keypair.public),
+                "strict signature should verify with the correct key",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 15. Strict sign/verify fails with wrong key
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn strict_sign_wrong_key_fails(message in arb_hash()) {
+            let keypair_a = generate_strict_signing_keypair()
+                .expect("strict keygen A should succeed");
+            let keypair_b = generate_strict_signing_keypair()
+                .expect("strict keygen B should succeed");
+            let signature = strict_sign_event_hash(&message, &keypair_a.private)
+                .expect("strict signing should succeed");
+            prop_assert!(
+                !strict_verify_event_signature(&message, &signature, &keypair_b.public),
+                "strict verification should fail with a different public key",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 16. Hybrid DEK wrap/unwrap round-trip
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn hybrid_dek_wrap_unwrap_roundtrip(
+            dek in arb_32_bytes(),
+            info in arb_info_bytes(),
+        ) {
+            let recipient = generate_hybrid_recipient_keypair(1)
+                .expect("hybrid recipient keygen should succeed");
+            let wrapped = wrap_dek_hybrid(&dek, &recipient.public, &info)
+                .expect("hybrid DEK wrapping should succeed");
+            let unwrapped = unwrap_dek_hybrid(&wrapped, &recipient.private, &info)
+                .expect("hybrid DEK unwrapping should succeed");
+            prop_assert_eq!(
+                dek, unwrapped,
+                "hybrid wrap/unwrap round-trip should recover original DEK",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 17. Strict DEK wrap/unwrap round-trip
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn strict_dek_wrap_unwrap_roundtrip(
+            dek in arb_32_bytes(),
+            info in arb_info_bytes(),
+        ) {
+            let recipient = generate_strict_recipient_keypair(1)
+                .expect("strict recipient keygen should succeed");
+            let wrapped = wrap_dek_strict(&dek, &recipient.public, &info)
+                .expect("strict DEK wrapping should succeed");
+            let unwrapped = unwrap_dek_strict(&wrapped, &recipient.private, &info)
+                .expect("strict DEK unwrapping should succeed");
+            prop_assert_eq!(
+                dek, unwrapped,
+                "strict wrap/unwrap round-trip should recover original DEK",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 18. Hybrid encrypt/decrypt round-trip
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(8))]
+
+        #[test]
+        fn hybrid_encrypt_decrypt_roundtrip(payload in arb_pqc_json_payload()) {
+            let placeholder = [0u8; 32];
+            let aad_params = PayloadAadParams {
+                ves_version: 1,
+                tenant_id: TEST_UUID,
+                store_id: TEST_UUID,
+                event_id: TEST_UUID,
+                source_agent_id: TEST_UUID,
+                agent_key_id: 1,
+                entity_type: "order",
+                entity_id: "ord_pqc_hybrid",
+                event_type: "order.created",
+                created_at: "2026-03-31T00:00:00Z",
+                payload_plain_hash: &placeholder,
+            };
+
+            let recipient = generate_hybrid_recipient_keypair(1)
+                .expect("hybrid recipient keygen should succeed");
+            let enc_result = encrypt_payload_hybrid(
+                &payload, &aad_params, &[recipient.public.clone()],
+            ).expect("hybrid encryption should succeed");
+
+            let dec_aad_params = PayloadAadParams {
+                payload_plain_hash: &enc_result.payload_plain_hash,
+                ..aad_params
+            };
+            let dec_payload_aad = compute_payload_aad(&dec_aad_params)
+                .expect("AAD computation should succeed");
+
+            let decrypted = decrypt_payload_hybrid(
+                &enc_result.payload_encrypted,
+                &dec_payload_aad,
+                1,
+                &recipient.private,
+                &enc_result.payload_plain_hash,
+            ).expect("hybrid decryption should succeed");
+
+            prop_assert_eq!(
+                &decrypted, &payload,
+                "hybrid encrypt/decrypt round-trip should recover original payload",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 19. Strict encrypt/decrypt round-trip
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(8))]
+
+        #[test]
+        fn strict_encrypt_decrypt_roundtrip(payload in arb_pqc_json_payload()) {
+            let placeholder = [0u8; 32];
+            let aad_params = PayloadAadParams {
+                ves_version: 1,
+                tenant_id: TEST_UUID,
+                store_id: TEST_UUID,
+                event_id: TEST_UUID,
+                source_agent_id: TEST_UUID,
+                agent_key_id: 1,
+                entity_type: "order",
+                entity_id: "ord_pqc_strict",
+                event_type: "order.created",
+                created_at: "2026-03-31T00:00:00Z",
+                payload_plain_hash: &placeholder,
+            };
+
+            let recipient = generate_strict_recipient_keypair(1)
+                .expect("strict recipient keygen should succeed");
+            let enc_result = encrypt_payload_strict(
+                &payload, &aad_params, &[recipient.public.clone()],
+            ).expect("strict encryption should succeed");
+
+            let dec_aad_params = PayloadAadParams {
+                payload_plain_hash: &enc_result.payload_plain_hash,
+                ..aad_params
+            };
+            let dec_payload_aad = compute_payload_aad(&dec_aad_params)
+                .expect("AAD computation should succeed");
+
+            let decrypted = decrypt_payload_strict(
+                &enc_result.payload_encrypted,
+                &dec_payload_aad,
+                1,
+                &recipient.private,
+                &enc_result.payload_plain_hash,
+            ).expect("strict decryption should succeed");
+
+            prop_assert_eq!(
+                &decrypted, &payload,
+                "strict encrypt/decrypt round-trip should recover original payload",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 20. Hybrid proof-of-possession round-trip
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(8))]
+
+        #[test]
+        fn hybrid_pop_roundtrip(_seed in arb_32_bytes()) {
+            let keypair = generate_hybrid_signing_keypair()
+                .expect("hybrid keygen should succeed");
+            let pop = generate_hybrid_signing_pop(&keypair)
+                .expect("hybrid PoP generation should succeed");
+            prop_assert!(
+                verify_hybrid_signing_pop(&pop, &keypair.public),
+                "hybrid PoP should verify with the correct keypair",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 21. Strict proof-of-possession round-trip
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(8))]
+
+        #[test]
+        fn strict_pop_roundtrip(_seed in arb_32_bytes()) {
+            let keypair = generate_strict_signing_keypair()
+                .expect("strict keygen should succeed");
+            let pop = generate_strict_signing_pop(&keypair)
+                .expect("strict PoP generation should succeed");
+            prop_assert!(
+                verify_strict_signing_pop(&pop, &keypair.public),
+                "strict PoP should verify with the correct keypair",
+            );
+        }
+    }
+}

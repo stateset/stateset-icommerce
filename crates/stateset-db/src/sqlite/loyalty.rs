@@ -1,6 +1,8 @@
 //! SQLite implementation of loyalty program repository
 
-use super::{map_db_error, parse_datetime_row, parse_enum_row, parse_uuid_row, with_immediate_transaction};
+use super::{
+    map_db_error, parse_datetime_row, parse_enum_row, parse_uuid_row, with_immediate_transaction,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -326,8 +328,8 @@ impl LoyaltyProgramRepository for SqliteLoyaltyProgramRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use stateset_core::{CustomerId, LoyaltyProgramStatus, LoyaltyTransactionType};
 
     fn test_repo() -> SqliteLoyaltyProgramRepository {
@@ -407,10 +409,7 @@ mod tests {
 
         let customer_id = CustomerId::new();
         let account = repo
-            .enroll(EnrollCustomer {
-                customer_id,
-                program_id: program.id,
-            })
+            .enroll(EnrollCustomer { customer_id, program_id: program.id })
             .expect("enroll customer");
 
         assert_eq!(account.customer_id, customer_id);
@@ -449,10 +448,7 @@ mod tests {
             .expect("create program");
 
         let account = repo
-            .enroll(EnrollCustomer {
-                customer_id: CustomerId::new(),
-                program_id: program.id,
-            })
+            .enroll(EnrollCustomer { customer_id: CustomerId::new(), program_id: program.id })
             .expect("enroll");
 
         // Earn 100 points

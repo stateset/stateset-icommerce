@@ -19,7 +19,7 @@ pub struct SqliteAgentValidationRepository {
 }
 
 impl SqliteAgentValidationRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }

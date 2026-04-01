@@ -9,8 +9,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
     CommerceError, CreateFraudAssessment, CreateFraudRule, FraudAssessment, FraudAssessmentFilter,
-    FraudDecision, FraudRepository, FraudRule, FraudRuleFilter, FraudRuleId, FraudSignal,
-    OrderId, Result, UpdateFraudRule,
+    FraudDecision, FraudRepository, FraudRule, FraudRuleFilter, FraudRuleId, FraudSignal, OrderId,
+    Result, UpdateFraudRule,
 };
 
 #[derive(Debug)]
@@ -73,11 +73,7 @@ impl SqliteFraudRepository {
                 "signal_type",
             )?,
             threshold: row.get("threshold")?,
-            action: parse_enum_row(
-                &row.get::<_, String>("action")?,
-                "fraud_rule",
-                "action",
-            )?,
+            action: parse_enum_row(&row.get::<_, String>("action")?, "fraud_rule", "action")?,
             enabled: row.get::<_, i32>("enabled")? != 0,
             created_at: parse_datetime_row(
                 &row.get::<_, String>("created_at")?,
@@ -112,11 +108,8 @@ impl FraudRepository for SqliteFraudRepository {
             .collect();
 
         let risk_score = FraudAssessment::calculate_risk_score(&signals);
-        let decision = if risk_score >= 0.8 {
-            FraudDecision::Review
-        } else {
-            FraudDecision::Accept
-        };
+        let decision =
+            if risk_score >= 0.8 { FraudDecision::Review } else { FraudDecision::Accept };
 
         let signals_json = serde_json::to_string(&signals)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -245,11 +238,7 @@ impl FraudRepository for SqliteFraudRepository {
                 ],
             )?;
 
-            tx.query_row(
-                "SELECT * FROM fraud_rules WHERE id = ?",
-                [&id_str],
-                Self::row_to_rule,
-            )
+            tx.query_row("SELECT * FROM fraud_rules WHERE id = ?", [&id_str], Self::row_to_rule)
         })
     }
 
@@ -302,11 +291,7 @@ impl FraudRepository for SqliteFraudRepository {
                 params.iter().map(|p| p.as_ref()).collect();
             tx.execute(&sql, param_refs.as_slice())?;
 
-            tx.query_row(
-                "SELECT * FROM fraud_rules WHERE id = ?",
-                [&id_str],
-                Self::row_to_rule,
-            )
+            tx.query_row("SELECT * FROM fraud_rules WHERE id = ?", [&id_str], Self::row_to_rule)
         })
     }
 
@@ -372,8 +357,8 @@ impl FraudRepository for SqliteFraudRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
     use stateset_core::{CreateFraudSignal, FraudSignalType};
 
     fn test_repo() -> SqliteFraudRepository {

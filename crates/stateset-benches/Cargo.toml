@@ -12,10 +12,15 @@ publish = false
 [dependencies]
 stateset-primitives = { path = "../stateset-primitives" }
 stateset-core = { path = "../stateset-core" }
-stateset-crypto = { path = "../stateset-crypto" }
+stateset-crypto = { path = "../stateset-crypto", features = ["pqc"] }
 stateset-db = { path = "../stateset-db", features = ["sqlite"] }
 stateset-embedded = { path = "../stateset-embedded", features = ["sqlite", "events"] }
+stateset-http = { path = "../stateset-http" }
+stateset-policy = { path = "../stateset-policy" }
 serde_json = { workspace = true }
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 uuid = { workspace = true }
 rust_decimal = { workspace = true }
 rust_decimal_macros = "1.36"
@@ -45,4 +50,24 @@ harness = false
 
 [[bench]]
 name = "event_bus_throughput"
+harness = false
+
+[[bench]]
+name = "http_routes"
+harness = false
+
+[[bench]]
+name = "sqlite_queries"
+harness = false
+
+[[bench]]
+name = "validation"
+harness = false
+
+[[bench]]
+name = "policy_engine"
+harness = false
+
+[[bench]]
+name = "pqc_crypto"
 harness = false

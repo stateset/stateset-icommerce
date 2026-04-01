@@ -369,3 +369,391 @@ proptest! {
         prop_assert_eq!(parts[0], "ORD");
     }
 }
+
+// ============================================================================
+// Money Type Properties
+// ============================================================================
+
+use stateset_primitives::{CurrencyCode, Money};
+
+proptest! {
+    #[test]
+    fn money_add_rejects_currency_mismatch(
+        a_cents in -999_999i64..999_999,
+        b_cents in -999_999i64..999_999,
+    ) {
+        let usd = Money::new(Decimal::new(a_cents, 2), CurrencyCode::USD);
+        let eur = Money::new(Decimal::new(b_cents, 2), CurrencyCode::EUR);
+        prop_assert!(usd.checked_add(eur).is_none());
+    }
+
+    #[test]
+    fn money_add_commutative(
+        a_cents in -999_999i64..999_999,
+        b_cents in -999_999i64..999_999,
+    ) {
+        let a = Money::new(Decimal::new(a_cents, 2), CurrencyCode::USD);
+        let b = Money::new(Decimal::new(b_cents, 2), CurrencyCode::USD);
+        let ab = a.checked_add(b).unwrap();
+        let ba = b.checked_add(a).unwrap();
+        prop_assert_eq!(ab.amount(), ba.amount());
+        prop_assert_eq!(ab.currency(), CurrencyCode::USD);
+    }
+
+    #[test]
+    fn money_zero_is_identity(amount_cents in -999_999i64..999_999) {
+        let m = Money::new(Decimal::new(amount_cents, 2), CurrencyCode::USD);
+        let zero = Money::zero(CurrencyCode::USD);
+        let result = m.checked_add(zero).unwrap();
+        prop_assert_eq!(result.amount(), m.amount());
+    }
+
+    #[test]
+    fn money_negate_is_self_inverse(amount_cents in -999_999i64..999_999) {
+        let m = Money::new(Decimal::new(amount_cents, 2), CurrencyCode::USD);
+        let double_negated = m.negate().negate();
+        prop_assert_eq!(double_negated.amount(), m.amount());
+    }
+
+    #[test]
+    fn money_abs_always_non_negative(amount_cents in -999_999i64..999_999) {
+        let m = Money::new(Decimal::new(amount_cents, 2), CurrencyCode::EUR);
+        prop_assert!(m.abs().amount() >= Decimal::ZERO);
+    }
+
+    #[test]
+    fn money_div_zero_returns_none(amount_cents in -999_999i64..999_999) {
+        let m = Money::new(Decimal::new(amount_cents, 2), CurrencyCode::USD);
+        prop_assert!(m.checked_div_scalar(Decimal::ZERO).is_none());
+    }
+
+    #[test]
+    fn money_serde_roundtrip(amount_cents in -999_999i64..999_999) {
+        let m = Money::new(Decimal::new(amount_cents, 2), CurrencyCode::USD);
+        let json = serde_json::to_string(&m).unwrap();
+        let deserialized: Money = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(m, deserialized);
+    }
+}
+
+// ============================================================================
+// Return Status Transition Properties
+// ============================================================================
+
+use stateset_core::models::ReturnStatus;
+
+fn valid_return_transitions(from: ReturnStatus) -> Vec<ReturnStatus> {
+    match from {
+        ReturnStatus::Requested => {
+            vec![ReturnStatus::Approved, ReturnStatus::Rejected, ReturnStatus::Cancelled]
+        }
+        ReturnStatus::Approved => vec![ReturnStatus::InTransit, ReturnStatus::Cancelled],
+        ReturnStatus::InTransit => vec![ReturnStatus::Received],
+        ReturnStatus::Received => vec![ReturnStatus::Inspecting],
+        ReturnStatus::Inspecting => vec![ReturnStatus::Completed, ReturnStatus::Rejected],
+        ReturnStatus::Rejected | ReturnStatus::Completed | ReturnStatus::Cancelled => vec![],
+        _ => vec![],
+    }
+}
+
+proptest! {
+    #[test]
+    fn return_status_transition_validity(from_idx in 0usize..8, to_idx in 0usize..8) {
+        let statuses = [
+            ReturnStatus::Requested, ReturnStatus::Approved, ReturnStatus::Rejected,
+            ReturnStatus::InTransit, ReturnStatus::Received, ReturnStatus::Inspecting,
+            ReturnStatus::Completed, ReturnStatus::Cancelled,
+        ];
+        let from = statuses[from_idx];
+        let to = statuses[to_idx];
+        if from == to {
+            prop_assert!(from.can_transition_to(to));
+        } else {
+            prop_assert_eq!(from.can_transition_to(to), valid_return_transitions(from).contains(&to));
+        }
+    }
+}
+
+// ============================================================================
+// Subscription Status Transition Properties
+// ============================================================================
+
+use stateset_core::models::SubscriptionStatus;
+
+fn valid_subscription_transitions(from: SubscriptionStatus) -> Vec<SubscriptionStatus> {
+    match from {
+        SubscriptionStatus::Pending => vec![
+            SubscriptionStatus::Trial,
+            SubscriptionStatus::Active,
+            SubscriptionStatus::Cancelled,
+        ],
+        SubscriptionStatus::Trial => vec![
+            SubscriptionStatus::Active,
+            SubscriptionStatus::Cancelled,
+            SubscriptionStatus::Expired,
+        ],
+        SubscriptionStatus::Active => vec![
+            SubscriptionStatus::Paused,
+            SubscriptionStatus::PastDue,
+            SubscriptionStatus::Cancelled,
+            SubscriptionStatus::Expired,
+        ],
+        SubscriptionStatus::Paused => {
+            vec![SubscriptionStatus::Active, SubscriptionStatus::Cancelled]
+        }
+        SubscriptionStatus::PastDue => vec![
+            SubscriptionStatus::Active,
+            SubscriptionStatus::Cancelled,
+            SubscriptionStatus::Expired,
+        ],
+        SubscriptionStatus::Cancelled | SubscriptionStatus::Expired => vec![],
+        _ => vec![],
+    }
+}
+
+proptest! {
+    #[test]
+    fn subscription_status_transition_validity(from_idx in 0usize..7, to_idx in 0usize..7) {
+        let statuses = [
+            SubscriptionStatus::Pending, SubscriptionStatus::Trial, SubscriptionStatus::Active,
+            SubscriptionStatus::Paused, SubscriptionStatus::PastDue,
+            SubscriptionStatus::Cancelled, SubscriptionStatus::Expired,
+        ];
+        let from = statuses[from_idx];
+        let to = statuses[to_idx];
+        if from == to {
+            prop_assert!(from.can_transition_to(to));
+        } else {
+            prop_assert_eq!(from.can_transition_to(to), valid_subscription_transitions(from).contains(&to));
+        }
+    }
+
+    #[test]
+    fn subscription_status_serde_roundtrip(idx in 0usize..7) {
+        let statuses = [
+            SubscriptionStatus::Pending, SubscriptionStatus::Trial,
+            SubscriptionStatus::Active, SubscriptionStatus::Paused,
+            SubscriptionStatus::PastDue, SubscriptionStatus::Cancelled,
+            SubscriptionStatus::Expired,
+        ];
+        let status = statuses[idx];
+        let json = serde_json::to_string(&status).unwrap();
+        let deserialized: SubscriptionStatus = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(status, deserialized);
+    }
+
+    #[test]
+    fn return_status_serde_roundtrip(idx in 0usize..8) {
+        let statuses = [
+            ReturnStatus::Requested, ReturnStatus::Approved, ReturnStatus::Rejected,
+            ReturnStatus::InTransit, ReturnStatus::Received, ReturnStatus::Inspecting,
+            ReturnStatus::Completed, ReturnStatus::Cancelled,
+        ];
+        let status = statuses[idx];
+        let json = serde_json::to_string(&status).unwrap();
+        let deserialized: ReturnStatus = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(status, deserialized);
+    }
+
+    #[test]
+    fn currency_code_roundtrip(idx in 0usize..8) {
+        let codes = ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY"];
+        let code_str = codes[idx];
+        let parsed: CurrencyCode = code_str.parse().unwrap();
+        prop_assert_eq!(parsed.as_str(), code_str);
+    }
+
+    #[test]
+    fn invalid_currency_code_rejected(s in "[a-z]{1,2}|[A-Z]{4,}|[0-9]{3}") {
+        let result: Result<CurrencyCode, _> = s.parse();
+        prop_assert!(result.is_err());
+    }
+
+    #[test]
+    fn line_totals_sum_to_subtotal(
+        qty1 in 1i32..100, price1_cents in 1i64..100_000,
+        qty2 in 1i32..100, price2_cents in 1i64..100_000,
+    ) {
+        let p1 = Decimal::new(price1_cents, 2);
+        let p2 = Decimal::new(price2_cents, 2);
+        let line1 = p1 * Decimal::from(qty1);
+        let line2 = p2 * Decimal::from(qty2);
+        let subtotal = line1 + line2;
+        prop_assert!(subtotal > Decimal::ZERO);
+        prop_assert!(subtotal >= line1);
+        prop_assert!(subtotal >= line2);
+    }
+}
+
+// ============================================================================
+// Event Serde Roundtrip Tests (non-proptest, but important coverage)
+// ============================================================================
+
+#[cfg(test)]
+mod event_roundtrip_tests {
+    use chrono::Utc;
+    use rust_decimal_macros::dec;
+    use stateset_core::events::CommerceEvent;
+    use stateset_primitives::*;
+
+    macro_rules! roundtrip {
+        ($name:ident, $event:expr) => {
+            #[test]
+            fn $name() {
+                let event = $event;
+                let json = serde_json::to_string(&event).unwrap();
+                let back: CommerceEvent = serde_json::from_str(&json).unwrap();
+                assert_eq!(event.event_type(), back.event_type());
+                assert_eq!(event.timestamp(), back.timestamp());
+            }
+        };
+    }
+
+    roundtrip!(
+        cart_created,
+        CommerceEvent::CartCreated {
+            cart_id: CartId::new(),
+            customer_id: Some(CustomerId::new()),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        cart_item_added,
+        CommerceEvent::CartItemAdded {
+            cart_id: CartId::new(),
+            product_id: ProductId::new(),
+            sku: "SKU-001".into(),
+            quantity: 2,
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        payment_created,
+        CommerceEvent::PaymentCreated {
+            payment_id: PaymentId::new(),
+            order_id: OrderId::new(),
+            amount: dec!(99.99),
+            currency: CurrencyCode::USD,
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        payment_completed,
+        CommerceEvent::PaymentCompleted {
+            payment_id: PaymentId::new(),
+            order_id: OrderId::new(),
+            amount: dec!(99.99),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        shipment_created,
+        CommerceEvent::ShipmentCreated {
+            shipment_id: ShipmentId::new(),
+            order_id: OrderId::new(),
+            carrier: "USPS".into(),
+            tracking_number: Some("1Z999".into()),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        shipment_delivered,
+        CommerceEvent::ShipmentDelivered {
+            shipment_id: ShipmentId::new(),
+            order_id: OrderId::new(),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        invoice_created,
+        CommerceEvent::InvoiceCreated {
+            invoice_id: InvoiceId::new(),
+            customer_id: CustomerId::new(),
+            total_amount: dec!(500.00),
+            currency: CurrencyCode::EUR,
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        subscription_created,
+        CommerceEvent::SubscriptionCreated {
+            subscription_id: SubscriptionId::new(),
+            customer_id: CustomerId::new(),
+            plan_name: "Pro".into(),
+            price: dec!(29.99),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        subscription_cancelled,
+        CommerceEvent::SubscriptionCancelled {
+            subscription_id: SubscriptionId::new(),
+            reason: Some("Too expensive".into()),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        subscription_renewed,
+        CommerceEvent::SubscriptionRenewed {
+            subscription_id: SubscriptionId::new(),
+            billing_amount: dec!(29.99),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        gift_card_created,
+        CommerceEvent::GiftCardCreated {
+            gift_card_id: GiftCardId::new(),
+            initial_balance: dec!(100.00),
+            currency: CurrencyCode::USD,
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        gift_card_redeemed,
+        CommerceEvent::GiftCardRedeemed {
+            gift_card_id: GiftCardId::new(),
+            amount: dec!(25.00),
+            order_id: Some(OrderId::new()),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        store_credit_issued,
+        CommerceEvent::StoreCreditIssued {
+            store_credit_id: StoreCreditId::new(),
+            customer_id: CustomerId::new(),
+            amount: dec!(15.00),
+            reason: "Return refund".into(),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        store_credit_applied,
+        CommerceEvent::StoreCreditApplied {
+            store_credit_id: StoreCreditId::new(),
+            order_id: OrderId::new(),
+            amount: dec!(15.00),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        loyalty_points_earned,
+        CommerceEvent::LoyaltyPointsEarned {
+            program_id: LoyaltyProgramId::new(),
+            customer_id: CustomerId::new(),
+            points: 500,
+            source: "purchase".into(),
+            timestamp: Utc::now()
+        }
+    );
+    roundtrip!(
+        loyalty_points_redeemed,
+        CommerceEvent::LoyaltyPointsRedeemed {
+            program_id: LoyaltyProgramId::new(),
+            customer_id: CustomerId::new(),
+            points: 200,
+            timestamp: Utc::now()
+        }
+    );
+}

@@ -15,7 +15,7 @@ pub mod sqlite {
     use rusqlite::Error as SqliteError;
 
     /// Convert a rusqlite error to `CommerceError` with context
-    #[must_use] 
+    #[must_use]
     pub fn map_error(
         table: &'static str,
         operation: &'static str,
@@ -26,7 +26,8 @@ pub mod sqlite {
                 // Check for constraint violations
                 match ffi_err.code {
                     rusqlite::ErrorCode::ConstraintViolation => {
-                        let constraint = msg.as_ref().map_or("unknown", std::string::String::as_str);
+                        let constraint =
+                            msg.as_ref().map_or("unknown", std::string::String::as_str);
                         CommerceError::Database(DbError::ConstraintViolation {
                             table,
                             constraint: extract_constraint_name(constraint).to_string(),
@@ -83,7 +84,7 @@ pub mod sqlite {
     }
 
     /// Convert an r2d2 pool error to `CommerceError`
-    #[must_use] 
+    #[must_use]
     pub fn map_pool_error(_err: r2d2::Error) -> CommerceError {
         CommerceError::Database(DbError::PoolExhausted {
             timeout_ms: 30000, // Default timeout

@@ -5,9 +5,9 @@ use rust_decimal_macros::dec;
 #[cfg(feature = "postgres")]
 use stateset_core::{
     A2APurchaseFilter, A2ASkill, CreateA2APurchase, CreateA2AQuote, CreateAgentCard,
-    CreateX402PaymentIntent, ItemAvailability, PurchaseStatus, QuoteStatus, QuotedItem,
-    SignX402PaymentIntent, SkillQuoteFilter, TrustLevel, X402Asset, X402CreditDirection,
-    X402CreditTransactionFilter, X402IntentStatus, X402Network,
+    CreateX402PaymentIntent, CurrencyCode, ItemAvailability, PurchaseStatus, QuoteStatus,
+    QuotedItem, SignX402PaymentIntent, SkillQuoteFilter, TrustLevel, X402Asset,
+    X402CreditDirection, X402CreditTransactionFilter, X402IntentStatus, X402Network,
 };
 #[cfg(feature = "postgres")]
 use stateset_embedded::AsyncCommerce;
@@ -158,7 +158,7 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
             merchant_name: Some("Test Merchant".to_string()),
             business_category: Some("automation".to_string()),
             max_transaction_amount: Some(10_000_000),
-            daily_volume_limit: Some(1_000_000_00),
+            daily_volume_limit: Some(100_000_000),
             requires_kyc: Some(false),
             metadata: Some("{\"source\":\"async-smoke\"}".to_string()),
         })
@@ -166,7 +166,7 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
         .expect("register agent");
 
     assert_eq!(card.wallet_address, seller_wallet);
-    assert_eq!(card.active, true);
+    assert!(card.active);
 
     let sellers = x402
         .discover_agents(
@@ -214,7 +214,7 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
             shipping_amount: Some(dec!(4.00)),
             discount_amount: None,
             total: dec!(30.00),
-            currency: Some("USD".to_string()),
+            currency: Some(CurrencyCode::USD),
             payment_network: Some(network),
             payment_asset: Some(asset),
             shipping_address: None,
@@ -247,7 +247,7 @@ async fn postgres_async_x402_agents_a2a_credit_smoke() {
             payment_intent_id: None,
             items: quote.items.clone(),
             total: quoted.total,
-            currency: Some(quoted.currency.clone()),
+            currency: Some(quoted.currency),
             fulfillment_type: Some("digital".to_string()),
             notes: Some("smoke test purchase".to_string()),
             metadata: Some("{\"channel\":\"integration\"}".to_string()),
@@ -454,7 +454,7 @@ async fn postgres_async_a2a_state_guards() {
             shipping_amount: Some(dec!(2.00)),
             discount_amount: None,
             total: dec!(33.00),
-            currency: Some("USD".to_string()),
+            currency: Some(CurrencyCode::USD),
             payment_network: Some(network),
             payment_asset: Some(asset),
             shipping_address: None,
@@ -480,7 +480,7 @@ async fn postgres_async_a2a_state_guards() {
             payment_intent_id: None,
             items: quoted.items.clone(),
             total: quoted.total,
-            currency: Some(quoted.currency.clone()),
+            currency: Some(quoted.currency),
             fulfillment_type: Some("digital".to_string()),
             notes: Some("wrong seller".to_string()),
             metadata: None,
@@ -497,7 +497,7 @@ async fn postgres_async_a2a_state_guards() {
             payment_intent_id: None,
             items: quoted.items.clone(),
             total: quoted.total,
-            currency: Some("EUR".to_string()),
+            currency: Some(CurrencyCode::EUR),
             fulfillment_type: Some("digital".to_string()),
             notes: Some("wrong currency".to_string()),
             metadata: None,
@@ -514,7 +514,7 @@ async fn postgres_async_a2a_state_guards() {
             payment_intent_id: None,
             items: quoted.items.clone(),
             total: quoted.total + dec!(1.00),
-            currency: Some(quoted.currency.clone()),
+            currency: Some(quoted.currency),
             fulfillment_type: Some("digital".to_string()),
             notes: Some("wrong total".to_string()),
             metadata: None,
@@ -531,7 +531,7 @@ async fn postgres_async_a2a_state_guards() {
             payment_intent_id: None,
             items: quoted.items.clone(),
             total: quoted.total,
-            currency: Some(quoted.currency.clone()),
+            currency: Some(quoted.currency),
             fulfillment_type: Some("digital".to_string()),
             notes: Some("valid purchase".to_string()),
             metadata: None,
@@ -570,7 +570,7 @@ async fn postgres_async_a2a_state_guards() {
             shipping_amount: Some(dec!(0.00)),
             discount_amount: None,
             total: dec!(15.00),
-            currency: Some("USD".to_string()),
+            currency: Some(CurrencyCode::USD),
             payment_network: Some(network),
             payment_asset: Some(asset),
             shipping_address: None,
@@ -601,7 +601,7 @@ async fn postgres_async_a2a_state_guards() {
             shipping_amount: Some(dec!(0.00)),
             discount_amount: None,
             total: dec!(15.00),
-            currency: Some("USD".to_string()),
+            currency: Some(CurrencyCode::USD),
             payment_network: Some(network),
             payment_asset: Some(asset),
             shipping_address: None,
@@ -632,7 +632,7 @@ async fn postgres_async_a2a_state_guards() {
             payment_intent_id: None,
             items: expired.items,
             total: expired.total,
-            currency: Some(expired.currency.clone()),
+            currency: Some(expired.currency),
             fulfillment_type: Some("digital".to_string()),
             notes: Some("expired quote blocked".to_string()),
             metadata: None,
@@ -696,7 +696,7 @@ async fn postgres_async_a2a_state_lifecycle_controls() {
         shipping_amount: Some(rust_decimal::Decimal::ZERO),
         discount_amount: Some(rust_decimal::Decimal::ZERO),
         total: dec!(12.00),
-        currency: Some("USD".to_string()),
+        currency: Some(CurrencyCode::USD),
         payment_network: Some(X402Network::SetChain),
         payment_asset: Some(X402Asset::Usdc),
         shipping_address: None,
@@ -721,7 +721,7 @@ async fn postgres_async_a2a_state_lifecycle_controls() {
             quote_id: Some(cancelled_quote.id),
             items: cancelled_quote.items.clone(),
             total: cancelled_quote.total,
-            currency: Some(cancelled_quote.currency.clone()),
+            currency: Some(cancelled_quote.currency),
             fulfillment_type: Some("digital".to_string()),
             notes: Some("cancel path".into()),
             metadata: None,
@@ -769,7 +769,7 @@ async fn postgres_async_a2a_state_lifecycle_controls() {
             quote_id: Some(disputed_quote.id),
             items: disputed_quote.items.clone(),
             total: disputed_quote.total,
-            currency: Some(disputed_quote.currency.clone()),
+            currency: Some(disputed_quote.currency),
             fulfillment_type: Some("digital".to_string()),
             notes: Some("dispute path".into()),
             metadata: None,

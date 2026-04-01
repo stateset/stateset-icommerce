@@ -36,7 +36,7 @@ pub struct SqlitePurchaseOrderRepository {
 }
 
 impl SqlitePurchaseOrderRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -704,9 +704,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             .map_err(map_db_error)?;
 
         let parsed_status: PurchaseOrderStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid purchase_order.status '{status}': {e}"
-            ))
+            CommerceError::DatabaseError(format!("Invalid purchase_order.status '{status}': {e}"))
         })?;
         if parsed_status != PurchaseOrderStatus::Draft {
             return Err(CommerceError::ValidationError(
@@ -821,9 +819,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             })
             .map_err(map_db_error)?;
         let current_status: PurchaseOrderStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid purchase_order.status '{status}': {e}"
-            ))
+            CommerceError::DatabaseError(format!("Invalid purchase_order.status '{status}': {e}"))
         })?;
 
         for item in items.items {
@@ -1365,9 +1361,8 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let params_refs = params_refs(&params);
 
         // Delete purchase order items first
-        let sql = format!(
-            "DELETE FROM purchase_order_items WHERE purchase_order_id IN ({placeholders})"
-        );
+        let sql =
+            format!("DELETE FROM purchase_order_items WHERE purchase_order_id IN ({placeholders})");
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
         // Delete purchase orders

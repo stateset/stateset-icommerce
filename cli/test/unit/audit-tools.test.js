@@ -2,8 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { auditTools } from '../../src/tools/audit.js';
-// Note: AuditStore uses better-sqlite3 which has a known binary mismatch
-// in this dev environment. Handler tests verify graceful error handling.
+// AuditStore falls back cleanly when the native SQLite binding is unavailable,
+// so these handler tests validate the real success path in both environments.
 
 // ---------------------------------------------------------------------------
 // Tool definition validation

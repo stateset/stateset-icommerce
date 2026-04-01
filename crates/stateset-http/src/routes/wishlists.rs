@@ -58,15 +58,13 @@ impl WishlistFilterParams {
 
     /// Resolved limit with bounds checking.
     #[must_use]
-    pub fn resolved_limit(&self) -> u32 {
-        self.limit
-            .unwrap_or(Self::DEFAULT_LIMIT)
-            .clamp(1, Self::MAX_LIMIT)
+    pub(crate) fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(Self::DEFAULT_LIMIT).clamp(1, Self::MAX_LIMIT)
     }
 
     /// Resolved offset.
     #[must_use]
-    pub fn resolved_offset(&self) -> u32 {
+    pub(crate) fn resolved_offset(&self) -> u32 {
         self.offset.unwrap_or(0)
     }
 }
@@ -112,15 +110,9 @@ pub(crate) struct WishlistListResponse {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/wishlists", post(create_wishlist).get(list_wishlists))
-        .route(
-            "/wishlists/{id}",
-            get(get_wishlist).delete(delete_wishlist),
-        )
+        .route("/wishlists/{id}", get(get_wishlist).delete(delete_wishlist))
         .route("/wishlists/{id}/items", post(add_item))
-        .route(
-            "/wishlists/{id}/items/{product_id}",
-            axum::routing::delete(remove_item),
-        )
+        .route("/wishlists/{id}/items/{product_id}", axum::routing::delete(remove_item))
 }
 
 // ============================================================================
@@ -215,12 +207,8 @@ pub(crate) async fn list_wishlists(
         .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
 
     // Count total matching records (without pagination)
-    let count_filter = stateset_core::WishlistFilter {
-        customer_id,
-        is_public: None,
-        limit: None,
-        offset: None,
-    };
+    let count_filter =
+        stateset_core::WishlistFilter { customer_id, is_public: None, limit: None, offset: None };
     let total = commerce.wishlists().list(count_filter)?.len();
 
     // Fetch the requested page

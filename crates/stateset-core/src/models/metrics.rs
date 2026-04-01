@@ -25,7 +25,7 @@ pub struct Counter {
 
 impl Counter {
     /// Create a new counter metric
-    #[must_use] 
+    #[must_use]
     pub fn new(name: &str, help: &str, labels: Vec<&str>) -> Self {
         Self {
             name: name.to_string(),
@@ -95,7 +95,7 @@ pub struct Gauge {
 
 impl Gauge {
     /// Create a new gauge metric
-    #[must_use] 
+    #[must_use]
     pub fn new(name: &str, help: &str, labels: Vec<&str>) -> Self {
         Self {
             name: name.to_string(),
@@ -181,7 +181,7 @@ struct HistogramData {
 
 impl Histogram {
     /// Create a new histogram metric
-    #[must_use] 
+    #[must_use]
     pub fn new(name: &str, help: &str, labels: Vec<&str>, buckets: Vec<f64>) -> Self {
         Self {
             name: name.to_string(),
@@ -193,7 +193,7 @@ impl Histogram {
     }
 
     /// Default buckets for request durations (in seconds)
-    #[must_use] 
+    #[must_use]
     pub fn default_buckets() -> Vec<f64> {
         vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
     }
@@ -201,7 +201,8 @@ impl Histogram {
     /// Record an observation value for the histogram
     pub fn observe(&self, label_values: &[&str], value: f64) {
         let key: Vec<String> = label_values.iter().map(|s| (*s).to_string()).collect();
-        let mut observations = self.observations.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut observations =
+            self.observations.write().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let data = observations.entry(key).or_insert_with(|| {
             let mut bucket_counts = Vec::with_capacity(self.buckets.len());
@@ -235,7 +236,8 @@ impl Histogram {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} histogram\n", self.name));
 
-        let observations = self.observations.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let observations =
+            self.observations.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         for (labels, data) in observations.iter() {
             let base_label_str = if !labels.is_empty() && !self.labels.is_empty() {
                 let pairs: Vec<String> = self
@@ -324,7 +326,7 @@ impl std::fmt::Debug for CommerceMetrics {
 
 impl CommerceMetrics {
     /// Create a registry of commerce-specific metrics
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             orders_created: Counter::new(
@@ -462,7 +464,7 @@ pub struct LogEntry {
 
 impl LogEntry {
     /// Create a new log entry with level and message
-    #[must_use] 
+    #[must_use]
     pub fn new(level: LogLevel, message: &str) -> Self {
         Self {
             timestamp: Utc::now(),
@@ -513,7 +515,7 @@ impl LogEntry {
     }
 
     /// Render as human-readable string
-    #[must_use] 
+    #[must_use]
     pub fn to_human(&self) -> String {
         let mut parts = vec![
             format!("{}", self.timestamp.format("%Y-%m-%d %H:%M:%S%.3f")),
@@ -542,7 +544,7 @@ pub struct CommerceLogger;
 
 impl CommerceLogger {
     /// Build a log entry for order creation
-    #[must_use] 
+    #[must_use]
     pub fn order_created(order_id: &str, customer_id: &str, total: Decimal) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Order created")
             .with_target("stateset::orders")
@@ -552,7 +554,7 @@ impl CommerceLogger {
     }
 
     /// Build a log entry for inventory adjustments
-    #[must_use] 
+    #[must_use]
     pub fn inventory_adjusted(sku: &str, quantity: Decimal, reason: &str) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Inventory adjusted")
             .with_target("stateset::inventory")
@@ -562,7 +564,7 @@ impl CommerceLogger {
     }
 
     /// Build a log entry for payment processing
-    #[must_use] 
+    #[must_use]
     pub fn payment_processed(payment_id: &str, amount: Decimal, status: &str) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Payment processed")
             .with_target("stateset::payments")
@@ -572,7 +574,7 @@ impl CommerceLogger {
     }
 
     /// Build a log entry for an operation error
-    #[must_use] 
+    #[must_use]
     pub fn error(operation: &str, error: &str) -> LogEntry {
         LogEntry::new(LogLevel::Error, &format!("Operation failed: {error}"))
             .with_target("stateset::error")
@@ -581,7 +583,7 @@ impl CommerceLogger {
     }
 
     /// Build a log entry for database queries
-    #[must_use] 
+    #[must_use]
     pub fn database_query(query_type: &str, table: &str, duration_ms: u64) -> LogEntry {
         LogEntry::new(LogLevel::Debug, "Database query executed")
             .with_target("stateset::database")

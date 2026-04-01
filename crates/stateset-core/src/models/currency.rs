@@ -91,7 +91,7 @@ pub enum Currency {
 
 impl Currency {
     /// Get the currency code as a string
-    #[must_use] 
+    #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
             Self::USD => "USD",
@@ -134,7 +134,7 @@ impl Currency {
     }
 
     /// Get the currency symbol
-    #[must_use] 
+    #[must_use]
     pub const fn symbol(&self) -> &'static str {
         match self {
             Self::USD => "$",
@@ -177,7 +177,7 @@ impl Currency {
     }
 
     /// Get the currency name
-    #[must_use] 
+    #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
             Self::USD => "US Dollar",
@@ -220,7 +220,7 @@ impl Currency {
     }
 
     /// Get the number of decimal places for this currency
-    #[must_use] 
+    #[must_use]
     pub const fn decimal_places(&self) -> u8 {
         match self {
             // Zero decimal currencies
@@ -235,19 +235,19 @@ impl Currency {
     }
 
     /// Check if this is a cryptocurrency
-    #[must_use] 
+    #[must_use]
     pub const fn is_crypto(&self) -> bool {
         matches!(self, Self::BTC | Self::ETH | Self::USDC | Self::USDT)
     }
 
     /// Check if this is a fiat currency
-    #[must_use] 
+    #[must_use]
     pub const fn is_fiat(&self) -> bool {
         !self.is_crypto()
     }
 
     /// Get all supported currencies
-    #[must_use] 
+    #[must_use]
     pub fn all() -> Vec<Self> {
         vec![
             Self::USD,
@@ -357,56 +357,56 @@ pub struct Money {
 
 impl Money {
     /// Create a new Money instance
-    #[must_use] 
+    #[must_use]
     pub const fn new(amount: Decimal, currency: Currency) -> Self {
         Self { amount, currency }
     }
 
     /// Create Money from a major unit amount (e.g., dollars, not cents)
-    #[must_use] 
+    #[must_use]
     pub const fn from_major(amount: Decimal, currency: Currency) -> Self {
         Self { amount, currency }
     }
 
     /// Create zero money in a currency
-    #[must_use] 
+    #[must_use]
     pub const fn zero(currency: Currency) -> Self {
         Self { amount: Decimal::ZERO, currency }
     }
 
     /// Check if the amount is zero
-    #[must_use] 
+    #[must_use]
     pub const fn is_zero(&self) -> bool {
         self.amount.is_zero()
     }
 
     /// Check if the amount is positive
-    #[must_use] 
+    #[must_use]
     pub const fn is_positive(&self) -> bool {
         self.amount.is_sign_positive() && !self.amount.is_zero()
     }
 
     /// Check if the amount is negative
-    #[must_use] 
+    #[must_use]
     pub const fn is_negative(&self) -> bool {
         self.amount.is_sign_negative()
     }
 
     /// Get the absolute value
-    #[must_use] 
+    #[must_use]
     pub fn abs(&self) -> Self {
         Self { amount: self.amount.abs(), currency: self.currency }
     }
 
     /// Round to the currency's decimal places
-    #[must_use] 
+    #[must_use]
     pub fn round(&self) -> Self {
         let places = u32::from(self.currency.decimal_places());
         Self { amount: self.amount.round_dp(places), currency: self.currency }
     }
 
     /// Format as a string with symbol
-    #[must_use] 
+    #[must_use]
     pub fn format(&self) -> String {
         let rounded = self.round();
         let places = self.currency.decimal_places();
@@ -422,7 +422,7 @@ impl Money {
     }
 
     /// Format as a string with currency code
-    #[must_use] 
+    #[must_use]
     pub fn format_with_code(&self) -> String {
         let rounded = self.round();
         let places = self.currency.decimal_places();
@@ -492,19 +492,19 @@ pub struct ExchangeRate {
 
 impl ExchangeRate {
     /// Convert an amount from base to quote currency
-    #[must_use] 
+    #[must_use]
     pub fn convert(&self, amount: Decimal) -> Decimal {
         amount * self.rate
     }
 
     /// Convert an amount from quote to base currency (inverse)
-    #[must_use] 
+    #[must_use]
     pub fn convert_inverse(&self, amount: Decimal) -> Decimal {
         if self.rate.is_zero() { Decimal::ZERO } else { amount / self.rate }
     }
 
     /// Get the inverse rate
-    #[must_use] 
+    #[must_use]
     pub fn inverse(&self) -> Decimal {
         if self.rate.is_zero() { Decimal::ZERO } else { Decimal::ONE / self.rate }
     }
@@ -559,13 +559,13 @@ pub struct MultiCurrencyPrice {
 
 impl MultiCurrencyPrice {
     /// Create a new multi-currency price with just the base
-    #[must_use] 
+    #[must_use]
     pub const fn new(base: Money) -> Self {
         Self { base, prices: Vec::new() }
     }
 
     /// Get the price in a specific currency if available
-    #[must_use] 
+    #[must_use]
     pub fn get(&self, currency: Currency) -> Option<&Money> {
         if self.base.currency == currency {
             Some(&self.base)

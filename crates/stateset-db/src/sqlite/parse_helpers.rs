@@ -38,9 +38,7 @@ use uuid::Uuid;
 /// * `field` - The field name (e.g., "id", "`customer_id`")
 pub(crate) fn parse_uuid(s: &str, entity: &str, field: &str) -> Result<Uuid> {
     Uuid::parse_str(s).map_err(|e| {
-        CommerceError::DatabaseError(format!(
-            "Invalid UUID for {entity}.{field}: '{s}' - {e}"
-        ))
+        CommerceError::DatabaseError(format!("Invalid UUID for {entity}.{field}: '{s}' - {e}"))
     })
 }
 
@@ -87,9 +85,7 @@ pub(crate) fn parse_datetime_opt(
 #[allow(dead_code)]
 pub(crate) fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
-        CommerceError::DatabaseError(format!(
-            "Invalid date for {entity}.{field}: '{s}' - {e}"
-        ))
+        CommerceError::DatabaseError(format!("Invalid date for {entity}.{field}: '{s}' - {e}"))
     })
 }
 
@@ -116,9 +112,7 @@ pub(crate) fn parse_date_opt(
 /// converted to zero as that can cause incorrect calculations.
 pub(crate) fn parse_decimal(s: &str, entity: &str, field: &str) -> Result<Decimal> {
     s.parse::<Decimal>().map_err(|e| {
-        CommerceError::DatabaseError(format!(
-            "Invalid decimal for {entity}.{field}: '{s}' - {e}"
-        ))
+        CommerceError::DatabaseError(format!("Invalid decimal for {entity}.{field}: '{s}' - {e}"))
     })
 }
 
@@ -255,9 +249,7 @@ where
 #[allow(dead_code)]
 pub(crate) fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
     s.parse::<i32>().map_err(|e| {
-        CommerceError::DatabaseError(format!(
-            "Invalid i32 for {entity}.{field}: '{s}' - {e}"
-        ))
+        CommerceError::DatabaseError(format!("Invalid i32 for {entity}.{field}: '{s}' - {e}"))
     })
 }
 
@@ -265,9 +257,7 @@ pub(crate) fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
 #[allow(dead_code)]
 pub(crate) fn parse_i64(s: &str, entity: &str, field: &str) -> Result<i64> {
     s.parse::<i64>().map_err(|e| {
-        CommerceError::DatabaseError(format!(
-            "Invalid i64 for {entity}.{field}: '{s}' - {e}"
-        ))
+        CommerceError::DatabaseError(format!("Invalid i64 for {entity}.{field}: '{s}' - {e}"))
     })
 }
 

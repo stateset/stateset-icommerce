@@ -20,7 +20,7 @@ use crate::rule::PolicyRule;
 /// 2. **`flag_high_value_returns`** (priority 50):
 ///    `return.value` >= 500 OR `customer.returnRate` >= 0.2
 ///    => Workflow: `returnProcessing` (requires approval)
-#[must_use] 
+#[must_use]
 pub fn auto_approve_returns_template() -> PolicySet {
     PolicySet::new("Auto-Approve Small Returns", "returns")
         .with_description(
@@ -88,7 +88,7 @@ pub fn auto_approve_returns_template() -> PolicySet {
 /// 2. **`low_stock_reorder`** (priority 50):
 ///    `inventory.quantity` <= `${inventory.reorderPoint}` (dynamic ref)
 ///    => Agent: create standard PO
-#[must_use] 
+#[must_use]
 pub fn inventory_restock_template() -> PolicySet {
     PolicySet::new("Inventory Restock Rules", "inventory")
         .with_description("Automatically trigger restock when inventory is low")
@@ -152,7 +152,7 @@ pub fn inventory_restock_template() -> PolicySet {
 /// 3. **`shipping_billing_mismatch`** (priority 80):
 ///    `order.shippingAddress.country` != `${order.billingAddress.country}` AND `order.total` > 500
 ///    => Workflow: `orderFulfillment` (medium risk)
-#[must_use] 
+#[must_use]
 pub fn order_fraud_detection_template() -> PolicySet {
     PolicySet::new("Order Fraud Detection", "orders")
         .with_description("Flag potentially fraudulent orders")
@@ -248,7 +248,7 @@ pub fn order_fraud_detection_template() -> PolicySet {
 /// 3. **`no_double_discount`** (priority 50, stop-on-match):
 ///    `cart.hasPercentageDiscount` is true AND `promotion.type` == "percentage"
 ///    => Deny
-#[must_use] 
+#[must_use]
 pub fn promotion_eligibility_template() -> PolicySet {
     PolicySet::new("Promotion Eligibility Rules", "promotions")
         .with_description("Determine promotion eligibility and stacking")
@@ -325,7 +325,7 @@ pub fn promotion_eligibility_template() -> PolicySet {
 /// 2. **`offer_discount_on_cancel`** (priority 80):
 ///    event == `"cancellation_requested"` AND `subscription.monthsActive` >= 6
 ///    => Agent: offer retention discount
-#[must_use] 
+#[must_use]
 pub fn subscription_rules_template() -> PolicySet {
     PolicySet::new("Subscription Management Rules", "subscriptions")
         .with_description("Handle subscription lifecycle events")

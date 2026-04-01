@@ -8,13 +8,13 @@ use axum::{
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_a2a::credit::{CreditManager, CreditStatus, CreditTerms, PaymentTerms};
+use stateset_a2a::credit::{CreditManager, CreditTerms, PaymentTerms};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::error::{ErrorBody, HttpError};
+use crate::error::HttpError;
 use crate::state::AppState;
 
 type CreditStore = Arc<RwLock<HashMap<Uuid, CreditTerms>>>;
@@ -23,25 +23,38 @@ type CreditStore = Arc<RwLock<HashMap<Uuid, CreditTerms>>>;
 pub fn router() -> Router<AppState> {
     let store: CreditStore = Arc::new(RwLock::new(HashMap::new()));
     Router::new()
-        .route("/a2a/credit", post({
-            let s = store.clone();
-            move |state, headers, body| create_terms(state, headers, body, s)
-        }).get({
-            let s = store.clone();
-            move |state, headers| list_terms(state, headers, s)
-        }))
-        .route("/a2a/credit/{id}", get({
-            let s = store.clone();
-            move |state, headers, path| get_terms(state, headers, path, s)
-        }))
-        .route("/a2a/credit/{id}/charge", post({
-            let s = store.clone();
-            move |state, headers, path, body| charge_credit(state, headers, path, body, s)
-        }))
-        .route("/a2a/credit/{id}/payment", post({
-            let s = store.clone();
-            move |state, headers, path, body| record_payment(state, headers, path, body, s)
-        }))
+        .route(
+            "/a2a/credit",
+            post({
+                let s = store.clone();
+                move |state, headers, body| create_terms(state, headers, body, s)
+            })
+            .get({
+                let s = store.clone();
+                move |state, headers| list_terms(state, headers, s)
+            }),
+        )
+        .route(
+            "/a2a/credit/{id}",
+            get({
+                let s = store.clone();
+                move |state, headers, path| get_terms(state, headers, path, s)
+            }),
+        )
+        .route(
+            "/a2a/credit/{id}/charge",
+            post({
+                let s = store.clone();
+                move |state, headers, path, body| charge_credit(state, headers, path, body, s)
+            }),
+        )
+        .route(
+            "/a2a/credit/{id}/payment",
+            post({
+                let s = store;
+                move |state, headers, path, body| record_payment(state, headers, path, body, s)
+            }),
+        )
 }
 
 /// Request body for creating credit terms.
@@ -107,9 +120,11 @@ async fn create_terms(
         Some("net_60") => PaymentTerms::Net60,
         Some("net_90") => PaymentTerms::Net90,
         Some("prepaid") => PaymentTerms::Prepaid,
-        Some(other) => return Err(HttpError::BadRequest(
-            format!("Invalid payment_terms: {other}. Valid values: net_15, net_30, net_60, net_90, prepaid")
-        )),
+        Some(other) => {
+            return Err(HttpError::BadRequest(format!(
+                "Invalid payment_terms: {other}. Valid values: net_15, net_30, net_60, net_90, prepaid"
+            )));
+        }
         None => PaymentTerms::Net30,
     };
 
@@ -150,7 +165,9 @@ async fn get_terms(
     store: CreditStore,
 ) -> Result<Json<CreditTermsResponse>, HttpError> {
     let guard = store.read().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
-    let terms = guard.get(&id).ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
+    let terms = guard
+        .get(&id)
+        .ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
     Ok(Json(terms_to_response(terms)))
 }
 
@@ -167,7 +184,9 @@ async fn charge_credit(
         .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?;
 
     let mut guard = store.write().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
-    let terms = guard.get_mut(&id).ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
+    let terms = guard
+        .get_mut(&id)
+        .ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
 
     CreditManager::charge(terms, amount, req.reference_id)
         .map_err(|e| HttpError::BadRequest(format!("Charge failed: {e}")))?;
@@ -188,7 +207,9 @@ async fn record_payment(
         .map_err(|e| HttpError::BadRequest(format!("Invalid amount: {e}")))?;
 
     let mut guard = store.write().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
-    let terms = guard.get_mut(&id).ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
+    let terms = guard
+        .get_mut(&id)
+        .ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
 
     CreditManager::record_payment(terms, amount, req.reference_id)
         .map_err(|e| HttpError::BadRequest(format!("Payment failed: {e}")))?;

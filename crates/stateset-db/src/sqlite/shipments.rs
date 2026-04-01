@@ -21,7 +21,7 @@ pub struct SqliteShipmentRepository {
 }
 
 impl SqliteShipmentRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -506,7 +506,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let mut stmt =
                 conn.prepare(&sql).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(std::convert::AsRef::as_ref).collect();
 
             let rows = stmt
                 .query_map(param_refs.as_slice(), |row| row.get::<_, String>(0))
@@ -724,7 +725,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
             params.push(Box::new(carrier.to_string()));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
 
         let count: i64 = conn
             .query_row(&sql, param_refs.as_slice(), |row| row.get(0))

@@ -69,7 +69,7 @@ pub struct SqliteBackorderRepository {
 }
 
 impl SqliteBackorderRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -360,7 +360,8 @@ impl BackorderRepository for SqliteBackorderRepository {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| self.row_to_backorder(row))

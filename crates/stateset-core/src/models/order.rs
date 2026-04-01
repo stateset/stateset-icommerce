@@ -82,7 +82,7 @@ pub enum OrderStatus {
 
 impl OrderStatus {
     /// Check if a status transition is allowed.
-    #[must_use] 
+    #[must_use]
     pub fn can_transition_to(self, next: Self) -> bool {
         if self == next {
             return true;
@@ -226,13 +226,13 @@ pub struct OrderFilter {
 
 impl Order {
     /// Calculate total from items
-    #[must_use] 
+    #[must_use]
     pub fn calculate_total(&self) -> Decimal {
         self.items.iter().map(|item| item.total).sum()
     }
 
     /// Check if order can be cancelled
-    #[must_use] 
+    #[must_use]
     pub const fn can_cancel(&self) -> bool {
         matches!(
             self.status,
@@ -241,7 +241,7 @@ impl Order {
     }
 
     /// Check if order can be refunded
-    #[must_use] 
+    #[must_use]
     pub const fn can_refund(&self) -> bool {
         matches!(self.payment_status, PaymentStatus::Paid | PaymentStatus::PartiallyPaid)
     }
@@ -249,7 +249,7 @@ impl Order {
 
 impl OrderItem {
     /// Calculate item total
-    #[must_use] 
+    #[must_use]
     pub fn calculate_total(
         quantity: i32,
         unit_price: Decimal,

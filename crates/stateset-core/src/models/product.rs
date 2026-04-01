@@ -171,7 +171,7 @@ pub struct ProductFilter {
 
 impl Product {
     /// Generate slug from name if not provided
-    #[must_use] 
+    #[must_use]
     pub fn generate_slug(name: &str) -> String {
         name.to_lowercase()
             .chars()
@@ -184,7 +184,7 @@ impl Product {
     }
 
     /// Check if product is purchasable
-    #[must_use] 
+    #[must_use]
     pub fn is_purchasable(&self) -> bool {
         self.status == ProductStatus::Active
     }
@@ -192,7 +192,7 @@ impl Product {
 
 impl ProductVariant {
     /// Calculate profit margin
-    #[must_use] 
+    #[must_use]
     pub fn profit_margin(&self) -> Option<Decimal> {
         self.cost.map(|cost| {
             if cost > Decimal::ZERO {
@@ -204,7 +204,7 @@ impl ProductVariant {
     }
 
     /// Check if on sale
-    #[must_use] 
+    #[must_use]
     pub fn is_on_sale(&self) -> bool {
         self.compare_at_price.is_some_and(|compare| compare > self.price)
     }

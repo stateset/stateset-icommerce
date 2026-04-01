@@ -164,28 +164,28 @@ impl AgentCard {
     }
 
     /// Add supported networks
-    #[must_use] 
+    #[must_use]
     pub fn with_networks(mut self, networks: Vec<X402Network>) -> Self {
         self.supported_networks = networks;
         self
     }
 
     /// Add supported assets
-    #[must_use] 
+    #[must_use]
     pub fn with_assets(mut self, assets: Vec<X402Asset>) -> Self {
         self.supported_assets = assets;
         self
     }
 
     /// Add A2A skills
-    #[must_use] 
+    #[must_use]
     pub fn with_skills(mut self, skills: Vec<A2ASkill>) -> Self {
         self.a2a_skills = skills;
         self
     }
 
     /// Set trust level
-    #[must_use] 
+    #[must_use]
     pub const fn with_trust_level(mut self, level: TrustLevel) -> Self {
         self.trust_level = level;
         self
@@ -199,31 +199,31 @@ impl AgentCard {
     }
 
     /// Check if agent supports a specific network
-    #[must_use] 
+    #[must_use]
     pub fn supports_network(&self, network: X402Network) -> bool {
         self.supported_networks.contains(&network)
     }
 
     /// Check if agent supports a specific asset
-    #[must_use] 
+    #[must_use]
     pub fn supports_asset(&self, asset: X402Asset) -> bool {
         self.supported_assets.contains(&asset)
     }
 
     /// Check if agent has a specific skill
-    #[must_use] 
+    #[must_use]
     pub fn has_skill(&self, skill: &A2ASkill) -> bool {
         self.a2a_skills.contains(skill)
     }
 
     /// Check if agent can sell
-    #[must_use] 
+    #[must_use]
     pub fn can_sell(&self) -> bool {
         self.a2a_skills.iter().any(|s| matches!(s, A2ASkill::Sell | A2ASkill::Quote))
     }
 
     /// Check if agent can buy
-    #[must_use] 
+    #[must_use]
     pub fn can_buy(&self) -> bool {
         self.a2a_skills.iter().any(|s| matches!(s, A2ASkill::Buy | A2ASkill::RequestQuote))
     }
@@ -259,7 +259,7 @@ pub enum TrustLevel {
 
 impl TrustLevel {
     /// Numeric rank for trust comparison (higher is more trusted).
-    #[must_use] 
+    #[must_use]
     pub const fn rank(&self) -> u8 {
         match self {
             Self::Sandbox => 0,
@@ -270,7 +270,7 @@ impl TrustLevel {
     }
 
     /// Get the default transaction limit for this trust level (in USDC cents)
-    #[must_use] 
+    #[must_use]
     pub const fn default_transaction_limit(&self) -> u64 {
         match self {
             Self::Sandbox => 100_000_000,        // $100 (for testing)
@@ -281,7 +281,7 @@ impl TrustLevel {
     }
 
     /// Get the default daily volume limit for this trust level
-    #[must_use] 
+    #[must_use]
     pub const fn default_daily_limit(&self) -> u64 {
         match self {
             Self::Sandbox => 1_000_000_000,        // $1,000/day

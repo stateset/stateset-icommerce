@@ -672,6 +672,17 @@ describe('Deploy Files', () => {
     assert.equal(config._version, pkg.version);
   });
 
+  it('should have deployment docs pinned to the current release image tag', () => {
+    const packagePath = join(__dirname, '..', 'package.json');
+    const deploymentDocPath = join(__dirname, '..', '..', 'docs', 'src', 'advanced', 'deployment.md');
+    const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'));
+    const deploymentDoc = readFileSync(deploymentDocPath, 'utf-8');
+    assert.ok(
+      deploymentDoc.includes(`image: stateset/icommerce:${pkg.version}`),
+      'deployment docs should reference the current release image tag',
+    );
+  });
+
   it('should have gateway service with security hardening', () => {
     const path = join(__dirname, '..', 'deploy', 'stateset-gateway.service');
     const content = readFileSync(path, 'utf-8');

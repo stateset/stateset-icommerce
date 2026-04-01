@@ -12,7 +12,8 @@
  *   - batchEmbed(texts)     → embed multiple texts at once
  */
 
-import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { getMemoryStore } from './store.js';
 
 // ============================================================================
@@ -21,6 +22,38 @@ import { getMemoryStore } from './store.js';
 
 const VECTOR_DIM = 256;
 const RRF_K = 60; // Reciprocal Rank Fusion constant
+const require = createRequire(import.meta.url);
+const FALLBACK_VECTOR_DATABASES = new Map();
+let cachedDatabaseCtor;
+
+function loadDatabaseCtor() {
+  if (cachedDatabaseCtor !== undefined) {
+    return cachedDatabaseCtor;
+  }
+
+  try {
+    const mod = require('better-sqlite3');
+    cachedDatabaseCtor = mod.default || mod;
+  } catch (error) {
+    if (error?.code !== 'ERR_DLOPEN_FAILED' && error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    cachedDatabaseCtor = null;
+  }
+
+  return cachedDatabaseCtor;
+}
+
+function getFallbackVectorDatabase(dbPath) {
+  let state = FALLBACK_VECTOR_DATABASES.get(dbPath);
+  if (!state || !existsSync(dbPath)) {
+    state = {
+      vectors: new Map(),
+    };
+    FALLBACK_VECTOR_DATABASES.set(dbPath, state);
+  }
+  return state;
+}
 
 // ============================================================================
 // Schema extension
@@ -156,10 +189,26 @@ export class VectorMemoryStore {
     this._base = opts.memoryStore || getMemoryStore(opts);
     this._dim = opts.dim || VECTOR_DIM;
     this._embedFn = opts.embedFn || ((text) => hashEmbed(text, this._dim));
+    this._fallbackState = null;
 
     // Open or reuse the base store's DB path for the vector table
     const dbPath = opts.dbPath || this._base._dbPath;
-    this._db = new Database(dbPath);
+    const Database = loadDatabaseCtor();
+
+    if (!Database) {
+      this._fallbackState = getFallbackVectorDatabase(dbPath);
+      return;
+    }
+
+    try {
+      this._db = new Database(dbPath);
+    } catch (error) {
+      if (error?.code === 'ERR_DLOPEN_FAILED') {
+        this._fallbackState = getFallbackVectorDatabase(dbPath);
+        return;
+      }
+      throw error;
+    }
     this._db.pragma('journal_mode = WAL');
     this._db.exec(VECTOR_SCHEMA);
 
@@ -243,6 +292,14 @@ export class VectorMemoryStore {
     const { id } = this._base.save(entry);
     const embedding = this.embed(entry.summary);
     const norm = l2Norm(embedding);
+    if (this._fallbackState) {
+      this._fallbackState.vectors.set(id, {
+        embedding,
+        norm,
+        createdAt: Date.now(),
+      });
+      return { id };
+    }
     const blob = Buffer.from(embedding.buffer);
     this._insertVecStmt.run(id, blob, norm, Date.now());
     return { id };
@@ -271,7 +328,35 @@ export class VectorMemoryStore {
 
     // Get candidate vectors
     let rows;
-    if (channel && senderId) {
+    if (this._fallbackState) {
+      const memories =
+        channel && senderId
+          ? this._base.getRecent(channel, senderId, Math.max(limit * 10, 200))
+          : this._base.getAllRecent(Math.max(limit * 10, 200));
+      rows = memories.map((mem) => {
+        let vector = this._fallbackState.vectors.get(mem.id);
+        if (!vector) {
+          const embedding = this.embed(mem.summary);
+          vector = {
+            embedding,
+            norm: l2Norm(embedding),
+            createdAt: Date.now(),
+          };
+          this._fallbackState.vectors.set(mem.id, vector);
+        }
+        return {
+          memory_id: mem.id,
+          embedding: vector.embedding,
+          norm: vector.norm,
+          channel: mem.channel,
+          sender_id: mem.sender_id,
+          summary: mem.summary,
+          facts: JSON.stringify(mem.facts || []),
+          agent: mem.agent,
+          created_at: mem.created_at,
+        };
+      });
+    } else if (channel && senderId) {
       rows = this._allVecsStmt.all(channel, senderId);
     } else {
       rows = this._allVecsGlobalStmt.all(Math.max(limit * 10, 200));
@@ -280,12 +365,15 @@ export class VectorMemoryStore {
     // Score each candidate
     const scored = [];
     for (const row of rows) {
-      const embedding = new Float64Array(
-        row.embedding.buffer.slice(
-          row.embedding.byteOffset,
-          row.embedding.byteOffset + row.embedding.byteLength,
-        ),
-      );
+      const embedding =
+        row.embedding instanceof Float64Array
+          ? row.embedding
+          : new Float64Array(
+              row.embedding.buffer.slice(
+                row.embedding.byteOffset,
+                row.embedding.byteOffset + row.embedding.byteLength,
+              ),
+            );
       const sim = cosineSimilarity(queryVec, embedding, queryNorm, row.norm);
       if (sim >= minSimilarity) {
         scored.push({
@@ -396,6 +484,9 @@ export class VectorMemoryStore {
    * @returns {number}
    */
   vectorCount() {
+    if (this._fallbackState) {
+      return this._fallbackState.vectors.size;
+    }
     return this._countVecsStmt.get().cnt;
   }
 
@@ -413,6 +504,25 @@ export class VectorMemoryStore {
 
     let processed = 0;
     let errors = 0;
+
+    if (this._fallbackState) {
+      for (const mem of memories) {
+        try {
+          if (this._fallbackState.vectors.has(mem.id)) continue;
+          const embedding = this.embed(mem.summary);
+          this._fallbackState.vectors.set(mem.id, {
+            embedding,
+            norm: l2Norm(embedding),
+            createdAt: Date.now(),
+          });
+          processed++;
+        } catch (err) {
+          console.warn('[vector-store] Embedding insertion failed:', err.message || err);
+          errors++;
+        }
+      }
+      return { processed, errors };
+    }
 
     const insertMany = this._db.transaction((items) => {
       for (const mem of items) {
@@ -442,6 +552,9 @@ export class VectorMemoryStore {
    * @returns {boolean}
    */
   deleteVector(memoryId) {
+    if (this._fallbackState) {
+      return this._fallbackState.vectors.delete(memoryId);
+    }
     return this._deleteVecStmt.run(memoryId).changes > 0;
   }
 

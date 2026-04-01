@@ -59,15 +59,13 @@ impl ReviewFilterParams {
 
     /// Resolved limit with bounds checking.
     #[must_use]
-    pub fn resolved_limit(&self) -> u32 {
-        self.limit
-            .unwrap_or(Self::DEFAULT_LIMIT)
-            .clamp(1, Self::MAX_LIMIT)
+    pub(crate) fn resolved_limit(&self) -> u32 {
+        self.limit.unwrap_or(Self::DEFAULT_LIMIT).clamp(1, Self::MAX_LIMIT)
     }
 
     /// Resolved offset.
     #[must_use]
-    pub fn resolved_offset(&self) -> u32 {
+    pub(crate) fn resolved_offset(&self) -> u32 {
         self.offset.unwrap_or(0)
     }
 }
@@ -136,9 +134,7 @@ pub(crate) async fn create_review(
     let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
 
     if req.rating < 1 || req.rating > 5 {
-        return Err(HttpError::BadRequest(
-            "Rating must be between 1 and 5".to_string(),
-        ));
+        return Err(HttpError::BadRequest("Rating must be between 1 and 5".to_string()));
     }
 
     let review = commerce.reviews().create(stateset_core::CreateReview {

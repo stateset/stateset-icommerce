@@ -44,7 +44,7 @@ impl std::fmt::Debug for InMemoryEventStore {
 
 impl InMemoryEventStore {
     /// Create a new in-memory event store
-    #[must_use] 
+    #[must_use]
     pub fn new(max_events: usize) -> Self {
         Self {
             events: Arc::new(RwLock::new(VecDeque::with_capacity(max_events))),
@@ -136,6 +136,51 @@ impl InMemoryEventStore {
             | CommerceEvent::A2APurchasePaid { purchase_id, .. }
             | CommerceEvent::A2ADeliveryConfirmed { purchase_id, .. } => {
                 (Some("a2a_purchase".to_string()), Some(purchase_id.to_string()))
+            }
+            // Cart events
+            CommerceEvent::CartCreated { cart_id, .. }
+            | CommerceEvent::CartItemAdded { cart_id, .. }
+            | CommerceEvent::CartStatusChanged { cart_id, .. }
+            | CommerceEvent::CartCheckoutCompleted { cart_id, .. } => {
+                (Some("cart".to_string()), Some(cart_id.to_string()))
+            }
+            // Payment events
+            CommerceEvent::PaymentCreated { payment_id, .. }
+            | CommerceEvent::PaymentStatusChanged { payment_id, .. }
+            | CommerceEvent::PaymentCompleted { payment_id, .. } => {
+                (Some("payment".to_string()), Some(payment_id.to_string()))
+            }
+            // Shipment events
+            CommerceEvent::ShipmentCreated { shipment_id, .. }
+            | CommerceEvent::ShipmentDelivered { shipment_id, .. } => {
+                (Some("shipment".to_string()), Some(shipment_id.to_string()))
+            }
+            // Invoice events
+            CommerceEvent::InvoiceCreated { invoice_id, .. }
+            | CommerceEvent::InvoiceStatusChanged { invoice_id, .. } => {
+                (Some("invoice".to_string()), Some(invoice_id.to_string()))
+            }
+            // Subscription events
+            CommerceEvent::SubscriptionCreated { subscription_id, .. }
+            | CommerceEvent::SubscriptionStatusChanged { subscription_id, .. }
+            | CommerceEvent::SubscriptionRenewed { subscription_id, .. }
+            | CommerceEvent::SubscriptionCancelled { subscription_id, .. } => {
+                (Some("subscription".to_string()), Some(subscription_id.to_string()))
+            }
+            // Gift card events
+            CommerceEvent::GiftCardCreated { gift_card_id, .. }
+            | CommerceEvent::GiftCardRedeemed { gift_card_id, .. } => {
+                (Some("gift_card".to_string()), Some(gift_card_id.to_string()))
+            }
+            // Store credit events
+            CommerceEvent::StoreCreditIssued { store_credit_id, .. }
+            | CommerceEvent::StoreCreditApplied { store_credit_id, .. } => {
+                (Some("store_credit".to_string()), Some(store_credit_id.to_string()))
+            }
+            // Loyalty events
+            CommerceEvent::LoyaltyPointsEarned { program_id, .. }
+            | CommerceEvent::LoyaltyPointsRedeemed { program_id, .. } => {
+                (Some("loyalty".to_string()), Some(program_id.to_string()))
             }
         }
     }
@@ -232,6 +277,13 @@ impl EventStore for InMemoryEventStore {
 #[cfg(feature = "sqlite-events")]
 pub struct SqliteEventStore {
     pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
+}
+
+#[cfg(feature = "sqlite-events")]
+impl std::fmt::Debug for SqliteEventStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqliteEventStore").finish_non_exhaustive()
+    }
 }
 
 #[cfg(feature = "sqlite-events")]
@@ -445,6 +497,13 @@ impl EventStore for SqliteEventStore {
 #[cfg(feature = "postgres")]
 pub struct PostgresEventStore {
     pool: sqlx::PgPool,
+}
+
+#[cfg(feature = "postgres")]
+impl std::fmt::Debug for PostgresEventStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresEventStore").finish_non_exhaustive()
+    }
 }
 
 #[cfg(feature = "postgres")]

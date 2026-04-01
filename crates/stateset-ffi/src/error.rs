@@ -153,7 +153,7 @@ impl<T: Default> FfiResult<T> {
 
     /// Create an error result with a default value.
     #[inline]
-    #[must_use] 
+    #[must_use]
     pub fn err(code: FfiErrorCode) -> Self {
         Self { code, value: T::default() }
     }

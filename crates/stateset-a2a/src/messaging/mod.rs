@@ -130,10 +130,8 @@ pub struct MessageQueue {
 impl MessageQueue {
     /// Create an empty queue.
     #[must_use]
-    pub fn new() -> Self {
-        Self {
-            queue: VecDeque::new(),
-        }
+    pub const fn new() -> Self {
+        Self { queue: VecDeque::new() }
     }
 
     /// Add a message to the queue and return its id.
@@ -193,11 +191,7 @@ impl MessageQueue {
     /// Return all messages that are [`MessageStatus::Pending`].
     #[must_use]
     pub fn get_pending(&self) -> Vec<A2AMessage> {
-        self.queue
-            .iter()
-            .filter(|m| m.status == MessageStatus::Pending)
-            .cloned()
-            .collect()
+        self.queue.iter().filter(|m| m.status == MessageStatus::Pending).cloned().collect()
     }
 
     /// Return failed messages whose `next_retry_at` is at or before `now`.
@@ -207,8 +201,7 @@ impl MessageQueue {
         self.queue
             .iter()
             .filter(|m| {
-                m.status == MessageStatus::Failed
-                    && m.next_retry_at.is_some_and(|t| t <= now)
+                m.status == MessageStatus::Failed && m.next_retry_at.is_some_and(|t| t <= now)
             })
             .cloned()
             .collect()
@@ -299,8 +292,7 @@ mod tests {
         let msg = make_message();
         let id = q.enqueue(msg);
 
-        q.mark_failed(id, "connection refused".into())
-            .expect("mark_failed should succeed");
+        q.mark_failed(id, "connection refused".into()).expect("mark_failed should succeed");
 
         let entry = q.queue.iter().find(|m| m.id == id).expect("message exists");
         assert_eq!(entry.status, MessageStatus::Failed);

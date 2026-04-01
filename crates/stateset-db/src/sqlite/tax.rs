@@ -26,7 +26,7 @@ pub struct SqliteTaxRepository {
 }
 
 impl SqliteTaxRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -692,12 +692,20 @@ impl SqliteTaxRepository {
         let now = Utc::now();
 
         let jurisdiction_ids_json = serde_json::to_string(
-            &input.jurisdiction_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
+            &input
+                .jurisdiction_ids
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>(),
         )
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let categories_json = serde_json::to_string(
-            &input.exempt_categories.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
+            &input
+                .exempt_categories
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>(),
         )
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 

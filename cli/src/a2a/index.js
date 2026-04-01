@@ -844,6 +844,7 @@ export function createA2AService(commerce, config) {
         status: 'accepted',
         total: fromSmallestUnit(quote.total, decimals),
         asset: quote.asset,
+        network: normalizeAcceptedNetworks(quote.accepted_networks)[0] || quote.network || defaultNetwork,
       },
     };
   }
@@ -1171,7 +1172,7 @@ export function createA2AService(commerce, config) {
 
     const { getChain, getExplorerTxUrl, getTransactionStatus } = await import('../chains/index.js');
     const chain = getChain(payment.network);
-    const requiredConfirmations = chain?.executionConfirmations || chain?.confirmations || 1;
+    const requiredConfirmations = chain?.confirmations || chain?.executionConfirmations || 1;
     let status = null;
     try {
       status = await getTransactionStatus(payment.tx_hash, payment.network);

@@ -473,7 +473,7 @@ impl Tax {
     ///     println!("Tax shipping: {}", info.tax_shipping);
     /// }
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn get_us_state_info(state_code: &str) -> Option<stateset_core::UsStateTaxInfo> {
         stateset_core::get_us_state_tax_info(state_code)
     }
@@ -493,7 +493,7 @@ impl Tax {
     ///     }
     /// }
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn get_eu_vat_info(country_code: &str) -> Option<stateset_core::EuVatInfo> {
         stateset_core::get_eu_vat_info(country_code)
     }
@@ -513,13 +513,13 @@ impl Tax {
     ///     }
     /// }
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn get_canadian_tax_info(province_code: &str) -> Option<stateset_core::CanadianTaxInfo> {
         stateset_core::get_canadian_tax_info(province_code)
     }
 
     /// Check if a country is in the EU.
-    #[must_use] 
+    #[must_use]
     pub fn is_eu_country(country_code: &str) -> bool {
         stateset_core::is_eu_member(country_code)
     }

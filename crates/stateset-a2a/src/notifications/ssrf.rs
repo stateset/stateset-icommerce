@@ -25,7 +25,7 @@ pub struct UrlValidationOptions {
 
 impl UrlValidationOptions {
     /// Build default URL validation options.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -47,7 +47,7 @@ impl UrlValidationOptions {
     }
 
     /// Return normalized allowlist entries.
-    #[must_use] 
+    #[must_use]
     pub fn outbound_allowlist(&self) -> &[String] {
         &self.outbound_allowlist
     }

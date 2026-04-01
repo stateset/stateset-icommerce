@@ -83,11 +83,7 @@ impl ShippingZoneRepository for SqliteShippingZoneRepository {
                 ],
             )?;
 
-            tx.query_row(
-                "SELECT * FROM shipping_zones WHERE id = ?",
-                [&id_str],
-                Self::row_to_zone,
-            )
+            tx.query_row("SELECT * FROM shipping_zones WHERE id = ?", [&id_str], Self::row_to_zone)
         })
     }
 
@@ -118,27 +114,27 @@ impl ShippingZoneRepository for SqliteShippingZoneRepository {
             }
             if let Some(ref countries) = input.countries {
                 let json = serde_json::to_string(countries).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::DatabaseError(e.to_string()),
-                    ))
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        e.to_string(),
+                    )))
                 })?;
                 sets.push("countries = ?".into());
                 params.push(Box::new(json));
             }
             if let Some(ref regions) = input.regions {
                 let json = serde_json::to_string(regions).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::DatabaseError(e.to_string()),
-                    ))
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        e.to_string(),
+                    )))
                 })?;
                 sets.push("regions = ?".into());
                 params.push(Box::new(json));
             }
             if let Some(ref postal_codes) = input.postal_codes {
                 let json = serde_json::to_string(postal_codes).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::DatabaseError(e.to_string()),
-                    ))
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        e.to_string(),
+                    )))
                 })?;
                 sets.push("postal_codes = ?".into());
                 params.push(Box::new(json));
@@ -159,11 +155,7 @@ impl ShippingZoneRepository for SqliteShippingZoneRepository {
                 params.iter().map(|p| p.as_ref()).collect();
             tx.execute(&sql, param_refs.as_slice())?;
 
-            tx.query_row(
-                "SELECT * FROM shipping_zones WHERE id = ?",
-                [&id_str],
-                Self::row_to_zone,
-            )
+            tx.query_row("SELECT * FROM shipping_zones WHERE id = ?", [&id_str], Self::row_to_zone)
         })
     }
 
@@ -216,10 +208,8 @@ impl ShippingZoneRepository for SqliteShippingZoneRepository {
         postal_code: Option<&str>,
     ) -> Result<Vec<ShippingZone>> {
         // Fetch all active zones and filter in Rust for correct JSON array matching
-        let all_active = self.list(ShippingZoneFilter {
-            is_active: Some(true),
-            ..Default::default()
-        })?;
+        let all_active =
+            self.list(ShippingZoneFilter { is_active: Some(true), ..Default::default() })?;
 
         let matched: Vec<ShippingZone> = all_active
             .into_iter()
@@ -270,8 +260,8 @@ impl ShippingZoneRepository for SqliteShippingZoneRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::SqliteDatabase;
     use crate::DatabaseConfig;
+    use crate::sqlite::SqliteDatabase;
 
     fn test_repo() -> SqliteShippingZoneRepository {
         let db = SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("in-memory db");

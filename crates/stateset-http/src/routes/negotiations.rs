@@ -9,43 +9,54 @@ use axum::{
 use chrono::{Duration, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_a2a::negotiation::{NegotiationEngine, NegotiationStatus};
+use stateset_a2a::negotiation::NegotiationEngine;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::error::{ErrorBody, HttpError};
+use crate::error::HttpError;
 use crate::state::AppState;
 
 /// In-memory negotiation store (production would use DB via V9 tables).
-type NegotiationStore =
-    Arc<RwLock<HashMap<Uuid, stateset_a2a::negotiation::Negotiation>>>;
+type NegotiationStore = Arc<RwLock<HashMap<Uuid, stateset_a2a::negotiation::Negotiation>>>;
 
 /// Build the negotiations sub-router.
 pub fn router() -> Router<AppState> {
     let store: NegotiationStore = Arc::new(RwLock::new(HashMap::new()));
     Router::new()
-        .route("/negotiations", post({
-            let store = store.clone();
-            move |state, headers, body| create_negotiation(state, headers, body, store)
-        }))
-        .route("/negotiations/{id}", get({
-            let store = store.clone();
-            move |state, headers, path| get_negotiation(state, headers, path, store)
-        }))
-        .route("/negotiations/{id}/counter-offer", post({
-            let store = store.clone();
-            move |state, headers, path, body| counter_offer(state, headers, path, body, store)
-        }))
-        .route("/negotiations/{id}/accept", post({
-            let store = store.clone();
-            move |state, headers, path| accept_negotiation(state, headers, path, store)
-        }))
-        .route("/negotiations/{id}/reject", post({
-            let store = store.clone();
-            move |state, headers, path| reject_negotiation(state, headers, path, store)
-        }))
+        .route(
+            "/negotiations",
+            post({
+                let store = store.clone();
+                move |state, headers, body| create_negotiation(state, headers, body, store)
+            }),
+        )
+        .route(
+            "/negotiations/{id}",
+            get({
+                let store = store.clone();
+                move |state, headers, path| get_negotiation(state, headers, path, store)
+            }),
+        )
+        .route(
+            "/negotiations/{id}/counter-offer",
+            post({
+                let store = store.clone();
+                move |state, headers, path, body| counter_offer(state, headers, path, body, store)
+            }),
+        )
+        .route(
+            "/negotiations/{id}/accept",
+            post({
+                let store = store.clone();
+                move |state, headers, path| accept_negotiation(state, headers, path, store)
+            }),
+        )
+        .route(
+            "/negotiations/{id}/reject",
+            post(move |state, headers, path| reject_negotiation(state, headers, path, store)),
+        )
 }
 
 /// Request body for creating a negotiation.
@@ -140,9 +151,8 @@ async fn get_negotiation(
     store: NegotiationStore,
 ) -> Result<Json<NegotiationResponse>, HttpError> {
     let guard = store.read().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
-    let neg = guard
-        .get(&id)
-        .ok_or_else(|| HttpError::NotFound(format!("Negotiation {id} not found")))?;
+    let neg =
+        guard.get(&id).ok_or_else(|| HttpError::NotFound(format!("Negotiation {id} not found")))?;
     Ok(Json(neg_to_response(neg)))
 }
 

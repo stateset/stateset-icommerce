@@ -27,7 +27,7 @@ pub struct SqliteOrderRepository {
 }
 
 impl SqliteOrderRepository {
-    #[must_use] 
+    #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }
@@ -961,7 +961,8 @@ impl OrderRepository for SqliteOrderRepository {
             }
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
         let orders = stmt
@@ -1088,7 +1089,8 @@ impl OrderRepository for SqliteOrderRepository {
             params.push(Box::new(to.to_rfc3339()));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(std::convert::AsRef::as_ref).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
         let count: i64 =
             conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
 
@@ -1103,14 +1105,12 @@ impl OrderRepository for SqliteOrderRepository {
 
         // Use a single connection for the entire batch to avoid pool churn.
         // Each order still gets its own transaction for partial-success semantics.
-        let mut conn =
-            self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         for (index, input) in inputs.into_iter().enumerate() {
             Self::validate_order_input(&input)?;
-            let tx_result = conn.transaction_with_behavior(
-                rusqlite::TransactionBehavior::Immediate,
-            );
+            let tx_result =
+                conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate);
             match tx_result {
                 Ok(tx) => {
                     match Self::create_internal_in_tx(&tx, None, false, &input) {

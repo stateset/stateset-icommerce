@@ -19,6 +19,13 @@ use stateset_db as _;
 use stateset_primitives as _;
 use tokio as _;
 
+// Bench-only dependencies for new benchmark suites
+use axum as _;
+use http_body_util as _;
+use stateset_http as _;
+use stateset_policy as _;
+use tower as _;
+
 use rust_decimal_macros::dec;
 use serde_json::json;
 use stateset_core::models::customer::CreateCustomer;
