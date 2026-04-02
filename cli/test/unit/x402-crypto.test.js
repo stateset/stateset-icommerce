@@ -95,7 +95,9 @@ describe('normalizeAsset', () => {
 describe('networkChainId', () => {
   it('returns chain IDs for known networks', () => {
     assert.strictEqual(networkChainId('ethereum'), 1);
+    assert.strictEqual(networkChainId('ethereum_sepolia'), 11155111);
     assert.strictEqual(networkChainId('base'), 8453);
+    assert.strictEqual(networkChainId('base_sepolia'), 84532);
     assert.strictEqual(networkChainId('arbitrum'), 42161);
     assert.strictEqual(networkChainId('optimism'), 10);
     assert.strictEqual(networkChainId('set_chain'), 84532001);

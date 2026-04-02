@@ -195,6 +195,33 @@ export const CHAINS = {
     },
   },
 
+  base_sepolia: {
+    name: 'Base Sepolia',
+    network: 'sepolia',
+    chainId: 84532,
+    rpcUrl: process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
+    explorerUrl: 'https://sepolia.basescan.org',
+    confirmations: 2,
+    blockTimeMs: 2000,
+    derivationPath: "m/44'/60'/0'/0/0",
+    tokens: {
+      USDC: {
+        symbol: 'USDC',
+        name: 'USD Coin (Testnet)',
+        address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+        decimals: 6,
+        type: 'erc20',
+      },
+      ETH: {
+        symbol: 'ETH',
+        name: 'Ether',
+        address: 'native',
+        decimals: 18,
+        type: 'native',
+      },
+    },
+  },
+
   // ===========================================================================
   // ETHEREUM MAINNET
   // ===========================================================================
@@ -219,6 +246,33 @@ export const CHAINS = {
         symbol: 'USDT',
         name: 'Tether USD',
         address: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+        decimals: 6,
+        type: 'erc20',
+      },
+      ETH: {
+        symbol: 'ETH',
+        name: 'Ether',
+        address: 'native',
+        decimals: 18,
+        type: 'native',
+      },
+    },
+  },
+
+  ethereum_sepolia: {
+    name: 'Ethereum Sepolia',
+    network: 'sepolia',
+    chainId: 11155111,
+    rpcUrl: process.env.ETH_SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com',
+    explorerUrl: 'https://sepolia.etherscan.io',
+    confirmations: 2,
+    blockTimeMs: 12000,
+    derivationPath: "m/44'/60'/0'/0/0",
+    tokens: {
+      USDC: {
+        symbol: 'USDC',
+        name: 'USD Coin (Testnet)',
+        address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
         decimals: 6,
         type: 'erc20',
       },

@@ -68,6 +68,8 @@ const ASSET_ALIASES = {
  *   chainId?: unknown,
  *   validUntil: unknown,
  *   nonce: unknown,
+ *   resourceUri?: unknown,
+ *   resourceMethod?: unknown,
  * }} X402SigningHashInput
  */
 
@@ -209,6 +211,8 @@ export function computeX402SigningHash({
   chainId,
   validUntil,
   nonce,
+  resourceUri,
+  resourceMethod,
 }) {
   if (!payerAddress || !payeeAddress) {
     throw new Error('payerAddress and payeeAddress are required');
@@ -232,6 +236,22 @@ export function computeX402SigningHash({
   hasher.update(u64BE(toU64(resolvedChainId, 'chainId')));
   hasher.update(u64BE(valid));
   hasher.update(u64BE(n));
+  if (resourceUri === undefined || resourceUri === null || resourceUri === '') {
+    hasher.update(Buffer.from([0]));
+  } else {
+    const uri = Buffer.from(String(resourceUri), 'utf8');
+    hasher.update(Buffer.from([1]));
+    hasher.update(u64BE(uri.length));
+    hasher.update(uri);
+  }
+  if (resourceMethod === undefined || resourceMethod === null || resourceMethod === '') {
+    hasher.update(Buffer.from([0]));
+  } else {
+    const method = Buffer.from(String(resourceMethod), 'utf8');
+    hasher.update(Buffer.from([1]));
+    hasher.update(u64BE(method.length));
+    hasher.update(method);
+  }
 
   return hasher.digest();
 }

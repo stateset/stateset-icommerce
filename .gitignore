@@ -100,3 +100,4 @@ admin/
 .claude/*.local*
 target-local/
 target-codex/
+.codex

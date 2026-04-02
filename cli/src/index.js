@@ -305,6 +305,12 @@ export {
   saveX402Config,
   resolveX402ConfigPath,
   pickConfigValue,
+  buildExactEvmPaymentRequired,
+  createExactEvmResourceServerHandler,
+  verifyFacilitatedPayment,
+  settleFacilitatedPayment,
+  buildFacilitatorSupportedResponse,
+  createFacilitatorHttpHandler,
 } from './x402/index.js';
 
 // Tutorial System

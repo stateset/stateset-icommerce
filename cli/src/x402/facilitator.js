@@ -1,0 +1,215 @@
+import { Wallet } from 'ethers';
+import {
+  getExactEvmSupportedKinds,
+  isExactEvmRequirement,
+  settleExactEvmPaymentPayload,
+  verifyExactEvmPaymentPayload,
+} from './exact-evm.js';
+
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+function json(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function signerAddressFromPrivateKey(privateKey) {
+  const normalized = String(privateKey || '').trim();
+  if (!/^0x[a-fA-F0-9]{64}$/.test(normalized)) {
+    return null;
+  }
+  return new Wallet(normalized).address;
+}
+
+function ensureV2(version) {
+  if (version === undefined || version === null) return null;
+  return Number(version) === 2 ? null : 'invalid_x402_version';
+}
+
+export async function verifyFacilitatedPayment({
+  x402Version = 2,
+  paymentPayload,
+  paymentRequirements,
+  checkOnchain = true,
+}) {
+  const versionError = ensureV2(x402Version);
+  if (versionError) {
+    return { isValid: false, invalidReason: versionError };
+  }
+
+  const payload = asObject(paymentPayload);
+  const requirements = asObject(paymentRequirements) || asObject(payload?.accepted);
+  if (!payload || !requirements) {
+    return { isValid: false, invalidReason: 'invalid_payload' };
+  }
+  if (Number(payload.x402Version) !== 2) {
+    return { isValid: false, invalidReason: 'invalid_x402_version' };
+  }
+  if (!isExactEvmRequirement(requirements)) {
+    return { isValid: false, invalidReason: 'unsupported_scheme' };
+  }
+
+  return verifyExactEvmPaymentPayload({
+    paymentPayload: payload,
+    paymentRequirements: requirements,
+    checkOnchain,
+  });
+}
+
+export async function settleFacilitatedPayment({
+  x402Version = 2,
+  paymentPayload,
+  paymentRequirements,
+  facilitatorPrivateKey,
+}) {
+  const versionError = ensureV2(x402Version);
+  if (versionError) {
+    return {
+      success: false,
+      errorReason: versionError,
+      payer: '',
+      transaction: '',
+      network: String(paymentRequirements?.network || paymentPayload?.accepted?.network || ''),
+    };
+  }
+
+  const payload = asObject(paymentPayload);
+  const requirements = asObject(paymentRequirements) || asObject(payload?.accepted);
+  if (!payload || !requirements) {
+    return {
+      success: false,
+      errorReason: 'invalid_payload',
+      payer: '',
+      transaction: '',
+      network: String(requirements?.network || ''),
+    };
+  }
+  if (Number(payload.x402Version) !== 2) {
+    return {
+      success: false,
+      errorReason: 'invalid_x402_version',
+      payer: '',
+      transaction: '',
+      network: String(requirements?.network || ''),
+    };
+  }
+  if (!isExactEvmRequirement(requirements)) {
+    return {
+      success: false,
+      errorReason: 'unsupported_scheme',
+      payer: '',
+      transaction: '',
+      network: String(requirements?.network || ''),
+    };
+  }
+
+  return settleExactEvmPaymentPayload({
+    paymentPayload: payload,
+    paymentRequirements: requirements,
+    facilitatorPrivateKey,
+  });
+}
+
+export function buildFacilitatorSupportedResponse({
+  kinds = getExactEvmSupportedKinds(),
+  extensions = [],
+  signers = null,
+  facilitatorPrivateKey = null,
+} = {}) {
+  let resolvedSigners = signers ? json(signers) : {};
+  if (!signers && facilitatorPrivateKey) {
+    const address = signerAddressFromPrivateKey(facilitatorPrivateKey);
+    if (address) {
+      resolvedSigners = { 'eip155:*': [address] };
+    }
+  }
+  return {
+    kinds: json(kinds),
+    extensions: Array.isArray(extensions) ? [...extensions] : [],
+    signers: resolvedSigners,
+  };
+}
+
+function sendJson(res, status, body) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(body));
+}
+
+async function readJson(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const body = Buffer.concat(chunks).toString('utf8');
+  return body ? JSON.parse(body) : {};
+}
+
+export function createFacilitatorHttpHandler({
+  facilitatorPrivateKey = null,
+  kinds = getExactEvmSupportedKinds(),
+  extensions = [],
+  signers = null,
+  defaultCheckOnchain = true,
+} = {}) {
+  const supportedResponse = buildFacilitatorSupportedResponse({
+    kinds,
+    extensions,
+    signers,
+    facilitatorPrivateKey,
+  });
+
+  return async (req, res) => {
+    try {
+      if (req.method === 'GET' && req.url === '/supported') {
+        return sendJson(res, 200, supportedResponse);
+      }
+
+      if (req.method === 'POST' && req.url === '/verify') {
+        const body = asObject(await readJson(req));
+        if (!body) {
+          return sendJson(res, 400, { isValid: false, invalidReason: 'invalid_payload' });
+        }
+        const response = await verifyFacilitatedPayment({
+          x402Version: body.x402Version,
+          paymentPayload: body.paymentPayload,
+          paymentRequirements: body.paymentRequirements,
+          checkOnchain: body.checkOnchain ?? defaultCheckOnchain,
+        });
+        return sendJson(res, 200, response);
+      }
+
+      if (req.method === 'POST' && req.url === '/settle') {
+        const body = asObject(await readJson(req));
+        if (!body) {
+          return sendJson(res, 400, {
+            success: false,
+            errorReason: 'invalid_payload',
+            payer: '',
+            transaction: '',
+            network: '',
+          });
+        }
+        const response = await settleFacilitatedPayment({
+          x402Version: body.x402Version,
+          paymentPayload: body.paymentPayload,
+          paymentRequirements: body.paymentRequirements,
+          facilitatorPrivateKey,
+        });
+        return sendJson(res, 200, response);
+      }
+
+      return sendJson(res, 404, { error: 'Not Found' });
+    } catch (_error) {
+      return sendJson(res, 400, { error: 'Invalid request body' });
+    }
+  };
+}
+
+export default {
+  verifyFacilitatedPayment,
+  settleFacilitatedPayment,
+  buildFacilitatorSupportedResponse,
+  createFacilitatorHttpHandler,
+};

@@ -17,9 +17,33 @@ permissions:
   contents: read
 
 jobs:
+  release_hygiene:
+    name: Release Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.release_meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - id: release_meta
+        name: Check release hygiene
+        env:
+          RELEASE_VERSION: ${{ inputs.version || '' }}
+        run: bash ./scripts/ci/check_release_hygiene.sh --github-output "$GITHUB_OUTPUT"
+
   build-native:
     name: Build Native (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: release_hygiene
     strategy:
       fail-fast: false
       matrix:
@@ -131,7 +155,7 @@ jobs:
 
   publish:
     name: Publish to Maven Central
-    needs: build-jar
+    needs: [release_hygiene, build-jar]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -212,13 +236,13 @@ jobs:
             <dependency>
                 <groupId>com.stateset</groupId>
                 <artifactId>embedded</artifactId>
-                <version>${{ github.ref_name }}</version>
+                <version>${{ needs.release_hygiene.outputs.version }}</version>
             </dependency>
             ```
 
             **Gradle:**
             ```groovy
-            implementation 'com.stateset:embedded:${{ github.ref_name }}'
+            implementation 'com.stateset:embedded:${{ needs.release_hygiene.outputs.version }}'
             ```
 
             ### Platform Support

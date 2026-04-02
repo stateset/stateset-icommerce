@@ -22,6 +22,11 @@ import {
   encodeBase64Json,
   networkChainId,
 } from '../../src/x402/crypto.js';
+import {
+  createExactEvmPaymentPayload,
+  verifyExactEvmPaymentPayload,
+} from '../../src/x402/exact-evm.js';
+import { deriveEvmWalletFromSeed } from '../../src/chains/wallet.js';
 
 // ===========================================================================
 // Helpers
@@ -116,13 +121,15 @@ describe('decodeReceiptHeader', () => {
 
 describe('verifyPaymentHeader', () => {
   // Build a valid payload for testing
-  function buildValidPayload() {
+  function buildValidPayload(overrides = {}) {
     const { privBytes, pubBytes } = generateEd25519Keypair();
     const now = Math.floor(Date.now() / 1000);
     const validUntil = now + 3600;
     const nonce = 42;
     const network = 'set_chain';
     const chainId = networkChainId(network);
+    const resourceUri = overrides.resource_uri ?? '/premium';
+    const resourceMethod = overrides.resource_method ?? 'GET';
 
     const signingHash = computeX402SigningHash({
       payerAddress: '0xPayer',
@@ -133,6 +140,8 @@ describe('verifyPaymentHeader', () => {
       chainId,
       validUntil,
       nonce,
+      resourceUri,
+      resourceMethod,
     });
 
     const signature = signX402Hash(signingHash, privBytes);
@@ -149,6 +158,8 @@ describe('verifyPaymentHeader', () => {
       signing_hash: hashToHex(signingHash),
       payer_signature: hashToHex(signature),
       payer_public_key: hashToHex(pubBytes),
+      resource_uri: resourceUri,
+      resource_method: resourceMethod,
     };
   }
 
@@ -219,6 +230,22 @@ describe('verifyPaymentHeader', () => {
     assert.strictEqual(result.ok, false);
     assert.ok(result.reason.includes('Signature verification failed'));
   });
+
+  it('returns ok:false when resource_uri changes after signing', () => {
+    const payload = buildValidPayload();
+    payload.resource_uri = '/other';
+    const result = verifyPaymentHeader(payload);
+    assert.strictEqual(result.ok, false);
+    assert.ok(result.reason.includes('Signing hash mismatch'));
+  });
+
+  it('returns ok:false when resource_method changes after signing', () => {
+    const payload = buildValidPayload();
+    payload.resource_method = 'POST';
+    const result = verifyPaymentHeader(payload);
+    assert.strictEqual(result.ok, false);
+    assert.ok(result.reason.includes('Signing hash mismatch'));
+  });
 });
 
 // ===========================================================================
@@ -228,25 +255,22 @@ describe('verifyPaymentHeader', () => {
 describe('x402Fetch — validation', () => {
   afterEach(() => restoreFetch());
 
-  it('throws on missing sequencerClient', async () => {
+  it('throws on missing payerAddress', async () => {
     await assert.rejects(
       () =>
         x402Fetch(
           'https://api.example.com/resource',
           {},
           {
-            tenantId: 'T',
-            storeId: 'S',
             agentId: 'A',
-            payerAddress: '0xPayer',
             signingKey: { privateKey: Buffer.alloc(32), publicKey: Buffer.alloc(32) },
           },
         ),
-      /sequencerClient is required/,
+      /payerAddress is required/,
     );
   });
 
-  it('throws on missing tenantId/storeId/agentId', async () => {
+  it('throws on missing agentId explicitly', async () => {
     await assert.rejects(
       () =>
         x402Fetch(
@@ -258,7 +282,7 @@ describe('x402Fetch — validation', () => {
             signingKey: { privateKey: Buffer.alloc(32), publicKey: Buffer.alloc(32) },
           },
         ),
-      /tenantId, storeId, and agentId are required/,
+      /agentId is required/,
     );
   });
 
@@ -334,6 +358,229 @@ describe('x402Fetch — validation', () => {
         ),
       /SSRF/,
     );
+  });
+});
+
+describe('x402Fetch — exact EVM flow', () => {
+  afterEach(() => restoreFetch());
+
+  it('retries with PAYMENT-SIGNATURE carrying an x402 v2 PaymentPayload', async () => {
+    const { privBytes, pubBytes } = generateEd25519Keypair();
+    const payerWallet = deriveEvmWalletFromSeed(privBytes, 'base');
+    let callCount = 0;
+    let capturedHeaders = null;
+
+    const paymentRequired = {
+      x402Version: 2,
+      error: 'PAYMENT-SIGNATURE header is required',
+      resource: {
+        url: 'https://api.example.com/premium',
+        description: 'Premium data',
+        mimeType: 'application/json',
+      },
+      accepts: [
+        {
+          scheme: 'exact',
+          network: 'eip155:8453',
+          amount: '10000',
+          asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          payTo: '0x1111111111111111111111111111111111111111',
+          maxTimeoutSeconds: 60,
+          extra: {
+            assetTransferMethod: 'eip3009',
+            name: 'USD Coin',
+            version: '2',
+          },
+        },
+      ],
+      extensions: {},
+    };
+
+    mockFetch((_url, options = {}) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          ok: false,
+          status: 402,
+          headers: {
+            get(name) {
+              return String(name).toLowerCase() === 'payment-required'
+                ? encodeBase64Json(paymentRequired)
+                : null;
+            },
+          },
+          clone() {
+            return this;
+          },
+          async json() {
+            return paymentRequired;
+          },
+        };
+      }
+
+      capturedHeaders = options.headers;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        async json() {
+          return { success: true };
+        },
+      };
+    });
+
+    const response = await x402Fetch(
+      'https://api.example.com/premium',
+      { method: 'GET' },
+      {
+        agentId: 'agent-test',
+        payerAddress: payerWallet.address,
+        signingKey: { privateKey: privBytes, publicKey: pubBytes },
+      },
+    );
+
+    assert.strictEqual(response.status, 200);
+    assert.ok(capturedHeaders['PAYMENT-SIGNATURE']);
+    const paymentPayload = decodePaymentHeader(capturedHeaders['PAYMENT-SIGNATURE']);
+    assert.strictEqual(paymentPayload.x402Version, 2);
+    assert.strictEqual(paymentPayload.accepted.scheme, 'exact');
+    assert.strictEqual(paymentPayload.accepted.network, 'eip155:8453');
+    assert.ok(!('meta' in paymentPayload));
+    assert.strictEqual(paymentPayload.payload.authorization.from, payerWallet.address);
+    assert.strictEqual(
+      paymentPayload.payload.authorization.to,
+      paymentRequired.accepts[0].payTo,
+    );
+  });
+
+  it('fails legacy 402 handling without sequencer configuration', async () => {
+    mockFetch(() => ({
+      ok: false,
+      status: 402,
+      headers: {
+        get(name) {
+          return String(name).toLowerCase() === 'x-payment-required'
+            ? encodeBase64Json({
+                payee_address: '0xPayee',
+                amount: 1000,
+                asset: 'usdc',
+                network: 'set_chain',
+              })
+            : null;
+        },
+      },
+      clone() {
+        return this;
+      },
+      async json() {
+        return {};
+      },
+    }));
+
+    await assert.rejects(
+      () =>
+        x402Fetch(
+          'https://api.example.com/premium',
+          { method: 'GET' },
+          {
+            agentId: 'agent-test',
+            payerAddress: '0xPayer',
+            signingKey: { privateKey: Buffer.alloc(32, 1), publicKey: Buffer.alloc(32, 2) },
+          },
+        ),
+      /sequencerClient is required for legacy sequencer-backed x402 payments/,
+    );
+  });
+});
+
+describe('exact EVM helpers', () => {
+  it('creates and verifies an exact EVM payment payload without onchain checks', async () => {
+    const { privBytes, pubBytes } = generateEd25519Keypair();
+    const wallet = deriveEvmWalletFromSeed(privBytes, 'base');
+    const requirement = {
+      scheme: 'exact',
+      network: 'eip155:8453',
+      amount: '10000',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payTo: '0x2222222222222222222222222222222222222222',
+      maxTimeoutSeconds: 60,
+      extra: {
+        assetTransferMethod: 'eip3009',
+        name: 'USD Coin',
+        version: '2',
+      },
+    };
+
+    const payload = await createExactEvmPaymentPayload({
+      requirement,
+      paymentRequired: {
+        resource: {
+          url: 'https://api.example.com/data',
+          description: 'Premium data',
+        },
+      },
+      signingKey: { privateKey: privBytes, publicKey: pubBytes },
+      payerAddress: wallet.address,
+      resourceUrl: 'https://api.example.com/data',
+      method: 'GET',
+    });
+
+    const verification = await verifyExactEvmPaymentPayload({
+      paymentPayload: payload,
+      paymentRequirements: requirement,
+      checkOnchain: false,
+    });
+
+    assert.deepStrictEqual(verification, { isValid: true, payer: wallet.address });
+    assert.ok(!('meta' in payload));
+  });
+
+  it('rejects authorizations that exceed maxTimeoutSeconds', async () => {
+    const { privBytes, pubBytes } = generateEd25519Keypair();
+    const wallet = deriveEvmWalletFromSeed(privBytes, 'base');
+    const requirement = {
+      scheme: 'exact',
+      network: 'eip155:8453',
+      amount: '10000',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payTo: '0x2222222222222222222222222222222222222222',
+      maxTimeoutSeconds: 60,
+      extra: {
+        assetTransferMethod: 'eip3009',
+        name: 'USD Coin',
+        version: '2',
+      },
+    };
+
+    const payload = await createExactEvmPaymentPayload({
+      requirement,
+      paymentRequired: {
+        resource: {
+          url: 'https://api.example.com/data',
+          description: 'Premium data',
+        },
+      },
+      signingKey: { privateKey: privBytes, publicKey: pubBytes },
+      payerAddress: wallet.address,
+      resourceUrl: 'https://api.example.com/data',
+      method: 'GET',
+    });
+
+    payload.payload.authorization.validBefore = String(
+      Number(payload.payload.authorization.validAfter) + 120,
+    );
+
+    const verification = await verifyExactEvmPaymentPayload({
+      paymentPayload: payload,
+      paymentRequirements: requirement,
+      checkOnchain: false,
+    });
+
+    assert.deepStrictEqual(verification, {
+      isValid: false,
+      invalidReason: 'invalid_payment_requirements',
+      payer: wallet.address,
+    });
   });
 });
 

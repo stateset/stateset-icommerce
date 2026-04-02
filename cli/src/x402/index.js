@@ -19,6 +19,26 @@ export {
   verifyPaymentHeader,
   BudgetExceededError,
 } from './agent.js';
+export {
+  caip2ToChainId,
+  chainIdToCaip2,
+  isExactEvmRequirement,
+  deriveExactEvmWallet,
+  createExactEvmPaymentPayload,
+  verifyExactEvmPaymentPayload,
+  settleExactEvmPaymentPayload,
+  getExactEvmSupportedKinds,
+} from './exact-evm.js';
+export {
+  verifyFacilitatedPayment,
+  settleFacilitatedPayment,
+  buildFacilitatorSupportedResponse,
+  createFacilitatorHttpHandler,
+} from './facilitator.js';
+export {
+  buildExactEvmPaymentRequired,
+  createExactEvmResourceServerHandler,
+} from './resource-server.js';
 export { createBudgetState, getDefaultBudgetStateFile } from './budget.js';
 export {
   getDefaultX402ConfigPath,

@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { deriveEvmWalletFromSeed } from '../../src/chains/wallet.js';
 
 // ---------------------------------------------------------------------------
 // Safe dynamic import — the module pulls in @anthropic-ai/claude-agent-sdk,
@@ -33,6 +34,7 @@ try {
 }
 
 const canImport = importError === null;
+const originalFetch = globalThis.fetch;
 
 // ---------------------------------------------------------------------------
 // Temp directory helper for isolated file system operations
@@ -48,6 +50,14 @@ function cleanDir(dir) {
   } catch {
     // ignore
   }
+}
+
+function mockFetch(handler) {
+  globalThis.fetch = async (...args) => handler(...args);
+}
+
+function restoreFetch() {
+  globalThis.fetch = originalFetch;
 }
 
 // ---------------------------------------------------------------------------
@@ -544,37 +554,23 @@ describe('x402_call — ensureConfig validation', { skip: !canImport && `import 
   });
 
   afterEach(() => {
+    restoreFetch();
     cleanDir(tmpDir);
   });
 
-  it('returns error when sequencer URL is missing', async () => {
+  it('returns error when agent ID is missing', async () => {
     const server = createX402McpServer({ env: {}, configDir: tmpDir });
     const tools = server.instance._registeredTools;
     const res = await tools.x402_call.handler({ url: 'https://api.example.com/data' });
     assert.equal(res.isError, true);
     const data = JSON.parse(res.content[0].text);
     assert.equal(data.success, false);
-    assert.ok(data.error.includes('X402_SEQUENCER_URL'));
-  });
-
-  it('returns error when tenant/store/agent IDs missing', async () => {
-    const server = createX402McpServer({
-      env: { X402_SEQUENCER_URL: 'https://seq.test' },
-      configDir: tmpDir,
-    });
-    const tools = server.instance._registeredTools;
-    const res = await tools.x402_call.handler({ url: 'https://api.example.com/data' });
-    assert.equal(res.isError, true);
-    const data = JSON.parse(res.content[0].text);
-    assert.ok(data.error.includes('X402_TENANT_ID'));
+    assert.ok(data.error.includes('X402_AGENT_ID'));
   });
 
   it('returns error when payer address missing', async () => {
     const server = createX402McpServer({
       env: {
-        X402_SEQUENCER_URL: 'https://seq.test',
-        X402_TENANT_ID: 't1',
-        X402_STORE_ID: 's1',
         X402_AGENT_ID: 'a1',
       },
       configDir: tmpDir,
@@ -584,6 +580,154 @@ describe('x402_call — ensureConfig validation', { skip: !canImport && `import 
     assert.equal(res.isError, true);
     const data = JSON.parse(res.content[0].text);
     assert.ok(data.error.includes('X402_PAYER_ADDRESS'));
+  });
+
+  it('supports exact x402 calls without sequencer configuration', async () => {
+    const privateKey = Buffer.from('11'.repeat(32), 'hex');
+    const publicKey = Buffer.from('22'.repeat(32), 'hex');
+    const wallet = deriveEvmWalletFromSeed(privateKey, 'base');
+    const paymentRequired = {
+      x402Version: 2,
+      error: 'PAYMENT-SIGNATURE header is required',
+      resource: {
+        url: 'https://api.example.com/data',
+        description: 'Premium data',
+        mimeType: 'application/json',
+      },
+      accepts: [
+        {
+          scheme: 'exact',
+          network: 'eip155:8453',
+          amount: '10000',
+          asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          payTo: '0x5555555555555555555555555555555555555555',
+          maxTimeoutSeconds: 60,
+          extra: {
+            assetTransferMethod: 'eip3009',
+            name: 'USD Coin',
+            version: '2',
+          },
+        },
+      ],
+      extensions: {},
+    };
+
+    let callCount = 0;
+    mockFetch((_url, options = {}) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          ok: false,
+          status: 402,
+          statusText: 'Payment Required',
+          url: 'https://api.example.com/data',
+          headers: {
+            get(name) {
+              return String(name).toLowerCase() === 'payment-required'
+                ? Buffer.from(JSON.stringify(paymentRequired)).toString('base64')
+                : null;
+            },
+            entries() {
+              return [];
+            },
+          },
+          clone() {
+            return this;
+          },
+          async json() {
+            return paymentRequired;
+          },
+          async text() {
+            return JSON.stringify(paymentRequired);
+          },
+        };
+      }
+
+      assert.ok(options.headers['PAYMENT-SIGNATURE']);
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        url: 'https://api.example.com/data',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        async json() {
+          return { success: true };
+        },
+      };
+    });
+
+    const server = createX402McpServer({
+      env: {
+        X402_AGENT_ID: 'a1',
+        X402_PAYER_ADDRESS: wallet.address,
+        X402_SIGNING_KEY: JSON.stringify({
+          privateKey: privateKey.toString('hex'),
+          publicKey: publicKey.toString('hex'),
+        }),
+      },
+      configDir: tmpDir,
+    });
+    const tools = server.instance._registeredTools;
+    const res = await tools.x402_call.handler({
+      url: 'https://api.example.com/data',
+      method: 'GET',
+    });
+    assert.notEqual(res.isError, true);
+    const data = JSON.parse(res.content[0].text);
+    assert.equal(data.success, true);
+    assert.equal(data.status, 200);
+  });
+
+  it('returns legacy-flow error when sequencer config is absent', async () => {
+    mockFetch(() => ({
+      ok: false,
+      status: 402,
+      statusText: 'Payment Required',
+      url: 'https://api.example.com/data',
+      headers: {
+        get(name) {
+          return String(name).toLowerCase() === 'x-payment-required'
+            ? Buffer.from(
+                JSON.stringify({
+                  payee_address: '0xPayee',
+                  amount: 1000,
+                  asset: 'usdc',
+                  network: 'set_chain',
+                }),
+              ).toString('base64')
+            : null;
+        },
+        entries() {
+          return [];
+        },
+      },
+      clone() {
+        return this;
+      },
+      async json() {
+        return {};
+      },
+      async text() {
+        return '{}';
+      },
+    }));
+
+    const server = createX402McpServer({
+      env: {
+        X402_AGENT_ID: 'a1',
+        X402_PAYER_ADDRESS: '0xPayer',
+        X402_SIGNING_KEY: JSON.stringify({
+          privateKey: '11'.repeat(32),
+          publicKey: '22'.repeat(32),
+        }),
+      },
+      configDir: tmpDir,
+    });
+    const tools = server.instance._registeredTools;
+    const res = await tools.x402_call.handler({ url: 'https://api.example.com/data' });
+    assert.equal(res.isError, true);
+    const data = JSON.parse(res.content[0].text);
+    assert.ok(data.error.includes('sequencerClient is required for legacy sequencer-backed x402 payments'));
   });
 });
 

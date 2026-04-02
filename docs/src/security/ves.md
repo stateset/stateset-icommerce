@@ -155,7 +155,7 @@ Hash:   SHA-256("VES_PAYLOAD_PLAIN_V1" || jcs_bytes) = 0xabc123...
 Sign:   Ed25519(key, hash) = 0xdef456...
 ```
 
-Both the Rust `stateset-crypto` crate and the JavaScript `cli/src/x402/crypto.js` module produce byte-identical results for the same inputs.
+Both the Rust `stateset-crypto` crate and the JavaScript `cli/src/x402/crypto.js` module are intended to produce byte-identical results for the same inputs, including optional `resourceUri` and `resourceMethod` binding for x402 payment intents.
 
 ## Encryption Flow (VES-ENC-1)
 

@@ -208,6 +208,27 @@ function deriveEvmWallet(seed, chainId, _chain) {
   };
 }
 
+/**
+ * Derive an EVM wallet from raw 32-byte seed material.
+ *
+ * This is used by x402 exact-EVM flows where the caller already has access
+ * to the agent signing seed and does not need key-manager lookup.
+ *
+ * @param {Buffer} seed - 32-byte Ed25519 seed
+ * @param {string} chainId - EVM chain identifier
+ * @returns {DerivedWallet}
+ */
+export function deriveEvmWalletFromSeed(seed, chainId) {
+  if (!Buffer.isBuffer(seed) || seed.length !== 32) {
+    throw new Error('EVM wallet derivation requires a 32-byte seed');
+  }
+  const chain = CHAINS[chainId];
+  if (!chain || !isEvmChain(chainId)) {
+    throw new Error(`Unsupported EVM chain for wallet derivation: ${chainId}`);
+  }
+  return deriveEvmWallet(seed, chainId, chain);
+}
+
 // =============================================================================
 // ZCASH T-ADDRESS VERSION BYTES
 // =============================================================================

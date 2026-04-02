@@ -45,8 +45,11 @@ Add these secrets to your GitHub repository settings:
 ### Rust Crates Release (crates.io)
 
 ```bash
-# 1) Ensure workspace version, changelog, and README are in sync.
-bash ./scripts/ci/check_version_sync.sh
+# 1) Ensure workspace version, changelog, README, and release tag agree.
+bash ./scripts/ci/check_release_hygiene.sh vX.Y.Z
+
+# 1b) Sanity-check the release helper itself before relying on it in CI.
+bash ./scripts/ci/check_release_hygiene.test.sh
 
 # 2) Validate publishability for all publishable crates.
 bash ./scripts/publish-rust-crates.sh --dry-run
@@ -64,8 +67,10 @@ GitHub Actions workflow:
 
 - `.github/workflows/publish-rust-crates.yml`
 - Tag trigger: `v*`
-- Manual trigger: `workflow_dispatch` with `publish=true` to publish, or `publish=false` for dry-run only
+- Manual trigger: `workflow_dispatch` with `version=X.Y.Z` plus `publish=true` to publish, or `publish=false` for dry-run only
 - Script used by workflow: `scripts/publish-rust-crates.sh`
+- Release preflight: `scripts/ci/check_release_hygiene.sh`
+- Release preflight regression test: `scripts/ci/check_release_hygiene.test.sh`
 
 ### Ruby Release
 
@@ -73,6 +78,7 @@ GitHub Actions workflow:
 # 1. Update version in these files:
 #    - bindings/ruby/lib/stateset_embedded.rb (VERSION constant)
 #    - bindings/ruby/stateset_embedded.gemspec (s.version)
+#    - CHANGELOG.md (top released entry must match the workspace version)
 
 # 2. Commit the changes
 git add -A
@@ -94,6 +100,7 @@ git push origin ruby-vX.Y.Z
 # 1. Update version in these files:
 #    - bindings/php/composer.json (version field)
 #    - bindings/php/scripts/install-extension.php (VERSION constant)
+#    - CHANGELOG.md (top released entry must match the workspace version)
 
 # 2. Commit the changes
 git add -A
@@ -192,6 +199,7 @@ We use semantic versioning (SemVer):
 Keep versions in sync across:
 - `Cargo.toml` (workspace version)
 - `CHANGELOG.md` (entry for the release)
+- `scripts/ci/check_release_hygiene.sh` (shared release preflight)
 - Rust release automation: `scripts/publish-rust-crates.sh` and `.github/workflows/publish-rust-crates.yml`
 - Ruby: `stateset_embedded.gemspec`, `lib/stateset_embedded.rb`
 - PHP: `composer.json`, `scripts/install-extension.php`

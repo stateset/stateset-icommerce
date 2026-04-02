@@ -10,7 +10,7 @@ Both paths go through the same policy engine, permission system, and audit layer
 ## Install
 
 ```bash
-npm install @stateset/cli@0.9.3 @stateset/embedded@0.9.3
+npm install @stateset/cli@0.9.4 @stateset/embedded@0.9.4
 ```
 
 ## Embedded Toolkit
@@ -197,7 +197,7 @@ The setup creates a configuration entry in your MCP client's config file:
     "mcpServers": {
         "stateset-commerce": {
             "command": "npx",
-            "args": ["@stateset/cli@0.9.3", "stateset-mcp", "--db", "./store.db"]
+            "args": ["@stateset/cli@0.9.4", "stateset-mcp", "--db", "./store.db"]
         }
     }
 }

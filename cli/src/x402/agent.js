@@ -17,6 +17,10 @@ import {
   signX402Hash,
   verifyX402Signature,
 } from './crypto.js';
+import {
+  createExactEvmPaymentPayload,
+  isExactEvmRequirement,
+} from './exact-evm.js';
 
 /**
  * @typedef {{
@@ -27,25 +31,29 @@ import {
  *   max_amount_required?: number | string,
  *   amountRequired?: number | string,
  *   maxAmountRequired?: number | string,
+ *   scheme?: string,
  *   asset?: string,
  *   token?: string,
  *   x402Version?: number,
  *   version?: number,
+ *   payTo?: string,
+ *   maxTimeoutSeconds?: number | string,
  *   validity_seconds?: number | string,
  *   validitySeconds?: number | string,
- *   payee_address?: string,
- *   payment_address?: string,
- *   recipient?: string,
- *   payeeAddress?: string,
- *   paymentAddress?: string,
- *   resource_uri?: string,
- *   resourceUri?: string,
- *   resource?: string,
- *   description?: string,
- *   merchant_id?: string,
- *   idempotency_key?: string,
- *   idempotencyKey?: string,
- *   metadata?: Record<string, unknown> | null,
+  *   payee_address?: string,
+  *   payment_address?: string,
+  *   recipient?: string,
+  *   payeeAddress?: string,
+  *   paymentAddress?: string,
+  *   resource_uri?: string,
+  *   resourceUri?: string,
+  *   resource?: string,
+  *   description?: string,
+  *   merchant_id?: string,
+  *   idempotency_key?: string,
+  *   idempotencyKey?: string,
+ *   extra?: Record<string, unknown> | null,
+  *   metadata?: Record<string, unknown> | null,
  * }} PaymentRequirement
  * @typedef {{
  *   requirements?: PaymentRequirement,
@@ -72,9 +80,9 @@ import {
  *   waitForReceipt: (intentId: string, options?: { timeoutMs?: number, intervalMs?: number }) => Promise<unknown>,
  * }} X402SequencerClientLike
  * @typedef {{
- *   sequencerClient: X402SequencerClientLike,
- *   tenantId: string,
- *   storeId: string,
+ *   sequencerClient?: X402SequencerClientLike | null,
+ *   tenantId?: string,
+ *   storeId?: string,
  *   agentId: string,
  *   agentKeyId?: number,
  *   payerAddress: string,
@@ -260,6 +268,22 @@ function resolveAmount(requirements) {
 }
 
 /**
+ * @param {PaymentRequirement | null | undefined} requirements
+ * @returns {string | null}
+ */
+function resolvePayeeAddress(requirements) {
+  return (
+    requirements?.payTo ||
+    requirements?.payee_address ||
+    requirements?.payment_address ||
+    requirements?.recipient ||
+    requirements?.payeeAddress ||
+    requirements?.paymentAddress ||
+    null
+  );
+}
+
+/**
  * @param {string} url
  * @param {RequestInit | undefined} options
  * @param {X402FetchConfig} config
@@ -287,9 +311,7 @@ export async function x402Fetch(url, options, config) {
     startingBalance,
   } = config;
 
-  if (!sequencerClient) throw new Error('sequencerClient is required');
-  if (!tenantId || !storeId || !agentId)
-    throw new Error('tenantId, storeId, and agentId are required');
+  if (!agentId) throw new Error('agentId is required');
   if (!payerAddress) throw new Error('payerAddress is required');
   if (!signingKey?.privateKey || !signingKey?.publicKey)
     throw new Error('signingKey with privateKey/publicKey is required');
@@ -311,6 +333,78 @@ export async function x402Fetch(url, options, config) {
   const requirements = parsed?.requirements;
   if (!requirements) {
     throw new Error('Failed to parse x402 payment requirements');
+  }
+
+  if (isExactEvmRequirement(requirements)) {
+    const amount = Number(requirements.amount);
+    const shouldTrackBudget = Boolean(
+      budgetState ||
+      budgetStateFile ||
+      maxAmountPerCall !== undefined ||
+      dailyBudget !== undefined ||
+      startingBalance !== undefined,
+    );
+    const resolvedBudgetState =
+      budgetState ||
+      (shouldTrackBudget
+        ? createBudgetState({
+            filePath: budgetStateFile || getDefaultBudgetStateFile(),
+            startingBalance,
+          })
+        : null);
+
+    if (maxAmount !== undefined && amount > maxAmount) {
+      throw new Error(`Required amount ${amount} exceeds maxAmount ${maxAmount}`);
+    }
+    if (maxAmountPerCall !== undefined && amount > maxAmountPerCall) {
+      throw new BudgetExceededError(`Amount ${amount} exceeds per-call limit ${maxAmountPerCall}`);
+    }
+    if (dailyBudget !== undefined && resolvedBudgetState) {
+      const spentToday = resolvedBudgetState.getSpentToday();
+      if (spentToday + amount > dailyBudget) {
+        throw new BudgetExceededError(
+          `Would exceed daily budget. Spent: ${spentToday}, limit: ${dailyBudget}`,
+        );
+      }
+    }
+    if (resolvedBudgetState) {
+      const balance = resolvedBudgetState.getBalance();
+      if (balance !== null && amount > balance) {
+        throw new BudgetExceededError(
+          `Insufficient x402 balance. Required: ${amount}, available: ${balance}`,
+        );
+      }
+    }
+
+    const paymentPayload = await createExactEvmPaymentPayload({
+      requirement: requirements,
+      paymentRequired: parsed?.raw,
+      signingKey,
+      payerAddress,
+      resourceUrl: url,
+      method: options?.method || 'GET',
+    });
+    const retryHeaders = {
+      ...baseHeaders,
+      'PAYMENT-SIGNATURE': encodeBase64Json(paymentPayload),
+    };
+    const finalResponse = await fetch(url, {
+      ...options,
+      headers: retryHeaders,
+    });
+
+    if (resolvedBudgetState && finalResponse.ok) {
+      resolvedBudgetState.recordSpend(amount, { url, scheme: 'exact', network: requirements.network });
+    }
+
+    return finalResponse;
+  }
+
+  if (!sequencerClient) {
+    throw new Error('sequencerClient is required for legacy sequencer-backed x402 payments');
+  }
+  if (!tenantId || !storeId) {
+    throw new Error('tenantId and storeId are required for legacy sequencer-backed x402 payments');
   }
   const useV2Headers =
     parsed?.version === 'v2' || requirements?.x402Version === 2 || requirements?.version === 2;
@@ -363,12 +457,7 @@ export async function x402Fetch(url, options, config) {
   const validUntil = now + validitySeconds;
   const nonce = randomNonce();
   const chainId = networkChainId(network);
-  const payeeAddress =
-    requirements.payee_address ||
-    requirements.payment_address ||
-    requirements.recipient ||
-    requirements.payeeAddress ||
-    requirements.paymentAddress;
+  const payeeAddress = resolvePayeeAddress(requirements);
   if (!payeeAddress) {
     throw new Error('Payment requirements missing payee address');
   }
@@ -382,6 +471,8 @@ export async function x402Fetch(url, options, config) {
     chainId,
     validUntil,
     nonce,
+    resourceUri: requirements.resource_uri || requirements.resourceUri || requirements.resource || url,
+    resourceMethod: options?.method || 'GET',
   });
 
   const signature = signX402Hash(signingHash, signingKey.privateKey);
@@ -404,6 +495,7 @@ export async function x402Fetch(url, options, config) {
     payer_public_key: hashToHex(signingKey.publicKey),
     resource_uri:
       requirements.resource_uri || requirements.resourceUri || requirements.resource || url,
+    resource_method: options?.method || 'GET',
     description: requirements.description,
     merchant_id: requirements.merchant_id,
     idempotency_key:
@@ -526,6 +618,8 @@ export function verifyPaymentHeader(payload) {
     chainId: payload.chain_id ?? expectedChainId,
     validUntil: payload.valid_until,
     nonce: payload.nonce,
+    resourceUri: payload.resource_uri,
+    resourceMethod: payload.resource_method,
   });
 
   const providedHash = hexToBytes(payload.signing_hash);

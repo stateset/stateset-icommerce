@@ -35,6 +35,7 @@ export {
 // Wallet derivation
 export {
   deriveWallet,
+  deriveEvmWalletFromSeed,
   getOrCreateWallet,
   getWalletAddress,
   listWalletAddresses,

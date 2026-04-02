@@ -11,16 +11,17 @@
     "format": "prettier --write 'cli/{src,bin}/**/*.js'",
     "format:check": "prettier --check 'cli/{src,bin}/**/*.js'",
     "check:env": "node scripts/check-node.mjs 20.20.0 10.0.0",
-    "check:versions": "bash ./scripts/ci/check_version_sync.sh",
+    "check:versions": "npm run check:env && bash ./scripts/ci/check_release_hygiene.sh",
+    "test:release-hygiene": "npm run check:env && bash ./scripts/ci/check_release_hygiene.test.sh",
     "test:env-check": "node --test scripts/check-node.test.mjs",
-    "check:shell": "bash -n examples/setup-sync.sh examples/verify-setup.sh scripts/arc_e2e_demo.sh scripts/ci/check_rust_feature_matrix.sh",
+    "check:shell": "bash -n examples/setup-sync.sh examples/verify-setup.sh scripts/arc_e2e_demo.sh scripts/ci/check_rust_feature_matrix.sh scripts/ci/check_release_hygiene.sh scripts/ci/check_release_hygiene.test.sh .github/scripts/shellcheck.sh .github/scripts/actionlint.sh",
     "check:rust:lint": "cargo clippy -p stateset-db -p stateset-embedded --all-features --tests --quiet && cargo clippy -p stateset-crypto -p stateset-protocol -p stateset-sync --all-targets --quiet -- -D warnings",
     "check:rust:feature-matrix": "bash ./scripts/ci/check_rust_feature_matrix.sh",
     "check:rust": "cargo fmt --all -- --check && cargo test -p stateset-core -p stateset-db -p stateset-embedded -p stateset-observability -p stateset-integration-tests --quiet && cargo test -p stateset-core --features metrics --quiet && npm run check:rust:lint && npm run check:rust:feature-matrix",
     "check:bindings:node": "npm --prefix bindings/node run check",
     "check:admin": "npm --prefix admin run check",
     "check:cli": "npm run check:env && npm run test:env-check && npm --prefix cli run check",
-    "check": "npm run check:versions && npm run check:rust && npm run check:shell && npm run check:bindings:node && npm run check:admin && npm run check:cli"
+    "check": "npm run check:versions && npm run test:release-hygiene && npm run check:rust && npm run check:shell && npm run check:bindings:node && npm run check:admin && npm run check:cli"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.8.1",

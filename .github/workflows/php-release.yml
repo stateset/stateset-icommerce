@@ -18,9 +18,30 @@ permissions:
   contents: read
 
 jobs:
+  release_hygiene:
+    name: Release Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Check release hygiene
+        env:
+          RELEASE_VERSION: ${{ inputs.version || '' }}
+        run: bash ./scripts/ci/check_release_hygiene.sh
+
   build:
     name: Build (${{ matrix.os }}-${{ matrix.php }})
     runs-on: ${{ matrix.os }}
+    needs: release_hygiene
     strategy:
       fail-fast: false
       matrix:
@@ -110,6 +131,7 @@ jobs:
   build-windows:
     name: Build (Windows-${{ matrix.php }})
     runs-on: windows-latest
+    needs: release_hygiene
     strategy:
       matrix:
         php: ['8.2', '8.3']
@@ -151,7 +173,7 @@ jobs:
 
   publish:
     name: Create Release
-    needs: [build, build-windows]
+    needs: [release_hygiene, build, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:

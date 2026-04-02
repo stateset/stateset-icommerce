@@ -17,9 +17,30 @@ permissions:
   contents: read
 
 jobs:
+  release_hygiene:
+    name: Release Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Check release hygiene
+        env:
+          RELEASE_VERSION: ${{ inputs.version || '' }}
+        run: bash ./scripts/ci/check_release_hygiene.sh
+
   build:
     name: Build (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
+    needs: release_hygiene
     strategy:
       fail-fast: false
       matrix:
@@ -84,6 +105,7 @@ jobs:
   build-source:
     name: Build Source Gem
     runs-on: ubuntu-latest
+    needs: release_hygiene
     steps:
       - uses: actions/checkout@v6
         with:
@@ -114,6 +136,7 @@ jobs:
   cross-build:
     name: Cross Build (${{ matrix.platform }})
     runs-on: ubuntu-latest
+    needs: release_hygiene
     strategy:
       fail-fast: false
       matrix:
@@ -148,7 +171,7 @@ jobs:
 
   publish:
     name: Publish to RubyGems
-    needs: [build, build-source, cross-build]
+    needs: [release_hygiene, build, build-source, cross-build]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:

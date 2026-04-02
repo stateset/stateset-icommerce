@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version to release (e.g., 0.9.4)'
+        required: true
       publish:
         description: 'Publish to crates.io (false runs dry-run only)'
         required: true
@@ -19,11 +22,32 @@ permissions:
   contents: read
 
 jobs:
+  release_hygiene:
+    name: Release Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Check release hygiene
+        env:
+          RELEASE_VERSION: ${{ inputs.version || '' }}
+        run: bash ./scripts/ci/check_release_hygiene.sh
+
   dry-run:
     name: Cargo Publish Dry Run
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    needs: release_hygiene
 
     steps:
       - uses: actions/checkout@v6
@@ -45,6 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     if: ${{ github.event_name == 'push' || inputs.publish }}
+    needs: release_hygiene
 
     steps:
       - uses: actions/checkout@v6

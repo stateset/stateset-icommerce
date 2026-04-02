@@ -6,6 +6,25 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-04-02
+
+### Added
+- x402 v2 exact-EVM payment support across the CLI, including standards-shaped `PAYMENT-SIGNATURE` retries, exact `PaymentPayload` construction, and exported exact/facilitator/resource-server helpers.
+- Facilitator primitives and HTTP endpoints for `/supported`, `/verify`, and `/settle`, plus runnable exact-flow facilitator and resource-server examples.
+- Exact resource-server helpers that emit `payment-required`, validate incoming `PAYMENT-SIGNATURE` payloads, settle accepted payments, and return `PAYMENT-RESPONSE`.
+- Base Sepolia and Ethereum Sepolia exact-EVM support, including testnet USDC configuration and new unit coverage for exact flow, facilitator flow, and resource-server flow.
+- Release hygiene automation for CI and publish workflows, including `check_release_hygiene.sh`, regression coverage for the helper, and `actionlint` workflow linting.
+
+### Changed
+- Bumped workspace and cross-language package metadata from `0.9.3` to `0.9.4`.
+- Synced docs, examples, templates, and lockfiles to the `0.9.4` release.
+- Updated release and publish workflows to gate on shared release-hygiene checks instead of version-sync alone.
+
+### Fixed
+- Aligned JavaScript x402 signing-hash verification with the Rust implementation by binding `resourceUri` and `resourceMethod` into signed legacy payment intents.
+- Removed the legacy sequencer requirement for exact x402 MCP calls while preserving explicit errors for legacy sequencer-backed flows.
+- Corrected the VES docs to describe the intended cross-language x402 hashing parity more precisely.
+
 ## [0.9.3] - 2026-04-01
 
 ### Added

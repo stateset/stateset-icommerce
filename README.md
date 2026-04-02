@@ -14,10 +14,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==0.9.3     # Python
-npm install @stateset/embedded@0.9.3     # Node.js
-npm install -g @stateset/cli@0.9.3       # CLI
-gem install stateset_embedded -v 0.9.3   # Ruby
+pip install stateset-embedded==0.9.4     # Python
+npm install @stateset/embedded@0.9.4     # Node.js
+npm install -g @stateset/cli@0.9.4       # CLI
+gem install stateset_embedded -v 0.9.4   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -109,7 +109,7 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/cli@0.9.3 @stateset/embedded@0.9.3
+npm install @stateset/cli@0.9.4 @stateset/embedded@0.9.4
 ```
 
 ```javascript
@@ -164,30 +164,24 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.9.3
+## What's New in v0.9.4
 
-**Post-Quantum Security Release** - `0.9.3` introduces hybrid and strict PQC support across VES, `stateset-sync`, the native Node bindings, and release documentation.
+**x402 v2 Exact-EVM Release** - `0.9.4` upgrades the x402 path from a sequencer-specific protocol toward the exact EVM shape used by x402 v2.
 
-### PQC Security Profiles
-- `legacy`: existing Ed25519 and X25519 compatibility mode
-- `hybrid`: `ed25519+mldsa65` event signatures and `x25519+mlkem768` recipient wrapping
-- `pqc-strict`: `mldsa65` signatures and `mlkem768` recipient wrapping only
-- Native Rust helpers now cover key generation, signing, verification, payload encryption/decryption, and signing proof-of-possession for both hybrid and strict modes
+### Exact x402 v2 Flow
+- CLI x402 clients now retry `402 Payment Required` responses with standards-shaped `PAYMENT-SIGNATURE` payloads for exact EVM payments
+- Added exported exact-EVM helpers for `PaymentPayload` creation, verification, settlement, CAIP-2 network mapping, and supported-kind discovery
+- Added Base Sepolia and Ethereum Sepolia support with testnet USDC metadata for exact-EVM flows
 
-### Sync and Key Management
-- `stateset-sync` config now validates `securityProfile`, requires secure transport for PQC-enabled profiles, and blocks silent downgrades unless explicitly forced
-- Agent key management now supports hybrid and `pqc-strict` signing/encryption keys, export flows, rotation paths, and proof-of-possession generation
-- Sync clients, outbox flows, and receipt verification now validate profile-compatible signatures, key registrations, recipient wraps, and VES receipts
+### Facilitator and Resource Server
+- Added facilitator helpers and HTTP handlers for `/supported`, `/verify`, and `/settle`
+- Added a reusable resource-server helper that emits `payment-required`, validates payments, settles accepted authorizations, and returns `PAYMENT-RESPONSE`
+- Added runnable exact-flow facilitator and resource-server examples for standards-native x402 v2 integrations
 
-### Bindings, Tooling, and Specs
-- The native Node binding now exposes hybrid and strict PQC APIs for signing, verification, recipient key generation, payload encryption/decryption, and signing PoP verification
-- Added PQC audit events for profile changes and key lifecycle operations, plus per-profile observability counters for signature and encryption usage
-- Added the initial PQC migration design doc in `docs/PQC_INITIAL_SPEC.md`
-
-### Validation and Benchmarks
-- Added cross-language Node/Rust PQC coverage for hybrid signing and recipient-wrap flows
-- Added strict-profile sync tests for key generation, signing, encryption/decryption, PoP, metrics, and cross-profile rejection
-- Added expanded Rust PQC coverage and Criterion PQC benchmarks for signing, KEM wrapping, and payload encryption
+### Interop and Release Tooling
+- Legacy x402 signing hashes in JavaScript now bind `resourceUri` and `resourceMethod`, matching the Rust-side replay protections
+- MCP exact-x402 calls no longer require legacy sequencer configuration
+- CI and publish workflows now run shared release-hygiene checks, with helper regression coverage and workflow linting
 
 ---
 
@@ -1331,7 +1325,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.9.3"
+stateset-embedded = "0.9.4"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1381,14 +1375,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.9.3</version>
+    <version>0.9.4</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.9.3'
+implementation 'com.stateset:embedded:0.9.4'
 ```
 
 ### Kotlin (Gradle)
@@ -1396,7 +1390,7 @@ implementation 'com.stateset:embedded:0.9.3'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.9.3")
+    implementation("com.stateset:embedded-kotlin:0.9.4")
 }
 ```
 
@@ -1405,32 +1399,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.3")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.4")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.9.3'
+pod 'StateSet', '~> 0.9.4'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.9.3
+dotnet add package StateSet.Embedded --version 0.9.4
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.9.3" />
+<PackageReference Include="StateSet.Embedded" Version="0.9.4" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.3
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.4
 ```
 
 ### CLI

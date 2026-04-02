@@ -139,6 +139,27 @@ jobs:
       - name: Run shellcheck
         run: bash ./.github/scripts/shellcheck.sh
 
+  actionlint:
+    name: Workflow Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.2'
+      - name: Install actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Run actionlint
+        run: bash ./.github/scripts/actionlint.sh
+
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
@@ -318,16 +339,22 @@ jobs:
       - name: Build docs
         run: mdbook build docs
 
-  version-sync:
-    name: Version Sync
+  release-hygiene:
+    name: Release Hygiene
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Check version sync
-        run: bash ./scripts/ci/check_version_sync.sh
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - name: Check release hygiene
+        run: bash ./scripts/ci/check_release_hygiene.sh
+      - name: Test release hygiene helper
+        run: bash ./scripts/ci/check_release_hygiene.test.sh
 
   rust:
     name: Rust

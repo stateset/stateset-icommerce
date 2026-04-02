@@ -39,9 +39,9 @@ const CHAINS_MODULE = './chains/index.js';
  *   evaluate: (domain: string, context: JsonRecord) => Promise<PolicyEvaluation>,
  * }} PolicyEngineLike
  * @typedef {{
- *   sequencerClient: X402SequencerClient,
- *   tenantId: string,
- *   storeId: string,
+ *   sequencerClient: X402SequencerClient | null,
+ *   tenantId?: string,
+ *   storeId?: string,
  *   agentId: string,
  *   agentKeyId: number,
  *   payerAddress: string,
@@ -413,9 +413,8 @@ export function createX402McpServer({
    * @returns {Promise<ResolvedX402Config>}
    */
   const ensureConfig = async () => {
-    if (!sequencerClient) throw new Error('X402_SEQUENCER_URL is required');
-    if (!tenantId || !storeId || !agentId) {
-      throw new Error('X402_TENANT_ID, X402_STORE_ID, and X402_AGENT_ID are required');
+    if (!agentId) {
+      throw new Error('X402_AGENT_ID is required');
     }
     if (!payerAddress) {
       throw new Error('X402_PAYER_ADDRESS is required');
