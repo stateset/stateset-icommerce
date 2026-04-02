@@ -183,6 +183,50 @@ describe('agent-toolkit', () => {
     assert.equal(result.result.count, 0);
   });
 
+  it('adapts prototype getter-based commerce APIs for tool execution', async () => {
+    class GetterCommerce {
+      get customers() {
+        return {
+          list: async () => [
+            {
+              id: 'cust_demo_1',
+              email: 'buyer@example.com',
+              firstName: 'Buyer',
+              lastName: 'Agent',
+              status: 'active',
+              acceptsMarketing: false,
+              createdAt: '2026-04-02T00:00:00.000Z',
+            },
+          ],
+          count: async () => 1,
+          get: async () => null,
+        };
+      }
+
+      get x402() {
+        return {
+          getNextNonce: async () => 42,
+        };
+      }
+    }
+
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: new GetterCommerce(),
+      allowApply: true,
+    });
+
+    const customers = await toolkit.executeTool('list_customers');
+    const nonce = await toolkit.executeTool('x402_get_next_nonce', {
+      payerAddress: '0x1234567890abcdef1234567890abcdef12345678',
+    });
+
+    assert.equal(customers.success, true);
+    assert.equal(customers.result.count, 1);
+    assert.equal(customers.result.customers[0].email, 'buyer@example.com');
+    assert.equal(nonce.success, true);
+    assert.equal(nonce.result.nextNonce, 42);
+  });
+
   it('normalizes OpenAI tool calls and returns a function_call_output payload', async () => {
     const toolkit = createEmbeddedAgentToolkit({ commerce: mockCommerce });
 

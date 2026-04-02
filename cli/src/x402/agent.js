@@ -98,6 +98,7 @@ import {
  *   budgetState?: BudgetState | null,
  *   budgetStateFile?: string,
  *   startingBalance?: number,
+ *   validateUrl?: boolean,
  * }} X402FetchConfig
  * @typedef {{ requirements: PaymentRequirement | null, version: 'v1' | 'v2' | null, raw: unknown }} ParsedPaymentRequired
  */
@@ -309,6 +310,7 @@ export async function x402Fetch(url, options, config) {
     budgetState,
     budgetStateFile,
     startingBalance,
+    validateUrl = true,
   } = config;
 
   if (!agentId) throw new Error('agentId is required');
@@ -316,7 +318,9 @@ export async function x402Fetch(url, options, config) {
   if (!signingKey?.privateKey || !signingKey?.publicKey)
     throw new Error('signingKey with privateKey/publicKey is required');
 
-  validateFetchUrl(url);
+  if (validateUrl !== false) {
+    validateFetchUrl(url);
+  }
 
   const baseHeaders = headersToObject(options?.headers);
 

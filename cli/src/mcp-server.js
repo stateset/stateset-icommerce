@@ -100,6 +100,90 @@ const MPP_SERVICE_INFO = buildMppServiceInfo({
   serverUrl: '/mcp',
 });
 
+function createCallableApiAccessor(resolveValue) {
+  return new Proxy(
+    function accessor() {
+      return resolveValue();
+    },
+    {
+      apply() {
+        return resolveValue();
+      },
+      get(_target, prop) {
+        const api = resolveValue();
+        const value = api?.[prop];
+        return typeof value === 'function' ? value.bind(api) : value;
+      },
+      has(_target, prop) {
+        const api = resolveValue();
+        return prop in (api || {});
+      },
+      ownKeys() {
+        const api = resolveValue();
+        return Reflect.ownKeys(api || {});
+      },
+      getOwnPropertyDescriptor(_target, prop) {
+        const api = resolveValue();
+        const descriptor = Object.getOwnPropertyDescriptor(api || {}, prop);
+        return descriptor ? { ...descriptor, configurable: true } : undefined;
+      },
+    },
+  );
+}
+
+function adaptCommerceForTools(commerce) {
+  if (!commerce || typeof commerce !== 'object') {
+    return commerce;
+  }
+
+  const adapted = { ...commerce };
+  const accessorCache = new Map();
+  const seen = new Set(Object.keys(adapted));
+
+  const getAccessor = (name) => {
+    if (!accessorCache.has(name)) {
+      accessorCache.set(name, createCallableApiAccessor(() => commerce[name]));
+    }
+    return accessorCache.get(name);
+  };
+
+  for (
+    let proto = Object.getPrototypeOf(commerce);
+    proto && proto !== Object.prototype;
+    proto = Object.getPrototypeOf(proto)
+  ) {
+    for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(proto))) {
+      if (name === 'constructor' || seen.has(name)) {
+        continue;
+      }
+
+      if (typeof descriptor.get === 'function') {
+        Object.defineProperty(adapted, name, {
+          enumerable: true,
+          configurable: true,
+          get() {
+            return getAccessor(name);
+          },
+        });
+        seen.add(name);
+        continue;
+      }
+
+      if (typeof descriptor.value === 'function') {
+        Object.defineProperty(adapted, name, {
+          enumerable: true,
+          configurable: true,
+          writable: false,
+          value: descriptor.value.bind(commerce),
+        });
+        seen.add(name);
+      }
+    }
+  }
+
+  return adapted;
+}
+
 /**
  * All domain tool definitions, collected from modules.
  */
@@ -1381,7 +1465,7 @@ export function createStatesetMcpServer({
 
   // Create a commerce wrapper that includes A2A methods
   const commerceWithA2A = {
-    ...commerce,
+    ...adaptCommerceForTools(commerce),
     a2a: () => ({
       createPayment: (p) => a2aStore.createPayment(p),
       getPayment: (id) => a2aStore.getPayment(id),

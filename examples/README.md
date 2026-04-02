@@ -12,6 +12,7 @@ Complete examples, guides, and scripts for StateSet Commerce.
 | **[Troubleshooting](./troubleshooting.md)** | Solutions to common problems |
 | **`examples/agents/openai-embedded-toolkit.mjs`** | Minimal embedded agent example using OpenAI-style JSON-schema tools |
 | **`examples/agents/framework-adapters.mjs`** | Minimal Vercel AI and LangChain adapter example using the embedded toolkit |
+| **[`examples/agents/README.md`](./agents/README.md)** | Runnable x402 agent demo flows: paid HTTP, local intents, and metered credits |
 
 ## Scripts
 

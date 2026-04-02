@@ -359,6 +359,32 @@ describe('x402Fetch — validation', () => {
       /SSRF/,
     );
   });
+
+  it('allows local URLs when validateUrl is false', async () => {
+    mockFetch(async () => {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    const response = await x402Fetch(
+      'http://127.0.0.1/resource',
+      {},
+      {
+        sequencerClient: {},
+        tenantId: 'T',
+        storeId: 'S',
+        agentId: 'A',
+        payerAddress: '0xPayer',
+        signingKey: { privateKey: Buffer.alloc(32), publicKey: Buffer.alloc(32) },
+        validateUrl: false,
+      },
+    );
+
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(await response.json(), { ok: true });
+  });
 });
 
 describe('x402Fetch — exact EVM flow', () => {
