@@ -193,7 +193,7 @@ export const agentCardTools = [
     inputSchema: {
       agentId: z.string().min(1).describe('Agent ID to verify'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       const { agentId } = params;
       if (!allowApply) {

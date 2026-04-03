@@ -110,6 +110,30 @@ describe('AuditStore', () => {
     });
   });
 
+  describe('durable fallback', () => {
+    it('persists audit entries when SQLite is unavailable', () => {
+      const fallbackPath = path.join(TEST_DB_DIR, 'audit-fallback.db');
+      const fallbackStore = new AuditStore({ dbPath: fallbackPath, databaseCtor: null });
+
+      fallbackStore.log({
+        tool: 'create_order',
+        params: { customerId: 'c-fallback' },
+        result: 'allowed',
+        level: 'write',
+      });
+      fallbackStore.close();
+
+      const reopened = new AuditStore({ dbPath: fallbackPath, databaseCtor: null });
+      const entries = reopened.query({ tool: 'create_order' });
+      assert.equal(reopened.backend, 'json-fallback');
+      assert.equal(entries.length, 1);
+      assert.deepEqual(entries[0].params, { customerId: 'c-fallback' });
+      assert.ok(fs.existsSync(`${fallbackPath}.fallback.json`));
+
+      reopened.close();
+    });
+  });
+
   describe('export()', () => {
     it('returns exportedAt, totalEntries, and entries', () => {
       const exported = store.export();

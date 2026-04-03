@@ -113,7 +113,7 @@ export const subscriptionTools = [
     description:
       'Archive a subscription plan (no new subscriptions, existing ones continue). Requires --apply flag.',
     inputSchema: { planId: z.string().min(1).describe('Plan ID to archive') },
-    permission: 'write',
+    permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
       const { planId } = params;
       if (!allowApply)
@@ -267,7 +267,7 @@ export const subscriptionTools = [
         .describe('Cancel immediately (default: false, cancels at period end)'),
       reason: z.string().optional().describe('Reason for cancellation'),
     },
-    permission: 'write',
+    permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
       const { subscriptionId, immediate, reason } = params;
       if (!allowApply)

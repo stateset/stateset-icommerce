@@ -9,7 +9,7 @@ StateSet iCommerce is available in three tiers. Start with Tier 1 for free, upgr
 | Feature | Included |
 |---------|----------|
 | SQLite commerce engine | Yes |
-| 520+ MCP tools (orders, inventory, payments, etc.) | Yes |
+| MCP tools (orders, inventory, payments, etc.) | Yes |
 | Policy engine (YAML rules, explainable denials) | Yes |
 | Shopify adapter (CSV import + webhooks) | Yes |
 | Stripe adapter (webhooks) | Yes |

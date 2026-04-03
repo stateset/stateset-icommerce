@@ -92,6 +92,8 @@ await toolkit.executeTool('add_to_wishlist', {
 
 ## GDPR Data Handling
 
+The exact GDPR tool surface depends on the runtime and deployment tier. Verify the named tools below against your actual MCP registry before depending on them in production workflows.
+
 ```javascript
 // Export all customer data (Right to Portability)
 await toolkit.executeTool('export_gdpr_subject_data', {

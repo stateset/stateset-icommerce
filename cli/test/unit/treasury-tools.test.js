@@ -96,8 +96,8 @@ describe('Treasury Tools — permissions', () => {
     assert.strictEqual(findTool('treasury_list_tokens').permission, 'read');
   });
 
-  it('treasury_register_token is write', () => {
-    assert.strictEqual(findTool('treasury_register_token').permission, 'write');
+  it('treasury_register_token is admin', () => {
+    assert.strictEqual(findTool('treasury_register_token').permission, 'admin');
   });
 });
 

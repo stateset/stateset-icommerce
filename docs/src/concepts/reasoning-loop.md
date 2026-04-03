@@ -51,7 +51,7 @@ The LLM parses this into a structured intent: tool = `ship_order`, params = `{ o
 
 ### 2. Tool Selection
 
-The LLM selects from 520+ MCP tools. Each tool has a JSON schema describing its parameters, making selection deterministic once the intent is parsed.
+The LLM selects from the available MCP tools. Each tool has a JSON schema describing its parameters, making selection deterministic once the intent is parsed.
 
 ### 3. Preview (Dry Run)
 

@@ -261,7 +261,7 @@ export const syncTools = [
         .optional()
         .describe('Optional local encryption key ID override for decrypting pulled events'),
     },
-    permission: 'read',
+    permission: 'write',
     handler: async ({ commerce, params }) => {
       const {
         fromSequence,
@@ -507,7 +507,7 @@ export const syncTools = [
     description:
       'Reset failed events to pending status so they can be retried. Requires --apply flag.',
     inputSchema: {},
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params: _params, allowApply }) => {
       if (!isSyncConfigured())
         return {
@@ -660,7 +660,7 @@ export const syncTools = [
         .optional()
         .describe('Maximum events to pull (default: 1000)'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       const { pushBatchSize = 100, pullLimit = 1000 } = params;
       if (!isSyncConfigured())
@@ -743,7 +743,7 @@ export const syncTools = [
         .optional()
         .describe('Resolution strategy (default: uses suggested strategy)'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       const { conflictId, strategy } = params;
       if (!isSyncConfigured())
@@ -784,7 +784,7 @@ export const syncTools = [
         .optional()
         .describe('Resolution strategy for all conflicts (default: remote-wins)'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       const { strategy = 'remote-wins' } = params;
       if (!isSyncConfigured())

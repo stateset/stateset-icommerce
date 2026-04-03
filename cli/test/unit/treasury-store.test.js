@@ -110,6 +110,25 @@ describe('TreasuryStore', () => {
       store2.close();
       fs.rmSync(dir2, { recursive: true });
     });
+
+    it('persists fallback ledger entries across instances when SQLite is unavailable', () => {
+      const fallbackDbPath = path.join(dir, 'fallback-treasury.db');
+      const fallbackStore = new TreasuryStore({ dbPath: fallbackDbPath, databaseCtor: null });
+      fallbackStore.init();
+      assert.equal(fallbackStore.backend, 'json-fallback');
+      fallbackStore.record(makeEntry({ event_id: 'fallback-1', metadata: { source: 'test' } }));
+      fallbackStore.close();
+
+      const fallbackPath = `${fallbackDbPath}.fallback.json`;
+      assert.ok(fs.existsSync(fallbackPath));
+
+      const reopened = new TreasuryStore({ dbPath: fallbackDbPath, databaseCtor: null });
+      reopened.init();
+      const entries = reopened.list({ agentId: 'agent-1' });
+      assert.equal(entries.length, 1);
+      assert.deepStrictEqual(entries[0].metadata, { source: 'test' });
+      reopened.close();
+    });
   });
 
   describe('list()', () => {

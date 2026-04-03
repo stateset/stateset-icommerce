@@ -313,6 +313,30 @@ describe('AgentSessionStore', () => {
     store = null;
   });
 
+  it('persists fallback sessions across instances when SQLite is unavailable', () => {
+    const dbPath = tmpDbPath();
+    store = new AgentSessionStore({ dbPath, databaseCtor: null });
+    assert.strictEqual(store.backend, 'json-fallback');
+    store.upsert('sess-fallback', {
+      provider: 'openai',
+      model: 'gpt-4o',
+      slaLevel: 'standard',
+      summaries: ['replay this'],
+    });
+    store.close();
+
+    assert.ok(fs.existsSync(`${dbPath}.fallback.json`));
+
+    const reopened = new AgentSessionStore({ dbPath, databaseCtor: null });
+    const session = reopened.get('sess-fallback');
+    assert.strictEqual(session.provider, 'openai');
+    assert.strictEqual(session.model, 'gpt-4o');
+    assert.strictEqual(session.slaLevel, 'standard');
+    assert.deepStrictEqual(session.summaries, ['replay this']);
+    reopened.close();
+    store = null;
+  });
+
   it('migrates legacy stores to the richer schema', () => {
     const dbPath = tmpDbPath();
     const Database = loadNativeDatabaseCtor();

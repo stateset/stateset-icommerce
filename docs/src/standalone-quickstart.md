@@ -119,7 +119,7 @@ stateset-checkout "create a cart for alice@example.com and add 2 widgets"
 
 | Feature | Description |
 |---------|-------------|
-| **520+ MCP tools** | Orders, inventory, payments, returns, carts, analytics, tax, promotions, subscriptions, manufacturing, A2A |
+| **MCP tools** | Orders, inventory, payments, returns, carts, analytics, tax, promotions, subscriptions, manufacturing, A2A |
 | **Policy engine** | YAML business rules with explainable denials and preview-before-execute |
 | **Shopify adapter** | CSV import, API sync, webhook handlers |
 | **Stripe adapter** | Real-time webhook sync for payments, subscriptions, invoices |

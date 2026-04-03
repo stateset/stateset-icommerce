@@ -2,10 +2,19 @@
  * Treasury Store
  *
  * SQLite-backed ledger for agent funding and token purchases when available.
+ * Falls back to a durable JSON ledger when the native SQLite binding is unavailable.
  */
 
 import { createRequire } from 'node:module';
-import { mkdirSync, existsSync, openSync, closeSync } from 'node:fs';
+import {
+  mkdirSync,
+  existsSync,
+  openSync,
+  closeSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 const SCHEMA = `
@@ -91,17 +100,62 @@ function loadDatabaseCtor() {
 }
 
 function getFallbackDatabaseState(dbPath) {
-  if (dbPath === ':memory:') {
-    return { nextId: 1, rows: [] };
+  const storagePath = dbPath === ':memory:' ? ':memory:' : `${dbPath}.fallback.json`;
+  if (storagePath === ':memory:') {
+    return { nextId: 1, rows: [], storagePath };
   }
 
-  let state = FALLBACK_TREASURY_DATABASES.get(dbPath);
-  if (!state || !existsSync(dbPath)) {
-    ensureDbFile(dbPath);
-    state = { nextId: 1, rows: [] };
-    FALLBACK_TREASURY_DATABASES.set(dbPath, state);
+  let state = FALLBACK_TREASURY_DATABASES.get(storagePath);
+  if (!state) {
+    let rows = [];
+    let nextId = 1;
+
+    if (existsSync(storagePath)) {
+      try {
+        const raw = readFileSync(storagePath, 'utf8').trim();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed?.rows)) {
+            rows = parsed.rows;
+          }
+          if (Number.isInteger(parsed?.nextId) && parsed.nextId > 0) {
+            nextId = parsed.nextId;
+          } else if (rows.length > 0) {
+            nextId = Math.max(...rows.map((row) => row.id || 0)) + 1;
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[treasury-store] Failed to read fallback treasury store ${storagePath}: ${error.message}`,
+        );
+      }
+    }
+
+    state = { nextId, rows, storagePath };
+    FALLBACK_TREASURY_DATABASES.set(storagePath, state);
   }
   return state;
+}
+
+function persistFallbackDatabaseState(state) {
+  if (!state?.storagePath || state.storagePath === ':memory:') {
+    return;
+  }
+
+  ensureDirForFile(state.storagePath);
+  const tmpPath = `${state.storagePath}.tmp`;
+  writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        nextId: state.nextId,
+        rows: state.rows,
+      },
+      null,
+      2,
+    ),
+  );
+  renameSync(tmpPath, state.storagePath);
 }
 
 /** @type {Record<string, string>} Allowed audit columns and their SQLite types */
@@ -128,11 +182,16 @@ export class TreasuryStore {
   /**
    * @param {Object} [opts]
    * @param {string} [opts.dbPath]
+   * @param {typeof import('better-sqlite3') | null} [opts.databaseCtor]
    */
   constructor(opts = {}) {
     this.dbPath = opts.dbPath || defaultTreasuryDbPath();
+    this._databaseCtor = Object.prototype.hasOwnProperty.call(opts, 'databaseCtor')
+      ? opts.databaseCtor
+      : undefined;
     this.db = null;
     this._fallbackState = null;
+    this.backend = 'sqlite';
     this._insertStmt = null;
     this._listStmt = null;
     this._listByAgentStmt = null;
@@ -142,9 +201,9 @@ export class TreasuryStore {
   init() {
     ensureDbFile(this.dbPath);
 
-    const Database = loadDatabaseCtor();
+    const Database = this._databaseCtor === undefined ? loadDatabaseCtor() : this._databaseCtor;
     if (!Database) {
-      this._enableFallback();
+      this._enableFallback('better-sqlite3 unavailable');
       return;
     }
 
@@ -154,7 +213,7 @@ export class TreasuryStore {
       if (error?.code !== 'ERR_DLOPEN_FAILED') {
         throw error;
       }
-      this._enableFallback();
+      this._enableFallback(error.message || 'native module load failure');
       return;
     }
 
@@ -202,8 +261,14 @@ export class TreasuryStore {
     `);
   }
 
-  _enableFallback() {
+  _enableFallback(reason = 'fallback requested') {
     this._fallbackState = getFallbackDatabaseState(this.dbPath);
+    this.backend = 'json-fallback';
+    if (this.dbPath !== ':memory:') {
+      console.warn(
+        `[treasury-store] ${reason}; using durable JSON fallback at ${this._fallbackState.storagePath}`,
+      );
+    }
     this.db = {
       pragma() {
         return 'WAL';
@@ -216,6 +281,9 @@ export class TreasuryStore {
   }
 
   close() {
+    if (this._fallbackState) {
+      persistFallbackDatabaseState(this._fallbackState);
+    }
     if (this.db) {
       this.db.close();
       this.db = null;
@@ -243,6 +311,7 @@ export class TreasuryStore {
         id: this._fallbackState.nextId++,
         ...payload,
       });
+      persistFallbackDatabaseState(this._fallbackState);
       return payload;
     }
 

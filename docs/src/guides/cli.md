@@ -1,6 +1,6 @@
 # CLI
 
-The `stateset` CLI is a natural-language interface to the embedded commerce engine and 520+ MCP tools. Tip: `ss` is a shorthand alias for `stateset`.
+The `stateset` CLI is a natural-language interface to the embedded commerce engine and its MCP tool surface. Tip: `ss` is a shorthand alias for `stateset`.
 
 ## Safety Model
 

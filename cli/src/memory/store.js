@@ -4,13 +4,13 @@
  * SQLite-backed conversation memory store. Persists summaries, facts, and
  * context from past conversations so agents can recall earlier interactions.
  *
- * Uses better-sqlite3 when available, and falls back to an in-process store
+ * Uses better-sqlite3 when available, and falls back to a durable JSON store
  * when the native module is unavailable.
  */
 
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
+import fs, { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 // ============================================================================
@@ -60,19 +60,68 @@ function loadDatabaseCtor() {
 }
 
 function ensureDbFile(dbPath) {
+  if (dbPath === ':memory:') return;
   mkdirSync(dirname(dbPath), { recursive: true });
   closeSync(openSync(dbPath, 'a'));
 }
 
+function getFallbackDatabasePath(dbPath) {
+  return dbPath === ':memory:' ? ':memory:' : `${dbPath}.fallback.json`;
+}
+
+function persistFallbackDatabase(state) {
+  if (!state?.storagePath || state.storagePath === ':memory:') {
+    return;
+  }
+
+  mkdirSync(dirname(state.storagePath), { recursive: true });
+  const tmpPath = `${state.storagePath}.tmp`;
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        nextId: state.nextId,
+        rows: state.rows,
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tmpPath, state.storagePath);
+}
+
 function getFallbackDatabase(dbPath) {
-  let state = FALLBACK_DATABASES.get(dbPath);
-  if (!state || !existsSync(dbPath)) {
-    ensureDbFile(dbPath);
-    state = {
-      nextId: 1,
-      rows: [],
-    };
-    FALLBACK_DATABASES.set(dbPath, state);
+  const storagePath = getFallbackDatabasePath(dbPath);
+  if (storagePath === ':memory:') {
+    return { nextId: 1, rows: [], storagePath };
+  }
+
+  let state = FALLBACK_DATABASES.get(storagePath);
+  if (!state) {
+    const rows = [];
+    let nextId = 1;
+    if (existsSync(storagePath)) {
+      try {
+        const raw = fs.readFileSync(storagePath, 'utf8').trim();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed?.rows)) {
+            rows.push(...parsed.rows);
+          }
+          if (Number.isInteger(parsed?.nextId) && parsed.nextId > 0) {
+            nextId = parsed.nextId;
+          } else if (rows.length > 0) {
+            nextId = Math.max(...rows.map((row) => row.id || 0)) + 1;
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[memory-store] Failed to read fallback store ${storagePath}: ${error.message}`,
+        );
+      }
+    }
+    state = { nextId, rows, storagePath };
+    FALLBACK_DATABASES.set(storagePath, state);
   }
   return state;
 }
@@ -103,14 +152,16 @@ export class MemoryStore {
   /**
    * @param {Object} [opts]
    * @param {string} [opts.dbPath] - SQLite database path (default: ~/.stateset/memory.db)
+   * @param {typeof import('better-sqlite3') | null} [opts.databaseCtor]
    */
   constructor(opts = {}) {
     this._dbPath = opts.dbPath || defaultDbPath();
-    const Database = loadDatabaseCtor();
+    const Database = opts.databaseCtor === undefined ? loadDatabaseCtor() : opts.databaseCtor;
     this._fallbackState = null;
+    this.backend = 'sqlite';
 
     if (!Database) {
-      this._enableFallback();
+      this._enableFallback('better-sqlite3 unavailable');
       return;
     }
 
@@ -118,7 +169,7 @@ export class MemoryStore {
       this._db = new Database(this._dbPath);
     } catch (error) {
       if (error?.code === 'ERR_DLOPEN_FAILED') {
-        this._enableFallback();
+        this._enableFallback(error.message || 'native module load failure');
         return;
       }
       throw error;
@@ -210,6 +261,7 @@ export class MemoryStore {
         createdAt: Date.now(),
         tokenCount,
       });
+      persistFallbackDatabase(this._fallbackState);
       return { id: row.id };
     }
 
@@ -318,6 +370,9 @@ export class MemoryStore {
     if (this._fallbackState) {
       const before = this._fallbackState.rows.length;
       this._fallbackState.rows = this._fallbackState.rows.filter((row) => row.created_at >= cutoff);
+      if (before !== this._fallbackState.rows.length) {
+        persistFallbackDatabase(this._fallbackState);
+      }
       return before - this._fallbackState.rows.length;
     }
     return this._deleteOldStmt.run(cutoff).changes;
@@ -334,6 +389,7 @@ export class MemoryStore {
       const index = this._fallbackState.rows.findIndex((row) => row.id === numericId);
       if (index === -1) return false;
       this._fallbackState.rows.splice(index, 1);
+      persistFallbackDatabase(this._fallbackState);
       return true;
     }
     return this._deleteByIdStmt.run(id).changes > 0;
@@ -354,6 +410,9 @@ export class MemoryStore {
    * Close the database.
    */
   close() {
+    if (this._fallbackState) {
+      persistFallbackDatabase(this._fallbackState);
+    }
     if (this._db) {
       this._db.close();
       this._db = null;
@@ -368,8 +427,14 @@ export class MemoryStore {
   }
 
   /** @private */
-  _enableFallback() {
+  _enableFallback(reason = 'fallback requested') {
     this._fallbackState = getFallbackDatabase(this._dbPath);
+    this.backend = 'json-fallback';
+    if (this._dbPath !== ':memory:') {
+      console.warn(
+        `[memory-store] ${reason}; using durable JSON fallback at ${this._fallbackState.storagePath}`,
+      );
+    }
     this._insertStmt = {
       run: (channel, senderId, sessionId, summary, facts, agent, createdAt, tokenCount) => {
         const row = this._insertFallbackRow({

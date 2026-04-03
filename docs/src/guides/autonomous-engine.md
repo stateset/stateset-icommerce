@@ -2,6 +2,8 @@
 
 The autonomous engine enables self-governing commerce operations — scheduled billing, automatic dispute resolution, SLA enforcement, and proactive monitoring — without human intervention.
 
+Note: some interfaces on this page are runtime-specific operational surfaces. Verify the named tools against your actual runtime before depending on them in unattended automation.
+
 ## Components
 
 | Component | Module | Description |

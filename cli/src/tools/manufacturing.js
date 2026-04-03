@@ -314,7 +314,7 @@ export const manufacturingTools = [
     inputSchema: {
       workOrderId: z.string().min(1).describe('Work order ID to cancel'),
     },
-    permission: 'write',
+    permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
       const { workOrderId } = params;
       if (!allowApply) {

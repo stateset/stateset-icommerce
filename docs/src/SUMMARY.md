@@ -7,6 +7,7 @@
 - [Standalone Quickstart](standalone-quickstart.md)
 - [AI Agent Quickstart](ai-agents.md)
 - [Product Tiers](tiers.md)
+- [Trust Foundation](trust-foundation.md)
 
 # Concepts & Architecture
 

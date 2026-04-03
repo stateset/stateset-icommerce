@@ -14,10 +14,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==0.9.4     # Python
-npm install @stateset/embedded@0.9.4     # Node.js
-npm install -g @stateset/cli@0.9.4       # CLI
-gem install stateset_embedded -v 0.9.4   # Ruby
+pip install stateset-embedded==0.9.5     # Python
+npm install @stateset/embedded@0.9.5     # Node.js
+npm install -g @stateset/cli@0.9.5       # CLI
+gem install stateset_embedded -v 0.9.5   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -47,13 +47,13 @@ println!("Order {} — ${}", order.order_number, order.total_amount);
 
 No database setup. No config files. No migrations to run. It just works.
 
-**[10-Minute Quickstart →](./QUICKSTART.md)** | **[API Reference](https://docs.rs/stateset-sdk)** | **[OpenAPI Spec](http://localhost:3000/api/v1/docs)**
+**[10-Minute Quickstart →](./QUICKSTART.md)** | **[API Reference](https://docs.rs/stateset-sdk)** | **[OpenAPI Spec](http://localhost:3000/api/v1/docs)** | **[Trust Foundation](./TRUST_FOUNDATION.md)**
 
 ---
 
 ## MCP Server (Claude Desktop / Cursor / Windsurf)
 
-StateSet exposes **256 commerce tools** via the [Model Context Protocol](https://modelcontextprotocol.io). Add it to your AI editor in one step.
+StateSet exposes **hundreds of commerce tools** via the [Model Context Protocol](https://modelcontextprotocol.io). Add it to your AI editor in one step.
 
 **One-command onboarding (including OpenClaw):**
 ```bash
@@ -109,7 +109,7 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/cli@0.9.4 @stateset/embedded@0.9.4
+npm install @stateset/cli@0.9.5 @stateset/embedded@0.9.5
 ```
 
 ```javascript
@@ -164,24 +164,23 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.9.4
+## What's New in v0.9.5
 
-**x402 v2 Exact-EVM Release** - `0.9.4` upgrades the x402 path from a sequencer-specific protocol toward the exact EVM shape used by x402 v2.
+**Runtime Trust Hardening Release** - `0.9.5` focuses on making the local-first runtime fail safer under degraded conditions and making the release surface more internally consistent.
 
-### Exact x402 v2 Flow
-- CLI x402 clients now retry `402 Payment Required` responses with standards-shaped `PAYMENT-SIGNATURE` payloads for exact EVM payments
-- Added exported exact-EVM helpers for `PaymentPayload` creation, verification, settlement, CAIP-2 network mapping, and supported-kind discovery
-- Added Base Sepolia and Ethereum Sepolia support with testnet USDC metadata for exact-EVM flows
+### Permission and Audit Safety
+- MCP permission enforcement now fails closed for unknown tools instead of silently defaulting to read access
+- Tool-module permission metadata is aligned with the runtime permission map
+- Audit-critical paths no longer quietly drop to ephemeral process memory when SQLite bindings are unavailable
 
-### Facilitator and Resource Server
-- Added facilitator helpers and HTTP handlers for `/supported`, `/verify`, and `/settle`
-- Added a reusable resource-server helper that emits `payment-required`, validates payments, settles accepted authorizations, and returns `PAYMENT-RESPONSE`
-- Added runnable exact-flow facilitator and resource-server examples for standards-native x402 v2 integrations
+### Durable Fallback Persistence
+- Credentials, treasury records, channel identity/session state, agent sessions, conversation memory, and ERC-8004 identity storage now persist to durable JSON fallback stores when `better-sqlite3` is unavailable
+- Fallback modes emit explicit warnings so degraded runtime posture is visible during operations
 
-### Interop and Release Tooling
-- Legacy x402 signing hashes in JavaScript now bind `resourceUri` and `resourceMethod`, matching the Rust-side replay protections
-- MCP exact-x402 calls no longer require legacy sequencer configuration
-- CI and publish workflows now run shared release-hygiene checks, with helper regression coverage and workflow linting
+### Runtime Hygiene
+- Session cleanup now enforces configured retention caps correctly
+- Channel-session fallback writes preserve the correct field ordering during upsert
+- Regression coverage expanded across permissions, MCP, treasury, audit, memory, channel, and identity paths
 
 ---
 
@@ -1325,7 +1324,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.9.4"
+stateset-embedded = "0.9.5"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1375,14 +1374,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.9.4</version>
+    <version>0.9.5</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.9.4'
+implementation 'com.stateset:embedded:0.9.5'
 ```
 
 ### Kotlin (Gradle)
@@ -1390,7 +1389,7 @@ implementation 'com.stateset:embedded:0.9.4'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.9.4")
+    implementation("com.stateset:embedded-kotlin:0.9.5")
 }
 ```
 
@@ -1399,32 +1398,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.4")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.5")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.9.4'
+pod 'StateSet', '~> 0.9.5'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.9.4
+dotnet add package StateSet.Embedded --version 0.9.5
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.9.4" />
+<PackageReference Include="StateSet.Embedded" Version="0.9.5" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.4
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.5
 ```
 
 ### CLI

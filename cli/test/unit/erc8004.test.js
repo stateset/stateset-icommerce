@@ -215,4 +215,22 @@ describe('listIdentities', () => {
     const results = listIdentities(dbPath, { limit: 2 });
     assert.equal(results.length, 2);
   });
+
+  it('persists fallback identities across calls when SQLite is unavailable', () => {
+    registerIdentity(
+      dbPath,
+      baseInput({ agentWallet: '0xFALLBACK' }),
+      { databaseCtor: null },
+    );
+
+    assert.ok(fs.existsSync(`${dbPath}.fallback.json`));
+
+    const identity = getIdentity(dbPath, 'stateset', 'agent-001', { databaseCtor: null });
+    assert.ok(identity);
+    assert.equal(identity.agent_wallet, '0xFALLBACK');
+
+    const byWallet = getIdentityByWallet(dbPath, '0xFALLBACK', { databaseCtor: null });
+    assert.ok(byWallet);
+    assert.equal(byWallet.agent_id, 'agent-001');
+  });
 });

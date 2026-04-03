@@ -130,6 +130,28 @@ describe('ChannelSessionStore', () => {
     assert.ok(store.get('ch', 'new-user'));
   });
 
+  it('persists fallback sessions across instances when SQLite is unavailable', () => {
+    const fallbackDbPath = tmpDbPath();
+    const fallbackStore = new ChannelSessionStore({ dbPath: fallbackDbPath, databaseCtor: null });
+    assert.equal(fallbackStore.backend, 'json-fallback');
+    fallbackStore.upsert('telegram', 'fallback-user', {
+      sessionId: 'fallback-session',
+      agent: 'orders',
+      lastActive: 1234,
+      context: { topic: 'fallback' },
+    });
+    fallbackStore.close();
+
+    assert.ok(fs.existsSync(`${fallbackDbPath}.fallback.json`));
+
+    const reopened = new ChannelSessionStore({ dbPath: fallbackDbPath, databaseCtor: null });
+    const session = reopened.get('telegram', 'fallback-user');
+    assert.ok(session);
+    assert.equal(session.sessionId, 'fallback-session');
+    assert.deepStrictEqual(session.context, { topic: 'fallback' });
+    reopened.close();
+  });
+
   it('close() closes the database', () => {
     store.close();
     // Second close should not throw

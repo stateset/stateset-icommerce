@@ -194,7 +194,7 @@ export const treasuryTools = [
       priceUsd: z.number().positive().optional().describe('Token price in USD'),
       issuerAgentId: z.string().min(1).optional().describe('Issuing agent ID'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ params, treasuryContextOptions }) => {
       const { symbol, chainId, decimals, address, priceUsd, issuerAgentId } = params;
       const { loadTreasuryContext, addRegistryToken } = await import('../treasury/index.js');

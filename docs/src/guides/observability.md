@@ -2,6 +2,8 @@
 
 iCommerce provides structured logging, metrics, distributed tracing, and health checks across both the Rust core and CLI layers.
 
+Note: this page mixes code-verified observability primitives with runtime-specific operational interfaces. Verify named tools against your actual MCP tool list before treating them as generally available automation dependencies.
+
 ## Three Pillars
 
 | Pillar | Rust Core | CLI Layer |

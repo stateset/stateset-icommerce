@@ -80,16 +80,57 @@ function ensureDbFile(dbPath) {
   fs.closeSync(fd);
 }
 
-function getFallbackState(dbPath) {
-  if (dbPath === ':memory:') {
-    return { rows: new Map() };
+function getFallbackIdentityPath(dbPath) {
+  return dbPath === ':memory:' ? ':memory:' : `${dbPath}.fallback.json`;
+}
+
+function persistFallbackState(state) {
+  if (!state?.storagePath || state.storagePath === ':memory:') {
+    return;
   }
 
-  let state = FALLBACK_IDENTITY_DATABASES.get(dbPath);
-  if (!state || !fs.existsSync(dbPath)) {
-    ensureDbFile(dbPath);
-    state = { rows: new Map() };
-    FALLBACK_IDENTITY_DATABASES.set(dbPath, state);
+  fs.mkdirSync(path.dirname(state.storagePath), { recursive: true });
+  const tmpPath = `${state.storagePath}.tmp`;
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        rows: Array.from(state.rows.values()),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tmpPath, state.storagePath);
+}
+
+function getFallbackState(dbPath) {
+  const storagePath = getFallbackIdentityPath(dbPath);
+  if (storagePath === ':memory:') {
+    return { rows: new Map(), storagePath };
+  }
+
+  let state = FALLBACK_IDENTITY_DATABASES.get(storagePath);
+  if (!state) {
+    const rows = new Map();
+    if (fs.existsSync(storagePath)) {
+      try {
+        const raw = fs.readFileSync(storagePath, 'utf8').trim();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          for (const row of parsed?.rows || []) {
+            if (!row?.agent_registry || !row?.agent_id) continue;
+            rows.set(identityKey(row.agent_registry, row.agent_id), row);
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[erc8004] Failed to read fallback store ${storagePath}: ${error.message}`,
+        );
+      }
+    }
+    state = { rows, storagePath };
+    FALLBACK_IDENTITY_DATABASES.set(storagePath, state);
   }
   return state;
 }
@@ -98,14 +139,22 @@ function identityKey(agentRegistry, agentId) {
   return `${agentRegistry}\u0000${agentId}`;
 }
 
-function openStore(dbPath) {
+function openStore(dbPath, { databaseCtor } = {}) {
   ensureDbFile(dbPath);
-  const Database = loadDatabaseCtor();
+  const Database = databaseCtor === undefined ? loadDatabaseCtor() : databaseCtor;
   if (!Database) {
+    const state = getFallbackState(dbPath);
+    if (dbPath !== ':memory:') {
+      console.warn(
+        `[erc8004] better-sqlite3 unavailable; using durable JSON fallback at ${state.storagePath}`,
+      );
+    }
     return {
       db: null,
-      state: getFallbackState(dbPath),
-      close() {},
+      state,
+      close() {
+        persistFallbackState(state);
+      },
     };
   }
 
@@ -124,10 +173,18 @@ function openStore(dbPath) {
     if (error?.code !== 'ERR_DLOPEN_FAILED') {
       throw error;
     }
+    const state = getFallbackState(dbPath);
+    if (dbPath !== ':memory:') {
+      console.warn(
+        `[erc8004] ${error.message || 'native module load failure'}; using durable JSON fallback at ${state.storagePath}`,
+      );
+    }
     return {
       db: null,
-      state: getFallbackState(dbPath),
-      close() {},
+      state,
+      close() {
+        persistFallbackState(state);
+      },
     };
   }
 }
@@ -159,8 +216,8 @@ function mapIdentity(row) {
   };
 }
 
-export function registerIdentity(dbPath, input) {
-  const store = openStore(dbPath);
+export function registerIdentity(dbPath, input, options = {}) {
+  const store = openStore(dbPath, options);
   const now = new Date().toISOString();
   const active = input.active === undefined ? 1 : input.active ? 1 : 0;
   const proofType = normalizeProofType(input.walletProofType);
@@ -188,6 +245,7 @@ export function registerIdentity(dbPath, input) {
       updated_at: now,
     };
     store.state.rows.set(identityKey(input.agentRegistry, input.agentId), row);
+    persistFallbackState(store.state);
     store.close();
     return mapIdentity(row);
   }
@@ -240,8 +298,8 @@ export function registerIdentity(dbPath, input) {
   return mapIdentity(record);
 }
 
-export function setAgentWallet(dbPath, input) {
-  const store = openStore(dbPath);
+export function setAgentWallet(dbPath, input, options = {}) {
+  const store = openStore(dbPath, options);
   const now = new Date().toISOString();
   const proofType = normalizeProofType(input.walletProofType);
   if (store.state) {
@@ -261,6 +319,7 @@ export function setAgentWallet(dbPath, input) {
       updated_at: now,
     };
     store.state.rows.set(identityKey(input.agentRegistry, input.agentId), row);
+    persistFallbackState(store.state);
     store.close();
     return mapIdentity(row);
   }
@@ -299,8 +358,8 @@ export function setAgentWallet(dbPath, input) {
   return mapIdentity(record);
 }
 
-export function getIdentity(dbPath, agentRegistry, agentId) {
-  const store = openStore(dbPath);
+export function getIdentity(dbPath, agentRegistry, agentId, options = {}) {
+  const store = openStore(dbPath, options);
   const record = store.state
     ? selectIdentity(store.state, agentRegistry, agentId)
     : store.db
@@ -310,8 +369,8 @@ export function getIdentity(dbPath, agentRegistry, agentId) {
   return mapIdentity(record);
 }
 
-export function getIdentityByWallet(dbPath, wallet) {
-  const store = openStore(dbPath);
+export function getIdentityByWallet(dbPath, wallet, options = {}) {
+  const store = openStore(dbPath, options);
   const record = store.state
     ? selectIdentityByWallet(store.state, wallet)
     : store.db.prepare('SELECT * FROM agent_identities WHERE agent_wallet = ?').get(wallet);
@@ -319,9 +378,9 @@ export function getIdentityByWallet(dbPath, wallet) {
   return mapIdentity(record);
 }
 
-export function listIdentities(dbPath, filter = {}) {
+export function listIdentities(dbPath, filter = {}, options = {}) {
   const limit = filter.limit || 50;
-  const store = openStore(dbPath);
+  const store = openStore(dbPath, options);
 
   if (store.state) {
     const rows = sortIdentitiesByUpdatedAt(store.state.rows.values())

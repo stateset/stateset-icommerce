@@ -4,7 +4,7 @@
  * Persists model/provider/think-level metadata per Claude session ID.
  * Also stores recent summaries to keep context stable across runs.
  *
- * Uses better-sqlite3 when available, and falls back to an in-process store
+ * Uses better-sqlite3 when available, and falls back to a durable JSON store
  * when the native module is unavailable.
  */
 
@@ -79,16 +79,57 @@ function ensureDbFile(dbPath) {
   fs.closeSync(fd);
 }
 
-function getFallbackDatabaseState(dbPath) {
-  if (dbPath === ':memory:') {
-    return { rows: new Map() };
+function getFallbackSessionPath(dbPath) {
+  return dbPath === ':memory:' ? ':memory:' : `${dbPath}.fallback.json`;
+}
+
+function persistFallbackDatabaseState(state) {
+  if (!state?.storagePath || state.storagePath === ':memory:') {
+    return;
   }
 
-  let state = FALLBACK_SESSION_DATABASES.get(dbPath);
-  if (!state || !fs.existsSync(dbPath)) {
-    ensureDbFile(dbPath);
-    state = { rows: new Map() };
-    FALLBACK_SESSION_DATABASES.set(dbPath, state);
+  fs.mkdirSync(path.dirname(state.storagePath), { recursive: true });
+  const tmpPath = `${state.storagePath}.tmp`;
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        rows: Array.from(state.rows.values()),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tmpPath, state.storagePath);
+}
+
+function getFallbackDatabaseState(dbPath) {
+  const storagePath = getFallbackSessionPath(dbPath);
+  if (storagePath === ':memory:') {
+    return { rows: new Map(), storagePath };
+  }
+
+  let state = FALLBACK_SESSION_DATABASES.get(storagePath);
+  if (!state) {
+    const rows = new Map();
+    if (fs.existsSync(storagePath)) {
+      try {
+        const raw = fs.readFileSync(storagePath, 'utf8').trim();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          for (const row of parsed?.rows || []) {
+            if (!row?.session_id) continue;
+            rows.set(row.session_id, row);
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[agent-session-store] Failed to read fallback store ${storagePath}: ${error.message}`,
+        );
+      }
+    }
+    state = { rows, storagePath };
+    FALLBACK_SESSION_DATABASES.set(storagePath, state);
   }
   return state;
 }
@@ -103,7 +144,7 @@ function sortRowsByRecency(rows) {
 }
 
 export class AgentSessionStore {
-  constructor({ dbPath = DEFAULT_DB_PATH, maxSummaries = 5 } = {}) {
+  constructor({ dbPath = DEFAULT_DB_PATH, maxSummaries = 5, databaseCtor } = {}) {
     if (dbPath !== ':memory:') {
       fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     }
@@ -112,10 +153,12 @@ export class AgentSessionStore {
     this._dbPath = dbPath;
     this.maxSummaries = maxSummaries;
     this._fallbackState = null;
+    this._databaseCtor = databaseCtor;
+    this.backend = 'sqlite';
 
-    const Database = loadDatabaseCtor();
+    const Database = databaseCtor === undefined ? loadDatabaseCtor() : databaseCtor;
     if (!Database) {
-      this._enableFallback();
+      this._enableFallback('better-sqlite3 unavailable');
       return;
     }
 
@@ -125,7 +168,7 @@ export class AgentSessionStore {
       if (error?.code !== 'ERR_DLOPEN_FAILED') {
         throw error;
       }
-      this._enableFallback();
+      this._enableFallback(error.message || 'native module load failure');
       return;
     }
     this.db.pragma('journal_mode = WAL');
@@ -162,8 +205,14 @@ export class AgentSessionStore {
     this._delete = this.db.prepare(`DELETE FROM agent_sessions WHERE session_id = ?`);
   }
 
-  _enableFallback() {
+  _enableFallback(reason = 'fallback requested') {
     this._fallbackState = getFallbackDatabaseState(this._dbPath);
+    this.backend = 'json-fallback';
+    if (this._dbPath !== ':memory:') {
+      console.warn(
+        `[agent-session-store] ${reason}; using durable JSON fallback at ${this._fallbackState.storagePath}`,
+      );
+    }
     this.db = {
       pragma() {
         return 'WAL';
@@ -312,6 +361,7 @@ export class AgentSessionStore {
 
     if (this._fallbackState) {
       this._fallbackState.rows.set(sessionId, row);
+      persistFallbackDatabaseState(this._fallbackState);
       return this._hydrateRow(row);
     }
 
@@ -382,12 +432,19 @@ export class AgentSessionStore {
 
   delete(sessionId) {
     if (this._fallbackState) {
-      return this._fallbackState.rows.delete(sessionId);
+      const deleted = this._fallbackState.rows.delete(sessionId);
+      if (deleted) {
+        persistFallbackDatabaseState(this._fallbackState);
+      }
+      return deleted;
     }
     return this._delete.run(sessionId).changes > 0;
   }
 
   close() {
+    if (this._fallbackState) {
+      persistFallbackDatabaseState(this._fallbackState);
+    }
     this.db.close();
   }
 }

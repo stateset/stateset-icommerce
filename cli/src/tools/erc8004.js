@@ -29,7 +29,7 @@ export const erc8004Tools = [
       walletProofDeadline: z.string().optional().describe('Wallet proof deadline (ISO)'),
       active: z.boolean().optional().describe('Active flag'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ params, allowApply, dbPath }) => {
       if (!allowApply) {
         return {

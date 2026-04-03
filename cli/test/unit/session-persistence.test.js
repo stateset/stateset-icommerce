@@ -151,6 +151,22 @@ describe('SessionPersistence', () => {
     assert.strictEqual(list[0].operationCount, 3);
   });
 
+  it('evicts the least recently accessed active sessions when maxSessions is exceeded', async () => {
+    sp = new SessionPersistence({ sessionDir: tmpSessionDir(), maxSessions: 2 });
+    await sp.saveSession({ id: 'sess-oldest', operations: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    await sp.saveSession({ id: 'sess-middle', operations: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    await sp.saveSession({ id: 'sess-newest', operations: [] });
+
+    const remaining = await sp.listSessions();
+    assert.deepStrictEqual(
+      remaining.map((session) => session.id).sort(),
+      ['sess-middle', 'sess-newest'],
+    );
+    assert.strictEqual(fs.existsSync(path.join(sp.sessionDir, 'sess-oldest.json')), false);
+  });
+
   it('persists across instances (loads from disk)', async () => {
     const dir = tmpSessionDir();
     sp = new SessionPersistence({ sessionDir: dir });

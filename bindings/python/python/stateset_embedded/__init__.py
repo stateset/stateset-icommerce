@@ -103,7 +103,7 @@ from stateset_embedded.stateset_embedded import (
     EmbeddingStats,
 )
 
-__version__ = "0.9.4"
+__version__ = "0.9.5"
 
 __all__ = [
     # Main entry point

@@ -220,6 +220,23 @@ describe('MemoryStore', () => {
     store = null;
   });
 
+  it('persists fallback memories across instances when SQLite is unavailable', () => {
+    const dbPath = tmpDbPath();
+    store = new MemoryStore({ dbPath, databaseCtor: null });
+    assert.strictEqual(store.backend, 'json-fallback');
+    store.save({ summary: 'Fallback memory', facts: ['persisted'] });
+    store.close();
+
+    assert.ok(fs.existsSync(`${dbPath}.fallback.json`));
+
+    const reopened = new MemoryStore({ dbPath, databaseCtor: null });
+    const results = reopened.getRecent();
+    assert.strictEqual(results[0].summary, 'Fallback memory');
+    assert.deepStrictEqual(results[0].facts, ['persisted']);
+    reopened.close();
+    store = null;
+  });
+
   it('close is idempotent', () => {
     store = new MemoryStore({ dbPath: tmpDbPath() });
     store.close();

@@ -2,7 +2,7 @@
  * Credential Store for StateSet Providers
  *
  * SQLite-backed API key storage with WAL enabled for safe concurrent access.
- * Falls back to an in-process store when the native SQLite binding is unavailable.
+ * Falls back to a durable JSON store when the native SQLite binding is unavailable.
  */
 
 import { createRequire } from 'node:module';
@@ -96,11 +96,53 @@ function resolveEncryptionKey(dir, dbPath) {
   return loadOrCreateLocalKey(dir);
 }
 
+function getFallbackCredentialPath(dbPath) {
+  return dbPath === ':memory:' ? ':memory:' : `${dbPath}.fallback.json`;
+}
+
+function persistFallbackCredentialDatabase(state) {
+  if (!state?.storagePath || state.storagePath === ':memory:') {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(state.storagePath), { recursive: true, mode: DIRECTORY_MODE });
+  const tmpPath = `${state.storagePath}.tmp`;
+  const payload = {
+    rows: Array.from(state.rows.values()),
+  };
+  fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), { mode: FILE_MODE });
+  fs.renameSync(tmpPath, state.storagePath);
+  setPermissionIfSupported(state.storagePath, FILE_MODE);
+}
+
 function getFallbackCredentialDatabase(dbPath) {
-  let state = FALLBACK_CREDENTIAL_DATABASES.get(dbPath);
-  if (!state || !fs.existsSync(dbPath)) {
-    state = { rows: new Map() };
-    FALLBACK_CREDENTIAL_DATABASES.set(dbPath, state);
+  const storagePath = getFallbackCredentialPath(dbPath);
+  if (storagePath === ':memory:') {
+    return { rows: new Map(), storagePath };
+  }
+
+  let state = FALLBACK_CREDENTIAL_DATABASES.get(storagePath);
+  if (!state) {
+    const rows = new Map();
+    if (fs.existsSync(storagePath)) {
+      try {
+        const raw = fs.readFileSync(storagePath, 'utf8').trim();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          for (const row of parsed?.rows || []) {
+            if (row?.provider) {
+              rows.set(row.provider, row);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[credentials] Failed to read fallback credential store ${storagePath}: ${error.message}`,
+        );
+      }
+    }
+    state = { rows, storagePath };
+    FALLBACK_CREDENTIAL_DATABASES.set(storagePath, state);
   }
   return state;
 }
@@ -159,7 +201,7 @@ function createFallbackCredentialDb(state) {
 }
 
 export class CredentialStore {
-  constructor({ dbPath = DEFAULT_DB_PATH } = {}) {
+  constructor({ dbPath = DEFAULT_DB_PATH, databaseCtor } = {}) {
     const dir = path.dirname(dbPath);
     fs.mkdirSync(dir, { recursive: true, mode: DIRECTORY_MODE });
     setPermissionIfSupported(dir, DIRECTORY_MODE);
@@ -170,12 +212,12 @@ export class CredentialStore {
     }
     setPermissionIfSupported(dbPath, FILE_MODE);
 
-    const Database = loadDatabaseCtor();
+    const Database = databaseCtor === undefined ? loadDatabaseCtor() : databaseCtor;
     this._fallbackState = null;
+    this.backend = 'sqlite';
 
     if (!Database) {
-      this._fallbackState = getFallbackCredentialDatabase(dbPath);
-      this.db = createFallbackCredentialDb(this._fallbackState);
+      this._enableFallback(dbPath, 'better-sqlite3 unavailable');
     } else {
       try {
         this.db = new Database(dbPath);
@@ -183,8 +225,7 @@ export class CredentialStore {
         if (error?.code !== 'ERR_DLOPEN_FAILED') {
           throw error;
         }
-        this._fallbackState = getFallbackCredentialDatabase(dbPath);
-        this.db = createFallbackCredentialDb(this._fallbackState);
+        this._enableFallback(dbPath, error.message || 'native module load failure');
       }
     }
 
@@ -213,6 +254,15 @@ export class CredentialStore {
     this._list = this.db.prepare(
       `SELECT provider, updated_at FROM provider_credentials ORDER BY updated_at DESC`,
     );
+  }
+
+  _enableFallback(dbPath, reason = 'fallback requested') {
+    this._fallbackState = getFallbackCredentialDatabase(dbPath);
+    this.backend = 'json-fallback';
+    console.warn(
+      `[credentials] ${reason}; using durable JSON fallback at ${this._fallbackState.storagePath}`,
+    );
+    this.db = createFallbackCredentialDb(this._fallbackState);
   }
 
   encryptApiKey(apiKey) {
@@ -270,11 +320,18 @@ export class CredentialStore {
   setApiKey(provider, apiKey) {
     if (!provider || !apiKey) return false;
     this._upsert.run(provider, this.encryptApiKey(apiKey), Date.now());
+    if (this._fallbackState) {
+      persistFallbackCredentialDatabase(this._fallbackState);
+    }
     return true;
   }
 
   removeApiKey(provider) {
-    return this._delete.run(provider).changes > 0;
+    const removed = this._delete.run(provider).changes > 0;
+    if (removed && this._fallbackState) {
+      persistFallbackCredentialDatabase(this._fallbackState);
+    }
+    return removed;
   }
 
   listProviders() {
@@ -285,6 +342,9 @@ export class CredentialStore {
   }
 
   close() {
+    if (this._fallbackState) {
+      persistFallbackCredentialDatabase(this._fallbackState);
+    }
     this.db.close();
   }
 }

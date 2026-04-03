@@ -87,12 +87,14 @@ describe('erc8004Tools — permission assignments', () => {
     }
   });
 
-  it('write tools have write permission', () => {
-    const writeToolNames = ['erc8004_register_identity', 'erc8004_link_wallet'];
-    for (const name of writeToolNames) {
-      const tool = findTool(name);
-      assert.equal(tool.permission, 'write', `${name} should be write`);
-    }
+  it('erc8004_register_identity is admin', () => {
+    const tool = findTool('erc8004_register_identity');
+    assert.equal(tool.permission, 'admin', 'erc8004_register_identity should be admin');
+  });
+
+  it('erc8004_link_wallet is write', () => {
+    const tool = findTool('erc8004_link_wallet');
+    assert.equal(tool.permission, 'write', 'erc8004_link_wallet should be write');
   });
 });
 

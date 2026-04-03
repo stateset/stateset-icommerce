@@ -7,7 +7,7 @@ StateSet iCommerce is the application layer of the StateSet Trilogy — a vertic
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  Layer 3: StateSet iCommerce (this project)                              │
-│  AI Agents · 520+ MCP Tools · A2A Protocol · Policy Engine              │
+│  AI Agents · MCP Tools · A2A Protocol · Policy Engine                   │
 │  Platform Adapters (Stripe, Shopify, WooCommerce) · 11 Language Bindings│
 └──────────────────────────────┬───────────────────────────────────────────┘
                                │ VES v1.0 signed events (Ed25519 + AES-256-GCM)
@@ -42,7 +42,7 @@ Each layer is independently verifiable — no layer trusts the one above it. See
 │                            CLI + MCP Server                                    │
 │                                                                                │
 │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
-│   │ 18 Agent │  │  520+MCP │  │  Policy  │  │   Sync   │  │Autonomous│      │
+│   │ 18 Agent │  │    MCP   │  │  Policy  │  │   Sync   │  │Autonomous│      │
 │   │ Configs  │  │  Tools   │  │  Engine  │  │  Engine  │  │  Engine  │      │
 │   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘      │
 │        └──────────────┼──────────────┼──────────────┼──────────────┘           │
@@ -119,7 +119,7 @@ Each layer is independently verifiable — no layer trusts the one above it. See
 The CLI layer is written in JavaScript (ES modules, Node 18+) and consists of:
 
 - **MCP Orchestrator** (`mcp-server.js`, 470 lines) — thin router that delegates to tool modules
-- **48 tool modules** (`tools/`) — 520+ MCP tool definitions with Zod validation
+- **48 tool modules** (`tools/`) — MCP tool definitions with Zod validation
 - **44 A2A modules** (`a2a/`) — agent-to-agent commerce protocol implementation
 - **3 platform adapters** (`adapters/`) — Stripe, WooCommerce, Shopify sync
 - **x402 client** (`x402/`) — payment intent signing, budget governance, circuit breaker

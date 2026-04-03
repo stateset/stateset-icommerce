@@ -4,15 +4,21 @@ This book represents the **latest** documentation from the main branch.
 
 ## Semantic Versioning
 
-iCommerce follows [Semantic Versioning](https://semver.org/):
+iCommerce follows [Semantic Versioning](https://semver.org/) with an explicit pre-`1.0` policy:
 
-- **Major** (X.0.0): Breaking changes to the public API surface
-- **Minor** (0.X.0): New features, new MCP tools, new domain APIs — backward compatible
-- **Patch** (0.0.X): Bug fixes, performance improvements, documentation updates
+- **Major** (`X.0.0`) after `1.0`: Breaking changes to the public API surface
+- **Minor** (`0.X.0` while pre-`1.0`, `X.Y.0` after `1.0`): New features and backward-compatible additions by project policy
+- **Patch** (`0.0.X` / `X.Y.Z`): Bug fixes, performance improvements, documentation updates
+
+## Pre-1.0 Status
+
+Current releases are still pre-`1.0`.
+
+The compatibility table below is a project policy commitment, not a claim that every public surface is permanently frozen. If a pre-`1.0` breaking change is unavoidable, it must be called out in release notes and accompanied by migration guidance.
 
 ## Current Release
 
-**v0.8.1** — See `RELEASING.md` for the full changelog.
+**v0.9.5** — See `RELEASING.md` for the full changelog.
 
 ## Compatibility Guarantees
 
@@ -59,7 +65,7 @@ stateset "show me all customers"   # triggers any pending migrations
 
 ## Release Snapshots
 
-For each tagged release, a documentation snapshot is created under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v0.8.1/`).
+For each tagged release, a documentation snapshot is created under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v0.9.5/`).
 
 ## Process
 
@@ -68,3 +74,5 @@ For each tagged release, a documentation snapshot is created under `docs/version
 3. Publish both the latest book and the snapshot
 
 See `RELEASING.md` for the full release checklist.
+
+For exact guarantee boundaries and current open trust gaps, see [Trust Foundation](trust-foundation.md).

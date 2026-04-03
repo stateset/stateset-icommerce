@@ -6,6 +6,7 @@
  * injecting customer context into agent prompts.
  *
  * Uses SQLite (better-sqlite3) for persistence alongside the session store.
+ * Falls back to a durable JSON store when the native SQLite binding is unavailable.
  */
 
 import { createRequire } from 'node:module';
@@ -43,20 +44,61 @@ function ensureDbFile(dbPath) {
   fs.closeSync(fd);
 }
 
+function getFallbackIdentityPath(dbPath) {
+  return dbPath === ':memory:' ? ':memory:' : `${dbPath}.fallback.json`;
+}
+
 function fallbackIdentityKey(channel, senderId) {
   return `${channel}\u0000${senderId}`;
 }
 
-function getFallbackDatabaseState(dbPath) {
-  if (dbPath === ':memory:') {
-    return { rows: new Map() };
+function persistFallbackDatabaseState(state) {
+  if (!state?.storagePath || state.storagePath === ':memory:') {
+    return;
   }
 
-  let state = FALLBACK_IDENTITY_DATABASES.get(dbPath);
-  if (!state || !fs.existsSync(dbPath)) {
-    ensureDbFile(dbPath);
-    state = { rows: new Map() };
-    FALLBACK_IDENTITY_DATABASES.set(dbPath, state);
+  fs.mkdirSync(path.dirname(state.storagePath), { recursive: true });
+  const tmpPath = `${state.storagePath}.tmp`;
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        rows: Array.from(state.rows.values()),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tmpPath, state.storagePath);
+}
+
+function getFallbackDatabaseState(dbPath) {
+  const storagePath = getFallbackIdentityPath(dbPath);
+  if (storagePath === ':memory:') {
+    return { rows: new Map(), storagePath };
+  }
+
+  let state = FALLBACK_IDENTITY_DATABASES.get(storagePath);
+  if (!state) {
+    const rows = new Map();
+    if (fs.existsSync(storagePath)) {
+      try {
+        const raw = fs.readFileSync(storagePath, 'utf8').trim();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          for (const row of parsed?.rows || []) {
+            if (!row?.channel || !row?.sender_id) continue;
+            rows.set(fallbackIdentityKey(row.channel, row.sender_id), row);
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[identity-store] Failed to read fallback store ${storagePath}: ${error.message}`,
+        );
+      }
+    }
+    state = { rows, storagePath };
+    FALLBACK_IDENTITY_DATABASES.set(storagePath, state);
   }
   return state;
 }
@@ -65,15 +107,18 @@ export class CustomerIdentityStore {
   /**
    * @param {Object} [opts]
    * @param {string} [opts.dbPath]
+   * @param {typeof import('better-sqlite3') | null} [opts.databaseCtor]
    */
-  constructor({ dbPath = DEFAULT_DB_PATH } = {}) {
+  constructor({ dbPath = DEFAULT_DB_PATH, databaseCtor } = {}) {
     this._dbPath = dbPath;
     this._fallbackState = null;
+    this._databaseCtor = databaseCtor;
+    this.backend = 'sqlite';
     ensureDbFile(dbPath);
 
-    const Database = loadDatabaseCtor();
+    const Database = databaseCtor === undefined ? loadDatabaseCtor() : databaseCtor;
     if (!Database) {
-      this._enableFallback();
+      this._enableFallback('better-sqlite3 unavailable');
       return;
     }
 
@@ -83,7 +128,7 @@ export class CustomerIdentityStore {
       if (error?.code !== 'ERR_DLOPEN_FAILED') {
         throw error;
       }
-      this._enableFallback();
+      this._enableFallback(error.message || 'native module load failure');
       return;
     }
     this.db.pragma('journal_mode = WAL');
@@ -120,8 +165,14 @@ export class CustomerIdentityStore {
     );
   }
 
-  _enableFallback() {
+  _enableFallback(reason = 'fallback requested') {
     this._fallbackState = getFallbackDatabaseState(this._dbPath);
+    this.backend = 'json-fallback';
+    if (this._dbPath !== ':memory:') {
+      console.warn(
+        `[identity-store] ${reason}; using durable JSON fallback at ${this._fallbackState.storagePath}`,
+      );
+    }
     this.db = {
       pragma() {
         return 'WAL';
@@ -165,6 +216,7 @@ export class CustomerIdentityStore {
         linked_at: Date.now(),
         linked_by: linkedBy,
       });
+      persistFallbackDatabaseState(this._fallbackState);
       return;
     }
     this._link.run(channel, senderId, customerId, Date.now(), linkedBy);
@@ -179,6 +231,7 @@ export class CustomerIdentityStore {
   unlink(channel, senderId) {
     if (this._fallbackState) {
       this._fallbackState.rows.delete(fallbackIdentityKey(channel, senderId));
+      persistFallbackDatabaseState(this._fallbackState);
       return;
     }
     this._unlink.run(channel, senderId);
@@ -202,6 +255,9 @@ export class CustomerIdentityStore {
   }
 
   close() {
+    if (this._fallbackState) {
+      persistFallbackDatabaseState(this._fallbackState);
+    }
     this.db.close();
   }
 }

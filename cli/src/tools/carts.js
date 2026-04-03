@@ -219,7 +219,7 @@ export const cartTools = [
     inputSchema: {
       itemId: z.string().min(1).describe('Cart item ID (UUID)'),
     },
-    permission: 'delete',
+    permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { itemId } = params;
       if (!allowApply) {

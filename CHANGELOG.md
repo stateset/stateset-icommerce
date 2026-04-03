@@ -6,6 +6,20 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-04-03
+
+### Added
+- Published repo-native trust and strategy documentation, including `TRUST_FOUNDATION.md`, distribution planning, outcomes modeling, and competitive-landscape notes to make the project posture more explicit.
+
+### Changed
+- Bumped workspace, bindings, admin app, CLI, templates, docs, and release metadata from `0.9.4` to `0.9.5`.
+- Synced install snippets, deployment examples, and current-release references to the `0.9.5` release.
+
+### Fixed
+- Hardened MCP permission enforcement so unknown tools fail closed instead of silently defaulting to read access, and aligned tool permission metadata with the runtime permission map.
+- Replaced silent in-memory downgrade paths with durable JSON fallback persistence for audit logs, credentials, treasury records, channel identity/session state, agent sessions, conversation memory, and ERC-8004 identity storage when the native SQLite binding is unavailable.
+- Enforced session retention caps correctly and fixed channel-session fallback upsert field ordering to preserve session integrity under degraded runtime conditions.
+
 ## [0.9.4] - 2026-04-02
 
 ### Added

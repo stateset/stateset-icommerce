@@ -6,9 +6,10 @@ We release patches for security vulnerabilities in the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.7.x   | :white_check_mark: |
-| 0.6.x   | :white_check_mark: |
-| < 0.6.0 | :x:                |
+| 0.9.x   | :white_check_mark: |
+| < 0.9.0 | :x:                |
+
+This table tracks the currently maintained release line for this repository and should be updated in the same change that advances the supported release series.
 
 ## Reporting a Vulnerability
 
@@ -41,6 +42,8 @@ Include the following information in your report:
 - Please give us reasonable time to address the issue before public disclosure
 - We follow coordinated disclosure practices
 - We will work with you to understand and resolve the issue quickly
+
+For the current audit, formal-verification, and trust-assumption status of the repo, see `TRUST_FOUNDATION.md`.
 
 ## Security Considerations
 

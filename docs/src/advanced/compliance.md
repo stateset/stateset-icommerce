@@ -2,6 +2,8 @@
 
 iCommerce provides built-in tools for regulatory compliance, audit trails, data export, and GDPR data handling.
 
+Note: this page includes a mix of shipped patterns and target or tier-specific interfaces. Treat a compliance tool as supported only if it is discoverable in your runtime's tool registry or explicitly documented for your deployment tier.
+
 ## Audit Trail
 
 Every tool invocation is logged with timestamp, agent ID, tool name, parameters (with PII redacted), and result status.

@@ -5,6 +5,9 @@ This directory contains the mdBook source for StateSet iCommerce.
 Related planning docs:
 
 - [Agentic Commerce Baseline](./AGENTIC_COMMERCE_BASELINE.md)
+- [Competitive Landscape](./COMPETITIVE_LANDSCAPE.md)
+- [Default Infrastructure Playbook](./DEFAULT_INFRASTRUCTURE_PLAYBOOK.md)
+- [Outcomes Model](./OUTCOMES_MODEL.md)
 
 ## Build locally
 

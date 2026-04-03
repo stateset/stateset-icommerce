@@ -119,6 +119,23 @@ describe('CustomerIdentityStore', () => {
     store2.close();
     store = null;
   });
+
+  it('persists fallback identity links across instances when SQLite is unavailable', () => {
+    const dbPath = tmpDbPath();
+    store = new CustomerIdentityStore({ dbPath, databaseCtor: null });
+    assert.strictEqual(store.backend, 'json-fallback');
+    store.link('telegram', 'fallback-user', 'cust-fallback');
+    store.close();
+
+    assert.ok(fs.existsSync(`${dbPath}.fallback.json`));
+
+    const store2 = new CustomerIdentityStore({ dbPath, databaseCtor: null });
+    const result = store2.getCustomerId('telegram', 'fallback-user');
+    assert.ok(result);
+    assert.strictEqual(result.customerId, 'cust-fallback');
+    store2.close();
+    store = null;
+  });
 });
 
 // ===========================================================================

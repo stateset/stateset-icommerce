@@ -4,6 +4,9 @@
 
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   PERMISSION_LEVELS,
   TOOL_PERMISSIONS,
@@ -14,6 +17,10 @@ import {
   getLevelFromFlags,
 } from '../../src/permissions.js';
 import { resetAuditStore } from '../../src/audit-store.js';
+import { TOOL_NAMES } from '../../src/mcp-server.js';
+
+const testDir = path.dirname(fileURLToPath(import.meta.url));
+const toolsDir = path.resolve(testDir, '../../src/tools');
 
 describe('permissions', () => {
   describe('PERMISSION_LEVELS', () => {
@@ -120,6 +127,40 @@ describe('permissions', () => {
     it('should treat x402 end-to-end execution as a write operation', () => {
       assert.strictEqual(TOOL_PERMISSIONS.x402_execute_agent_payment, 'write');
     });
+
+    it('should define permissions for every exposed MCP tool', () => {
+      const missing = TOOL_NAMES.map((name) => name.replace('mcp__stateset-commerce__', '')).filter(
+        (name) => !TOOL_PERMISSIONS[name],
+      );
+      assert.deepStrictEqual(missing, []);
+    });
+
+    it('should match permission metadata exported by tool modules', async () => {
+      const mismatches = [];
+      for (const file of fs.readdirSync(toolsDir).filter((entry) => entry.endsWith('.js'))) {
+        const moduleUrl = pathToFileURL(path.join(toolsDir, file)).href;
+        const mod = await import(moduleUrl);
+        const seen = new Set();
+        for (const value of Object.values(mod)) {
+          if (!Array.isArray(value)) continue;
+          for (const tool of value) {
+            if (!tool?.name || !tool?.permission) continue;
+            const key = `${file}:${tool.name}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            if (TOOL_PERMISSIONS[tool.name] !== tool.permission) {
+              mismatches.push({
+                file,
+                name: tool.name,
+                expected: tool.permission,
+                actual: TOOL_PERMISSIONS[tool.name] || null,
+              });
+            }
+          }
+        }
+      }
+      assert.deepStrictEqual(mismatches, []);
+    });
   });
 
   describe('PermissionGate', () => {
@@ -148,6 +189,12 @@ describe('permissions', () => {
       it('should normalize tool names with mcp prefix', async () => {
         const result = await gate.checkPermission('mcp__stateset-commerce__list_customers', {});
         assert.strictEqual(result.allowed, true);
+      });
+
+      it('should fail closed for unregistered tools', async () => {
+        const result = await gate.checkPermission('totally_unknown_tool', {});
+        assert.strictEqual(result.allowed, false);
+        assert.match(result.reason, /no registered permission policy/i);
       });
     });
 
@@ -194,7 +241,9 @@ describe('permissions', () => {
           password: 'secret',
         });
         const log = gate.getAuditLog();
-        assert.strictEqual(log[0].params.password, '[REDACTED]');
+        const entry = log.find((item) => item.tool === 'create_customer');
+        assert.ok(entry);
+        assert.strictEqual(entry.params.password, '[REDACTED]');
       });
     });
 

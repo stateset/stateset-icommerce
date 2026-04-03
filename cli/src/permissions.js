@@ -77,6 +77,21 @@ export const TOOL_PERMISSIONS = {
   vector_index_all_inventory: 'admin',
   vector_clear: 'admin',
   vector_clear_all: 'admin',
+  vector_reindex_all: 'admin',
+
+  // Custom object tools
+  list_custom_object_types: 'read',
+  get_custom_object_type: 'read',
+  get_custom_object_type_by_handle: 'read',
+  create_custom_object_type: 'write',
+  update_custom_object_type: 'write',
+  delete_custom_object_type: 'delete',
+  list_custom_objects: 'read',
+  get_custom_object: 'read',
+  get_custom_object_by_handle: 'read',
+  create_custom_object: 'write',
+  update_custom_object: 'write',
+  delete_custom_object: 'delete',
 
   // Return tools
   list_returns: 'read',
@@ -299,6 +314,8 @@ export const TOOL_PERMISSIONS = {
   sync_outbox: 'read',
   sync_conflicts: 'read',
   sync_entity_history: 'read',
+  sync_pulled_events: 'read',
+  sync_decrypt_event: 'read',
   sync_full: 'admin',
   sync_rebase: 'admin',
   sync_resolve: 'admin',
@@ -390,6 +407,7 @@ export const TOOL_PERMISSIONS = {
   a2a_accept_quote: 'write',
   a2a_decline_quote: 'write',
   a2a_fulfill_quote: 'write',
+  a2a_get_payment: 'read',
   a2a_list_payments: 'read',
   a2a_list_payment_requests: 'read',
   a2a_list_quotes: 'read',
@@ -503,6 +521,11 @@ export const TOOL_PERMISSIONS = {
   a2a_replay_notification: 'write',
   a2a_notification_retry_all: 'write',
   a2a_webhook_dlq_status: 'read',
+  a2a_list_webhook_dlq: 'admin',
+  a2a_quarantine_failed_webhooks: 'admin',
+  a2a_replay_dlq_entry: 'admin',
+  a2a_purge_dlq: 'admin',
+  a2a_dlq_count: 'read',
   a2a_health_check: 'read',
   a2a_readiness: 'read',
   x402_circuit_status: 'read',
@@ -646,21 +669,21 @@ export const TOOL_PERMISSIONS = {
   convert_wishlist_to_cart: 'write',
 
   // Loyalty Programs
-  create_loyalty_program: 'write',
+  create_loyalty_program: 'admin',
   get_loyalty_program: 'read',
   enroll_customer: 'write',
   get_loyalty_account: 'read',
   earn_points: 'write',
   redeem_points: 'write',
   list_rewards: 'read',
-  create_reward: 'write',
+  create_reward: 'admin',
 
   // Fraud Detection
   assess_order_fraud: 'read',
   get_fraud_assessment: 'read',
   list_fraud_signals: 'read',
-  create_fraud_rule: 'write',
-  update_fraud_rule: 'write',
+  create_fraud_rule: 'admin',
+  update_fraud_rule: 'admin',
   review_flagged_order: 'write',
 
   // Agentic Runtime
@@ -869,7 +892,13 @@ export class PermissionGate {
     }
 
     // Check permission level
-    const requiredLevel = TOOL_PERMISSIONS[normalizedName] || 'read';
+    const requiredLevel = TOOL_PERMISSIONS[normalizedName];
+    if (!requiredLevel) {
+      return this._deny(
+        `Tool '${normalizedName}' has no registered permission policy`,
+        normalizedName,
+      );
+    }
     const requiredValue = PERMISSION_LEVELS[requiredLevel] || 0;
 
     if (requiredValue > this.level) {

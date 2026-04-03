@@ -180,19 +180,21 @@ export class SessionPersistence {
       }
     }
 
-    if (expired.length + this.sessions.size > this.maxSessions) {
-      const toDelete = expired.slice(
-        0,
-        expired.length + this.sessions.size - this.maxSessions + expired.length,
-      );
-
-      for (const sessionId of toDelete) {
-        await this.deleteSession(sessionId);
-      }
-    }
-
     for (const sessionId of expired) {
       await this.deleteSession(sessionId);
+    }
+
+    const overflow = this.sessions.size - this.maxSessions;
+    if (overflow <= 0) {
+      return;
+    }
+
+    const oldestActiveSessions = Array.from(this.sessions.values())
+      .sort((a, b) => a.lastAccessedAt - b.lastAccessedAt)
+      .slice(0, overflow);
+
+    for (const session of oldestActiveSessions) {
+      await this.deleteSession(session.id);
     }
   }
 

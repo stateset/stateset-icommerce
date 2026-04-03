@@ -100,7 +100,7 @@ export const currencyTools = [
         .default('manual')
         .describe('Source of the rate (e.g., manual, api)'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       const { baseCurrency, quoteCurrency, rate, source } = params;
       if (!allowApply)
@@ -159,7 +159,7 @@ export const currencyTools = [
     inputSchema: {
       currency: z.string().min(1).describe('Currency code to set as base (e.g., USD, EUR)'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       const { currency } = params;
       if (!allowApply)
@@ -187,7 +187,7 @@ export const currencyTools = [
         .array(z.string())
         .describe('List of currency codes to enable (e.g., ["USD", "EUR", "GBP"])'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       const { currencies } = params;
       if (!allowApply)

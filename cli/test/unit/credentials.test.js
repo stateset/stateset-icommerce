@@ -188,6 +188,25 @@ describe('CredentialStore', () => {
     store2.close();
     store = null;
   });
+
+  it('persists encrypted credentials across instances when SQLite is unavailable', () => {
+    const dbPath = tmpDbPath();
+    store = new CredentialStore({ dbPath, databaseCtor: null });
+    assert.strictEqual(store.backend, 'json-fallback');
+    store.setApiKey('openai', 'sk-fallback-persistent');
+    store.close();
+
+    const fallbackPath = `${dbPath}.fallback.json`;
+    assert.ok(fs.existsSync(fallbackPath));
+    const raw = fs.readFileSync(fallbackPath, 'utf8');
+    assert.ok(!raw.includes('sk-fallback-persistent'));
+    assert.ok(raw.includes('enc:v1:'));
+
+    const reopened = new CredentialStore({ dbPath, databaseCtor: null });
+    assert.strictEqual(reopened.getApiKey('openai'), 'sk-fallback-persistent');
+    reopened.close();
+    store = null;
+  });
 });
 
 // ===========================================================================

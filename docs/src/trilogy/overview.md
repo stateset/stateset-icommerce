@@ -8,7 +8,7 @@ The StateSet Trilogy is a vertically integrated, three-layer protocol stack for 
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Layer 3: StateSet iCommerce (Application)                         │
 │                                                                     │
-│  AI Agents · 520+ MCP Tools · A2A Protocol · Policy Engine         │
+│  AI Agents · MCP Tools · A2A Protocol · Policy Engine              │
 │  Platform Adapters (Stripe, Shopify, WooCommerce) · 11 Bindings    │
 │                                                                     │
 │  Emits: VES-signed commerce events (Ed25519 + AES-256-GCM)        │

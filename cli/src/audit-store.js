@@ -43,16 +43,69 @@ function ensureDbFile(dbPath) {
   fs.closeSync(fd);
 }
 
-function getFallbackDatabaseState(dbPath) {
-  if (dbPath === ':memory:') {
-    return { nextId: 1, rows: [] };
+function getFallbackAuditPath(dbPath) {
+  return dbPath === ':memory:' ? ':memory:' : `${dbPath}.fallback.json`;
+}
+
+function persistFallbackDatabaseState(state) {
+  if (!state?.storagePath || state.storagePath === ':memory:') {
+    return;
   }
 
-  let state = FALLBACK_AUDIT_DATABASES.get(dbPath);
-  if (!state || !fs.existsSync(dbPath)) {
-    ensureDbFile(dbPath);
-    state = { nextId: 1, rows: [] };
-    FALLBACK_AUDIT_DATABASES.set(dbPath, state);
+  fs.mkdirSync(path.dirname(state.storagePath), { recursive: true });
+  const tmpPath = `${state.storagePath}.tmp`;
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        nextId: state.nextId,
+        rows: state.rows,
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+  fs.renameSync(tmpPath, state.storagePath);
+  try {
+    fs.chmodSync(state.storagePath, 0o600);
+  } catch {}
+}
+
+function getFallbackDatabaseState(dbPath) {
+  const storagePath = getFallbackAuditPath(dbPath);
+  if (storagePath === ':memory:') {
+    return { nextId: 1, rows: [], storagePath };
+  }
+
+  let state = FALLBACK_AUDIT_DATABASES.get(storagePath);
+  if (!state) {
+    let rows = [];
+    let nextId = 1;
+
+    if (fs.existsSync(storagePath)) {
+      try {
+        const raw = fs.readFileSync(storagePath, 'utf-8').trim();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed?.rows)) {
+            rows = parsed.rows;
+          }
+          if (Number.isInteger(parsed?.nextId) && parsed.nextId > 0) {
+            nextId = parsed.nextId;
+          } else if (rows.length > 0) {
+            nextId = Math.max(...rows.map((row) => row.id || 0)) + 1;
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[audit-store] Failed to read fallback audit log ${storagePath}: ${error.message}`,
+        );
+      }
+    }
+
+    state = { nextId, rows, storagePath };
+    FALLBACK_AUDIT_DATABASES.set(storagePath, state);
   }
   return state;
 }
@@ -69,8 +122,9 @@ export class AuditStore {
    * @param {string} [options.dbPath] - Path to audit SQLite database
    * @param {number} [options.maxEntries] - Max entries to keep (0 = unlimited)
    * @param {number} [options.retentionDays] - Days to keep entries (default: 90)
+   * @param {typeof import('better-sqlite3') | null} [options.databaseCtor] - Override database constructor for tests
    */
-  constructor({ dbPath = DEFAULT_DB_PATH, maxEntries = 0, retentionDays = 90 } = {}) {
+  constructor({ dbPath = DEFAULT_DB_PATH, maxEntries = 0, retentionDays = 90, databaseCtor } = {}) {
     if (dbPath !== ':memory:') {
       fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     }
@@ -79,10 +133,11 @@ export class AuditStore {
     this.maxEntries = maxEntries;
     this.retentionDays = retentionDays;
     this._fallbackState = null;
+    this.backend = 'sqlite';
 
-    const Database = loadDatabaseCtor();
+    const Database = databaseCtor === undefined ? loadDatabaseCtor() : databaseCtor;
     if (!Database) {
-      this._enableFallback(dbPath);
+      this._enableFallback(dbPath, 'better-sqlite3 unavailable');
       return;
     }
 
@@ -92,7 +147,7 @@ export class AuditStore {
       if (error?.code !== 'ERR_DLOPEN_FAILED') {
         throw error;
       }
-      this._enableFallback(dbPath);
+      this._enableFallback(dbPath, error.message || 'native module load failure');
       return;
     }
     this.db.pragma('journal_mode = WAL');
@@ -136,8 +191,14 @@ export class AuditStore {
     `);
   }
 
-  _enableFallback(dbPath) {
+  _enableFallback(dbPath, reason = 'fallback requested') {
     this._fallbackState = getFallbackDatabaseState(dbPath);
+    this.backend = 'json-fallback';
+    if (dbPath !== ':memory:') {
+      console.warn(
+        `[audit-store] ${reason}; using durable JSON fallback at ${this._fallbackState.storagePath}`,
+      );
+    }
     this.db = {
       pragma() {
         return 'WAL';
@@ -180,6 +241,7 @@ export class AuditStore {
           this.maxEntries,
         );
       }
+      persistFallbackDatabaseState(this._fallbackState);
       return;
     }
 
@@ -249,6 +311,7 @@ export class AuditStore {
       this._fallbackState.rows = this._fallbackState.rows.filter(
         (row) => row.timestamp >= cutoffIso,
       );
+      persistFallbackDatabaseState(this._fallbackState);
       return;
     }
     this._cleanup.run(cutoff.toISOString());
@@ -273,6 +336,9 @@ export class AuditStore {
    * Close the database connection.
    */
   close() {
+    if (this._fallbackState) {
+      persistFallbackDatabaseState(this._fallbackState);
+    }
     this.db.close();
   }
 }

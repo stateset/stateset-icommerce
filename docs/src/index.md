@@ -6,7 +6,11 @@ StateSet iCommerce is a portable, AI-native commerce engine that runs in-process
 
 Think of it as the **SQLite of Commerce**: embed a full commerce engine in any application, in any language, with a single dependency.
 
-Current release: **0.9.4**
+Current release: **0.9.5**
+
+Before depending on this stack for regulated or infrastructure-grade workloads, read the
+[Trust Foundation](trust-foundation.md). It states the current guarantees, residual trust
+assumptions, and the boundary between implemented, adjacent-repo, and planned capabilities.
 
 ## See It In Action
 
@@ -41,7 +45,7 @@ Traditional commerce platforms assume a human in the loop. iCommerce assumes the
 |-------|-----------------|
 | **Rust Core** (21 crates) | Type-safe domain models, 24 entity ID newtypes, explicit state machines |
 | **Commerce Engine** (41 APIs) | Orders, inventory, payments, returns, subscriptions, manufacturing, tax, analytics, loyalty, reviews, and more |
-| **MCP Tools** (520+) | Every commerce operation exposed via the Model Context Protocol |
+| **MCP Tools** | Commerce operations exposed via the Model Context Protocol |
 | **A2A Protocol** | Agent-to-agent payments, quotes, escrow, splits, reputation, disputes |
 | **x402 Protocol** | Cryptographically signed payment intents with budget governance |
 | **VES v1.0** | Ed25519 signatures, AES-256-GCM encryption, Merkle proofs |
@@ -60,7 +64,7 @@ iCommerce is the application layer of a vertically integrated, three-layer proto
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  Layer 3: iCommerce (Application)                                │
-│  AI Agents · 520+ MCP Tools · A2A Protocol · Policy Engine      │
+│  AI Agents · MCP Tools · A2A Protocol · Policy Engine           │
 └──────────────────────────────┬───────────────────────────────────┘
                                │ VES v1.0 signed events
 ┌──────────────────────────────┼───────────────────────────────────┐
@@ -96,7 +100,7 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 2. [Getting Started](getting-started.md) — Install and run in 60 seconds
 3. [AI Agent Quickstart](ai-agents.md) — OpenAI, Vercel AI SDK, LangChain, MCP
 4. [Policy Engine](policy/engine.md) — Safety guardrails for autonomous agents
-5. [MCP Tools](guides/mcp-tools.md) — 520+ operations your agent can call
+5. [MCP Tools](guides/mcp-tools.md) — hundreds of operations your agent can call
 
 ### I'm connecting an existing store (Shopify, Stripe, WooCommerce)
 
@@ -118,6 +122,7 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 3. [SET Chain L2](trilogy/set-chain.md) — Commerce-optimized L2 with gas abstraction
 4. [STARK Proofs](trilogy/stark-proofs.md) — Zero-knowledge compliance verification
 5. [ssUSD Stablecoin](trilogy/ssusd.md) — Yield-bearing settlement asset
+6. [Trust Foundation](trust-foundation.md) — exact guarantees, gaps, and residual trust assumptions
 
 ### I'm deploying to production
 
@@ -126,5 +131,6 @@ No data migration between tiers. See [Product Tiers](tiers.md).
 3. [Security Architecture](security/architecture.md) — Hardening guide
 4. [Compliance & Audit](advanced/compliance.md) — GDPR, SOC 2, audit trails
 5. [Testing Strategy](advanced/testing.md) — 15,300+ tests across all layers
+6. [Trust Foundation](trust-foundation.md) — current trust posture and open gaps
 
-Current release: **0.9.4**
+Current release: **0.9.5**
