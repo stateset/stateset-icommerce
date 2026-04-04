@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { resolveCommerceApi } from '../commerce.js';
 
 function parseJsonObject(value) {
   if (!value) return null;
@@ -74,14 +75,23 @@ export const agentCardTools = [
         }
       }
 
-      const card = await commerce.x402().registerAgent({
+      const x402 = resolveCommerceApi(commerce, 'x402');
+
+      const card = await x402.registerAgent({
         name: params.name,
+        walletAddress: params.walletAddress,
         wallet_address: params.walletAddress,
+        publicKey: params.publicKey,
         public_key: params.publicKey,
+        supportedNetworks: params.supportedNetworks,
         supported_networks: params.supportedNetworks,
+        supportedAssets: params.supportedAssets,
         supported_assets: params.supportedAssets,
+        paymentAddresses: params.paymentAddresses,
         payment_addresses: params.paymentAddresses,
+        a2aSkills: params.skills,
         a2a_skills: params.skills,
+        endpointUrl: params.endpointUrl,
         endpoint_url: params.endpointUrl,
         description: params.description,
       });
@@ -121,12 +131,13 @@ export const agentCardTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const agents = await commerce.x402().discoverAgents({
-        network: params.network,
-        asset: params.asset,
-        skill: params.skill,
-        trust_level: params.trustLevel,
-      });
+      const x402 = resolveCommerceApi(commerce, 'x402');
+      const agents = await x402.discoverAgents(
+        params.network,
+        params.asset,
+        params.skill,
+        params.trustLevel,
+      );
       return {
         success: true,
         count: agents.length,
@@ -154,12 +165,13 @@ export const agentCardTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
+      const x402 = resolveCommerceApi(commerce, 'x402');
       const { agentId, walletAddress } = params;
       let agent;
       if (agentId) {
-        agent = await commerce.x402().getAgent(agentId);
+        agent = await x402.getAgent(agentId);
       } else if (walletAddress) {
-        agent = await commerce.x402().getAgentByWallet(walletAddress);
+        agent = await x402.getAgentByWallet(walletAddress);
       } else {
         return { success: false, error: 'Must provide agentId or walletAddress' };
       }
@@ -193,7 +205,7 @@ export const agentCardTools = [
     inputSchema: {
       agentId: z.string().min(1).describe('Agent ID to verify'),
     },
-    permission: 'admin',
+    permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
       const { agentId } = params;
       if (!allowApply) {
@@ -204,7 +216,8 @@ export const agentCardTools = [
         };
       }
 
-      const verified = await commerce.x402().verifyAgent(agentId);
+      const x402 = resolveCommerceApi(commerce, 'x402');
+      const verified = await x402.verifyAgent(agentId);
       return {
         success: true,
         message: 'Agent verified.',
@@ -227,8 +240,10 @@ export const agentCardTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const agents = await commerce.x402().listAgents({
+      const x402 = resolveCommerceApi(commerce, 'x402');
+      const agents = await x402.listAgents({
         active: params.active,
+        trustLevel: params.trustLevel,
         trust_level: params.trustLevel,
         limit: params.limit || 50,
       });

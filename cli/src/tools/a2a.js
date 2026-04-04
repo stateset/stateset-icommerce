@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { resolveCommerceApi } from '../commerce.js';
 
 function parseJsonObject(value) {
   if (!value) return null;
@@ -777,12 +778,13 @@ export const a2aTools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const agents = await commerce.x402().discoverAgents({
-        network: params.network,
-        asset: params.asset,
-        skill: params.skill,
-        trust_level: params.trustLevel,
-      });
+      const x402 = resolveCommerceApi(commerce, 'x402');
+      const agents = await x402.discoverAgents(
+        params.network,
+        params.asset,
+        params.skill,
+        params.trustLevel,
+      );
 
       return {
         success: true,

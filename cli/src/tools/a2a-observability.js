@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import { getDefaultAssetForNetwork } from '../a2a/assets.js';
+import { adaptCommerceApis, resolveCommerceApi } from '../commerce.js';
 
 function parseJsonObject(value) {
   if (!value) return null;
@@ -47,6 +48,14 @@ async function getA2AContextForWallet(commerce, walletAddress) {
     runtime: null,
     a2a: createA2AService(commerce, { walletAddress }),
   };
+}
+
+function getA2AStore(commerce) {
+  try {
+    return resolveCommerceApi(adaptCommerceApis(commerce, ['a2a']), 'a2a');
+  } catch {
+    return null;
+  }
 }
 
 function buildAssetNetworkFilter(params = {}) {
@@ -106,7 +115,7 @@ function createEmptyAgentAlertFeed(filters = {}) {
 }
 
 async function buildAgentAlertFeed(commerce, agentAddress, options = {}) {
-  const store = typeof commerce?.a2a === 'function' ? commerce.a2a() : null;
+  const store = getA2AStore(commerce);
   const categories =
     Array.isArray(options.categories) && options.categories.length > 0
       ? options.categories.filter((value) => value === 'budget' || value === 'settlement')
@@ -246,7 +255,7 @@ async function buildAgentAlertFeed(commerce, agentAddress, options = {}) {
 }
 
 async function buildBudgetEventSnapshot(commerce, agentAddress, options = {}) {
-  const store = typeof commerce?.a2a === 'function' ? commerce.a2a() : null;
+  const store = getA2AStore(commerce);
   if (!store || typeof store.listEventLog !== 'function' || !agentAddress) {
     return null;
   }
@@ -616,7 +625,7 @@ async function computeFinalityMetricsFromPayments(commerce, payments, options = 
 
 async function hydrateFinalityTrackerFromPayments(commerce, options = {}) {
   const { agentAddress = null, includeCompleted = false, limit = 100, network = null } = options;
-  const store = typeof commerce?.a2a === 'function' ? commerce.a2a() : null;
+  const store = getA2AStore(commerce);
   const payments =
     store && typeof store.listPayments === 'function'
       ? (await store.listPayments({ limit, network })) || []
@@ -948,7 +957,7 @@ export const a2aObservabilityTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const tracker = await ensureFinalityTracker(commerce);
-      const store = typeof commerce?.a2a === 'function' ? commerce.a2a() : null;
+      const store = getA2AStore(commerce);
       let payment =
         store && typeof store.getPayment === 'function'
           ? await store.getPayment(params.intentId)

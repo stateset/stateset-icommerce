@@ -17,7 +17,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "0.9.5"
+//! stateset-sdk = "0.9.6"
 //! ```
 //!
 //! ```rust,ignore

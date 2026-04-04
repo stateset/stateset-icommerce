@@ -7,7 +7,8 @@
  */
 
 import { z } from 'zod';
-import { signX402Hash, hashToHex } from '../x402/crypto.js';
+import { computeX402SigningHash, signX402Hash, hashToHex } from '../x402/crypto.js';
+import { resolveCommerceApi } from '../commerce.js';
 
 const CHAINS_MODULE = '../chains/index.js';
 const SYNC_KEYS_MODULE = '../sync/keys.js';
@@ -30,9 +31,21 @@ const TREASURY_MODULE = '../treasury/index.js';
  *   network?: unknown,
  *   chainId?: unknown,
  *   chain_id?: unknown,
+ *   validUntil?: unknown,
+ *   valid_until?: unknown,
  *   nonce?: unknown,
  *   signingHash?: unknown,
  *   signing_hash?: unknown,
+ *   idempotencyKey?: unknown,
+ *   idempotency_key?: unknown,
+ *   resourceUri?: unknown,
+ *   resource_uri?: unknown,
+ *   resourceMethod?: unknown,
+ *   resource_method?: unknown,
+ *   description?: unknown,
+ *   merchantId?: unknown,
+ *   merchant_id?: unknown,
+ *   metadata?: unknown,
  *   payerSignature?: unknown,
  *   payer_signature?: unknown,
  *   payerPublicKey?: unknown,
@@ -52,8 +65,15 @@ const TREASURY_MODULE = '../treasury/index.js';
  *   asset: unknown,
  *   network: unknown,
  *   chainId: unknown,
+ *   validUntil: unknown,
  *   nonce: unknown,
  *   signingHash: unknown,
+ *   idempotencyKey: unknown,
+ *   resourceUri: unknown,
+ *   resourceMethod: unknown,
+ *   description: unknown,
+ *   merchantId: unknown,
+ *   metadata: unknown,
  *   payerSignature: unknown,
  *   payerPublicKey: unknown,
  *   txHash: unknown,
@@ -113,7 +133,7 @@ const TREASURY_MODULE = '../treasury/index.js';
  *   debitAccount: (params: JsonRecord) => Promise<JsonRecord>,
  *   listCreditTransactions: (params: JsonRecord) => Promise<JsonRecord[]>,
  * }} CommerceX402ApiLike
- * @typedef {{ x402: () => CommerceX402ApiLike }} CommerceLike
+ * @typedef {{ x402?: CommerceX402ApiLike | (() => CommerceX402ApiLike) }} CommerceLike
  * @typedef {{
  *   commerce: CommerceLike,
  *   params: JsonRecord,
@@ -225,12 +245,200 @@ function normalizeIntent(intent) {
     asset: firstValue(intent, ['asset']),
     network: firstValue(intent, ['network']),
     chainId: firstValue(intent, ['chainId', 'chain_id']),
+    validUntil: firstValue(intent, ['validUntil', 'valid_until']),
     nonce: firstValue(intent, ['nonce']),
     signingHash: firstValue(intent, ['signingHash', 'signing_hash']),
+    idempotencyKey: firstValue(intent, ['idempotencyKey', 'idempotency_key']),
+    resourceUri: firstValue(intent, ['resourceUri', 'resource_uri']),
+    resourceMethod: firstValue(intent, ['resourceMethod', 'resource_method']),
+    description: firstValue(intent, ['description']),
+    merchantId: firstValue(intent, ['merchantId', 'merchant_id']),
+    metadata: firstValue(intent, ['metadata']),
     payerSignature: firstValue(intent, ['payerSignature', 'payer_signature']),
     payerPublicKey: firstValue(intent, ['payerPublicKey', 'payer_public_key']),
     txHash: firstValue(intent, ['txHash', 'tx_hash']),
     blockNumber: firstValue(intent, ['blockNumber', 'block_number']),
+  };
+}
+
+/**
+ * @param {CommerceLike} commerce
+ * @returns {CommerceX402ApiLike}
+ */
+function getX402Api(commerce) {
+  return /** @type {CommerceX402ApiLike} */ (resolveCommerceApi(commerce, 'x402'));
+}
+
+/**
+ * @param {CreatePaymentIntentParams | ExecuteAgentPaymentParams} params
+ * @returns {JsonRecord}
+ */
+function buildCreateIntentInput(params) {
+  return {
+    payerAddress: params.payerAddress,
+    payer_address: params.payerAddress,
+    payeeAddress: params.payeeAddress,
+    payee_address: params.payeeAddress,
+    amount: params.amount,
+    asset: params.asset || 'usdc',
+    network: params.network || 'set_chain',
+    cartId: params.cartId,
+    cart_id: params.cartId,
+    orderId: params.orderId,
+    order_id: params.orderId,
+    description: params.description,
+    validitySeconds: params.validitySeconds,
+    validity_seconds: params.validitySeconds,
+  };
+}
+
+/**
+ * @param {{
+ *   intentId?: string,
+ *   signature: string,
+ *   publicKey: string,
+ *   signatureScheme?: string,
+ *   signatureBundle?: unknown,
+ *   publicKeyBundle?: unknown,
+ * }} params
+ * @returns {JsonRecord}
+ */
+function buildSignIntentInput({
+  intentId,
+  signature,
+  publicKey,
+  signatureScheme,
+  signatureBundle,
+  publicKeyBundle,
+}) {
+  return {
+    intentId,
+    intent_id: intentId,
+    signature,
+    publicKey,
+    public_key: publicKey,
+    signatureScheme,
+    signature_scheme: signatureScheme,
+    signatureBundle,
+    signature_bundle: signatureBundle,
+    publicKeyBundle,
+    public_key_bundle: publicKeyBundle,
+  };
+}
+
+/**
+ * @param {ListIntentsParams} params
+ * @returns {JsonRecord}
+ */
+function buildListIntentsInput(params) {
+  return {
+    payerAddress: params.payerAddress,
+    payer_address: params.payerAddress,
+    payeeAddress: params.payeeAddress,
+    payee_address: params.payeeAddress,
+    status: params.status,
+    network: params.network,
+    limit: params.limit || 50,
+  };
+}
+
+/**
+ * @param {CreditBalanceParams} params
+ * @returns {JsonRecord}
+ */
+function buildCreditBalanceInput(params) {
+  return {
+    payerAddress: params.payerAddress,
+    payer_address: params.payerAddress,
+    asset: params.asset,
+    network: params.network,
+  };
+}
+
+/**
+ * @param {CreditMutationParams} params
+ * @returns {JsonRecord}
+ */
+function buildCreditMutationInput(params) {
+  return {
+    payerAddress: params.payerAddress,
+    payer_address: params.payerAddress,
+    asset: params.asset,
+    network: params.network,
+    amount: params.amount,
+    reason: params.reason,
+    referenceId: params.referenceId,
+    reference_id: params.referenceId,
+    metadata: params.metadata,
+  };
+}
+
+/**
+ * @param {CreditTransactionsParams} params
+ * @returns {JsonRecord}
+ */
+function buildCreditTransactionFilterInput(params) {
+  return {
+    payerAddress: params.payerAddress,
+    payer_address: params.payerAddress,
+    asset: params.asset,
+    network: params.network,
+    direction: params.direction,
+    limit: params.limit || 50,
+  };
+}
+
+/**
+ * @param {IntentLike | JsonRecord | null | undefined} intent
+ * @returns {string}
+ */
+function ensureIntentSigningHash(intent) {
+  const normalized = normalizeIntent(intent);
+  if (normalized.signingHash) {
+    return String(normalized.signingHash);
+  }
+
+  if (
+    normalized.payerAddress === undefined ||
+    normalized.payeeAddress === undefined ||
+    normalized.amount === undefined ||
+    normalized.asset === undefined ||
+    normalized.network === undefined ||
+    normalized.validUntil === undefined ||
+    normalized.nonce === undefined
+  ) {
+    throw new Error('Intent is missing signing hash');
+  }
+
+  return hashToHex(
+    computeX402SigningHash({
+      payerAddress: normalized.payerAddress,
+      payeeAddress: normalized.payeeAddress,
+      amount: normalized.amount,
+      asset: normalized.asset,
+      network: normalized.network,
+      chainId: normalized.chainId,
+      validUntil: normalized.validUntil,
+      nonce: normalized.nonce,
+      resourceUri: normalized.resourceUri,
+      resourceMethod: normalized.resourceMethod,
+    }),
+  );
+}
+
+/**
+ * @param {JsonRecord | null | undefined} txn
+ * @returns {JsonRecord}
+ */
+function normalizeCreditTransaction(txn) {
+  return {
+    id: firstValue(txn, ['id']),
+    accountId: firstValue(txn, ['accountId', 'account_id']),
+    payerAddress: firstValue(txn, ['payerAddress', 'payer_address']),
+    direction: firstValue(txn, ['direction']),
+    amount: firstValue(txn, ['amount']),
+    balanceAfter: firstValue(txn, ['balanceAfter', 'balance_after']),
+    createdAt: firstValue(txn, ['createdAt', 'created_at']),
   };
 }
 
@@ -408,15 +616,14 @@ async function signIntentWithLocalAgent({
     throw new Error('agentId is required for local signing');
   }
 
-  const rawIntent = await commerce.x402().getIntent(intentId);
+  const x402 = getX402Api(commerce);
+  const rawIntent = await x402.getIntent(intentId);
   if (!rawIntent) {
     throw new Error('Payment intent not found');
   }
 
   const intent = normalizeIntent(rawIntent);
-  if (!intent.signingHash) {
-    throw new Error('Intent is missing signing hash');
-  }
+  intent.signingHash = ensureIntentSigningHash(intent);
 
   const chainId = await resolveIntentChainId(intent, chain);
   if (chainId && intent.payerAddress) {
@@ -460,11 +667,14 @@ async function signIntentWithLocalAgent({
   const signature = hashToHex(signatureBytes);
   const publicKey = hashToHex(signingKey.publicKey);
 
-  const signed = await commerce.x402().signIntent(intentId, {
-    intent_id: intentId,
-    signature,
-    public_key: publicKey,
-  });
+  const signed = await x402.signIntent(
+    intentId,
+    buildSignIntentInput({
+      intentId,
+      signature,
+      publicKey,
+    }),
+  );
 
   return {
     signed,
@@ -507,7 +717,8 @@ async function handleSettleIntentOnchain({
     };
   }
 
-  const rawIntent = await commerce.x402().getIntent(intentId);
+  const x402 = getX402Api(commerce);
+  const rawIntent = await x402.getIntent(intentId);
   if (!rawIntent) {
     return { success: false, error: 'Payment intent not found' };
   }
@@ -678,9 +889,7 @@ async function handleSettleIntentOnchain({
     };
   }
 
-  const settledIntent = await commerce
-    .x402()
-    .markSettled(intentId, paymentResult.txHash, settledBlockNumber);
+  const settledIntent = await x402.markSettled(intentId, paymentResult.txHash, settledBlockNumber);
 
   /** @type {JsonRecord | null} */
   let incomingSettlement = null;
@@ -825,32 +1034,23 @@ export const x402Tools = [
     },
     permission: 'write',
     handler: async ({ commerce, params }) => {
-      const intent = await commerce.x402().createIntent({
-        payer_address: params.payerAddress,
-        payee_address: params.payeeAddress,
-        amount: params.amount,
-        asset: params.asset || 'usdc',
-        network: params.network || 'set_chain',
-        cart_id: params.cartId,
-        order_id: params.orderId,
-        description: params.description,
-        validity_seconds: params.validitySeconds,
-      });
+      const x402 = getX402Api(commerce);
+      const intent = normalizeIntent(await x402.createIntent(buildCreateIntentInput(params)));
       return {
         success: true,
         message: 'x402 payment intent created. Payer must sign the signing_hash.',
         intent: {
           id: intent.id,
           status: intent.status,
-          payerAddress: intent.payer_address,
-          payeeAddress: intent.payee_address,
+          payerAddress: intent.payerAddress,
+          payeeAddress: intent.payeeAddress,
           amount: intent.amount,
-          amountDecimal: intent.amount_decimal,
+          amountDecimal: intent.amountDecimal,
           asset: intent.asset,
           network: intent.network,
-          chainId: intent.chain_id,
-          signingHash: intent.signing_hash,
-          validUntil: intent.valid_until,
+          chainId: intent.chainId,
+          signingHash: intent.signingHash,
+          validUntil: intent.validUntil,
           nonce: intent.nonce,
         },
       };
@@ -962,11 +1162,17 @@ export const x402Tools = [
         };
       }
 
-      const signed = await commerce.x402().signIntent(intentId, {
-        intent_id: intentId,
-        signature,
-        public_key: publicKey,
-      });
+      const x402 = getX402Api(commerce);
+      const signed = normalizeIntent(
+        await x402.signIntent(
+          intentId,
+          buildSignIntentInput({
+            intentId,
+            signature,
+            publicKey,
+          }),
+        ),
+      );
       return {
         success: true,
         message: 'Payment intent signed. Ready for settlement.',
@@ -976,8 +1182,8 @@ export const x402Tools = [
         intent: {
           id: signed.id,
           status: signed.status,
-          payerSignature: signed.payer_signature,
-          payerPublicKey: signed.payer_public_key,
+          payerSignature: signed.payerSignature,
+          payerPublicKey: signed.payerPublicKey,
         },
       };
     },
@@ -992,29 +1198,30 @@ export const x402Tools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { intentId } = params;
-      const intent = await commerce.x402().getIntent(intentId);
-      if (!intent) {
+      const x402 = getX402Api(commerce);
+      const rawIntent = await x402.getIntent(intentId);
+      if (!rawIntent) {
         return { success: false, error: 'Payment intent not found' };
       }
+      const intent = normalizeIntent(rawIntent);
       return {
         success: true,
         intent: {
           id: intent.id,
           status: intent.status,
-          payerAddress: intent.payer_address,
-          payeeAddress: intent.payee_address,
+          payerAddress: intent.payerAddress,
+          payeeAddress: intent.payeeAddress,
           amount: intent.amount,
-          amountDecimal: intent.amount_decimal,
+          amountDecimal: intent.amountDecimal,
           asset: intent.asset,
           network: intent.network,
-          chainId: intent.chain_id,
-          signingHash: intent.signing_hash,
-          payerSignature: intent.payer_signature,
-          validUntil: intent.valid_until,
+          chainId: intent.chainId,
+          signingHash: intent.signingHash,
+          payerSignature: intent.payerSignature,
+          validUntil: intent.validUntil,
           nonce: intent.nonce,
-          txHash: intent.tx_hash,
-          blockNumber: intent.block_number,
-          createdAt: intent.created_at,
+          txHash: intent.txHash,
+          blockNumber: intent.blockNumber,
         },
       };
     },
@@ -1037,28 +1244,23 @@ export const x402Tools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
-      const intents = /** @type {JsonRecord[]} */ (
-        await commerce.x402().listIntents({
-          payer_address: params.payerAddress,
-          payee_address: params.payeeAddress,
-          status: params.status,
-          network: params.network,
-          limit: params.limit || 50,
-        })
-      );
+      const x402 = getX402Api(commerce);
+      const intents = /** @type {JsonRecord[]} */ (await x402.listIntents(buildListIntentsInput(params)));
       return {
         success: true,
         count: intents.length,
-        intents: intents.map((i) => ({
-          id: i.id,
-          status: i.status,
-          payerAddress: i.payer_address,
-          payeeAddress: i.payee_address,
-          amount: i.amount,
-          asset: i.asset,
-          network: i.network,
-          createdAt: i.created_at,
-        })),
+        intents: intents.map((intent) => {
+          const normalized = normalizeIntent(intent);
+          return {
+            id: normalized.id,
+            status: normalized.status,
+            payerAddress: normalized.payerAddress,
+            payeeAddress: normalized.payeeAddress,
+            amount: normalized.amount,
+            asset: normalized.asset,
+            network: normalized.network,
+          };
+        }),
       };
     },
   },
@@ -1291,17 +1493,20 @@ export const x402Tools = [
         };
       }
 
-      const createdIntent = await commerce.x402().createIntent({
-        payer_address: resolvedPayerAddress,
-        payee_address: resolvedPayeeAddress,
-        amount,
-        asset: asset || 'usdc',
-        network: normalizedNetwork,
-        cart_id: cartId,
-        order_id: orderId,
-        description,
-        validity_seconds: validitySeconds,
-      });
+      const x402 = getX402Api(commerce);
+      const createdIntent = await x402.createIntent(
+        buildCreateIntentInput({
+          payerAddress: resolvedPayerAddress,
+          payeeAddress: resolvedPayeeAddress,
+          amount,
+          asset,
+          network: normalizedNetwork,
+          cartId,
+          orderId,
+          description,
+          validitySeconds,
+        }),
+      );
       const normalizedIntent = normalizeIntent(createdIntent);
       if (!normalizedIntent.id) {
         return { success: false, error: 'x402 createIntent did not return an intent id' };
@@ -1424,7 +1629,8 @@ export const x402Tools = [
         };
       }
 
-      const rawIntent = await commerce.x402().getIntent(intentId);
+      const x402 = getX402Api(commerce);
+      const rawIntent = await x402.getIntent(intentId);
       if (!rawIntent) {
         return { success: false, error: 'Payment intent not found' };
       }
@@ -1617,16 +1823,17 @@ export const x402Tools = [
         };
       }
 
-      const settled = await commerce.x402().markSettled(intentId, txHash, blockNumber);
+      const x402 = getX402Api(commerce);
+      const settled = await x402.markSettled(intentId, txHash, blockNumber);
       return {
         success: true,
         message: 'Payment intent marked as settled.',
         intent: {
           id: settled.id,
           status: settled.status,
-          txHash: settled.tx_hash,
-          blockNumber: settled.block_number,
-          settledAt: settled.settled_at,
+          txHash: firstValue(settled, ['txHash', 'tx_hash']),
+          blockNumber: firstValue(settled, ['blockNumber', 'block_number']),
+          settledAt: firstValue(settled, ['settledAt', 'settled_at']),
         },
       };
     },
@@ -1641,7 +1848,8 @@ export const x402Tools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { payerAddress } = params;
-      const nonce = await commerce.x402().getNextNonce(payerAddress);
+      const x402 = getX402Api(commerce);
+      const nonce = await x402.getNextNonce(payerAddress);
       return {
         success: true,
         payerAddress,
@@ -1665,11 +1873,10 @@ export const x402Tools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { payerAddress, asset, network } = params;
-      const balance = await commerce.x402().getCreditBalance({
-        payer_address: payerAddress,
-        asset,
-        network,
-      });
+      const x402 = getX402Api(commerce);
+      const balance = await x402.getCreditBalance(
+        buildCreditBalanceInput({ payerAddress, asset, network }),
+      );
       return {
         success: true,
         payerAddress,
@@ -1706,25 +1913,22 @@ export const x402Tools = [
         };
       }
 
-      const txn = await commerce.x402().creditAccount({
-        payer_address: payerAddress,
-        asset,
-        network,
-        amount,
-        reason,
-        reference_id: referenceId,
-        metadata,
-      });
+      const x402 = getX402Api(commerce);
+      const txn = normalizeCreditTransaction(
+        await x402.creditAccount(
+          buildCreditMutationInput({ payerAddress, amount, asset, network, reason, referenceId, metadata }),
+        ),
+      );
       return {
         success: true,
         message: 'Credit deposited.',
         transaction: {
           id: txn.id,
-          accountId: txn.account_id,
+          accountId: txn.accountId,
           direction: txn.direction,
           amount: txn.amount,
-          balanceAfter: txn.balance_after,
-          createdAt: txn.created_at,
+          balanceAfter: txn.balanceAfter,
+          createdAt: txn.createdAt,
         },
       };
     },
@@ -1756,25 +1960,22 @@ export const x402Tools = [
         };
       }
 
-      const txn = await commerce.x402().debitAccount({
-        payer_address: payerAddress,
-        asset,
-        network,
-        amount,
-        reason,
-        reference_id: referenceId,
-        metadata,
-      });
+      const x402 = getX402Api(commerce);
+      const txn = normalizeCreditTransaction(
+        await x402.debitAccount(
+          buildCreditMutationInput({ payerAddress, amount, asset, network, reason, referenceId, metadata }),
+        ),
+      );
       return {
         success: true,
         message: 'Credit debited.',
         transaction: {
           id: txn.id,
-          accountId: txn.account_id,
+          accountId: txn.accountId,
           direction: txn.direction,
           amount: txn.amount,
-          balanceAfter: txn.balance_after,
-          createdAt: txn.created_at,
+          balanceAfter: txn.balanceAfter,
+          createdAt: txn.createdAt,
         },
       };
     },
@@ -1792,27 +1993,14 @@ export const x402Tools = [
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
+      const x402 = getX402Api(commerce);
       const txns = /** @type {JsonRecord[]} */ (
-        await commerce.x402().listCreditTransactions({
-          payer_address: params.payerAddress,
-          asset: params.asset,
-          network: params.network,
-          direction: params.direction,
-          limit: params.limit || 50,
-        })
+        await x402.listCreditTransactions(buildCreditTransactionFilterInput(params))
       );
       return {
         success: true,
         count: txns.length,
-        transactions: txns.map((txn) => ({
-          id: txn.id,
-          accountId: txn.account_id,
-          payerAddress: txn.payer_address,
-          direction: txn.direction,
-          amount: txn.amount,
-          balanceAfter: txn.balance_after,
-          createdAt: txn.created_at,
-        })),
+        transactions: txns.map((txn) => normalizeCreditTransaction(txn)),
       };
     },
   },

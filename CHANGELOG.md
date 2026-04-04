@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-04-04
+
+### Added
+- Added raw-binding compatibility regression coverage for getter-style `commerce.x402` and mixed A2A/x402 commerce surfaces so agent-payment flows are validated against the real Node binding shape.
+
+### Changed
+- Bumped workspace, bindings, admin app, CLI, examples, templates, docs, and release metadata from `0.9.5` to `0.9.6`.
+- Normalized the shared commerce API access layer so A2A runtimes, MCP tools, the x402 CLI, and the MCP server all support both getter-style and callable-style embedded bindings.
+
+### Fixed
+- Persisted x402 signing hashes at intent creation and tightened settlement-state validation so intents cannot skip directly to `Settled`.
+- Fixed the shipped x402/A2A payment tooling to work against the real embedded Node binding, including local signing, sequencer submission payloads, settlement updates, and agent-card/runtime compatibility.
+
 ## [0.9.5] - 2026-04-03
 
 ### Added

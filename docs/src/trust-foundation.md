@@ -6,7 +6,7 @@ The canonical repo-native inventory lives in `TRUST_FOUNDATION.md` at the reposi
 
 ## Current Posture
 
-- Current workspace release: `0.9.5`
+- Current workspace release: `0.9.6`
 - Current release status: pre-`1.0`
 - This repo is one layer in a larger documented stack with adjacent `stateset-sequencer`, `stateset-stark`, and `set` repos
 

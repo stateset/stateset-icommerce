@@ -7,7 +7,6 @@
  */
 
 import { Command } from 'commander';
-import { createRequire } from 'node:module';
 import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'node:fs';
@@ -22,29 +21,9 @@ import {
   pickConfigValue,
 } from '../src/x402/config.js';
 import { x402Tools } from '../src/tools/x402.js';
+import { createCommerce, hasCommerceApi } from '../src/commerce.js';
 import { installShutdownHandlers } from '../src/graceful-shutdown.js';
 installShutdownHandlers('stateset-x402');
-
-const require = createRequire(import.meta.url);
-
-function getCommerceCtor() {
-  let mod;
-  try {
-    mod = require('@stateset/embedded');
-  } catch (error) {
-    throw new Error(`Failed to load @stateset/embedded: ${error.message}`);
-  }
-  const Commerce = mod.Commerce || mod.default?.Commerce || mod.default;
-  if (!Commerce) {
-    throw new Error('Failed to resolve Commerce export from @stateset/embedded');
-  }
-  return Commerce;
-}
-
-function createCommerce(dbPath) {
-  const Commerce = getCommerceCtor();
-  return new Commerce(dbPath);
-}
 
 function resolveOutputOptions(options = {}) {
   return {
@@ -158,7 +137,7 @@ async function runX402Tool({ toolName, params, options, defaultAgentId }) {
         },
       )
     : createCommerce(options.db || './store.db');
-  if (!isWritePreview && typeof commerce.x402 !== 'function') {
+  if (!isWritePreview && !hasCommerceApi(commerce, 'x402')) {
     throw new Error(
       'x402 APIs are unavailable in the current @stateset/embedded build. Rebuild or upgrade embedded bindings before running x402 commands.',
     );

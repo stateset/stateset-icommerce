@@ -47,6 +47,7 @@ import {
   getDefaultAssetForNetwork,
   toSmallestUnit,
 } from './assets.js';
+import { adaptCommerceApis } from '../commerce.js';
 
 // ---------------------------------------------------------------------------
 // Commerce Proxy Helper — shared across all demos and tests
@@ -60,7 +61,7 @@ import {
  * @returns {Object} Commerce-compatible proxy
  */
 export function makeCommerceProxy(a2aStore) {
-  return {
+  return adaptCommerceApis({
     a2a: () => ({
       // Payments
       createPayment: (p) => a2aStore.createPayment(p),
@@ -175,7 +176,7 @@ export function makeCommerceProxy(a2aStore) {
       verifyAgent: (id) => a2aStore.verifyAgent?.(id) ?? null,
       updateAgent: (id, u) => a2aStore.updateAgent?.(id, u) ?? null,
     }),
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +236,7 @@ function countPastDueCycles(sinceIso, interval) {
  * @returns {Object} Agent runtime instance
  */
 export function createAgentRuntime(params) {
-  const {
+  let {
     name,
     walletAddress,
     signingKey,
@@ -255,6 +256,7 @@ export function createAgentRuntime(params) {
 
   if (!walletAddress) throw new Error('walletAddress is required');
   if (!commerce) throw new Error('commerce is required');
+  commerce = adaptCommerceApis(commerce, ['a2a', 'x402']);
 
   let settlement = null;
   const settlementServices = new Map();

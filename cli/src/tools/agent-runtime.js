@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import crypto from 'node:crypto';
+import { adaptCommerceApis, resolveCommerceApi } from '../commerce.js';
 
 function parseJsonObject(value) {
   if (!value) return null;
@@ -19,6 +20,10 @@ function parseJsonObject(value) {
   } catch {
     return null;
   }
+}
+
+function getA2AStore(commerce) {
+  return resolveCommerceApi(adaptCommerceApis(commerce, ['a2a']), 'a2a');
 }
 
 function buildRuntimeBudgetScope(rt, override = {}) {
@@ -743,7 +748,7 @@ export const agentRuntimeTools = [
       const defaultPayment = rt.getDefaultPaymentConfig?.() || {};
       // Fallback: use subscription service directly
       const { createA2ASubscriptionService } = await import('../a2a/subscriptions.js');
-      const subSvc = createA2ASubscriptionService(commerce.a2a());
+      const subSvc = createA2ASubscriptionService(getA2AStore(commerce));
       const sub = await subSvc.createSubscription({
         subscriberAddress: rt.walletAddress,
         providerAddress: params.providerAddress,
@@ -783,7 +788,7 @@ export const agentRuntimeTools = [
       }
       // Fallback: use reputation service directly
       const { createReputationService } = await import('../a2a/reputation.js');
-      const repSvc = createReputationService(commerce.a2a());
+      const repSvc = createReputationService(getA2AStore(commerce));
       const feedback = await repSvc.rateAgent({
         agentAddress: params.ratedAddress,
         reviewerAddress: rt.walletAddress,
@@ -805,7 +810,7 @@ export const agentRuntimeTools = [
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const { createReputationService } = await import('../a2a/reputation.js');
-      const a2aProxy = commerce.a2a();
+      const a2aProxy = getA2AStore(commerce);
       const repSvc = createReputationService(a2aProxy);
       const result = await repSvc.getReputation(params.address);
       return { success: true, reputation: result?.reputation || result };
@@ -867,7 +872,7 @@ export const agentRuntimeTools = [
       const defaultPayment = rt.getDefaultPaymentConfig?.() || {};
       // Fallback: use splits service directly
       const { createSplitPaymentService } = await import('../a2a/splits.js');
-      const splitSvc = createSplitPaymentService(commerce.a2a());
+      const splitSvc = createSplitPaymentService(getA2AStore(commerce));
       const split = await splitSvc.createSplitPayment({
         senderAddress: rt.walletAddress,
         totalAmount: params.totalAmount,
@@ -919,7 +924,7 @@ export const agentRuntimeTools = [
       if (!rt) {
         return { success: false, error: `Agent "${params.name}" not found.` };
       }
-      const a2a = commerce.a2a();
+      const a2a = getA2AStore(commerce);
       if (typeof a2a.listEventLog !== 'function') {
         return {
           success: true,
@@ -1258,7 +1263,7 @@ export const agentRuntimeTools = [
     handler: async ({ commerce, params }) => {
       try {
         const { createMarketplaceService } = await import('../a2a/marketplace.js');
-        const mktSvc = createMarketplaceService(commerce.a2a(), null);
+        const mktSvc = createMarketplaceService(getA2AStore(commerce), null);
         const metrics = mktSvc.getServiceMetrics(params.serviceId);
         return { success: true, metrics };
       } catch (err) {
@@ -1320,7 +1325,7 @@ export const agentRuntimeTools = [
     handler: async ({ commerce, params }) => {
       try {
         const { createSLAService } = await import('../a2a/sla.js');
-        const slaSvc = createSLAService(commerce.a2a());
+        const slaSvc = createSLAService(getA2AStore(commerce));
         const compliance = slaSvc.checkCompliance(params.serviceId);
         return { success: true, ...compliance };
       } catch (err) {
@@ -1412,7 +1417,7 @@ export const agentRuntimeTools = [
     handler: async ({ commerce, params }) => {
       try {
         const { createWorkflowService } = await import('../a2a/workflows.js');
-        const wfSvc = createWorkflowService(commerce.a2a(), null);
+        const wfSvc = createWorkflowService(getA2AStore(commerce), null);
         const status = wfSvc.getWorkflowStatus(params.workflowId);
         return { success: true, ...status };
       } catch (err) {

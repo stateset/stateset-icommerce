@@ -661,6 +661,7 @@ mod tests {
         assert_eq!(intent.asset, X402Asset::Usdc);
         assert_eq!(intent.network, X402Network::SetChain);
         assert_eq!(intent.status, X402IntentStatus::Created);
+        assert!(intent.signing_hash.is_some());
     }
 
     #[test]
@@ -834,12 +835,52 @@ mod tests {
             )
             .unwrap();
 
+        let sequenced =
+            commerce.x402().mark_sequenced(intent.id, 7, Uuid::new_v4()).unwrap();
+        assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
+
         // Then settle
         let settled = commerce.x402().mark_settled(intent.id, "0xTxHash123", 12345).unwrap();
 
         assert_eq!(settled.status, X402IntentStatus::Settled);
         assert_eq!(settled.tx_hash, Some("0xTxHash123".to_string()));
         assert_eq!(settled.block_number, Some(12345));
+    }
+
+    #[test]
+    fn test_mark_settled_rejects_unsequenced_intent() {
+        let commerce = setup_commerce();
+
+        let intent = commerce
+            .x402()
+            .create_intent(CreateX402PaymentIntent {
+                payer_address: "0xPayer123".into(),
+                payee_address: "0xPayee456".into(),
+                amount: 25_000_000,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
+        locally_signed.sign_with_ed25519(&[9u8; 32]).unwrap();
+
+        commerce
+            .x402()
+            .sign_intent(
+                intent.id,
+                SignX402PaymentIntent {
+                    intent_id: intent.id,
+                    signature_scheme: None,
+                    signature: locally_signed.payer_signature.unwrap(),
+                    public_key: locally_signed.payer_public_key.unwrap(),
+                    signature_bundle: None,
+                    public_key_bundle: None,
+                },
+            )
+            .unwrap();
+
+        let err = commerce.x402().mark_settled(intent.id, "0xTxHash123", 12345).unwrap_err();
+        assert!(err.to_string().contains("Cannot settle intent in signed status"));
     }
 
     #[test]

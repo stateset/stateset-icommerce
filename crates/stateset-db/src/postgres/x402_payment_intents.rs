@@ -304,6 +304,32 @@ impl PgX402PaymentIntentRepository {
                 Some(n) => n,
                 None => Self::get_next_nonce_in_tx(&mut tx, &input.payer_address).await?,
             };
+            let mut signing_intent = X402PaymentIntent::new(
+                input.payer_address.clone(),
+                input.payee_address.clone(),
+                input.amount,
+                asset,
+                network,
+            )
+            .with_validity(validity_seconds)
+            .with_nonce(nonce);
+            signing_intent.id = id;
+            signing_intent.created_at = now;
+            signing_intent.updated_at = now;
+            signing_intent.created_at_unix = now_unix;
+            signing_intent.valid_until = valid_until;
+            signing_intent.chain_id = chain_id;
+            signing_intent.token_address = token_address.clone();
+            signing_intent.resource_uri = input.resource_uri.clone();
+            signing_intent.resource_method = input.resource_method.clone();
+            let signing_hash = format!(
+                "0x{}",
+                signing_intent
+                    .sequencer_signing_hash()
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>()
+            );
 
             let insert_result = sqlx::query(
                 r#"
@@ -311,12 +337,12 @@ impl PgX402PaymentIntentRepository {
                     id, version, status, payer_address, payee_address, amount, amount_decimal,
                     asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
                     idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                    invoice_id, merchant_id, metadata, created_at, updated_at
+                    invoice_id, merchant_id, signing_hash, metadata, created_at, updated_at
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
                     $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20,
-                    $21, $22, $23, $24, $25
+                    $21, $22, $23, $24, $25, $26
                 )
                 "#,
             )
@@ -342,6 +368,7 @@ impl PgX402PaymentIntentRepository {
             .bind(input.order_id)
             .bind(input.invoice_id)
             .bind(input.merchant_id.clone())
+            .bind(signing_hash)
             .bind(input.metadata.clone())
             .bind(now)
             .bind(now)
@@ -536,6 +563,23 @@ impl PgX402PaymentIntentRepository {
         tx_hash: &str,
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, IntentRow>(
+            "SELECT * FROM x402_payment_intents WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let intent = row.map(Self::row_to_intent).transpose()?.ok_or(CommerceError::NotFound)?;
+        if intent.status != X402IntentStatus::Sequenced {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot settle intent in {} status",
+                intent.status
+            )));
+        }
+
         sqlx::query(
             "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, block_number = $3, settled_at = $4, updated_at = $5 WHERE id = $6",
         )
@@ -545,9 +589,11 @@ impl PgX402PaymentIntentRepository {
         .bind(Utc::now())
         .bind(Utc::now())
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }

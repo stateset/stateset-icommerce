@@ -12,9 +12,9 @@ name = "stateset_java"
 crate-type = ["cdylib"]
 
 [dependencies]
-stateset-embedded = { path = "../../crates/stateset-embedded", version = "0.9.5" }
-stateset-core = { path = "../../crates/stateset-core", version = "0.9.5" }
-stateset-primitives = { path = "../../crates/stateset-primitives", version = "0.9.5" }
+stateset-embedded = { path = "../../crates/stateset-embedded", version = "0.9.6" }
+stateset-core = { path = "../../crates/stateset-core", version = "0.9.6" }
+stateset-primitives = { path = "../../crates/stateset-primitives", version = "0.9.6" }
 
 # JNI bindings
 jni = "0.21"

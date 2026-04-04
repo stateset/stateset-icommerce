@@ -16,6 +16,7 @@ import { PolicyEngine } from './policies/engine.js';
 import { createMcpEventStreamer } from './mcp-event-streamer.js';
 import { ToolDiscoveryEngine } from './mcp-tool-discovery.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
+import { adaptCommerceApis } from './commerce.js';
 import {
   MPP_PROTOCOL,
   MPP_JSONRPC_PAYMENT_REQUIRED_CODE,
@@ -109,7 +110,10 @@ function createCallableApiAccessor(resolveValue) {
       apply() {
         return resolveValue();
       },
-      get(_target, prop) {
+      get(target, prop, receiver) {
+        if (prop in target) {
+          return Reflect.get(target, prop, receiver);
+        }
         const api = resolveValue();
         const value = api?.[prop];
         return typeof value === 'function' ? value.bind(api) : value;
@@ -1464,7 +1468,7 @@ export function createStatesetMcpServer({
   const a2aStore = new A2AStore({ dbPath: dbPath.replace('.db', '-a2a.db') });
 
   // Create a commerce wrapper that includes A2A methods
-  const commerceWithA2A = {
+  const commerceWithA2A = adaptCommerceApis({
     ...adaptCommerceForTools(commerce),
     a2a: () => ({
       createPayment: (p) => a2aStore.createPayment(p),
@@ -1572,7 +1576,7 @@ export function createStatesetMcpServer({
       updateWorkflowStep: (id, u) => a2aStore.updateWorkflowStep(id, u),
       listWorkflowSteps: (f) => a2aStore.listWorkflowSteps(f),
     }),
-  };
+  });
 
   // ---------------------------------------------------------------------------
   // Intelligence services initialization (automatic wiring)

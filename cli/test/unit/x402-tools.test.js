@@ -21,6 +21,14 @@ function createMockCommerce(overrides = {}) {
   };
 }
 
+function createGetterStyleCommerce(overrides = {}) {
+  return {
+    x402: {
+      ...overrides,
+    },
+  };
+}
+
 describe('x402_sign_intent tool', () => {
   it('returns preview details when allowApply is false', async () => {
     const tool = x402Tools.find((entry) => entry.name === 'x402_sign_intent');
@@ -93,5 +101,48 @@ describe('x402_execute_agent_payment tool', () => {
     assert.equal(result.wouldExecute.amount, 1000000);
     assert.equal(result.wouldExecute.payeeAddress, '0xabc');
     assert.equal(result.wouldExecute.network, 'set_chain');
+  });
+});
+
+describe('x402_create_payment_intent tool', () => {
+  it('supports the raw getter-style x402 binding shape', async () => {
+    const tool = x402Tools.find((entry) => entry.name === 'x402_create_payment_intent');
+    assert.ok(tool, 'x402_create_payment_intent should exist');
+
+    /** @type {Record<string, unknown> | null} */
+    let received = null;
+    const commerce = createGetterStyleCommerce({
+      createIntent: async (payload) => {
+        received = payload;
+        return {
+          id: 'intent_123',
+          status: 'created',
+          payerAddress: payload.payerAddress,
+          payeeAddress: payload.payeeAddress,
+          amount: payload.amount,
+          amountDecimal: 1,
+          asset: payload.asset,
+          network: payload.network,
+          chainId: 84532001,
+          signingHash: '0xabc123',
+          validUntil: 1_700_000_000,
+          nonce: 0,
+        };
+      },
+    });
+
+    const result = await tool.handler({
+      commerce,
+      params: {
+        payerAddress: '0xPayer',
+        payeeAddress: '0xPayee',
+        amount: 1_000_000,
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(received?.payerAddress, '0xPayer');
+    assert.equal(received?.payeeAddress, '0xPayee');
+    assert.equal(result.intent.signingHash, '0xabc123');
   });
 });

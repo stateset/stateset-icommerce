@@ -235,14 +235,40 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let decimals = asset.decimals();
         let divisor = 10u64.pow(u32::from(decimals));
         let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
+        let mut signing_intent = X402PaymentIntent::new(
+            input.payer_address.clone(),
+            input.payee_address.clone(),
+            input.amount,
+            asset,
+            network,
+        )
+        .with_validity(validity_seconds)
+        .with_nonce(nonce);
+        signing_intent.id = id;
+        signing_intent.created_at = now;
+        signing_intent.updated_at = now;
+        signing_intent.created_at_unix = now_unix;
+        signing_intent.valid_until = valid_until;
+        signing_intent.chain_id = chain_id;
+        signing_intent.token_address = token_address.clone();
+        signing_intent.resource_uri = input.resource_uri.clone();
+        signing_intent.resource_method = input.resource_method.clone();
+        let signing_hash = format!(
+            "0x{}",
+            signing_intent
+                .sequencer_signing_hash()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
 
         tx.execute(
             "INSERT INTO x402_payment_intents (
                 id, version, status, payer_address, payee_address, amount, amount_decimal,
                 asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
                 idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                invoice_id, merchant_id, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                invoice_id, merchant_id, signing_hash, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
                 id.to_string(),
                 "1.0",
@@ -266,6 +292,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 input.order_id.map(|id| id.to_string()),
                 input.invoice_id.map(|id| id.to_string()),
                 input.merchant_id,
+                signing_hash,
                 input.metadata,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
@@ -424,6 +451,14 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
         let conn = self.conn()?;
+        let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
+
+        if intent.status != X402IntentStatus::Sequenced {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot settle intent in {} status",
+                intent.status
+            )));
+        }
 
         conn.execute(
             "UPDATE x402_payment_intents SET

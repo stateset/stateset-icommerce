@@ -1,6 +1,6 @@
 {
   "name": "@stateset/embedded-wasm",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "StateSet Embedded Commerce for browsers (WebAssembly)",
   "main": "pkg/stateset_embedded.js",
   "module": "pkg/stateset_embedded.js",

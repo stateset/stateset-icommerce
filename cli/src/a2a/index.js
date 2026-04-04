@@ -28,6 +28,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { computeX402SigningHash, hashToHex, signX402Hash } from '../x402/crypto.js';
+import { adaptCommerceApis, resolveCommerceApi } from '../commerce.js';
 import {
   DEFAULT_NETWORK,
   getDefaultAssetForNetwork,
@@ -49,6 +51,8 @@ import {
  * @param {string} [config.storeId] - Store ID for sequencer
  */
 export function createA2AService(commerce, config) {
+  commerce = adaptCommerceApis(commerce, ['a2a', 'x402']);
+
   const {
     agentId,
     walletAddress,
@@ -64,6 +68,156 @@ export function createA2AService(commerce, config) {
 
   if (!walletAddress) {
     throw new Error('walletAddress is required for A2A service');
+  }
+
+  function getX402Api() {
+    return resolveCommerceApi(commerce, 'x402');
+  }
+
+  function firstDefined(record, keys) {
+    if (!record || typeof record !== 'object') return undefined;
+    for (const key of keys) {
+      if (record[key] !== undefined && record[key] !== null) {
+        return record[key];
+      }
+    }
+    return undefined;
+  }
+
+  function normalizeX402Intent(intent) {
+    return {
+      id: firstDefined(intent, ['id']),
+      payerAddress: firstDefined(intent, ['payerAddress', 'payer_address']),
+      payeeAddress: firstDefined(intent, ['payeeAddress', 'payee_address']),
+      amount: firstDefined(intent, ['amount']),
+      asset: firstDefined(intent, ['asset']),
+      network: firstDefined(intent, ['network']),
+      chainId: firstDefined(intent, ['chainId', 'chain_id']),
+      validUntil: firstDefined(intent, ['validUntil', 'valid_until']),
+      nonce: firstDefined(intent, ['nonce']),
+      signingHash: firstDefined(intent, ['signingHash', 'signing_hash']),
+      payerSignature: firstDefined(intent, ['payerSignature', 'payer_signature']),
+      payerPublicKey: firstDefined(intent, ['payerPublicKey', 'payer_public_key']),
+      idempotencyKey: firstDefined(intent, ['idempotencyKey', 'idempotency_key']),
+      resourceUri: firstDefined(intent, ['resourceUri', 'resource_uri']),
+      resourceMethod: firstDefined(intent, ['resourceMethod', 'resource_method']),
+      description: firstDefined(intent, ['description']),
+      merchantId: firstDefined(intent, ['merchantId', 'merchant_id']),
+      metadata: firstDefined(intent, ['metadata']),
+    };
+  }
+
+  function toBytes32(value) {
+    if (Buffer.isBuffer(value)) {
+      return value.length === 32 ? value : null;
+    }
+    if (typeof value !== 'string') return null;
+    const normalized = value.startsWith('0x') ? value.slice(2) : value;
+    if (!/^[a-fA-F0-9]{64}$/.test(normalized)) {
+      return null;
+    }
+    return Buffer.from(normalized, 'hex');
+  }
+
+  function buildCreateIntentInput({
+    payerAddress,
+    payeeAddress,
+    amount,
+    asset,
+    network,
+    description,
+    idempotencyKey,
+  }) {
+    return {
+      payerAddress,
+      payer_address: payerAddress,
+      payeeAddress,
+      payee_address: payeeAddress,
+      amount,
+      asset,
+      network,
+      description,
+      idempotencyKey,
+      idempotency_key: idempotencyKey,
+    };
+  }
+
+  function buildSignIntentInput({ intentId, signature, publicKey }) {
+    return {
+      intentId,
+      intent_id: intentId,
+      signature,
+      publicKey,
+      public_key: publicKey,
+    };
+  }
+
+  function buildSequencerPaymentIntentPayload(intent, overrides = {}) {
+    const normalized = normalizeX402Intent(intent);
+    const payload = {
+      tenant_id: tenantId,
+      store_id: storeId,
+      agent_id: agentId,
+      intent_id: normalized.id,
+      payer_address: normalized.payerAddress,
+      payee_address: normalized.payeeAddress,
+      amount: normalized.amount,
+      asset: normalized.asset,
+      network: normalized.network,
+      valid_until: normalized.validUntil,
+      nonce: normalized.nonce,
+      signing_hash: normalized.signingHash,
+      payer_signature: normalized.payerSignature,
+      payer_public_key: normalized.payerPublicKey,
+      resource_uri: normalized.resourceUri,
+      resource_method: normalized.resourceMethod,
+      description: normalized.description,
+      merchant_id: normalized.merchantId,
+      idempotency_key: normalized.idempotencyKey,
+      metadata: normalized.metadata ?? null,
+      ...overrides,
+    };
+    return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
+  }
+
+  async function signIntentForSequencer(x402, intent) {
+    const normalized = normalizeX402Intent(intent);
+    const privateKey = toBytes32(signingKey?.privateKey);
+    const publicKey = toBytes32(signingKey?.publicKey);
+
+    if (privateKey && publicKey) {
+      const signingHash =
+        normalized.signingHash ||
+        hashToHex(
+          computeX402SigningHash({
+            payerAddress: normalized.payerAddress,
+            payeeAddress: normalized.payeeAddress,
+            amount: normalized.amount,
+            asset: normalized.asset,
+            network: normalized.network,
+            chainId: normalized.chainId,
+            validUntil: normalized.validUntil,
+            nonce: normalized.nonce,
+            resourceUri: normalized.resourceUri,
+            resourceMethod: normalized.resourceMethod,
+          }),
+        );
+      const signature = hashToHex(
+        signX402Hash(Buffer.from(String(signingHash).replace(/^0x/, ''), 'hex'), privateKey),
+      );
+      return x402.signIntent(
+        String(normalized.id),
+        buildSignIntentInput({
+          intentId: String(normalized.id),
+          signature,
+          publicKey: hashToHex(publicKey),
+        }),
+      );
+    }
+
+    // Compatibility path for existing test doubles and custom wrappers that
+    // derive signatures inside signIntent from raw key material.
+    return x402.signIntent(String(normalized.id), signingKey);
   }
 
   function normalizeAcceptedNetworks(value) {
@@ -266,10 +420,12 @@ export function createA2AService(commerce, config) {
       throw new Error('Agent reference is required');
     }
 
+    const x402 = getX402Api();
+
     if (typeof agentRef === 'string') {
       // Try to look up as agent ID (UUID format)
       if (agentRef.includes('-') && agentRef.length === 36) {
-        const agent = await commerce.x402().getAgent(agentRef);
+        const agent = await x402.getAgent(agentRef);
         if (agent) {
           return {
             address: agent.wallet_address,
@@ -280,7 +436,7 @@ export function createA2AService(commerce, config) {
       }
 
       // Prefer a registered agent card over treating the value as a raw address.
-      const agentByWallet = await commerce.x402().getAgentByWallet(agentRef);
+      const agentByWallet = await x402.getAgentByWallet(agentRef);
       if (agentByWallet) {
         return {
           address: agentByWallet.wallet_address,
@@ -383,27 +539,26 @@ export function createA2AService(commerce, config) {
     // If we have a sequencer client, create and submit the x402 payment intent
     if (sequencerClient && signingKey) {
       try {
+        const x402 = getX402Api();
         // Create x402 payment intent
-        const intent = await commerce.x402().createIntent({
-          payer_address: walletAddress,
-          payee_address: recipient.paymentAddress || recipient.address,
-          amount: amountSmallest,
-          asset,
-          network,
-          description: memo,
-          idempotency_key: payment.idempotency_key,
-        });
+        const intent = await x402.createIntent(
+          buildCreateIntentInput({
+            payerAddress: walletAddress,
+            payeeAddress: recipient.paymentAddress || recipient.address,
+            amount: amountSmallest,
+            asset,
+            network,
+            description: memo,
+            idempotencyKey: payment.idempotency_key,
+          }),
+        );
 
         // Sign the intent
-        const signedIntent = await commerce.x402().signIntent(intent.id, signingKey);
+        const signedIntent = await signIntentForSequencer(x402, intent);
+        const submissionIntent = { ...intent, ...signedIntent };
 
         // Submit to sequencer
-        await sequencerClient.submitPaymentIntent({
-          tenant_id: tenantId,
-          store_id: storeId,
-          agent_id: agentId,
-          ...signedIntent,
-        });
+        await sequencerClient.submitPaymentIntent(buildSequencerPaymentIntentPayload(submissionIntent));
 
         // Update payment with intent info
         await commerce.a2a().updatePayment(paymentId, {
@@ -422,7 +577,7 @@ export function createA2AService(commerce, config) {
           payment: formatPayment(payment),
           intent: {
             id: intent.id,
-            signingHash: signedIntent.signing_hash,
+            signingHash: normalizeX402Intent(submissionIntent).signingHash,
           },
         };
       } catch (error) {
@@ -1681,14 +1836,17 @@ export function createA2AService(commerce, config) {
     let intentId = null;
     if (sequencerClient && signingKey) {
       try {
-        const intent = await commerce.x402().createIntent({
-          payer_address: walletAddress,
-          payee_address: sellerAddress,
-          amount: amountSmallest,
-          asset: asset.toUpperCase(),
-          network,
-          description: memo || `Conditional payment (escrow ${escrow.id})`,
-        });
+        const x402 = getX402Api();
+        const intent = await x402.createIntent(
+          buildCreateIntentInput({
+            payerAddress: walletAddress,
+            payeeAddress: sellerAddress,
+            amount: amountSmallest,
+            asset: asset.toUpperCase(),
+            network,
+            description: memo || `Conditional payment (escrow ${escrow.id})`,
+          }),
+        );
         intentId = intent.id;
 
         // Link intent to escrow
@@ -1814,8 +1972,25 @@ export function createA2AService(commerce, config) {
     let intentSettled = false;
     if (escrow.intent_id && sequencerClient) {
       try {
-        await commerce.x402().updateIntent(escrow.intent_id, { status: 'settled' });
-        intentSettled = true;
+        const x402 = getX402Api();
+        let receipt = null;
+
+        if (typeof sequencerClient.getPaymentReceipt === 'function') {
+          const response = await sequencerClient.getPaymentReceipt(escrow.intent_id, { maxRetries: 0 });
+          receipt = response?.receipt || response;
+        } else if (typeof sequencerClient.waitForReceipt === 'function') {
+          receipt = await sequencerClient.waitForReceipt(escrow.intent_id);
+        }
+
+        const txHash = firstDefined(receipt, ['txHash', 'tx_hash']);
+        const blockNumber = firstDefined(receipt, ['blockNumber', 'block_number']);
+        if (txHash && blockNumber !== undefined && typeof x402.markSettled === 'function') {
+          await x402.markSettled(escrow.intent_id, String(txHash), Number(blockNumber));
+          intentSettled = true;
+        } else if (typeof x402.updateIntent === 'function') {
+          await x402.updateIntent(escrow.intent_id, { status: 'settled' });
+          intentSettled = true;
+        }
       } catch (err) {
         console.warn('x402 intent settlement update failed:', err.message);
       }

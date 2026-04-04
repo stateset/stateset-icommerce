@@ -18,7 +18,7 @@ The compatibility table below is a project policy commitment, not a claim that e
 
 ## Current Release
 
-**v0.9.5** — See `RELEASING.md` for the full changelog.
+**v0.9.6** — See `RELEASING.md` for the full changelog.
 
 ## Compatibility Guarantees
 
@@ -65,7 +65,7 @@ stateset "show me all customers"   # triggers any pending migrations
 
 ## Release Snapshots
 
-For each tagged release, a documentation snapshot is created under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v0.9.5/`).
+For each tagged release, a documentation snapshot is created under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v0.9.6/`).
 
 ## Process
 
