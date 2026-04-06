@@ -267,8 +267,8 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 id, version, status, payer_address, payee_address, amount, amount_decimal,
                 asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
                 idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                invoice_id, merchant_id, signing_hash, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
                 id.to_string(),
                 "1.0",
@@ -293,6 +293,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 input.invoice_id.map(|id| id.to_string()),
                 input.merchant_id,
                 signing_hash,
+                signing_intent.signature_scheme().to_string(),
                 input.metadata,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
@@ -358,7 +359,14 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             signature_bundle,
             public_key_bundle,
         } = input;
-        let signature_scheme = signature_scheme.unwrap_or(X402SignatureScheme::Ed25519);
+        let signature_scheme = signature_scheme.unwrap_or_else(|| intent.signature_scheme());
+        if !intent.allows_signing_scheme(signature_scheme) {
+            return Err(CommerceError::ValidationError(format!(
+                "x402 intent requires {} signatures; refusing {} authorization for this intent",
+                intent.signature_scheme(),
+                signature_scheme
+            )));
+        }
         let signature = (!signature.trim().is_empty()).then_some(signature);
         let public_key = (!public_key.trim().is_empty()).then_some(public_key);
         let signature_bundle_json = signature_bundle

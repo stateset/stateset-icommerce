@@ -31,6 +31,10 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('resolveSecurityProfile', () => {
+  it('defaults undefined to "hybrid"', () => {
+    assert.equal(resolveSecurityProfile(), 'hybrid');
+  });
+
   it('accepts "pqc-strict"', () => {
     assert.equal(resolveSecurityProfile('pqc-strict'), 'pqc-strict');
   });
@@ -49,8 +53,8 @@ describe('resolveSecurityProfile', () => {
 // ---------------------------------------------------------------------------
 
 describe('profileMetricLabel', () => {
-  it('returns legacy for undefined', () => {
-    assert.equal(profileMetricLabel(), 'legacy');
+  it('returns hybrid for undefined', () => {
+    assert.equal(profileMetricLabel(), 'hybrid');
   });
 
   it('returns pqc-strict', () => {
@@ -63,8 +67,15 @@ describe('profileMetricLabel', () => {
 // ---------------------------------------------------------------------------
 
 describe('assertSecureTransportForProfile', () => {
-  it('allows insecure transport for legacy', () => {
-    assert.doesNotThrow(() => assertSecureTransportForProfile('legacy', false));
+  it('rejects insecure transport for legacy unless explicitly allowed', () => {
+    assert.throws(
+      () => assertSecureTransportForProfile('legacy', false),
+      /explicitly allowed/,
+    );
+  });
+
+  it('allows insecure transport for legacy when explicitly allowed', () => {
+    assert.doesNotThrow(() => assertSecureTransportForProfile('legacy', false, 'sequencer', true));
   });
 
   it('rejects insecure transport for pqc-strict', () => {

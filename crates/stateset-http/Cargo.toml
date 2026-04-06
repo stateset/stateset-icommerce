@@ -16,6 +16,7 @@ stateset-core = { workspace = true }
 stateset-embedded = { workspace = true }
 stateset-primitives = { workspace = true }
 stateset-a2a = { path = "../stateset-a2a" }
+stateset-authz = { path = "../stateset-authz" }
 
 axum = { version = "0.8", features = ["json", "query"] }
 tower = { version = "0.5", features = ["timeout"] }

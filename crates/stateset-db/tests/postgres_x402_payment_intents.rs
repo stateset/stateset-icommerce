@@ -1,8 +1,10 @@
 #[cfg(feature = "postgres")]
 use stateset_core::{
-    CreateX402PaymentIntent, SignX402PaymentIntent, X402Asset, X402IntentStatus, X402Network,
-    X402PaymentIntentFilter,
+    CommerceError, CreateX402PaymentIntent, SignX402PaymentIntent, X402_DEFAULT_SIGNATURE_SCHEME,
+    X402Asset, X402IntentStatus, X402Network, X402PaymentIntentFilter, X402SignatureScheme,
 };
+#[cfg(feature = "postgres")]
+use stateset_crypto::pqc::generate_hybrid_signing_keypair;
 #[cfg(feature = "postgres")]
 use stateset_db::PostgresDatabase;
 #[cfg(feature = "postgres")]
@@ -58,6 +60,7 @@ async fn postgres_x402_payment_intent_smoke() {
 
     assert_eq!(intent.status, X402IntentStatus::Created);
     assert_eq!(intent.cart_id, Some(cart_id));
+    assert_eq!(intent.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
 
     let by_key = repo
         .get_by_idempotency_key_async(&idempotency)
@@ -67,7 +70,8 @@ async fn postgres_x402_payment_intent_smoke() {
     assert_eq!(by_key.id, intent.id);
 
     let mut local_signed = intent.clone();
-    local_signed.sign_with_ed25519(&[11u8; 32]).expect("sign intent locally");
+    let keypair = generate_hybrid_signing_keypair().expect("generate hybrid signing keypair");
+    local_signed.sign_with_hybrid(&keypair).expect("sign intent locally");
 
     let signed = repo
         .sign_async(
@@ -75,15 +79,16 @@ async fn postgres_x402_payment_intent_smoke() {
             SignX402PaymentIntent {
                 intent_id: intent.id,
                 signature_scheme: None,
-                signature: local_signed.payer_signature.expect("generated signature"),
-                public_key: local_signed.payer_public_key.expect("generated public key"),
-                signature_bundle: None,
-                public_key_bundle: None,
+                signature: local_signed.payer_signature.clone().expect("generated signature"),
+                public_key: local_signed.payer_public_key.clone().expect("generated public key"),
+                signature_bundle: local_signed.payer_signature_bundle.clone(),
+                public_key_bundle: local_signed.payer_public_key_bundle.clone(),
             },
         )
         .await
         .expect("sign intent");
     assert_eq!(signed.status, X402IntentStatus::Signed);
+    assert_eq!(signed.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
 
     let batch_id = Uuid::new_v4();
     let sequenced =
@@ -114,4 +119,56 @@ async fn postgres_x402_payment_intent_smoke() {
         .expect("list intents");
 
     assert!(!list.is_empty(), "expected at least one intent in list");
+}
+
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_x402_rejects_ed25519_downgrade_for_new_intents() {
+    let url = match postgres_url() {
+        Some(url) => url,
+        None => {
+            eprintln!(
+                "POSTGRES_URL or DATABASE_URL not set; skipping postgres x402 downgrade test"
+            );
+            return;
+        }
+    };
+
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
+    let repo = db.x402_payment_intents();
+
+    let intent = repo
+        .create_async(CreateX402PaymentIntent {
+            payer_address: format!("0xtest{}", Uuid::new_v4().to_string().replace('-', "")),
+            payee_address: format!("0xpayee{}", Uuid::new_v4().to_string().replace('-', "")),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            ..Default::default()
+        })
+        .await
+        .expect("create intent");
+
+    let mut local_signed = intent.clone();
+    local_signed.sign_with_ed25519(&[13u8; 32]).expect("locally sign legacy intent");
+
+    let result = repo
+        .sign_async(
+            intent.id,
+            SignX402PaymentIntent {
+                intent_id: intent.id,
+                signature_scheme: Some(X402SignatureScheme::Ed25519),
+                signature: local_signed.payer_signature.expect("legacy signature"),
+                public_key: local_signed.payer_public_key.expect("legacy public key"),
+                signature_bundle: None,
+                public_key_bundle: None,
+            },
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(CommerceError::ValidationError(message))
+            if message.contains("ed25519_ml_dsa65") && message.contains("refusing ed25519")
+    ));
 }

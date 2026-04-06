@@ -146,7 +146,7 @@ const preview = await toolkit.simulateMutation({
 npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
-This registers the MCP server with your client. All 520+ tools appear automatically.
+This registers the MCP server with your client. The full registry-generated tool inventory appears automatically.
 
 ## Next Steps
 

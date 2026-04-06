@@ -1,18 +1,20 @@
 //! Server builder for configuring and running the HTTP service.
 
 use std::{
+    collections::HashSet,
     fmt,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
 };
 
 use axum::Router;
+use stateset_authz::AuthzEngine;
 use stateset_embedded::Commerce;
 use uuid::Uuid;
 
 use crate::error::HttpError;
-use crate::middleware::{self, RateLimitConfig};
-use crate::routes;
+use crate::middleware::{self, AuthzConfig, BearerAuthBinding, RateLimitConfig};
+use crate::routes::{self, DEFAULT_REQUEST_BODY_LIMIT_BYTES};
 use crate::state::{AppState, IpCidr, MetricsHeaderLimits};
 
 /// Default bind address.
@@ -26,6 +28,20 @@ const METRICS_X_FORWARDED_FOR_HEADER_MAX_BYTES_ENV: &str =
 const METRICS_X_REAL_IP_HEADER_MAX_BYTES_ENV: &str = "STATESET_HTTP_METRICS_X_REAL_IP_MAX_BYTES";
 const METRICS_AUTHORIZATION_HEADER_MAX_BYTES_ENV: &str =
     "STATESET_HTTP_METRICS_AUTHORIZATION_MAX_BYTES";
+const REQUEST_BODY_MAX_BYTES_ENV: &str = "STATESET_HTTP_MAX_BODY_BYTES";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AdditionalApiBearerBinding {
+    token: String,
+    bound_tenant_id: Option<String>,
+    bound_actor_id: Option<String>,
+}
+
+impl AdditionalApiBearerBinding {
+    fn new(token: String, bound_tenant_id: Option<String>, bound_actor_id: Option<String>) -> Self {
+        Self { token, bound_tenant_id, bound_actor_id }
+    }
+}
 
 fn parse_ip_allowlist_csv(env_var: &str, value: &str) -> Result<Vec<IpAddr>, HttpError> {
     let mut ips = value
@@ -100,7 +116,12 @@ pub struct ServerBuilder {
     enable_request_id: bool,
     api_bearer_token: Option<String>,
     bound_tenant_id: Option<String>,
+    bound_actor_id: Option<String>,
+    additional_api_bearer_bindings: Vec<AdditionalApiBearerBinding>,
     generated_default_token: bool,
+    max_request_body_bytes: usize,
+    authz_config: Option<AuthzConfig>,
+    trust_actor_headers_for_authz: bool,
     rate_limit: Option<RateLimitConfig>,
 }
 
@@ -117,13 +138,94 @@ impl fmt::Debug for ServerBuilder {
                 &self.state.metrics_bearer_auth_token().map(|_| "<redacted>"),
             )
             .field("bound_tenant_id", &self.bound_tenant_id.as_ref().map(|_| "<redacted>"))
+            .field("bound_actor_id", &self.bound_actor_id.as_ref().map(|_| "<redacted>"))
+            .field("additional_api_bearer_bindings", &self.additional_api_bearer_bindings.len())
             .field("generated_default_token", &self.generated_default_token)
+            .field("max_request_body_bytes", &self.max_request_body_bytes)
+            .field("authz_enabled", &self.authz_config.is_some())
+            .field("trust_actor_headers_for_authz", &self.trust_actor_headers_for_authz)
             .field("rate_limit", &self.rate_limit)
             .finish()
     }
 }
 
 impl ServerBuilder {
+    fn api_bearer_bindings(&self) -> Vec<AdditionalApiBearerBinding> {
+        let mut bindings = Vec::with_capacity(
+            usize::from(self.api_bearer_token.is_some())
+                + self.additional_api_bearer_bindings.len(),
+        );
+        if let Some(token) = self.api_bearer_token.clone() {
+            bindings.push(AdditionalApiBearerBinding::new(
+                token,
+                self.bound_tenant_id.clone(),
+                self.bound_actor_id.clone(),
+            ));
+        }
+        bindings.extend(self.additional_api_bearer_bindings.iter().cloned());
+        bindings
+    }
+
+    fn tenant_routing_auth_error(&self) -> Option<&'static str> {
+        if self.state.tenant_db_dir().is_none() {
+            return None;
+        }
+        let bindings = self.api_bearer_bindings();
+        if bindings.is_empty() {
+            return Some("per-tenant database routing requires API auth to remain enabled");
+        }
+        if bindings.iter().any(|binding| binding.bound_tenant_id.is_none()) {
+            return Some(
+                "per-tenant database routing requires binding every API bearer token to a single tenant",
+            );
+        }
+        None
+    }
+
+    fn api_auth_error(&self) -> Option<String> {
+        if let Some(message) = self.tenant_routing_auth_error() {
+            return Some(message.to_string());
+        }
+        let bindings = self.api_bearer_bindings();
+        if bindings.is_empty() {
+            if self.authz_config.is_some() && !self.trust_actor_headers_for_authz {
+                return Some(
+                    "request authorization requires actor-bound API authentication or explicitly trusted x-actor-id headers"
+                        .to_string(),
+                );
+            }
+            if self.bound_actor_id.is_some() {
+                return Some(
+                    "actor-bound API authentication requires API auth to remain enabled"
+                        .to_string(),
+                );
+            }
+            return None;
+        }
+
+        let mut seen_tokens = HashSet::with_capacity(bindings.len());
+        for binding in &bindings {
+            if !seen_tokens.insert(binding.token.clone()) {
+                return Some("duplicate API bearer tokens are not allowed".to_string());
+            }
+            if let Some(bound_actor_id) = binding.bound_actor_id.as_deref() {
+                if !middleware::is_valid_actor_id(bound_actor_id) {
+                    return Some("bound actor ID is invalid".to_string());
+                }
+            }
+        }
+        if self.authz_config.is_some()
+            && !self.trust_actor_headers_for_authz
+            && bindings.iter().any(|binding| binding.bound_actor_id.is_none())
+        {
+            return Some(
+                "request authorization requires binding every API bearer token to a single actor or explicitly trusting x-actor-id headers"
+                    .to_string(),
+            );
+        }
+        None
+    }
+
     /// Create a new server builder wrapping a [`Commerce`] instance.
     #[must_use]
     pub fn new(commerce: Commerce) -> Self {
@@ -137,7 +239,12 @@ impl ServerBuilder {
             // explicitly disabled.
             api_bearer_token: Some(generated_token),
             bound_tenant_id: None,
+            bound_actor_id: None,
+            additional_api_bearer_bindings: Vec::new(),
             generated_default_token: true,
+            max_request_body_bytes: DEFAULT_REQUEST_BODY_LIMIT_BYTES,
+            authz_config: None,
+            trust_actor_headers_for_authz: false,
             rate_limit: None,
         }
     }
@@ -155,7 +262,8 @@ impl ServerBuilder {
     pub fn new_from_env(commerce: Commerce) -> Result<Self, HttpError> {
         Self::new(commerce)
             .with_metrics_network_policy_from_env()?
-            .with_metrics_header_limits_from_env()
+            .with_metrics_header_limits_from_env()?
+            .with_request_body_limit_from_env()
     }
 
     /// Set the bind address.
@@ -190,6 +298,19 @@ impl ServerBuilder {
         self.api_bearer_token = Some(token.into());
         self.generated_default_token = false;
         self
+    }
+
+    fn push_bearer_auth_binding(
+        &mut self,
+        token: impl Into<String>,
+        bound_tenant_id: Option<String>,
+        bound_actor_id: Option<String>,
+    ) {
+        self.additional_api_bearer_bindings.push(AdditionalApiBearerBinding::new(
+            token.into(),
+            bound_tenant_id,
+            bound_actor_id,
+        ));
     }
 
     /// Configure bearer authentication for `/metrics`.
@@ -369,6 +490,23 @@ impl ServerBuilder {
         Ok(self.with_metrics_header_limits(limits))
     }
 
+    /// Apply the request body size limit from `STATESET_HTTP_MAX_BODY_BYTES`.
+    pub fn with_request_body_limit_from_env(self) -> Result<Self, HttpError> {
+        let max_body_bytes = std::env::var(REQUEST_BODY_MAX_BYTES_ENV).ok();
+        self.with_request_body_limit_from_value(max_body_bytes.as_deref())
+    }
+
+    fn with_request_body_limit_from_value(
+        mut self,
+        max_body_bytes: Option<&str>,
+    ) -> Result<Self, HttpError> {
+        if let Some(raw) = max_body_bytes {
+            self.max_request_body_bytes =
+                parse_positive_usize_env(REQUEST_BODY_MAX_BYTES_ENV, raw)?;
+        }
+        Ok(self)
+    }
+
     /// Disable trusted proxy checks for `/metrics`.
     #[must_use]
     pub fn without_metrics_trusted_proxies(mut self) -> Self {
@@ -385,6 +523,16 @@ impl ServerBuilder {
         self
     }
 
+    /// Bind the configured bearer token to a single actor.
+    ///
+    /// When set, authenticated API requests are treated as this actor during
+    /// authorization checks, and any conflicting `x-actor-id` header is rejected.
+    #[must_use]
+    pub fn bind_auth_actor(mut self, actor_id: impl Into<String>) -> Self {
+        self.bound_actor_id = Some(actor_id.into());
+        self
+    }
+
     /// Configure bearer authentication and bind it to a tenant in one call.
     #[must_use]
     pub fn with_bearer_auth_for_tenant(
@@ -393,6 +541,59 @@ impl ServerBuilder {
         tenant_id: impl Into<String>,
     ) -> Self {
         self.with_bearer_auth(token).bind_auth_tenant(tenant_id)
+    }
+
+    /// Configure bearer authentication and bind it to an actor in one call.
+    #[must_use]
+    pub fn with_bearer_auth_for_actor(
+        self,
+        token: impl Into<String>,
+        actor_id: impl Into<String>,
+    ) -> Self {
+        self.with_bearer_auth(token).bind_auth_actor(actor_id)
+    }
+
+    /// Add an additional bearer token for `/api/v1/*` endpoints.
+    ///
+    /// This leaves the primary configured API token unchanged.
+    #[must_use]
+    pub fn add_bearer_auth(mut self, token: impl Into<String>) -> Self {
+        self.push_bearer_auth_binding(token, None, None);
+        self
+    }
+
+    /// Add an additional bearer token bound to a tenant.
+    #[must_use]
+    pub fn add_bearer_auth_for_tenant(
+        mut self,
+        token: impl Into<String>,
+        tenant_id: impl Into<String>,
+    ) -> Self {
+        self.push_bearer_auth_binding(token, Some(tenant_id.into()), None);
+        self
+    }
+
+    /// Add an additional bearer token bound to an actor.
+    #[must_use]
+    pub fn add_bearer_auth_for_actor(
+        mut self,
+        token: impl Into<String>,
+        actor_id: impl Into<String>,
+    ) -> Self {
+        self.push_bearer_auth_binding(token, None, Some(actor_id.into()));
+        self
+    }
+
+    /// Add an additional bearer token bound to both an actor and a tenant.
+    #[must_use]
+    pub fn add_bearer_auth_for_actor_and_tenant(
+        mut self,
+        token: impl Into<String>,
+        actor_id: impl Into<String>,
+        tenant_id: impl Into<String>,
+    ) -> Self {
+        self.push_bearer_auth_binding(token, Some(tenant_id.into()), Some(actor_id.into()));
+        self
     }
 
     /// Enable per-tenant storage using `<base_dir>/<tenant>.db`.
@@ -409,11 +610,42 @@ impl ServerBuilder {
         self
     }
 
+    /// Set the maximum accepted request body size for extractor-based endpoints.
+    #[must_use]
+    pub const fn with_max_request_body_bytes(mut self, max_request_body_bytes: usize) -> Self {
+        self.max_request_body_bytes =
+            if max_request_body_bytes == 0 { 1 } else { max_request_body_bytes };
+        self
+    }
+
+    /// Enable request authorization for `/api/v1/*` using a provided authz engine.
+    ///
+    /// By default, authorization expects actor identity to come from actor-bound
+    /// bearer tokens. If you want to trust `x-actor-id` request headers instead,
+    /// also call [`Self::trust_actor_headers_for_authz`].
+    #[must_use]
+    pub fn with_authz_engine(mut self, engine: AuthzEngine) -> Self {
+        self.authz_config = Some(AuthzConfig::new(engine));
+        self
+    }
+
+    /// Explicitly trust `x-actor-id` request headers for authorization.
+    ///
+    /// Use this only behind a trusted upstream that authenticates callers and
+    /// strips or overwrites any client-supplied actor header.
+    #[must_use]
+    pub const fn trust_actor_headers_for_authz(mut self) -> Self {
+        self.trust_actor_headers_for_authz = true;
+        self
+    }
+
     /// Disable API authentication (not recommended for untrusted networks).
     #[must_use]
     pub fn without_auth(mut self) -> Self {
         self.api_bearer_token = None;
         self.bound_tenant_id = None;
+        self.bound_actor_id = None;
+        self.additional_api_bearer_bindings.clear();
         self.generated_default_token = false;
         self
     }
@@ -469,13 +701,32 @@ impl ServerBuilder {
     ///
     /// Useful for testing or embedding in a larger application.
     pub fn build(self) -> Router {
-        let auth_config = self.api_bearer_token.map(|token| (token, self.bound_tenant_id));
-        let router = routes::api_router().with_state(self.state);
+        let misconfigured_auth_message = self.api_auth_error();
+        let auth_bindings = self
+            .api_bearer_bindings()
+            .into_iter()
+            .map(|binding| {
+                BearerAuthBinding::new(
+                    binding.token,
+                    binding.bound_tenant_id,
+                    binding.bound_actor_id,
+                )
+            })
+            .collect::<Vec<_>>();
+        let auth_config = if auth_bindings.is_empty() { None } else { Some(auth_bindings) };
+        let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
+        let authz_config = self.authz_config.map(|config| {
+            if trust_actor_headers_for_authz { config.with_trusted_actor_headers() } else { config }
+        });
+        let router =
+            routes::api_router_with_body_limit(self.max_request_body_bytes).with_state(self.state);
         middleware::apply_middleware(
             router,
             self.enable_cors,
             self.enable_request_id,
             auth_config,
+            authz_config,
+            misconfigured_auth_message,
             self.rate_limit,
         )
     }
@@ -485,17 +736,25 @@ impl ServerBuilder {
     /// This method will block until the server is shut down.
     pub async fn serve(self) -> Result<(), HttpError> {
         let token = self.api_bearer_token.clone();
+        let api_token_count = self.api_bearer_bindings().len();
         let metrics_token = self.state.metrics_bearer_auth_token().map(ToOwned::to_owned);
         let trusted_proxy_count = self.state.metrics_trusted_proxies().map_or(0, |v| v.len());
         let metrics_header_limits = self.state.metrics_header_limits();
         let bound_tenant_id = self.bound_tenant_id.clone();
+        let bound_actor_id = self.bound_actor_id.clone();
         let generated_default_token = self.generated_default_token;
+        let authz_enabled = self.authz_config.is_some();
+        let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
         let addr = self.addr;
 
-        if token.is_none() && !addr.ip().is_loopback() {
+        if api_token_count == 0 && !addr.ip().is_loopback() {
             return Err(HttpError::BadRequest(
                 "Refusing to start without API auth on a non-loopback address".to_string(),
             ));
+        }
+
+        if let Some(message) = self.api_auth_error() {
+            return Err(HttpError::BadRequest(format!("Refusing to start: {message}")));
         }
 
         let app = self.build();
@@ -503,10 +762,19 @@ impl ServerBuilder {
         tracing::info!("StateSet HTTP listening on {addr}");
         if let Some(token) = token.as_deref() {
             tracing::info!("API bearer authentication is enabled for /api/v1/*");
+            if api_token_count > 1 {
+                tracing::info!(api_token_count, "Multiple API bearer tokens are configured");
+            }
             if let Some(bound_tenant_id) = bound_tenant_id.as_deref() {
                 tracing::info!(
                     tenant_id = %bound_tenant_id,
                     "API token is bound to a specific tenant"
+                );
+            }
+            if let Some(bound_actor_id) = bound_actor_id.as_deref() {
+                tracing::info!(
+                    actor_id = %bound_actor_id,
+                    "API token is bound to a specific actor"
                 );
             }
             if generated_default_token {
@@ -520,8 +788,16 @@ impl ServerBuilder {
                     "Generated API bearer token (redacted preview)"
                 );
             }
+        } else if api_token_count > 0 {
+            tracing::info!("API bearer authentication is enabled for /api/v1/*");
+            tracing::info!(api_token_count, "Multiple API bearer tokens are configured");
         } else {
             tracing::warn!("API authentication is disabled for /api/v1/*");
+        }
+        if authz_enabled && bound_actor_id.is_none() && trust_actor_headers_for_authz {
+            tracing::warn!(
+                "Request authorization is enabled for /api/v1/*; ensure x-actor-id is set by a trusted upstream"
+            );
         }
 
         if metrics_token.is_some() {
@@ -565,6 +841,7 @@ mod tests {
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use stateset_authz::{AuthzEngineBuilder, Role};
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -582,6 +859,11 @@ mod tests {
         assert!(builder.metrics_bearer_auth_token().is_some());
         assert_eq!(builder.metrics_header_limits(), MetricsHeaderLimits::default());
         assert!(builder.bound_tenant_id.is_none());
+        assert!(builder.bound_actor_id.is_none());
+        assert!(builder.additional_api_bearer_bindings.is_empty());
+        assert_eq!(builder.max_request_body_bytes, DEFAULT_REQUEST_BODY_LIMIT_BYTES);
+        assert!(builder.authz_config.is_none());
+        assert!(!builder.trust_actor_headers_for_authz);
     }
 
     #[test]
@@ -614,6 +896,7 @@ mod tests {
         assert_eq!(builder.bearer_auth_token(), Some("test-token"));
         assert_eq!(builder.metrics_bearer_auth_token(), Some(default_metrics_token.as_str()));
         assert!(builder.bound_tenant_id.is_none());
+        assert!(builder.bound_actor_id.is_none());
     }
 
     #[test]
@@ -763,6 +1046,58 @@ mod tests {
     }
 
     #[test]
+    fn builder_with_request_body_limit() {
+        let builder = ServerBuilder::new(test_commerce()).with_max_request_body_bytes(4096);
+        assert_eq!(builder.max_request_body_bytes, 4096);
+    }
+
+    #[test]
+    fn builder_with_request_body_limit_from_value() {
+        let builder = ServerBuilder::new(test_commerce())
+            .with_request_body_limit_from_value(Some("8192"))
+            .expect("request body limit should parse");
+        assert_eq!(builder.max_request_body_bytes, 8192);
+    }
+
+    #[test]
+    fn builder_with_authz_engine() {
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let builder = ServerBuilder::new(test_commerce()).with_authz_engine(engine);
+        assert!(builder.authz_config.is_some());
+    }
+
+    #[test]
+    fn builder_trusts_actor_headers_for_authz() {
+        let builder = ServerBuilder::new(test_commerce()).trust_actor_headers_for_authz();
+        assert!(builder.trust_actor_headers_for_authz);
+    }
+
+    #[test]
+    fn builder_with_bearer_auth_for_actor() {
+        let builder = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_actor("actor-token", "admin-1");
+        assert_eq!(builder.bearer_auth_token(), Some("actor-token"));
+        assert_eq!(builder.bound_actor_id.as_deref(), Some("admin-1"));
+    }
+
+    #[test]
+    fn builder_adds_additional_actor_bound_token() {
+        let builder = ServerBuilder::new(test_commerce())
+            .without_auth()
+            .add_bearer_auth_for_actor("viewer-token", "viewer-1");
+        assert!(builder.bearer_auth_token().is_none());
+        assert_eq!(builder.additional_api_bearer_bindings.len(), 1);
+        assert_eq!(builder.additional_api_bearer_bindings[0].token, "viewer-token");
+        assert_eq!(
+            builder.additional_api_bearer_bindings[0].bound_actor_id.as_deref(),
+            Some("viewer-1")
+        );
+    }
+
+    #[test]
     fn builder_with_bearer_auth_for_tenant() {
         let builder = ServerBuilder::new(test_commerce())
             .with_bearer_auth_for_tenant("tenant-token", "tenant-1");
@@ -774,10 +1109,12 @@ mod tests {
     fn builder_without_auth() {
         let builder = ServerBuilder::new(test_commerce())
             .with_bearer_auth_for_tenant("token", "tenant-1")
+            .bind_auth_actor("admin-1")
             .without_auth();
         assert!(builder.bearer_auth_token().is_none());
         assert!(builder.metrics_bearer_auth_token().is_some());
         assert!(builder.bound_tenant_id.is_none());
+        assert!(builder.bound_actor_id.is_none());
     }
 
     #[test]
@@ -819,12 +1156,14 @@ mod tests {
             .with_cors()
             .with_request_id()
             .with_bearer_auth("chain-token")
-            .bind_auth_tenant("chain-tenant");
+            .bind_auth_tenant("chain-tenant")
+            .bind_auth_actor("chain-actor");
         assert_eq!(builder.addr, addr);
         assert!(builder.enable_cors);
         assert!(builder.enable_request_id);
         assert_eq!(builder.bearer_auth_token(), Some("chain-token"));
         assert_eq!(builder.bound_tenant_id.as_deref(), Some("chain-tenant"));
+        assert_eq!(builder.bound_actor_id.as_deref(), Some("chain-actor"));
     }
 
     #[test]
@@ -849,6 +1188,137 @@ mod tests {
     #[test]
     fn builder_builds_router() {
         let _router = ServerBuilder::new(test_commerce()).build();
+    }
+
+    #[tokio::test]
+    async fn built_router_fails_closed_for_unbound_tenant_routing() {
+        let tenant_dir =
+            std::env::temp_dir().join(format!("stateset-http-misconfig-{}", Uuid::new_v4()));
+        let builder = ServerBuilder::new(test_commerce()).with_tenant_db_dir(tenant_dir.clone());
+        let token =
+            builder.bearer_auth_token().expect("default auth token should be present").to_string();
+        let router = builder.build();
+
+        let resp = router
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let _ = std::fs::remove_dir_all(tenant_dir);
+    }
+
+    #[tokio::test]
+    async fn built_router_fails_closed_for_invalid_bound_actor() {
+        let builder = ServerBuilder::new(test_commerce()).bind_auth_actor("invalid actor");
+        let token =
+            builder.bearer_auth_token().expect("default auth token should be present").to_string();
+        let router = builder.build();
+
+        let resp = router
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn built_router_fails_closed_for_actor_binding_without_auth() {
+        let router =
+            ServerBuilder::new(test_commerce()).without_auth().bind_auth_actor("admin-1").build();
+
+        let resp = router
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn built_router_fails_closed_for_duplicate_api_tokens() {
+        let builder = ServerBuilder::new(test_commerce())
+            .with_bearer_auth("duplicate-token")
+            .add_bearer_auth_for_actor("duplicate-token", "viewer-1");
+        let router = builder.build();
+
+        let resp = router
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", "Bearer duplicate-token")
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn built_router_fails_closed_for_authz_without_actor_bound_tokens_or_trusted_headers() {
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let builder = ServerBuilder::new(test_commerce()).with_authz_engine(engine);
+        let token =
+            builder.bearer_auth_token().expect("default auth token should be present").to_string();
+        let router = builder.build();
+
+        let resp = router
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("x-tenant-id", "tenant-1")
+                    .header("x-actor-id", "viewer-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn built_router_fails_closed_for_tenant_routing_with_unbound_additional_token() {
+        let tenant_dir =
+            std::env::temp_dir().join(format!("stateset-http-extra-token-{}", Uuid::new_v4()));
+        let builder = ServerBuilder::new(test_commerce())
+            .with_bearer_auth_for_tenant("primary-token", "tenant-1")
+            .add_bearer_auth_for_actor("viewer-token", "viewer-1")
+            .with_tenant_db_dir(tenant_dir.clone());
+        let router = builder.build();
+
+        let resp = router
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", "Bearer viewer-token")
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let _ = std::fs::remove_dir_all(tenant_dir);
     }
 
     #[tokio::test]
@@ -1021,5 +1491,49 @@ mod tests {
             .expect_err("should reject public bind without auth");
 
         assert!(err.to_string().contains("Refusing to start without API auth"));
+    }
+
+    #[tokio::test]
+    async fn serve_refuses_tenant_routing_without_tenant_binding() {
+        let tenant_dir =
+            std::env::temp_dir().join(format!("stateset-http-serve-misconfig-{}", Uuid::new_v4()));
+        let err = ServerBuilder::new(test_commerce())
+            .with_tenant_db_dir(tenant_dir.clone())
+            .serve()
+            .await
+            .expect_err("should reject unbound tenant routing");
+
+        assert!(err.to_string().contains("binding every API bearer token"));
+        let _ = std::fs::remove_dir_all(tenant_dir);
+    }
+
+    #[tokio::test]
+    async fn serve_refuses_tenant_routing_without_auth() {
+        let tenant_dir =
+            std::env::temp_dir().join(format!("stateset-http-serve-no-auth-{}", Uuid::new_v4()));
+        let err = ServerBuilder::new(test_commerce())
+            .with_tenant_db_dir(tenant_dir.clone())
+            .without_auth()
+            .serve()
+            .await
+            .expect_err("should reject tenant routing without auth");
+
+        assert!(err.to_string().contains("requires API auth"));
+        let _ = std::fs::remove_dir_all(tenant_dir);
+    }
+
+    #[tokio::test]
+    async fn serve_refuses_authz_without_actor_bound_tokens_or_trusted_headers() {
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let err = ServerBuilder::new(test_commerce())
+            .with_authz_engine(engine)
+            .serve()
+            .await
+            .expect_err("should reject authz configuration without actor identity source");
+
+        assert!(err.to_string().contains("binding every API bearer token"));
     }
 }

@@ -95,8 +95,7 @@ FUTURE.md
 PAPER.md
 comparison_doc.md
 
-# Admin dashboard (not for public release)
-admin/
+# Admin dashboard local artifacts
 .claude/*.local*
 target-local/
 target-codex/

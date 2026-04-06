@@ -1,0 +1,2201 @@
+{
+  "source": "cli/src/tools/index.js",
+  "totalTools": 340,
+  "moduleCount": 32,
+  "modules": [
+    {
+      "name": "a2a",
+      "count": 59
+    },
+    {
+      "name": "agent-cards",
+      "count": 5
+    },
+    {
+      "name": "analytics",
+      "count": 10
+    },
+    {
+      "name": "carts",
+      "count": 14
+    },
+    {
+      "name": "catalog",
+      "count": 6
+    },
+    {
+      "name": "checkout",
+      "count": 8
+    },
+    {
+      "name": "circuit-breaker",
+      "count": 8
+    },
+    {
+      "name": "compliance",
+      "count": 6
+    },
+    {
+      "name": "connectors",
+      "count": 11
+    },
+    {
+      "name": "currency",
+      "count": 8
+    },
+    {
+      "name": "custom-objects",
+      "count": 12
+    },
+    {
+      "name": "customers",
+      "count": 3
+    },
+    {
+      "name": "erc8004",
+      "count": 5
+    },
+    {
+      "name": "inventory",
+      "count": 6
+    },
+    {
+      "name": "invoices",
+      "count": 5
+    },
+    {
+      "name": "manufacturing",
+      "count": 11
+    },
+    {
+      "name": "orders",
+      "count": 6
+    },
+    {
+      "name": "payments",
+      "count": 17
+    },
+    {
+      "name": "products",
+      "count": 4
+    },
+    {
+      "name": "promotions",
+      "count": 10
+    },
+    {
+      "name": "proofs",
+      "count": 7
+    },
+    {
+      "name": "returns",
+      "count": 5
+    },
+    {
+      "name": "shipments",
+      "count": 11
+    },
+    {
+      "name": "stablecoin",
+      "count": 4
+    },
+    {
+      "name": "subscriptions",
+      "count": 15
+    },
+    {
+      "name": "suppliers",
+      "count": 6
+    },
+    {
+      "name": "sync",
+      "count": 20
+    },
+    {
+      "name": "tax",
+      "count": 19
+    },
+    {
+      "name": "treasury",
+      "count": 6
+    },
+    {
+      "name": "vector",
+      "count": 16
+    },
+    {
+      "name": "warranties",
+      "count": 4
+    },
+    {
+      "name": "x402",
+      "count": 13
+    }
+  ],
+  "permissions": [
+    {
+      "name": "admin",
+      "count": 33
+    },
+    {
+      "name": "delete",
+      "count": 11
+    },
+    {
+      "name": "read",
+      "count": 164
+    },
+    {
+      "name": "write",
+      "count": 132
+    }
+  ],
+  "permissionCounts": {
+    "admin": 33,
+    "delete": 11,
+    "read": 164,
+    "write": 132
+  },
+  "tools": [
+    {
+      "name": "a2a_accept_quote",
+      "description": "Accept a quote and pay. Automatically sends payment to the seller.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_cancel_agent_subscription",
+      "description": "Cancel an agent subscription. Can cancel immediately or at the end of the current billing period.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_check_payment_conditions",
+      "description": "Check whether all release conditions are met for a conditional payment (escrow).",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_configure_webhooks",
+      "description": "Configure webhook settings for an agent. Set the endpoint URL, signing secret, and which event types to receive.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_counter_quote",
+      "description": "Counter a quote with a different price (for buyers). Initiates or continues price negotiation with the seller.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_create_agent_subscription",
+      "description": "Create a recurring payment subscription between two agents. Supports trial periods and configurable billing intervals.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_create_conditional_payment",
+      "description": "Create a conditional payment that combines escrow with x402 payment intent. Funds are held in escrow until conditions are met, then automatically settled.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_create_escrow",
+      "description": "Create an escrow to hold funds between buyer and seller agents. Supports conditional release, time-based expiry, and dispute escalation.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_create_split_payment",
+      "description": "Create a multi-party split payment. Splits a payment across 2+ recipients by percentage or fixed amounts, with optional platform fee.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_decline_quote",
+      "description": "Decline a quote.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_discover_agents",
+      "description": "Discover AI agents that can provide goods or services. Find sellers, buyers, or agents with specific capabilities.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_dispute_escrow",
+      "description": "Dispute an escrow, escalating it to the dispute resolution system.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_dlq_count",
+      "description": "Get the count of entries in the webhook dead letter queue.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_execute_split_payment",
+      "description": "Execute a pending split payment, sending funds to each recipient. Tracks per-recipient status.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_file_dispute",
+      "description": "File a formal dispute against an escrow. Begins the dispute resolution process with evidence collection and review.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_fulfill_quote",
+      "description": "Mark a quote as fulfilled after delivering goods/services (for sellers).",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_fund_escrow",
+      "description": "Fund an escrow, moving it to active status so the seller can begin work.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_get_agent_subscription",
+      "description": "Get details of an agent-to-agent subscription.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_balance",
+      "description": "Get an A2A payment summary for this agent, with optional asset/network filters and per-rail breakdowns.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_dispute",
+      "description": "Get details of a dispute by ID, including evidence count.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_escrow",
+      "description": "Get details of an escrow by ID.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_event_history",
+      "description": "Get historical events for an agent with optional filtering.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_payment",
+      "description": "Get a single A2A payment by ID. Optionally refresh native on-chain confirmation state for supported settlement networks including Bitcoin and shielded Zcash.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_reputation",
+      "description": "Get reputation and trust score for an agent.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_service",
+      "description": "Get details of a specific agent service.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_split_payment",
+      "description": "Get details of a split payment including all recipient shares and statuses.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_agent_subscriptions",
+      "description": "List agent-to-agent subscriptions with optional filters.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_disputes",
+      "description": "List disputes with optional filters.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_escrows",
+      "description": "List escrows with optional filters.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_event_subscriptions",
+      "description": "List active event subscriptions for an agent.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_notification_log",
+      "description": "View the webhook notification delivery log with optional filters.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_payment_requests",
+      "description": "List payment requests created by or sent to this agent.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_payments",
+      "description": "List A2A payments sent or received by this agent. Can optionally refresh pending native-chain settlement state for payments with on-chain transaction hashes.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_quotes",
+      "description": "List quotes where this agent is buyer or seller.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_services",
+      "description": "List available agent services with optional filters and search.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_split_payments",
+      "description": "List split payments with optional filters.",
+      "module": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_webhook_dlq",
+      "description": "List quarantined webhook notifications that permanently failed delivery. Use to inspect and replay failed deliveries.",
+      "module": "a2a",
+      "permission": "admin"
+    },
+    {
+      "name": "a2a_pause_agent_subscription",
+      "description": "Pause an active agent subscription. Billing is suspended until resumed.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_pay",
+      "description": "Pay another AI agent directly. Send supported payment assets including USDC, ssUSD, BTC, or shielded ZEC to another agent by identity wallet, native chain address, or agent ID.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_pay_request",
+      "description": "Pay an existing payment request from another agent.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_process_subscription_billing",
+      "description": "Process all due subscription billing cycles. Bills active subscriptions, handles past-due retries, transitions expired trials, and cancels end-of-period subscriptions.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_provide_quote",
+      "description": "Respond to a quote request with pricing (for sellers).",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_purge_dlq",
+      "description": "Purge old dead letter queue entries. Removes entries quarantined more than the specified number of days ago.",
+      "module": "a2a",
+      "permission": "admin"
+    },
+    {
+      "name": "a2a_quarantine_failed_webhooks",
+      "description": "Move permanently failed webhook notifications to the dead letter queue. Notifications that exhausted all retry attempts are quarantined for inspection.",
+      "module": "a2a",
+      "permission": "admin"
+    },
+    {
+      "name": "a2a_rate_agent",
+      "description": "Rate an agent after a transaction. Scores 1-5 with optional dimension ratings (reliability, quality, speed, communication).",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_refund_escrow",
+      "description": "Refund escrow funds back to the buyer.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_register_service",
+      "description": "Register a service that this agent provides. Other agents can discover and purchase your services.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_release_escrow",
+      "description": "Release escrow funds to the seller. All release conditions must be met.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_replay_dlq_entry",
+      "description": "Replay a dead letter queue entry by moving it back to the notification log for retry. Resets the attempt counter.",
+      "module": "a2a",
+      "permission": "admin"
+    },
+    {
+      "name": "a2a_request_payment",
+      "description": "Request payment from another agent. Creates a payment request that the other agent can pay.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_request_quote",
+      "description": "Request a price quote from another agent for goods or services.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_resolve_dispute",
+      "description": "Resolve a dispute with a resolution type (full refund, partial refund, release to seller, split, or escalate).",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_respond_to_feedback",
+      "description": "Respond to feedback left on your agent (only the rated agent can respond).",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_resume_agent_subscription",
+      "description": "Resume a paused agent subscription. Recalculates billing dates from now.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_revise_quote",
+      "description": "Revise a quote after a buyer counter-offer (for sellers). Adjusts pricing in response to negotiation.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_send_notification",
+      "description": "Send a webhook notification to another agent. Delivers a signed payload to their configured endpoint.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_settle_conditional_payment",
+      "description": "Settle a conditional payment. Checks all conditions, releases escrow funds to the seller, and marks the x402 intent as settled.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_submit_evidence",
+      "description": "Submit evidence for an active dispute.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_subscribe_events",
+      "description": "Subscribe an agent to receive real-time events. Supports wildcard and prefix-based event type filtering.",
+      "module": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "abandon_cart",
+      "description": "Mark a cart as abandoned (for recovery campaigns).",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "activate_bom",
+      "description": "Activate a BOM to make it available for work orders.",
+      "module": "manufacturing",
+      "permission": "write"
+    },
+    {
+      "name": "activate_promotion",
+      "description": "Activate a promotion to make it available for use.",
+      "module": "promotions",
+      "permission": "write"
+    },
+    {
+      "name": "activate_subscription_plan",
+      "description": "Activate a subscription plan (make it available for new subscriptions). Requires --apply flag.",
+      "module": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "add_bom_component",
+      "description": "Add a component/ingredient to a Bill of Materials.",
+      "module": "manufacturing",
+      "permission": "write"
+    },
+    {
+      "name": "add_cart_item",
+      "description": "Add an item to a shopping cart.",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "adjust_inventory",
+      "description": "Adjust inventory quantity for a SKU. Use positive numbers to add stock, negative to remove.",
+      "module": "inventory",
+      "permission": "write"
+    },
+    {
+      "name": "agent_get_all_breaker_states",
+      "description": "Get the circuit breaker states for all known agents.",
+      "module": "circuit-breaker",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_breaker_state",
+      "description": "Get the circuit breaker state for a specific agent, including trip reason and config.",
+      "module": "circuit-breaker",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_spending_summary",
+      "description": "Get the spending summary for an agent: today's spend, monthly spend, and remaining limits.",
+      "module": "circuit-breaker",
+      "permission": "read"
+    },
+    {
+      "name": "agent_instant_checkout",
+      "description": "Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement.",
+      "module": "checkout",
+      "permission": "write"
+    },
+    {
+      "name": "agent_key_export",
+      "description": "Export an agent public key for sequencer registration. Returns public key only — never the private key.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "agent_key_generate",
+      "description": "Generate a new Ed25519 signing or X25519 encryption key pair for an agent. Requires --apply flag.",
+      "module": "sync",
+      "permission": "write"
+    },
+    {
+      "name": "agent_key_info",
+      "description": "Get detailed info for a specific agent key. Returns metadata only — no private key.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "agent_key_list",
+      "description": "List signing and/or encryption keys for an agent. Returns only public metadata — never exposes private keys.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "agent_key_rotate",
+      "description": "Rotate an agent key: generate a new key and revoke the current one. Requires --apply flag.",
+      "module": "sync",
+      "permission": "write"
+    },
+    {
+      "name": "agent_reset_all_breakers",
+      "description": "Reset ALL circuit breakers and deactivate the global kill switch.",
+      "module": "circuit-breaker",
+      "permission": "admin"
+    },
+    {
+      "name": "agent_reset_breaker",
+      "description": "Reset the circuit breaker for a specific agent, allowing transactions again.",
+      "module": "circuit-breaker",
+      "permission": "admin"
+    },
+    {
+      "name": "agent_set_spending_limits",
+      "description": "Update the spending limits for agent circuit breakers: per-transaction, daily, and monthly caps.",
+      "module": "circuit-breaker",
+      "permission": "admin"
+    },
+    {
+      "name": "agent_trip_all_breakers",
+      "description": "Activate the global kill switch — blocks ALL agent transactions immediately.",
+      "module": "circuit-breaker",
+      "permission": "admin"
+    },
+    {
+      "name": "agent_trip_breaker",
+      "description": "Manually trip the circuit breaker for a specific agent. Blocks all transactions until reset.",
+      "module": "circuit-breaker",
+      "permission": "admin"
+    },
+    {
+      "name": "apply_cart_discount",
+      "description": "Apply a coupon/discount code to the cart.",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "apply_cart_promotions",
+      "description": "Calculate and apply all applicable promotions to a cart. Uses coupon codes on the cart and automatic promotions.",
+      "module": "promotions",
+      "permission": "write"
+    },
+    {
+      "name": "approve_purchase_order",
+      "description": "Approve a purchase order.",
+      "module": "suppliers",
+      "permission": "write"
+    },
+    {
+      "name": "approve_return",
+      "description": "Approve a return request.",
+      "module": "returns",
+      "permission": "write"
+    },
+    {
+      "name": "approve_warranty_claim",
+      "description": "Approve a warranty claim.",
+      "module": "warranties",
+      "permission": "write"
+    },
+    {
+      "name": "archive_subscription_plan",
+      "description": "Archive a subscription plan (no new subscriptions, existing ones continue). Requires --apply flag.",
+      "module": "subscriptions",
+      "permission": "delete"
+    },
+    {
+      "name": "assess_wasm_connector_safety",
+      "description": "Compute connector safety scorecard and risk signals for marketplace governance and installation policy.",
+      "module": "connectors",
+      "permission": "read"
+    },
+    {
+      "name": "calculate_cart_tax",
+      "description": "Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "calculate_tax",
+      "description": "Calculate tax for a transaction based on shipping address and line items. Supports US sales tax, EU VAT, and Canadian GST/HST/PST.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "calculate_tax_quote",
+      "description": "Calculate a provider-backed tax quote with deterministic replay-safe output and optional idempotency key.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "calculate_tax_quote_with_failover",
+      "description": "Calculate a tax quote with jurisdiction compliance validation and provider failover routing.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "cancel_cart",
+      "description": "Cancel a shopping cart.",
+      "module": "carts",
+      "permission": "delete"
+    },
+    {
+      "name": "cancel_order",
+      "description": "Cancel an order. Only pending or confirmed orders can be cancelled.",
+      "module": "orders",
+      "permission": "delete"
+    },
+    {
+      "name": "cancel_payment_intent",
+      "description": "Cancel an uncaptured provider-backed payment intent.",
+      "module": "payments",
+      "permission": "delete"
+    },
+    {
+      "name": "cancel_subscription",
+      "description": "Cancel a subscription. By default cancels at end of period. Requires --apply flag.",
+      "module": "subscriptions",
+      "permission": "delete"
+    },
+    {
+      "name": "cancel_work_order",
+      "description": "Cancel a work order.",
+      "module": "manufacturing",
+      "permission": "delete"
+    },
+    {
+      "name": "capture_payment_intent",
+      "description": "Capture all or part of a provider-backed payment intent.",
+      "module": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "certify_wasm_connector",
+      "description": "Issue marketplace certification metadata for a connector version using automated safety score + trust policy.",
+      "module": "connectors",
+      "permission": "admin"
+    },
+    {
+      "name": "checkout_with_crypto",
+      "description": "Express checkout with a crypto wallet. Similar to express_checkout but takes a wallet address and network for on-chain payment.",
+      "module": "checkout",
+      "permission": "write"
+    },
+    {
+      "name": "commit_tax_transaction",
+      "description": "Commit a previously calculated tax quote into a provider transaction record.",
+      "module": "tax",
+      "permission": "write"
+    },
+    {
+      "name": "complete_checkout",
+      "description": "Complete the checkout process and convert the cart to an order. This is the final step in the checkout flow.",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "complete_payment",
+      "description": "Mark a payment as completed.",
+      "module": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "complete_work_order",
+      "description": "Complete a work order with the quantity produced.",
+      "module": "manufacturing",
+      "permission": "write"
+    },
+    {
+      "name": "compliance_summary",
+      "description": "Generate a compliance dashboard summary with transaction volume, dispute rates, policy violations, and top agents for a given period.",
+      "module": "compliance",
+      "permission": "read"
+    },
+    {
+      "name": "confirm_reservation",
+      "description": "Confirm an inventory reservation, deducting the reserved quantity from stock.",
+      "module": "inventory",
+      "permission": "write"
+    },
+    {
+      "name": "convert_currency",
+      "description": "Convert an amount from one currency to another using current exchange rates.",
+      "module": "currency",
+      "permission": "read"
+    },
+    {
+      "name": "create_bom",
+      "description": "Create a new Bill of Materials for a product. Defines what components/ingredients are needed.",
+      "module": "manufacturing",
+      "permission": "write"
+    },
+    {
+      "name": "create_cart",
+      "description": "Create a new shopping cart. Can be for a guest or authenticated customer.",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "create_coupon",
+      "description": "Create a coupon code for a promotion.",
+      "module": "promotions",
+      "permission": "write"
+    },
+    {
+      "name": "create_custom_object",
+      "description": "Create a custom object record. Provide `values` (object) or `valuesJson` (string). Values are validated against the type schema.",
+      "module": "custom-objects",
+      "permission": "write"
+    },
+    {
+      "name": "create_custom_object_type",
+      "description": "Create a custom object type (schema). Fields define allowed keys and types; record values are validated deterministically.",
+      "module": "custom-objects",
+      "permission": "write"
+    },
+    {
+      "name": "create_customer",
+      "description": "Create a new customer. Requires email, first name, and last name.",
+      "module": "customers",
+      "permission": "write"
+    },
+    {
+      "name": "create_inventory_item",
+      "description": "Create a new inventory item for a SKU.",
+      "module": "inventory",
+      "permission": "write"
+    },
+    {
+      "name": "create_invoice",
+      "description": "Create an invoice for a customer.",
+      "module": "invoices",
+      "permission": "write"
+    },
+    {
+      "name": "create_order",
+      "description": "Create a new order for a customer with line items.",
+      "module": "orders",
+      "permission": "write"
+    },
+    {
+      "name": "create_payment",
+      "description": "Create a payment for an order.",
+      "module": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "create_payment_intent",
+      "description": "Create a provider-backed payment intent with idempotency support for governed checkout flows.",
+      "module": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "create_payment_link",
+      "description": "Create a shareable payment link for instant checkout. Returns a short URL that buyers or agents can use.",
+      "module": "checkout",
+      "permission": "write"
+    },
+    {
+      "name": "create_payment_settlement_batch",
+      "description": "Create a settlement batch for captured/refunded payment intents to simulate provider payout reconciliation.",
+      "module": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "create_product",
+      "description": "Create a new product with optional variants.",
+      "module": "products",
+      "permission": "write"
+    },
+    {
+      "name": "create_promotion",
+      "description": "Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts.",
+      "module": "promotions",
+      "permission": "write"
+    },
+    {
+      "name": "create_purchase_order",
+      "description": "Create a purchase order to a supplier.",
+      "module": "suppliers",
+      "permission": "write"
+    },
+    {
+      "name": "create_refund",
+      "description": "Create a refund for a payment.",
+      "module": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "create_return",
+      "description": "Create a return request for an order.",
+      "module": "returns",
+      "permission": "write"
+    },
+    {
+      "name": "create_shipment",
+      "description": "Create a shipment for an order.",
+      "module": "shipments",
+      "permission": "write"
+    },
+    {
+      "name": "create_shipping_label",
+      "description": "Create a carrier label from quoted rates or explicit service code.",
+      "module": "shipments",
+      "permission": "write"
+    },
+    {
+      "name": "create_stablecoin_payment",
+      "description": "Create and execute a blockchain payment to a wallet address. Supports stablecoins plus native BTC and shielded ZEC flows.",
+      "module": "stablecoin",
+      "permission": "write"
+    },
+    {
+      "name": "create_subscription",
+      "description": "Create a new subscription for a customer. Requires --apply flag.",
+      "module": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "create_subscription_plan",
+      "description": "Create a new subscription plan. Requires --apply flag.",
+      "module": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "create_supplier",
+      "description": "Create a new supplier.",
+      "module": "suppliers",
+      "permission": "write"
+    },
+    {
+      "name": "create_tax_exemption",
+      "description": "Create a tax exemption certificate for a customer.",
+      "module": "tax",
+      "permission": "write"
+    },
+    {
+      "name": "create_warranty",
+      "description": "Create a warranty for a product.",
+      "module": "warranties",
+      "permission": "write"
+    },
+    {
+      "name": "create_warranty_claim",
+      "description": "File a warranty claim.",
+      "module": "warranties",
+      "permission": "write"
+    },
+    {
+      "name": "create_work_order",
+      "description": "Create a manufacturing work order to produce a quantity of product.",
+      "module": "manufacturing",
+      "permission": "write"
+    },
+    {
+      "name": "deactivate_promotion",
+      "description": "Pause/deactivate a promotion.",
+      "module": "promotions",
+      "permission": "write"
+    },
+    {
+      "name": "delete_custom_object",
+      "description": "Delete a custom object record by ID.",
+      "module": "custom-objects",
+      "permission": "delete"
+    },
+    {
+      "name": "delete_custom_object_type",
+      "description": "Delete a custom object type (schema). Records of this type must be deleted first.",
+      "module": "custom-objects",
+      "permission": "delete"
+    },
+    {
+      "name": "delete_gdpr_data",
+      "description": "Delete personal data for GDPR right to erasure (Article 17). Optionally retains anonymized transaction records for legal/accounting requirements.",
+      "module": "compliance",
+      "permission": "admin"
+    },
+    {
+      "name": "deliver_shipment",
+      "description": "Mark a shipment as delivered.",
+      "module": "shipments",
+      "permission": "write"
+    },
+    {
+      "name": "discover_agents",
+      "description": "Discover AI agents with specific commerce capabilities. Find sellers, buyers, or agents supporting specific networks/assets.",
+      "module": "agent-cards",
+      "permission": "read"
+    },
+    {
+      "name": "enable_currencies",
+      "description": "Enable currencies for the store.",
+      "module": "currency",
+      "permission": "admin"
+    },
+    {
+      "name": "erc8004_get_by_wallet",
+      "description": "Get an ERC-8004 identity by wallet address.",
+      "module": "erc8004",
+      "permission": "read"
+    },
+    {
+      "name": "erc8004_get_identity",
+      "description": "Get an ERC-8004 identity by registry + agent id.",
+      "module": "erc8004",
+      "permission": "read"
+    },
+    {
+      "name": "erc8004_link_wallet",
+      "description": "Link a wallet to an existing ERC-8004 identity record.",
+      "module": "erc8004",
+      "permission": "write"
+    },
+    {
+      "name": "erc8004_list_identities",
+      "description": "List ERC-8004 identities.",
+      "module": "erc8004",
+      "permission": "read"
+    },
+    {
+      "name": "erc8004_register_identity",
+      "description": "Register or update an ERC-8004 agent identity record.",
+      "module": "erc8004",
+      "permission": "admin"
+    },
+    {
+      "name": "execute_wasm_connector",
+      "description": "Execute an installed WASM connector action so agents can orchestrate ecosystem apps through iCommerce.",
+      "module": "connectors",
+      "permission": "write"
+    },
+    {
+      "name": "export_agent_catalog",
+      "description": "Export the agent catalog in JSON or OpenAPI format. Useful for sharing the catalog with other systems or generating API documentation.",
+      "module": "catalog",
+      "permission": "read"
+    },
+    {
+      "name": "export_audit_trail",
+      "description": "Export a complete audit trail of agent transactions and events for compliance review. Supports JSON and CSV formats with date range, agent, and event type filters.",
+      "module": "compliance",
+      "permission": "admin"
+    },
+    {
+      "name": "export_compliance_package",
+      "description": "Generate a compliance package — a complete set of verifiable receipts for all events in a batch, suitable for regulatory export or third-party audit.",
+      "module": "proofs",
+      "permission": "read"
+    },
+    {
+      "name": "export_gdpr_data",
+      "description": "Export all personal data for a customer or agent (GDPR Article 20 — data portability). Returns personal data, payments, communications, and disputes.",
+      "module": "compliance",
+      "permission": "admin"
+    },
+    {
+      "name": "express_checkout",
+      "description": "One-call checkout from a payment link. Converts the link into an order and payment.",
+      "module": "checkout",
+      "permission": "write"
+    },
+    {
+      "name": "format_currency",
+      "description": "Format an amount with currency symbol.",
+      "module": "currency",
+      "permission": "read"
+    },
+    {
+      "name": "generate_1099k",
+      "description": "Generate a 1099-K tax report for an agent. Summarizes gross payment amounts, transaction counts, and monthly breakdowns for a given tax year.",
+      "module": "compliance",
+      "permission": "admin"
+    },
+    {
+      "name": "generate_inclusion_proof",
+      "description": "Generate a Merkle inclusion proof for a specific event within a batch of events.",
+      "module": "proofs",
+      "permission": "read"
+    },
+    {
+      "name": "generate_receipt_bundle",
+      "description": "Generate a full verifiable receipt bundle for an event — includes event data, leaf hash, Merkle inclusion proof, and anchor metadata.",
+      "module": "proofs",
+      "permission": "read"
+    },
+    {
+      "name": "get_abandoned_carts",
+      "description": "Get all abandoned carts for recovery campaigns.",
+      "module": "carts",
+      "permission": "read"
+    },
+    {
+      "name": "get_active_promotions",
+      "description": "Get all currently active promotions.",
+      "module": "promotions",
+      "permission": "read"
+    },
+    {
+      "name": "get_agent_card",
+      "description": "Get details of a registered AI agent card.",
+      "module": "agent-cards",
+      "permission": "read"
+    },
+    {
+      "name": "get_agent_wallet",
+      "description": "Get the agent wallet address for a specific blockchain. Returns the wallet address derived from VES keys.",
+      "module": "stablecoin",
+      "permission": "read"
+    },
+    {
+      "name": "get_billing_cycle",
+      "description": "Get details for a specific billing cycle.",
+      "module": "subscriptions",
+      "permission": "read"
+    },
+    {
+      "name": "get_bom",
+      "description": "Get a Bill of Materials by ID, including all components/ingredients.",
+      "module": "manufacturing",
+      "permission": "read"
+    },
+    {
+      "name": "get_cart",
+      "description": "Get a specific cart by ID or cart number. Returns full cart details including items.",
+      "module": "carts",
+      "permission": "read"
+    },
+    {
+      "name": "get_currency_settings",
+      "description": "Get the store currency settings including base currency and enabled currencies.",
+      "module": "currency",
+      "permission": "read"
+    },
+    {
+      "name": "get_custom_object",
+      "description": "Get a custom object record by ID.",
+      "module": "custom-objects",
+      "permission": "read"
+    },
+    {
+      "name": "get_custom_object_by_handle",
+      "description": "Get a custom object record by (typeHandle, objectHandle).",
+      "module": "custom-objects",
+      "permission": "read"
+    },
+    {
+      "name": "get_custom_object_type",
+      "description": "Get a custom object type (schema) by ID.",
+      "module": "custom-objects",
+      "permission": "read"
+    },
+    {
+      "name": "get_custom_object_type_by_handle",
+      "description": "Get a custom object type (schema) by handle.",
+      "module": "custom-objects",
+      "permission": "read"
+    },
+    {
+      "name": "get_customer",
+      "description": "Get a specific customer by ID or email address.",
+      "module": "customers",
+      "permission": "read"
+    },
+    {
+      "name": "get_customer_metrics",
+      "description": "Get customer metrics including total customers, new customers, returning customers, and average lifetime value.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_customer_tax_exemptions",
+      "description": "Get active tax exemptions for a customer.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "get_demand_forecast",
+      "description": "Get demand forecast for inventory items based on historical sales. Predicts future demand and days until stockout.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_exchange_rate",
+      "description": "Get the exchange rate between two currencies.",
+      "module": "currency",
+      "permission": "read"
+    },
+    {
+      "name": "get_installed_connector",
+      "description": "Get details for an installed connector and its action contract.",
+      "module": "connectors",
+      "permission": "read"
+    },
+    {
+      "name": "get_inventory_health",
+      "description": "Get inventory health summary showing total SKUs, in-stock, low stock, and out of stock counts.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_low_stock_items",
+      "description": "Get items that are low in stock or approaching reorder point.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_order",
+      "description": "Get a specific order by ID or order number. Returns full order details including line items.",
+      "module": "orders",
+      "permission": "read"
+    },
+    {
+      "name": "get_order_status_breakdown",
+      "description": "Get breakdown of orders by status.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_overdue_invoices",
+      "description": "Get all overdue invoices.",
+      "module": "invoices",
+      "permission": "read"
+    },
+    {
+      "name": "get_payment",
+      "description": "Get a payment by ID.",
+      "module": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "get_payment_intent",
+      "description": "Get a provider-backed payment intent by ID.",
+      "module": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "get_payment_link_status",
+      "description": "Get the status and metrics (views, conversions) for a payment link.",
+      "module": "checkout",
+      "permission": "read"
+    },
+    {
+      "name": "get_product",
+      "description": "Get a specific product by ID.",
+      "module": "products",
+      "permission": "read"
+    },
+    {
+      "name": "get_product_spec",
+      "description": "Get the full machine-readable spec for a catalog product. Returns capabilities, requirements, pricing, trust level, and a JSON Schema fragment.",
+      "module": "catalog",
+      "permission": "read"
+    },
+    {
+      "name": "get_product_variant",
+      "description": "Get a product variant by SKU.",
+      "module": "products",
+      "permission": "read"
+    },
+    {
+      "name": "get_promotion",
+      "description": "Get a promotion by ID or internal code.",
+      "module": "promotions",
+      "permission": "read"
+    },
+    {
+      "name": "get_return",
+      "description": "Get a specific return by ID.",
+      "module": "returns",
+      "permission": "read"
+    },
+    {
+      "name": "get_return_metrics",
+      "description": "Get return metrics including return rate and total refunds.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_revenue_forecast",
+      "description": "Get revenue forecast based on historical trends.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_sales_summary",
+      "description": "Get sales summary for a time period. Returns total revenue, order count, average order value, items sold, and unique customers.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_shipping_rates",
+      "description": "Get available shipping rates for a cart based on contents and address.",
+      "module": "carts",
+      "permission": "read"
+    },
+    {
+      "name": "get_stock",
+      "description": "Get current stock level for a SKU. Shows on-hand, allocated, and available quantities.",
+      "module": "inventory",
+      "permission": "read"
+    },
+    {
+      "name": "get_subscription",
+      "description": "Get details for a specific subscription.",
+      "module": "subscriptions",
+      "permission": "read"
+    },
+    {
+      "name": "get_subscription_events",
+      "description": "Get event history (audit log) for a subscription.",
+      "module": "subscriptions",
+      "permission": "read"
+    },
+    {
+      "name": "get_subscription_plan",
+      "description": "Get details for a specific subscription plan.",
+      "module": "subscriptions",
+      "permission": "read"
+    },
+    {
+      "name": "get_tax_quote",
+      "description": "Get a provider-backed tax quote by ID.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "get_tax_rate",
+      "description": "Get the effective tax rate for a shipping address and product category.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "get_tax_settings",
+      "description": "Get the store tax calculation settings.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "get_tax_transaction",
+      "description": "Get a provider-backed tax transaction by ID.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "get_top_customers",
+      "description": "Get top customers by total spend.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_top_products",
+      "description": "Get top selling products by revenue or units sold.",
+      "module": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_us_state_tax_info",
+      "description": "Get pre-configured US state sales tax information including rates and rules.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "get_wallet_balance",
+      "description": "Check the balance of the agent wallet on a blockchain.",
+      "module": "stablecoin",
+      "permission": "read"
+    },
+    {
+      "name": "get_work_order",
+      "description": "Get a work order by ID with full details.",
+      "module": "manufacturing",
+      "permission": "read"
+    },
+    {
+      "name": "handle_fulfillment_exception",
+      "description": "Execute governed fulfillment exception workflows for carrier failure, partial shipment, split tender, and returns arbitration.",
+      "module": "shipments",
+      "permission": "write"
+    },
+    {
+      "name": "ingest_payment_provider_webhook",
+      "description": "Ingest a payment provider webhook event and reconcile payment intent state in shadow or production mode.",
+      "module": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "ingest_shipping_provider_webhook",
+      "description": "Ingest a shipping provider webhook event and reconcile label/tracking state for shadow mode operations.",
+      "module": "shipments",
+      "permission": "write"
+    },
+    {
+      "name": "ingest_tax_provider_webhook",
+      "description": "Ingest a tax provider webhook event and reconcile quote/transaction state in shadow or production mode.",
+      "module": "tax",
+      "permission": "write"
+    },
+    {
+      "name": "inspect_batch",
+      "description": "Inspect a batch of events — computes Merkle root, event count, and time range.",
+      "module": "proofs",
+      "permission": "read"
+    },
+    {
+      "name": "install_wasm_connector",
+      "description": "Install a connector from marketplace catalog into the local connector runtime.",
+      "module": "connectors",
+      "permission": "write"
+    },
+    {
+      "name": "list_agent_cards",
+      "description": "List all registered AI agent cards.",
+      "module": "agent-cards",
+      "permission": "read"
+    },
+    {
+      "name": "list_billing_cycles",
+      "description": "List billing cycles for a subscription.",
+      "module": "subscriptions",
+      "permission": "read"
+    },
+    {
+      "name": "list_boms",
+      "description": "List all Bills of Materials (BOMs). BOMs define the components/ingredients needed to manufacture a product.",
+      "module": "manufacturing",
+      "permission": "read"
+    },
+    {
+      "name": "list_carts",
+      "description": "List all shopping carts. Shows cart status, customer, totals, and item count.",
+      "module": "carts",
+      "permission": "read"
+    },
+    {
+      "name": "list_connector_marketplace",
+      "description": "List available WASM connectors in the local marketplace catalog.",
+      "module": "connectors",
+      "permission": "read"
+    },
+    {
+      "name": "list_coupons",
+      "description": "List coupon codes with optional filters.",
+      "module": "promotions",
+      "permission": "read"
+    },
+    {
+      "name": "list_custom_object_types",
+      "description": "List custom object types (schemas). Custom objects are similar to Shopify metaobjects / Salesforce custom objects.",
+      "module": "custom-objects",
+      "permission": "read"
+    },
+    {
+      "name": "list_custom_objects",
+      "description": "List custom object records (entries).",
+      "module": "custom-objects",
+      "permission": "read"
+    },
+    {
+      "name": "list_customers",
+      "description": "List all customers in the database. Returns customer details including email, name, and status.",
+      "module": "customers",
+      "permission": "read"
+    },
+    {
+      "name": "list_exchange_rates",
+      "description": "List all available exchange rates, optionally filtered by base currency.",
+      "module": "currency",
+      "permission": "read"
+    },
+    {
+      "name": "list_installed_connectors",
+      "description": "List installed connectors available to agentic runtime execution.",
+      "module": "connectors",
+      "permission": "read"
+    },
+    {
+      "name": "list_invoices",
+      "description": "List all invoices.",
+      "module": "invoices",
+      "permission": "read"
+    },
+    {
+      "name": "list_orders",
+      "description": "List all orders. Shows order number, status, customer, total amount, and item count.",
+      "module": "orders",
+      "permission": "read"
+    },
+    {
+      "name": "list_payment_intents",
+      "description": "List provider-backed payment intents with optional filtering.",
+      "module": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "list_payment_links",
+      "description": "List payment links with optional filters by status and customer.",
+      "module": "checkout",
+      "permission": "read"
+    },
+    {
+      "name": "list_payment_providers",
+      "description": "List available payment providers and capabilities for agentic payment flows.",
+      "module": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "list_payment_settlement_batches",
+      "description": "List provider payout batches generated from settlement runs.",
+      "module": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "list_payment_settlements",
+      "description": "List settlement records produced by provider payout reconciliation.",
+      "module": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "list_payments",
+      "description": "List all payments in the system.",
+      "module": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "list_products",
+      "description": "List all products in the catalog.",
+      "module": "products",
+      "permission": "read"
+    },
+    {
+      "name": "list_promotions",
+      "description": "List all promotions. Shows active, paused, and scheduled promotions with their discount details.",
+      "module": "promotions",
+      "permission": "read"
+    },
+    {
+      "name": "list_purchase_orders",
+      "description": "List all purchase orders.",
+      "module": "suppliers",
+      "permission": "read"
+    },
+    {
+      "name": "list_returns",
+      "description": "List all returns. Shows return status, order, and reason.",
+      "module": "returns",
+      "permission": "read"
+    },
+    {
+      "name": "list_shipments",
+      "description": "List all shipments.",
+      "module": "shipments",
+      "permission": "read"
+    },
+    {
+      "name": "list_shipping_labels",
+      "description": "List provider-backed shipping labels with optional filtering.",
+      "module": "shipments",
+      "permission": "read"
+    },
+    {
+      "name": "list_shipping_providers",
+      "description": "List shipping providers and capabilities for quoting, labeling, and tracking.",
+      "module": "shipments",
+      "permission": "read"
+    },
+    {
+      "name": "list_subscription_plans",
+      "description": "List all subscription plans. Filter by status (draft, active, archived) or billing interval.",
+      "module": "subscriptions",
+      "permission": "read"
+    },
+    {
+      "name": "list_subscriptions",
+      "description": "List subscriptions. Filter by customer, plan, or status.",
+      "module": "subscriptions",
+      "permission": "read"
+    },
+    {
+      "name": "list_suppliers",
+      "description": "List all suppliers.",
+      "module": "suppliers",
+      "permission": "read"
+    },
+    {
+      "name": "list_supported_chains",
+      "description": "List all supported blockchain networks for agent payment execution.",
+      "module": "stablecoin",
+      "permission": "read"
+    },
+    {
+      "name": "list_tax_jurisdictions",
+      "description": "List tax jurisdictions with optional filtering by country or level.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "list_tax_providers",
+      "description": "List tax providers and capabilities for quote, commit, and void workflows.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "list_tax_rates",
+      "description": "List tax rates for a jurisdiction or all active rates.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "list_tax_transactions",
+      "description": "List provider-backed tax transactions with optional filtering.",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "list_warranties",
+      "description": "List all warranties.",
+      "module": "warranties",
+      "permission": "read"
+    },
+    {
+      "name": "list_work_orders",
+      "description": "List all manufacturing work orders. Work orders track production runs.",
+      "module": "manufacturing",
+      "permission": "read"
+    },
+    {
+      "name": "match_agent_to_products",
+      "description": "Find catalog products compatible with an agent based on its capabilities and trust level. Returns products sorted by relevance (capability overlap).",
+      "module": "catalog",
+      "permission": "read"
+    },
+    {
+      "name": "match_product_to_agents",
+      "description": "Find agents compatible with a specific product. Filters available agents by the product's required trust level and capabilities.",
+      "module": "catalog",
+      "permission": "read"
+    },
+    {
+      "name": "pause_subscription",
+      "description": "Pause a subscription (stops billing, can resume later). Requires --apply flag.",
+      "module": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "publish_product_catalog",
+      "description": "Publish a product to the machine-readable agent catalog. Makes products discoverable by AI agents with capability-based matching, trust levels, and machine-readable specs.",
+      "module": "catalog",
+      "permission": "write"
+    },
+    {
+      "name": "publish_wasm_connector",
+      "description": "Publish a WASM connector to the local marketplace catalog (app-store style ecosystem index).",
+      "module": "connectors",
+      "permission": "admin"
+    },
+    {
+      "name": "query_agent_catalog",
+      "description": "Query the agent catalog for products matching filters. Supports capability, trust level, price, fulfillment chain, and category filtering.",
+      "module": "catalog",
+      "permission": "read"
+    },
+    {
+      "name": "quote_shipping_rates",
+      "description": "Quote carrier rates from provider adapters using structured parcel data and destination address.",
+      "module": "shipments",
+      "permission": "read"
+    },
+    {
+      "name": "reconcile_payment_provider",
+      "description": "Reconcile payment intents against settlement records to find pending settlement or over-settlement drift.",
+      "module": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "record_invoice_payment",
+      "description": "Record payment on an invoice.",
+      "module": "invoices",
+      "permission": "write"
+    },
+    {
+      "name": "refund_payment_intent",
+      "description": "Refund all or part of a captured provider-backed payment intent.",
+      "module": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "register_agent_card",
+      "description": "Register an AI agent card for A2A commerce. Advertises capabilities, supported networks, and payment assets.",
+      "module": "agent-cards",
+      "permission": "write"
+    },
+    {
+      "name": "reject_return",
+      "description": "Reject a return request with a reason.",
+      "module": "returns",
+      "permission": "write"
+    },
+    {
+      "name": "release_reservation",
+      "description": "Release an inventory reservation, returning the reserved quantity to available stock.",
+      "module": "inventory",
+      "permission": "write"
+    },
+    {
+      "name": "remove_cart_item",
+      "description": "Remove an item from the cart.",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "reserve_inventory",
+      "description": "Reserve inventory for an order. Reserved stock is allocated but not yet deducted.",
+      "module": "inventory",
+      "permission": "write"
+    },
+    {
+      "name": "resolve_payment_link",
+      "description": "Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status.",
+      "module": "checkout",
+      "permission": "read"
+    },
+    {
+      "name": "resume_subscription",
+      "description": "Resume a paused subscription. Requires --apply flag.",
+      "module": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "revoke_payment_link",
+      "description": "Revoke (cancel) an active payment link. Prevents further checkouts from it.",
+      "module": "checkout",
+      "permission": "write"
+    },
+    {
+      "name": "send_invoice",
+      "description": "Send an invoice to the customer.",
+      "module": "invoices",
+      "permission": "write"
+    },
+    {
+      "name": "send_purchase_order",
+      "description": "Send a PO to the supplier.",
+      "module": "suppliers",
+      "permission": "write"
+    },
+    {
+      "name": "set_base_currency",
+      "description": "Set the store's base currency.",
+      "module": "currency",
+      "permission": "admin"
+    },
+    {
+      "name": "set_cart_payment",
+      "description": "Set the payment method for a cart.",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "set_cart_shipping_address",
+      "description": "Set the shipping address for a cart.",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "set_exchange_rate",
+      "description": "Set or update an exchange rate between two currencies.",
+      "module": "currency",
+      "permission": "admin"
+    },
+    {
+      "name": "ship_order",
+      "description": "Mark an order as shipped with optional tracking number.",
+      "module": "orders",
+      "permission": "write"
+    },
+    {
+      "name": "sign_wasm_connector_attestation",
+      "description": "Sign a marketplace connector attestation using local signing key material for trustable install/execute verification.",
+      "module": "connectors",
+      "permission": "admin"
+    },
+    {
+      "name": "skip_billing_cycle",
+      "description": "Skip the next billing cycle for a subscription. Requires --apply flag.",
+      "module": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "soc2_evidence",
+      "description": "Generate a SOC2 audit evidence package. Gathers structured evidence for requested controls: access_control, change_management, encryption, monitoring, incident_response.",
+      "module": "compliance",
+      "permission": "admin"
+    },
+    {
+      "name": "start_work_order",
+      "description": "Start a work order (begin production).",
+      "module": "manufacturing",
+      "permission": "write"
+    },
+    {
+      "name": "sync_conflicts",
+      "description": "List unresolved sync conflicts. Conflicts occur when local and remote events modify the same entity concurrently.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "sync_decrypt_event",
+      "description": "Decrypt an encrypted sync event from the local outbox or pulled-event store using the local recipient key. Supports legacy X25519 and hybrid X25519 + ML-KEM-768 wraps.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "sync_entity_history",
+      "description": "Get the event history for a specific entity from the remote sequencer or the local pulled-event store.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "sync_full",
+      "description": "Perform a full sync: push pending events then pull new events. Requires --apply flag for push.",
+      "module": "sync",
+      "permission": "admin"
+    },
+    {
+      "name": "sync_inspect_commitment",
+      "description": "Inspect a VES batch commitment from the sequencer. Shows the Merkle root, sequence range, and event count.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "sync_outbox",
+      "description": "List events in the local outbox. Shows pending, synced, failed, and rejected events.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "sync_pull",
+      "description": "Pull events from the remote sequencer and store them locally.",
+      "module": "sync",
+      "permission": "write"
+    },
+    {
+      "name": "sync_pulled_events",
+      "description": "List events already pulled from the sequencer and stored locally. Can optionally include plaintext payloads or decrypt encrypted payloads with local keys.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "sync_push",
+      "description": "Push pending local events to the remote sequencer. Requires --apply flag for actual push.",
+      "module": "sync",
+      "permission": "write"
+    },
+    {
+      "name": "sync_rebase",
+      "description": "Resolve all sync conflicts using a resolution strategy. Requires --apply flag.",
+      "module": "sync",
+      "permission": "admin"
+    },
+    {
+      "name": "sync_resolve",
+      "description": "Resolve a specific sync conflict using a resolution strategy. Requires --apply flag.",
+      "module": "sync",
+      "permission": "admin"
+    },
+    {
+      "name": "sync_retry_failed",
+      "description": "Reset failed events to pending status so they can be retried. Requires --apply flag.",
+      "module": "sync",
+      "permission": "admin"
+    },
+    {
+      "name": "sync_status",
+      "description": "Get the current sync status between local database and remote sequencer. Shows pending events, sync lag, and connection status.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "sync_verify_inclusion",
+      "description": "Verify a Merkle inclusion proof for a VES event. Proves the event is included in a committed batch.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "sync_verify_receipt",
+      "description": "Verify the signature on a VES event receipt. Supports legacy Ed25519 receipts and hybrid Ed25519 + ML-DSA-65 bundles.",
+      "module": "sync",
+      "permission": "read"
+    },
+    {
+      "name": "track_shipping_label",
+      "description": "Track a shipping label by label ID or tracking number.",
+      "module": "shipments",
+      "permission": "read"
+    },
+    {
+      "name": "treasury_balance",
+      "description": "Get treasury balances for an agent.",
+      "module": "treasury",
+      "permission": "read"
+    },
+    {
+      "name": "treasury_buy",
+      "description": "Purchase tokens using treasury stablecoin balances.",
+      "module": "treasury",
+      "permission": "write"
+    },
+    {
+      "name": "treasury_deposit",
+      "description": "Record a treasury deposit for an agent (funds received).",
+      "module": "treasury",
+      "permission": "write"
+    },
+    {
+      "name": "treasury_ledger",
+      "description": "List recent treasury transactions for an agent.",
+      "module": "treasury",
+      "permission": "read"
+    },
+    {
+      "name": "treasury_list_tokens",
+      "description": "List available tokens from chain config and custom registry.",
+      "module": "treasury",
+      "permission": "read"
+    },
+    {
+      "name": "treasury_register_token",
+      "description": "Add or update a token in the treasury registry.",
+      "module": "treasury",
+      "permission": "admin"
+    },
+    {
+      "name": "uninstall_wasm_connector",
+      "description": "Uninstall a connector version from the local connector runtime.",
+      "module": "connectors",
+      "permission": "delete"
+    },
+    {
+      "name": "update_cart_item",
+      "description": "Update the quantity of an item in the cart.",
+      "module": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "update_custom_object",
+      "description": "Update a custom object record. Provide `values` (object) or `valuesJson` (string) to update record values.",
+      "module": "custom-objects",
+      "permission": "write"
+    },
+    {
+      "name": "update_custom_object_type",
+      "description": "Update a custom object type (schema). Updating fields replaces the full field definition list.",
+      "module": "custom-objects",
+      "permission": "write"
+    },
+    {
+      "name": "update_order_status",
+      "description": "Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded.",
+      "module": "orders",
+      "permission": "write"
+    },
+    {
+      "name": "validate_coupon",
+      "description": "Check if a coupon code is valid and can be used.",
+      "module": "promotions",
+      "permission": "read"
+    },
+    {
+      "name": "validate_tax_jurisdiction_compliance",
+      "description": "Validate jurisdiction readiness for tax calculation (country/state/postal requirements and category checks).",
+      "module": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "vector_clear",
+      "description": "Clear all vector embeddings for a specific entity type.",
+      "module": "vector",
+      "permission": "admin"
+    },
+    {
+      "name": "vector_clear_all",
+      "description": "Clear all vector embeddings across all entity types.",
+      "module": "vector",
+      "permission": "admin"
+    },
+    {
+      "name": "vector_index_all_customers",
+      "description": "Index all customers in the database for vector search.",
+      "module": "vector",
+      "permission": "admin"
+    },
+    {
+      "name": "vector_index_all_inventory",
+      "description": "Index all inventory items in the database for vector search.",
+      "module": "vector",
+      "permission": "admin"
+    },
+    {
+      "name": "vector_index_all_orders",
+      "description": "Index all orders in the database for vector search.",
+      "module": "vector",
+      "permission": "admin"
+    },
+    {
+      "name": "vector_index_all_products",
+      "description": "Index all products in the database for vector search. This may take a while for large catalogs.",
+      "module": "vector",
+      "permission": "admin"
+    },
+    {
+      "name": "vector_index_customer",
+      "description": "Index a single customer for vector search by their ID.",
+      "module": "vector",
+      "permission": "write"
+    },
+    {
+      "name": "vector_index_inventory",
+      "description": "Index a single inventory item for vector search by its ID.",
+      "module": "vector",
+      "permission": "write"
+    },
+    {
+      "name": "vector_index_order",
+      "description": "Index a single order for vector search by its ID.",
+      "module": "vector",
+      "permission": "write"
+    },
+    {
+      "name": "vector_index_product",
+      "description": "Index a single product for vector search by its ID.",
+      "module": "vector",
+      "permission": "write"
+    },
+    {
+      "name": "vector_reindex_all",
+      "description": "Rebuild all vector embeddings from scratch. Clears existing embeddings then re-indexes all products, customers, orders, and inventory items. Use this after bulk data imports or to fix stale embeddings.",
+      "module": "vector",
+      "permission": "admin"
+    },
+    {
+      "name": "vector_search_customers",
+      "description": "Search customers using natural language query with hybrid semantic + BM25 ranking.",
+      "module": "vector",
+      "permission": "read"
+    },
+    {
+      "name": "vector_search_inventory",
+      "description": "Search inventory items using natural language query with hybrid semantic + BM25 ranking.",
+      "module": "vector",
+      "permission": "read"
+    },
+    {
+      "name": "vector_search_orders",
+      "description": "Search orders using natural language query with hybrid semantic + BM25 ranking.",
+      "module": "vector",
+      "permission": "read"
+    },
+    {
+      "name": "vector_search_products",
+      "description": "Search products using natural language query with hybrid semantic + BM25 ranking. Returns products sorted by relevance score.",
+      "module": "vector",
+      "permission": "read"
+    },
+    {
+      "name": "vector_stats",
+      "description": "Get statistics about vector embeddings including counts by entity type.",
+      "module": "vector",
+      "permission": "read"
+    },
+    {
+      "name": "verify_agent",
+      "description": "Verify an AI agent card (admin operation). Upgrades trust level to Verified.",
+      "module": "agent-cards",
+      "permission": "write"
+    },
+    {
+      "name": "verify_chain_anchor",
+      "description": "Verify that an event proof matches an expected on-chain anchor transaction hash and Merkle root. Confirms the event was committed to the chain.",
+      "module": "proofs",
+      "permission": "read"
+    },
+    {
+      "name": "verify_inclusion_proof",
+      "description": "Verify a Merkle inclusion proof — confirms that a leaf hash is included in a Merkle root.",
+      "module": "proofs",
+      "permission": "read"
+    },
+    {
+      "name": "verify_receipt",
+      "description": "Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof.",
+      "module": "proofs",
+      "permission": "read"
+    },
+    {
+      "name": "verify_wasm_connector_attestation",
+      "description": "Verify connector trust attestation in the marketplace catalog before installation or execution.",
+      "module": "connectors",
+      "permission": "read"
+    },
+    {
+      "name": "void_shipping_label",
+      "description": "Void a shipping label before final delivery.",
+      "module": "shipments",
+      "permission": "delete"
+    },
+    {
+      "name": "void_tax_transaction",
+      "description": "Void a committed tax transaction with optional reason.",
+      "module": "tax",
+      "permission": "delete"
+    },
+    {
+      "name": "x402_create_payment_intent",
+      "description": "Create an x402 payment intent for AI agent commerce. Returns a signing hash that the payer agent must sign with Ed25519.",
+      "module": "x402",
+      "permission": "write"
+    },
+    {
+      "name": "x402_credit_balance",
+      "description": "Get x402 credit balance for a payer (prepaid meter for streaming usage).",
+      "module": "x402",
+      "permission": "read"
+    },
+    {
+      "name": "x402_credit_debit",
+      "description": "Debit x402 balance for metered usage. Requires --apply.",
+      "module": "x402",
+      "permission": "write"
+    },
+    {
+      "name": "x402_credit_deposit",
+      "description": "Credit (deposit) x402 balance for metered usage. Requires --apply.",
+      "module": "x402",
+      "permission": "write"
+    },
+    {
+      "name": "x402_credit_transactions",
+      "description": "List x402 credit ledger transactions.",
+      "module": "x402",
+      "permission": "read"
+    },
+    {
+      "name": "x402_execute_agent_payment",
+      "description": "Execute end-to-end agentic payment: create intent, locally sign with payer agent key, settle on-chain, and optionally record incoming settlement for payee agent.",
+      "module": "x402",
+      "permission": "write"
+    },
+    {
+      "name": "x402_get_intent",
+      "description": "Get details of an x402 payment intent.",
+      "module": "x402",
+      "permission": "read"
+    },
+    {
+      "name": "x402_get_next_nonce",
+      "description": "Get the next nonce for a payer address. Used for replay protection.",
+      "module": "x402",
+      "permission": "read"
+    },
+    {
+      "name": "x402_list_intents",
+      "description": "List x402 payment intents with optional filtering.",
+      "module": "x402",
+      "permission": "read"
+    },
+    {
+      "name": "x402_mark_settled",
+      "description": "Mark an x402 payment intent as settled on-chain. Called after blockchain confirmation.",
+      "module": "x402",
+      "permission": "write"
+    },
+    {
+      "name": "x402_record_incoming_settlement",
+      "description": "Record a settled x402 intent as an incoming treasury deposit for a local payee agent.",
+      "module": "x402",
+      "permission": "write"
+    },
+    {
+      "name": "x402_settle_intent_onchain",
+      "description": "Execute a signed x402 intent on-chain using an agent wallet, then mark the intent as settled.",
+      "module": "x402",
+      "permission": "write"
+    },
+    {
+      "name": "x402_sign_intent",
+      "description": "Sign an x402 payment intent with an Ed25519 signature. Supports manual signature/public key or local agent-key signing.",
+      "module": "x402",
+      "permission": "write"
+    }
+  ]
+}

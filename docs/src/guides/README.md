@@ -4,7 +4,7 @@ Focused guides for common workflows and operations.
 
 ## Getting Started
 - [CLI](cli.md) — Natural language interface and safety model
-- [MCP Tools](mcp-tools.md) — 520+ tools via the Model Context Protocol
+- [MCP Tools](mcp-tools.md) — Registry-generated tool inventory via MCP
 
 ## Data & Sync
 - [Sync (VES)](sync.md) — Verifiable Event Sync between agents

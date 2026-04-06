@@ -9,6 +9,7 @@ use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use rust_decimal_macros::dec;
 use serde_json::{Value, json};
+use stateset_authz::{AuthzEngineBuilder, PermissionLevel, Role, RoleBuilder};
 use stateset_embedded::Commerce;
 use stateset_http::{
     AppState, CreateCustomerRequest, CreateOrderItemRequest, CreateOrderRequest,
@@ -42,8 +43,53 @@ fn secure_app() -> (axum::Router, String) {
     (builder.build(), token)
 }
 
+fn secure_authz_app() -> (axum::Router, String) {
+    let builder = ServerBuilder::new(test_commerce())
+        .with_authz_engine(authz_engine())
+        .trust_actor_headers_for_authz();
+    let token =
+        builder.bearer_auth_token().expect("default auth token should be configured").to_string();
+    (builder.build(), token)
+}
+
+fn secure_bound_authz_app(actor_id: &str) -> (axum::Router, String) {
+    let builder = ServerBuilder::new(test_commerce())
+        .with_authz_engine(authz_engine())
+        .bind_auth_actor(actor_id);
+    let token =
+        builder.bearer_auth_token().expect("default auth token should be configured").to_string();
+    (builder.build(), token)
+}
+
+fn multi_actor_authz_app() -> axum::Router {
+    ServerBuilder::new(test_commerce())
+        .without_auth()
+        .add_bearer_auth_for_actor("viewer-token", "viewer-1")
+        .add_bearer_auth_for_actor("admin-token", "admin-1")
+        .with_authz_engine(authz_engine())
+        .build()
+}
+
+fn tenant_app(base_dir: &std::path::Path, token: &str, tenant_id: &str) -> axum::Router {
+    ServerBuilder::new(test_commerce())
+        .with_bearer_auth_for_tenant(token, tenant_id)
+        .with_tenant_db_dir(base_dir.to_path_buf())
+        .build()
+}
+
 fn test_commerce() -> Commerce {
     Commerce::new(":memory:").expect("in-memory Commerce")
+}
+
+fn authz_engine() -> stateset_authz::AuthzEngine {
+    AuthzEngineBuilder::new()
+        .add_role(Role::admin())
+        .add_role(Role::viewer())
+        .add_role(RoleBuilder::new("writer").default_level(PermissionLevel::Write).build())
+        .assign_role("admin-1", "admin")
+        .assign_role("viewer-1", "viewer")
+        .assign_role("writer-1", "writer")
+        .build()
 }
 
 /// Read a response body into a [`serde_json::Value`].
@@ -147,6 +193,7 @@ async fn health_returns_200_with_status_ok() {
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
     assert_eq!(json["status"], "ok");
+    assert!(json.get("tenant_cache").is_none());
 }
 
 #[tokio::test]
@@ -158,6 +205,7 @@ async fn health_ready_returns_200_with_database_connected() {
     let json = body_json(resp).await;
     assert_eq!(json["status"], "ok");
     assert_eq!(json["database"], "connected");
+    assert!(json.get("tenant_cache").is_none());
 }
 
 #[tokio::test]
@@ -242,6 +290,203 @@ async fn api_accepts_valid_bearer_auth() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn api_authz_requires_actor_header_when_enabled() {
+    let (router, token) = secure_authz_app();
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "tenant-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_authz_fails_closed_without_actor_binding_or_trusted_headers() {
+    let builder = ServerBuilder::new(test_commerce()).with_authz_engine(authz_engine());
+    let token =
+        builder.bearer_auth_token().expect("default auth token should be configured").to_string();
+    let router = builder.build();
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "tenant-1")
+                .header("x-actor-id", "viewer-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn viewer_can_read_but_not_create_when_authz_enabled() {
+    let (router, token) = secure_authz_app();
+
+    let read_resp = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "tenant-1")
+                .header("x-actor-id", "viewer-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_resp.status(), StatusCode::OK);
+
+    let payload = json!({
+        "email": "viewer@example.com",
+        "first_name": "Viewer",
+        "last_name": "Only"
+    });
+    let create_resp = router
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "tenant-1")
+                .header("x-actor-id", "viewer-1")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admin_can_create_customer_when_authz_enabled() {
+    let (router, token) = secure_authz_app();
+    let payload = json!({
+        "email": "admin@example.com",
+        "first_name": "Admin",
+        "last_name": "User"
+    });
+
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "tenant-1")
+                .header("x-actor-id", "admin-1")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn bound_actor_token_allows_authorized_create_without_actor_header() {
+    let (router, token) = secure_bound_authz_app("admin-1");
+    let payload = json!({
+        "email": "bound-admin@example.com",
+        "first_name": "Bound",
+        "last_name": "Admin"
+    });
+
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "tenant-1")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn bound_actor_token_rejects_conflicting_actor_header() {
+    let (router, token) = secure_bound_authz_app("viewer-1");
+
+    let resp = router
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-tenant-id", "tenant-1")
+                .header("x-actor-id", "admin-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn multi_actor_tokens_map_to_distinct_roles() {
+    let router = multi_actor_authz_app();
+
+    let viewer_read = router
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("authorization", "Bearer viewer-token")
+                .header("x-tenant-id", "tenant-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(viewer_read.status(), StatusCode::OK);
+
+    let payload = json!({
+        "email": "multi-admin@example.com",
+        "first_name": "Multi",
+        "last_name": "Admin"
+    });
+
+    let viewer_create = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("authorization", "Bearer viewer-token")
+                .header("x-tenant-id", "tenant-1")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(viewer_create.status(), StatusCode::FORBIDDEN);
+
+    let admin_create = router
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("authorization", "Bearer admin-token")
+                .header("x-tenant-id", "tenant-1")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin_create.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -481,10 +726,10 @@ async fn metrics_trusted_proxy_uses_standard_forwarded_header_when_peer_is_trust
 async fn tenant_db_routing_isolates_data_between_tenants() {
     let tenant_dir =
         std::env::temp_dir().join(format!("stateset-http-tenant-e2e-{}", Uuid::new_v4()));
-    let router = ServerBuilder::new(test_commerce())
-        .without_auth()
-        .with_tenant_db_dir(tenant_dir.clone())
-        .build();
+    let tenant_a_token = "tenant-a-token";
+    let tenant_b_token = "tenant-b-token";
+    let router_a = tenant_app(&tenant_dir, tenant_a_token, "tenant-a");
+    let router_b = tenant_app(&tenant_dir, tenant_b_token, "tenant-b");
 
     let create_body = json!({
         "email": "tenant-a@example.com",
@@ -492,10 +737,11 @@ async fn tenant_db_routing_isolates_data_between_tenants() {
         "last_name": "A"
     });
 
-    let create_resp = router
+    let create_resp = router_a
         .clone()
         .oneshot(
             Request::post("/api/v1/customers")
+                .header("authorization", format!("Bearer {tenant_a_token}"))
                 .header("content-type", "application/json")
                 .header("x-tenant-id", "tenant-a")
                 .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
@@ -503,12 +749,15 @@ async fn tenant_db_routing_isolates_data_between_tenants() {
         )
         .await
         .unwrap();
-    assert_eq!(create_resp.status(), StatusCode::CREATED);
+    let create_status = create_resp.status();
+    let create_body = axum::body::to_bytes(create_resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(create_status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&create_body));
 
-    let tenant_a_list = router
+    let tenant_a_list = router_a
         .clone()
         .oneshot(
             Request::get("/api/v1/customers")
+                .header("authorization", format!("Bearer {tenant_a_token}"))
                 .header("x-tenant-id", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -519,10 +768,11 @@ async fn tenant_db_routing_isolates_data_between_tenants() {
     let tenant_a_json = body_json(tenant_a_list).await;
     assert_eq!(tenant_a_json["total"], 1);
 
-    let tenant_b_list = router
+    let tenant_b_list = router_b
         .clone()
         .oneshot(
             Request::get("/api/v1/customers")
+                .header("authorization", format!("Bearer {tenant_b_token}"))
                 .header("x-tenant-id", "tenant-b")
                 .body(Body::empty())
                 .unwrap(),
@@ -533,8 +783,13 @@ async fn tenant_db_routing_isolates_data_between_tenants() {
     let tenant_b_json = body_json(tenant_b_list).await;
     assert_eq!(tenant_b_json["total"], 0);
 
-    let missing_tenant_header = router
-        .oneshot(Request::get("/api/v1/customers").body(Body::empty()).unwrap())
+    let missing_tenant_header = router_a
+        .oneshot(
+            Request::get("/api/v1/customers")
+                .header("authorization", format!("Bearer {tenant_a_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(missing_tenant_header.status(), StatusCode::BAD_REQUEST);
@@ -611,6 +866,29 @@ async fn create_customer_returns_201_with_correct_fields() {
     assert!(json["id"].as_str().is_some());
     assert!(json["created_at"].as_str().is_some());
     assert!(json["updated_at"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn oversized_create_customer_payload_returns_413() {
+    let router =
+        ServerBuilder::new(test_commerce()).without_auth().with_max_request_body_bytes(64).build();
+    let payload = json!({
+        "email": format!("{}@example.com", "a".repeat(80)),
+        "first_name": "Alice",
+        "last_name": "Wonderland"
+    });
+
+    let resp = router
+        .oneshot(
+            Request::post("/api/v1/customers")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 #[tokio::test]
@@ -1825,13 +2103,29 @@ async fn e2e_create_inventory_items_then_list_inventory() {
 
 #[tokio::test]
 async fn deep_health_returns_database_latency_and_metrics() {
-    let resp =
-        app().oneshot(Request::get("/health/deep").body(Body::empty()).unwrap()).await.unwrap();
+    let (router, token) = secure_app();
+    let resp = router
+        .oneshot(
+            Request::get("/health/deep")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
     assert_eq!(json["status"], "ok");
     assert!(json["database"]["connected"].as_bool().unwrap());
     assert!(json["database"]["latency_ms"].is_number());
+}
+
+#[tokio::test]
+async fn deep_health_requires_bearer_auth_by_default() {
+    let (router, _token) = secure_app();
+    let resp =
+        router.oneshot(Request::get("/health/deep").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ============================================================================
@@ -3006,17 +3300,18 @@ async fn cache_control_differs_by_endpoint_type() {
 async fn e2e_tenant_isolation_orders() {
     let tenant_dir =
         std::env::temp_dir().join(format!("stateset-http-tenant-orders-{}", Uuid::new_v4()));
-    let router = ServerBuilder::new(test_commerce())
-        .without_auth()
-        .with_tenant_db_dir(tenant_dir.clone())
-        .build();
+    let tenant_x_token = "tenant-x-token";
+    let tenant_y_token = "tenant-y-token";
+    let router_x = tenant_app(&tenant_dir, tenant_x_token, "tenant-x");
+    let router_y = tenant_app(&tenant_dir, tenant_y_token, "tenant-y");
 
     let body =
         json!({ "email": "tenant-x@example.com", "first_name": "TenantX", "last_name": "User" });
-    let resp = router
+    let resp = router_x
         .clone()
         .oneshot(
             Request::post("/api/v1/customers")
+                .header("authorization", format!("Bearer {tenant_x_token}"))
                 .header("content-type", "application/json")
                 .header("x-tenant-id", "tenant-x")
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
@@ -3024,15 +3319,18 @@ async fn e2e_tenant_isolation_orders() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED);
-    let cust = body_json(resp).await;
+    let status = resp.status();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&body_bytes));
+    let cust: Value = serde_json::from_slice(&body_bytes).unwrap();
     let cid = cust["id"].as_str().unwrap();
 
     let body = json!({ "name": "Tenant X Widget" });
-    let resp = router
+    let resp = router_x
         .clone()
         .oneshot(
             Request::post("/api/v1/products")
+                .header("authorization", format!("Bearer {tenant_x_token}"))
                 .header("content-type", "application/json")
                 .header("x-tenant-id", "tenant-x")
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
@@ -3045,10 +3343,11 @@ async fn e2e_tenant_isolation_orders() {
     let pid = prod["id"].as_str().unwrap();
 
     let body = json!({ "customer_id": cid, "items": [{ "product_id": pid, "sku": "TX-001", "name": "Tenant X Widget", "quantity": 1, "unit_price": "25.00" }] });
-    let resp = router
+    let resp = router_x
         .clone()
         .oneshot(
             Request::post("/api/v1/orders")
+                .header("authorization", format!("Bearer {tenant_x_token}"))
                 .header("content-type", "application/json")
                 .header("x-tenant-id", "tenant-x")
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
@@ -3058,10 +3357,11 @@ async fn e2e_tenant_isolation_orders() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = router
+    let resp = router_x
         .clone()
         .oneshot(
             Request::get("/api/v1/orders")
+                .header("authorization", format!("Bearer {tenant_x_token}"))
                 .header("x-tenant-id", "tenant-x")
                 .body(Body::empty())
                 .unwrap(),
@@ -3071,10 +3371,11 @@ async fn e2e_tenant_isolation_orders() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(body_json(resp).await["total"], 1);
 
-    let resp = router
+    let resp = router_y
         .clone()
         .oneshot(
             Request::get("/api/v1/orders")
+                .header("authorization", format!("Bearer {tenant_y_token}"))
                 .header("x-tenant-id", "tenant-y")
                 .body(Body::empty())
                 .unwrap(),
@@ -3084,9 +3385,17 @@ async fn e2e_tenant_isolation_orders() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(body_json(resp).await["total"], 0);
 
-    let resp =
-        router.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = router_x
+        .oneshot(
+            Request::get("/api/v1/orders")
+                .header("authorization", format!("Bearer {tenant_x_token}"))
+                .header("x-tenant-id", "tenant-y")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let _ = fs::remove_dir_all(tenant_dir);
 }
 
@@ -3094,35 +3403,43 @@ async fn e2e_tenant_isolation_orders() {
 async fn e2e_tenant_isolation_returns() {
     let tenant_dir =
         std::env::temp_dir().join(format!("stateset-http-tenant-returns-{}", Uuid::new_v4()));
-    let router = ServerBuilder::new(test_commerce())
-        .without_auth()
-        .with_tenant_db_dir(tenant_dir.clone())
-        .build();
+    let tenant_a_token = "tenant-a-token";
+    let tenant_b_token = "tenant-b-token";
+    let router_a = tenant_app(&tenant_dir, tenant_a_token, "tenant-a");
+    let router_b = tenant_app(&tenant_dir, tenant_b_token, "tenant-b");
 
-    let resp = router
+    let resp = router_a
         .clone()
         .oneshot(
             Request::get("/api/v1/returns")
+                .header("authorization", format!("Bearer {tenant_a_token}"))
                 .header("x-tenant-id", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(body_json(resp).await["total"], 0);
+    let status = resp.status();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body_bytes));
+    let json: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json["total"], 0);
 
-    let resp = router
+    let resp = router_b
         .oneshot(
             Request::get("/api/v1/returns")
+                .header("authorization", format!("Bearer {tenant_b_token}"))
                 .header("x-tenant-id", "tenant-b")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(body_json(resp).await["total"], 0);
+    let status = resp.status();
+    let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body_bytes));
+    let json: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json["total"], 0);
     let _ = fs::remove_dir_all(tenant_dir);
 }
 

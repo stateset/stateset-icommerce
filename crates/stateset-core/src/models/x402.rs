@@ -14,7 +14,7 @@
 //!
 //! 1. Client requests resource
 //! 2. Server returns HTTP 402 with `X402PaymentRequired` header
-//! 3. Client creates `X402PaymentIntent`, signs it with Ed25519
+//! 3. Client creates `X402PaymentIntent`, signs it with the intent's configured scheme
 //! 4. Client syncs intent to sequencer for batching
 //! 5. Batched payments are settled on Set Chain L2
 //! 6. Server verifies payment via inclusion proof
@@ -22,7 +22,9 @@
 //! ## Example
 //!
 //! ```rust
-//! use stateset_core::models::x402::{X402PaymentIntent, X402Network, X402Asset};
+//! use stateset_core::models::x402::{
+//!     X402PaymentIntent, X402Network, X402Asset, X402_DEFAULT_SIGNATURE_SCHEME,
+//! };
 //!
 //! let intent = X402PaymentIntent::new(
 //!     "0x1234abcd1234abcd1234abcd1234abcd1234abcd",
@@ -32,6 +34,7 @@
 //!     X402Network::SetChain,
 //! );
 //! assert_eq!(intent.amount, 1_000_000);
+//! assert_eq!(intent.signature_scheme(), X402_DEFAULT_SIGNATURE_SCHEME);
 //! ```
 
 use chrono::{DateTime, Utc};
@@ -65,6 +68,9 @@ pub const X402_MAX_VALIDITY_SECONDS: u64 = 86400;
 
 /// Default payment validity window (1 hour in seconds)
 pub const X402_DEFAULT_VALIDITY_SECONDS: u64 = 3600;
+
+/// Default signature scheme for newly created x402 payment intents.
+pub const X402_DEFAULT_SIGNATURE_SCHEME: X402SignatureScheme = X402SignatureScheme::Ed25519MlDsa65;
 
 // =============================================================================
 // x402 Network & Asset Types
@@ -492,7 +498,7 @@ impl X402PaymentIntent {
             invoice_id: None,
             merchant_id: None,
             signing_hash: None,
-            payer_signature_scheme: None,
+            payer_signature_scheme: Some(X402_DEFAULT_SIGNATURE_SCHEME),
             payer_signature: None,
             payer_public_key: None,
             payer_signature_bundle: None,
@@ -664,6 +670,18 @@ impl X402PaymentIntent {
     #[must_use]
     pub fn signature_scheme(&self) -> X402SignatureScheme {
         self.payer_signature_scheme.unwrap_or(X402SignatureScheme::Ed25519)
+    }
+
+    /// Check whether a signing request matches the persisted intent policy.
+    ///
+    /// Legacy rows created before signature schemes were persisted return `true`
+    /// for any requested scheme to preserve compatibility during migration.
+    #[must_use]
+    pub fn allows_signing_scheme(&self, requested: X402SignatureScheme) -> bool {
+        match self.payer_signature_scheme {
+            Some(configured) => configured == requested,
+            None => true,
+        }
     }
 
     /// Sign the intent using Ed25519 (sequencer-compatible hash)
@@ -1228,11 +1246,12 @@ pub struct CreateX402PaymentIntent {
 pub struct SignX402PaymentIntent {
     /// Intent ID to sign
     pub intent_id: Uuid,
-    /// Signature scheme used to authorize the intent. Absent = legacy Ed25519.
+    /// Signature scheme used to authorize the intent. Absent = the intent's stored preference,
+    /// with legacy rows falling back to Ed25519.
     pub signature_scheme: Option<X402SignatureScheme>,
-    /// Legacy Ed25519 signature (hex-encoded, 64 bytes).
+    /// Ed25519 signature material (hex-encoded, 64 bytes) for legacy or hybrid flows.
     pub signature: String,
-    /// Payer's Ed25519 public key (hex-encoded, 32 bytes).
+    /// Payer's Ed25519 public key (hex-encoded, 32 bytes) for legacy or hybrid flows.
     pub public_key: String,
     /// Additional PQC signature material for hybrid or strict signatures.
     pub signature_bundle: Option<X402SignatureBundle>,
@@ -1420,8 +1439,39 @@ mod tests {
         assert_eq!(intent.asset, X402Asset::Usdc);
         assert_eq!(intent.network, X402Network::SetChain);
         assert_eq!(intent.chain_id, 84532001);
+        assert_eq!(intent.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
+        assert_eq!(intent.signature_scheme(), X402_DEFAULT_SIGNATURE_SCHEME);
         assert!(!intent.is_expired());
         assert!(!intent.is_signed());
+    }
+
+    #[test]
+    fn test_x402_legacy_rows_fall_back_to_ed25519() {
+        let mut intent = X402PaymentIntent::new(
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "0xabcdef1234567890abcdef1234567890abcdef12",
+            1_000_000,
+            X402Asset::Usdc,
+            X402Network::SetChain,
+        );
+
+        intent.payer_signature_scheme = None;
+
+        assert_eq!(intent.signature_scheme(), X402SignatureScheme::Ed25519);
+    }
+
+    #[test]
+    fn test_x402_new_intents_require_configured_signature_scheme() {
+        let intent = X402PaymentIntent::new(
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "0xabcdef1234567890abcdef1234567890abcdef12",
+            1_000_000,
+            X402Asset::Usdc,
+            X402Network::SetChain,
+        );
+
+        assert!(intent.allows_signing_scheme(X402_DEFAULT_SIGNATURE_SCHEME));
+        assert!(!intent.allows_signing_scheme(X402SignatureScheme::Ed25519));
     }
 
     #[test]

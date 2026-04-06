@@ -13,8 +13,9 @@ use stateset_protocol::merkle::{
     ZERO_HASH, compute_merkle_proof, compute_merkle_root, verify_merkle_proof,
 };
 use stateset_protocol::{
-    BatchSignature, EventEnvelope, MerkleLeafHashMode, MerkleProof, PayloadCodec, ProtocolError,
-    ProtocolVersion, SchemaVersion, SignatureAlgorithm, SyncBatch,
+    BATCH_PROTOCOL_VERSION_CURRENT, BATCH_PROTOCOL_VERSION_LEGACY, BatchSignature, EventEnvelope,
+    MerkleLeafHashMode, MerkleProof, PayloadCodec, ProtocolError, ProtocolVersion, SchemaVersion,
+    SignatureAlgorithm, SyncBatch,
 };
 
 // ---------------------------------------------------------------------------
@@ -239,6 +240,7 @@ fn batch_without_signatures_validates() {
 fn batch_with_wrong_public_key_length_fails() {
     let envs = vec![make_envelope("t", "1", b"d")];
     let mut batch = SyncBatch::new("node", envs);
+    batch.protocol_version = BATCH_PROTOCOL_VERSION_LEGACY;
     batch.add_signature(BatchSignature {
         signer_id: "signer".into(),
         algorithm: SignatureAlgorithm::Ed25519,
@@ -255,6 +257,7 @@ fn batch_with_wrong_public_key_length_fails() {
 fn batch_with_invalid_signature_bytes_fails() {
     let envs = vec![make_envelope("t", "1", b"d")];
     let mut batch = SyncBatch::new("node", envs);
+    batch.protocol_version = BATCH_PROTOCOL_VERSION_LEGACY;
     batch.add_signature(BatchSignature {
         signer_id: "signer".into(),
         algorithm: SignatureAlgorithm::Ed25519,
@@ -271,6 +274,7 @@ fn batch_with_invalid_signature_bytes_fails() {
 fn batch_with_empty_signer_id_fails() {
     let envs = vec![make_envelope("t", "1", b"d")];
     let mut batch = SyncBatch::new("node", envs);
+    batch.protocol_version = BATCH_PROTOCOL_VERSION_LEGACY;
     batch.add_signature(BatchSignature {
         signer_id: "  ".into(),
         algorithm: SignatureAlgorithm::Ed25519,
@@ -281,6 +285,25 @@ fn batch_with_empty_signer_id_fails() {
     });
 
     assert!(matches!(batch.validate(), Err(ProtocolError::InvalidSignature(_))));
+}
+
+#[test]
+fn batch_current_protocol_rejects_ed25519_signatures() {
+    let envs = vec![make_envelope("t", "1", b"d")];
+    let mut batch = SyncBatch::new("node", envs);
+    assert_eq!(batch.protocol_version, BATCH_PROTOCOL_VERSION_CURRENT);
+    batch.add_signature(BatchSignature {
+        signer_id: "signer".into(),
+        algorithm: SignatureAlgorithm::Ed25519,
+        signature: vec![0u8; 64],
+        public_key: vec![0u8; 32],
+        signature_bundle: None,
+        public_key_bundle: None,
+    });
+
+    let err = batch.validate().unwrap_err();
+    assert!(matches!(err, ProtocolError::InvalidSignature(_)));
+    assert!(err.to_string().contains("require mldsa65 or ed25519_mldsa65"));
 }
 
 #[test]

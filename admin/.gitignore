@@ -1,0 +1,11 @@
+.next/
+.next_root_owned_*/
+node_modules/
+node_modules_root_owned_*/
+store.db
+*.db
+*.db-shm
+*.db-wal
+.env.local
+tsconfig.tsbuildinfo
+tsconfig.tests.tsbuildinfo

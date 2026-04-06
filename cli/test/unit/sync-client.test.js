@@ -62,6 +62,7 @@ function makeConfig({
   apiKey = null,
   jwt = null,
   securityProfile = 'legacy',
+  allowInsecureTransport = false,
   tenantId = '550e8400-e29b-41d4-a716-446655440001',
   storeId = '550e8400-e29b-41d4-a716-446655440002',
   maxRetries = 3,
@@ -71,6 +72,8 @@ function makeConfig({
   return {
     sequencerUrl: url,
     securityProfile,
+    allowInsecureTransport,
+    sequencer: { url, insecure: allowInsecureTransport },
     tenantId,
     storeId,
     getCredentials: () => ({ apiKey, jwt }),
@@ -153,18 +156,37 @@ describe('SequencerClient — constructor', () => {
     assert.strictEqual(client.isConnected(), false);
   });
 
+  it('defaults missing securityProfile to hybrid', () => {
+    const config = makeConfig();
+    delete config.securityProfile;
+    const client = new SequencerClient(config);
+    assert.strictEqual(client.securityProfile, 'hybrid');
+  });
+
   it('sets baseUrl for https:// URL', () => {
     const client = new SequencerClient(makeConfig({ url: 'https://seq.example.com' }));
     assert.strictEqual(client.baseUrl, 'https://seq.example.com');
   });
 
   it('strips trailing slash from http:// URL', () => {
-    const client = new SequencerClient(makeConfig({ url: 'http://seq.example.com/' }));
+    const client = new SequencerClient(
+      makeConfig({
+        url: 'http://seq.example.com/',
+        securityProfile: 'legacy',
+        allowInsecureTransport: true,
+      }),
+    );
     assert.ok(!client.baseUrl.endsWith('/'));
   });
 
   it('converts grpc:// to http://', () => {
-    const client = new SequencerClient(makeConfig({ url: 'grpc://seq.example.com:50051' }));
+    const client = new SequencerClient(
+      makeConfig({
+        url: 'grpc://seq.example.com:50051',
+        securityProfile: 'legacy',
+        allowInsecureTransport: true,
+      }),
+    );
     assert.strictEqual(client.baseUrl, 'http://seq.example.com:50051');
   });
 
@@ -205,6 +227,13 @@ describe('SequencerClient — constructor', () => {
     assert.throws(
       () => new SequencerClient(makeConfig({ url: 'http://seq.example.com', securityProfile: 'hybrid' })),
       /must use TLS for hybrid sync profile/,
+    );
+  });
+
+  it('rejects insecure transport for legacy without explicit allow flag', () => {
+    assert.throws(
+      () => new SequencerClient(makeConfig({ url: 'http://seq.example.com', securityProfile: 'legacy' })),
+      /explicitly allowed/,
     );
   });
 

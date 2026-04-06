@@ -36,6 +36,12 @@ use crate::envelope::EventEnvelope;
 use crate::error::{ProtocolError, Result};
 use crate::merkle;
 
+/// Legacy batch protocol version that still allows Ed25519-only signatures.
+pub const BATCH_PROTOCOL_VERSION_LEGACY: u16 = 1;
+
+/// Current batch protocol version. New batches emitted by this crate use this version.
+pub const BATCH_PROTOCOL_VERSION_CURRENT: u16 = 2;
+
 /// Merkle leaf-hash algorithm used by a [`SyncBatch`].
 ///
 /// - `payload_hash_v1`: legacy mode that hashes only envelope payload hashes.
@@ -108,7 +114,7 @@ impl SyncBatch {
             merkle_leaf_hash_mode,
             signatures: Vec::new(),
             proofs: Vec::new(),
-            protocol_version: 1,
+            protocol_version: BATCH_PROTOCOL_VERSION_CURRENT,
             created_at: Utc::now(),
         }
     }
@@ -153,10 +159,14 @@ impl SyncBatch {
     /// [`ProtocolError::InvalidEnvelope`] if any envelope is invalid, or
     /// [`ProtocolError::MerkleVerificationFailed`] if the root does not match.
     pub fn validate(&self) -> Result<()> {
-        if self.protocol_version != 1 {
+        if self.protocol_version != BATCH_PROTOCOL_VERSION_LEGACY
+            && self.protocol_version != BATCH_PROTOCOL_VERSION_CURRENT
+        {
             return Err(ProtocolError::UnsupportedVersion(format!(
-                "unsupported batch protocol_version {} (expected 1)",
-                self.protocol_version
+                "unsupported batch protocol_version {} (expected {} or {})",
+                self.protocol_version,
+                BATCH_PROTOCOL_VERSION_LEGACY,
+                BATCH_PROTOCOL_VERSION_CURRENT
             )));
         }
         validate_required_batch_str("source_node_id", &self.source_node_id)?;
@@ -230,6 +240,14 @@ impl SyncBatch {
     fn validate_signature(&self, signature: &BatchSignature, message: &[u8]) -> Result<()> {
         if signature.signer_id.trim().is_empty() {
             return Err(ProtocolError::InvalidSignature("signer_id must not be empty".into()));
+        }
+
+        if self.protocol_version >= BATCH_PROTOCOL_VERSION_CURRENT
+            && matches!(signature.algorithm, SignatureAlgorithm::Ed25519)
+        {
+            return Err(ProtocolError::InvalidSignature(
+                "protocol_version 2 batches require mldsa65 or ed25519_mldsa65 signatures".into(),
+            ));
         }
 
         match signature.algorithm {
@@ -542,7 +560,7 @@ mod tests {
         let batch = SyncBatch::new("node_a", vec![env.clone()]);
         assert_eq!(batch.leaves.len(), 1);
         assert_eq!(batch.source_node_id, "node_a");
-        assert_eq!(batch.protocol_version, 1);
+        assert_eq!(batch.protocol_version, BATCH_PROTOCOL_VERSION_CURRENT);
         assert!(batch.signatures.is_empty());
         assert!(batch.proofs.is_empty());
         assert_eq!(batch.merkle_leaf_hash_mode, MerkleLeafHashMode::EnvelopeHashV2);
@@ -665,7 +683,7 @@ mod tests {
     fn validate_rejects_unsupported_protocol_version() {
         let envs = vec![make_envelope("1", b"data")];
         let mut batch = SyncBatch::new("node", envs);
-        batch.protocol_version = 2;
+        batch.protocol_version = 99;
         assert!(matches!(batch.validate(), Err(ProtocolError::UnsupportedVersion(_))));
     }
 
@@ -701,9 +719,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_accepts_valid_signature_and_proof() {
+    fn validate_accepts_legacy_ed25519_signature_and_proof_on_protocol_v1() {
         let envs = vec![make_envelope("1", b"d"), make_envelope("2", b"e")];
         let mut batch = SyncBatch::new("node", envs);
+        batch.protocol_version = BATCH_PROTOCOL_VERSION_LEGACY;
 
         let leaf_hashes = batch.leaf_hashes();
         let proof = merkle::compute_merkle_proof(&leaf_hashes, 0).unwrap();
@@ -727,6 +746,7 @@ mod tests {
     fn validate_rejects_invalid_signature_bytes() {
         let envs = vec![make_envelope("1", b"d")];
         let mut batch = SyncBatch::new("node", envs);
+        batch.protocol_version = BATCH_PROTOCOL_VERSION_LEGACY;
         batch.add_signature(BatchSignature {
             signer_id: "node_signer".into(),
             algorithm: SignatureAlgorithm::Ed25519,
@@ -744,6 +764,7 @@ mod tests {
     fn validate_rejects_whitespace_signer_id() {
         let envs = vec![make_envelope("1", b"d")];
         let mut batch = SyncBatch::new("node", envs);
+        batch.protocol_version = BATCH_PROTOCOL_VERSION_LEGACY;
         batch.add_signature(BatchSignature {
             signer_id: "   ".into(),
             algorithm: SignatureAlgorithm::Ed25519,
@@ -755,6 +776,26 @@ mod tests {
 
         let err = batch.validate().unwrap_err();
         assert!(matches!(err, ProtocolError::InvalidSignature(_)));
+    }
+
+    #[test]
+    fn validate_rejects_ed25519_signature_on_current_protocol() {
+        let envs = vec![make_envelope("1", b"d")];
+        let mut batch = SyncBatch::new("node", envs);
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let signature = signing_key.sign(&batch.signature_message().unwrap());
+        batch.add_signature(BatchSignature {
+            signer_id: "node_signer".into(),
+            algorithm: SignatureAlgorithm::Ed25519,
+            signature: signature.to_bytes().to_vec(),
+            public_key: signing_key.verifying_key().to_bytes().to_vec(),
+            signature_bundle: None,
+            public_key_bundle: None,
+        });
+
+        let err = batch.validate().unwrap_err();
+        assert!(matches!(err, ProtocolError::InvalidSignature(_)));
+        assert!(err.to_string().contains("require mldsa65 or ed25519_mldsa65"));
     }
 
     #[test]

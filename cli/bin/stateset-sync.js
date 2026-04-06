@@ -81,6 +81,11 @@ program
   .requiredOption('--store-id <uuid>', 'Store UUID')
   .option('--api-key <key>', 'API key for authentication')
   .option('--db <path>', 'Database path', './store.db')
+  .option('--security-profile <profile>', 'Sync security profile', 'hybrid')
+  .option(
+    '--allow-insecure-transport',
+    'Allow insecure http/grpc sequencer transport for explicit legacy development',
+  )
   .option('--force', 'Reinitialize if sync is already configured')
   .action(async (options) => {
     const spinner = ora('Initializing sync...').start();
@@ -104,6 +109,8 @@ program
         storeId: options.storeId,
         apiKey: options.apiKey,
         dbPath: options.db,
+        securityProfile: options.securityProfile,
+        allowInsecureTransport: options.allowInsecureTransport === true,
       });
 
       // Validate
@@ -118,7 +125,7 @@ program
       // Initialize database with outbox schema
       spinner.text = 'Initializing outbox tables...';
       const db = new Database(options.db);
-      const outbox = createOutbox(db);
+      const outbox = createOutbox(db, { securityProfile: config.sync.securityProfile });
       outbox.initialize();
 
       // Set initial sync state

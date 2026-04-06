@@ -54,6 +54,7 @@ No database setup. No config files. No migrations to run. It just works.
 ## MCP Server (Claude Desktop / Cursor / Windsurf)
 
 StateSet exposes **hundreds of commerce tools** via the [Model Context Protocol](https://modelcontextprotocol.io). Add it to your AI editor in one step.
+The exact current count and module breakdown are generated from code in the [MCP Tool Inventory](./docs/src/appendix/mcp-tool-inventory.md).
 
 **One-command onboarding (including OpenClaw):**
 ```bash
@@ -259,7 +260,7 @@ stateset-icommerce/
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
     ├── bin/                 # CLI programs (41 entry points)
-    ├── src/                 # MCP server (256 tools)
+    ├── src/                 # MCP server + registry-generated tool surface
     ├── src/a2a/             # Agent-to-Agent commerce (payments, subscriptions, splits, events)
     ├── src/channels/        # 10-channel messaging gateway
     │   ├── base.js          # Shared sessions, commands, pipeline
@@ -1114,47 +1115,10 @@ Order status updates enforce the core state machine (cancel before shipment, ref
 
 ---
 
-## MCP Tools (256 Total)
+## MCP Tools
 
-The MCP server exposes 256 tools (248 domain tools + 8 agentic runtime tools) across 27 domain modules for AI agent integration:
-
-| Domain | Tools | Count |
-|--------|-------|-------|
-| **Customers** | list_customers, get_customer, create_customer | 3 |
-| **Orders** | list_orders, get_order, create_order, update_order_status, ship_order, cancel_order | 6 |
-| **Products** | list_products, get_product, get_product_variant, create_product | 4 |
-| **Inventory** | get_stock, create_inventory_item, adjust_inventory, reserve_inventory, confirm_reservation, release_reservation | 6 |
-| **Returns** | list_returns, get_return, create_return, approve_return, reject_return | 5 |
-| **Carts** | list_carts, get_cart, create_cart, add_cart_item, update_cart_item, remove_cart_item, set_cart_shipping_address, set_cart_payment, apply_cart_discount, get_shipping_rates, complete_checkout, cancel_cart, abandon_cart, get_abandoned_carts | 14 |
-| **Analytics** | get_sales_summary, get_top_products, get_customer_metrics, get_top_customers, get_inventory_health, get_low_stock_items, get_demand_forecast, get_revenue_forecast, get_order_status_breakdown, get_return_metrics | 10 |
-| **Currency** | get_exchange_rate, list_exchange_rates, convert_currency, set_exchange_rate, get_currency_settings, set_base_currency, enable_currencies, format_currency | 8 |
-| **Tax** | calculate_tax, calculate_cart_tax, get_tax_rate, list_tax_jurisdictions, list_tax_rates, get_tax_settings, get_us_state_tax_info, get_customer_tax_exemptions, create_tax_exemption | 9 |
-| **Promotions** | list_promotions, get_promotion, create_promotion, activate_promotion, deactivate_promotion, create_coupon, validate_coupon, list_coupons, get_active_promotions, apply_cart_promotions | 10 |
-| **Subscriptions** | list_subscription_plans, get_subscription_plan, create_subscription_plan, activate_subscription_plan, archive_subscription_plan, list_subscriptions, get_subscription, create_subscription, pause_subscription, resume_subscription, cancel_subscription, skip_billing_cycle, list_billing_cycles, get_billing_cycle, get_subscription_events | 15 |
-| **Payments** | list_payments, get_payment, create_payment, complete_payment, create_refund | 5 |
-| **Shipments** | list_shipments, create_shipment, deliver_shipment | 3 |
-| **Suppliers/POs** | list_suppliers, create_supplier, list_purchase_orders, create_purchase_order, approve_purchase_order, send_purchase_order | 6 |
-| **Invoices** | list_invoices, create_invoice, send_invoice, record_invoice_payment, get_overdue_invoices | 5 |
-| **Warranties** | list_warranties, create_warranty, create_warranty_claim, approve_warranty_claim | 4 |
-| **Manufacturing** | list_boms, get_bom, create_bom, add_bom_component, activate_bom, list_work_orders, get_work_order, create_work_order, start_work_order, complete_work_order, cancel_work_order | 11 |
-| **Stablecoin** | get_agent_wallet, get_wallet_balance, create_stablecoin_payment, list_supported_chains | 4 |
-| **x402** | x402_create_payment_intent, x402_sign_intent, x402_get_intent, x402_list_intents, x402_mark_settled, x402_get_next_nonce | 6 |
-| **Agent Cards** | register_agent_card, discover_agents, get_agent_card, verify_agent, list_agent_cards | 5 |
-| **A2A Payments** | a2a_pay, a2a_request_payment, a2a_pay_request | 3 |
-| **A2A Quotes** | a2a_request_quote, a2a_provide_quote, a2a_accept_quote, a2a_decline_quote, a2a_fulfill_quote | 5 |
-| **A2A Subscriptions** | a2a_create_subscription, a2a_list_subscriptions, a2a_get_subscription, a2a_pause_subscription, a2a_resume_subscription, a2a_cancel_subscription, a2a_skip_billing, a2a_list_billing_cycles | 8 |
-| **A2A Splits** | a2a_create_split_payment, a2a_execute_split_payment, a2a_list_split_payments, a2a_get_split_payment, a2a_add_split_recipient, a2a_get_split_recipients | 6 |
-| **A2A Notifications** | a2a_configure_webhooks, a2a_send_notification, a2a_list_notifications, a2a_retry_notifications | 4 |
-| **A2A Events** | a2a_subscribe_events, a2a_push_event, a2a_get_event_history, a2a_list_event_subscriptions, a2a_handle_sse_connection | 5 |
-| **A2A Escrow** | a2a_create_escrow_payment, a2a_fulfill_condition, a2a_release_escrow, a2a_dispute_escrow, a2a_get_dispute_status | 5 |
-| **A2A Discovery** | a2a_discover_agents, a2a_register_service, a2a_list_services, a2a_list_payments, a2a_list_payment_requests, a2a_list_quotes, a2a_get_balance | 7 |
-| **A2A Reputation** | a2a_get_reputation, a2a_list_reputation_records, a2a_create_reputation_record, a2a_update_trust_level, a2a_get_trust_profile | 5 |
-| **Treasury** | treasury tools (budget, allocation, reporting) | 9 |
-| **Custom Objects** | custom_objects CRUD and schema management | 8 |
-| **Vector Search** | vector_upsert, vector_search, vector_delete and more | 6 |
-| **Sync** | sync push, pull, status, verify, rebase and more | 10 |
-| **ERC-8004** | tokenized commerce operations | 5 |
-| **Agentic Runtime** | agentic_runtime_contract, agentic_plan, agentic_replay, agentic_subscribe_events, agentic_unsubscribe_events, agentic_list_event_subscriptions, agentic_get_event_history, agentic_execute_plan | 8 |
+The MCP surface is generated from the live CLI registry instead of maintained as a static table in this README.
+For the exact current tool count, module breakdown, permissions summary, and full tool list, see the generated [MCP Tool Inventory](./docs/src/appendix/mcp-tool-inventory.md).
 
 ---
 
@@ -1307,11 +1271,11 @@ Eighteen specialized agents for different commerce domains:
 - Real-time SSE event streaming with wildcard/prefix filtering and persistent event log
 - Agent discovery by capability, reputation scoring, and trust-level gating
 - Idempotency keys to prevent duplicate payments
-- 53 dedicated A2A domain tools + 8 agentic runtime tools
+- Registry-generated A2A tooling plus the broader MCP runtime surface
 
 ### AI-Ready Architecture
 - Deterministic operations for agent reliability
-- MCP protocol integration (256 tools across 27 modules)
+- MCP protocol integration with a registry-generated tool inventory
 - Safety architecture (--apply flag for writes)
 - Event-driven for full auditability
 - Portable state in single database file
@@ -1670,8 +1634,8 @@ stateset-icommerce/
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
 │   ├── bin/                   # 41 CLI entry points
-│   ├── src/mcp-server.js      # MCP orchestrator (256 tools)
-│   ├── src/tools/             # 27 modular tool modules
+│   ├── src/mcp-server.js      # MCP orchestrator
+│   ├── src/tools/             # Modular tool modules
 │   ├── src/a2a/               # Agent-to-Agent commerce
 │   │   ├── index.js           # Direct payments, quotes, escrow, conditions
 │   │   ├── store.js           # SQLite persistence (7 tables)

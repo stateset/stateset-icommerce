@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import {
+  SECURITY_PROFILE_HYBRID,
   SECURITY_PROFILE_LEGACY,
   assertSecureTransportForProfile,
   isSecureSequencerProtocol,
@@ -31,7 +32,7 @@ import { auditProfileChanged, auditProfileDowngradeBlocked } from './pqc-audit.j
  * @property {string} url - Sequencer URL (grpc:// or https://)
  * @property {boolean} tls - Enable TLS
  * @property {string} [certPath] - Custom CA certificate path
- * @property {boolean} [insecure] - Skip TLS verification (dev only)
+ * @property {boolean} [insecure] - Allow insecure transport explicitly (legacy dev only)
  */
 
 /**
@@ -78,9 +79,9 @@ import { auditProfileChanged, auditProfileDowngradeBlocked } from './pqc-audit.j
 
 const DEFAULT_CONFIG = {
   sequencer: {
-    url: 'grpc://localhost:50051',
-    tls: false,
-    insecure: true,
+    url: 'grpcs://localhost:50051',
+    tls: true,
+    insecure: false,
   },
   identity: {
     tenantId: null,
@@ -95,7 +96,7 @@ const DEFAULT_CONFIG = {
     autoSync: false,
     syncIntervalMs: 30000,
     batchSize: 100,
-    securityProfile: SECURITY_PROFILE_LEGACY,
+    securityProfile: SECURITY_PROFILE_HYBRID,
     retryPolicy: {
       maxRetries: 3,
       baseDelay: 1000,
@@ -241,7 +242,8 @@ export function saveSyncConfig(config, cwd = process.cwd()) {
  * @param {string} [options.dbPath] - Database path
  * @param {boolean} [options.autoGenerateKeys=true] - Auto-generate keys
  * @param {boolean} [options.encryptPayloads=false] - Enable payload encryption
- * @param {'legacy' | 'hybrid' | 'pqc-strict'} [options.securityProfile='legacy'] - PQ migration profile
+ * @param {'legacy' | 'hybrid' | 'pqc-strict'} [options.securityProfile='hybrid'] - PQ migration profile
+ * @param {boolean} [options.allowInsecureTransport=false] - Allow insecure legacy transport explicitly
  * @param {string} [cwd] - Current working directory
  * @returns {SyncConfig}
  */
@@ -251,9 +253,14 @@ export function createSyncConfig(options, cwd = process.cwd()) {
   const url = parseSequencerUrl(sequencerUrl);
   const isSecure = url.protocol === 'grpcs:' || url.protocol === 'https:';
   const securityProfile = resolveSecurityProfile(
-    options.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+    options.securityProfile ?? DEFAULT_CONFIG.sync.securityProfile,
   );
-  assertSecureTransportForProfile(securityProfile, isSecure, 'Sequencer URL');
+  assertSecureTransportForProfile(
+    securityProfile,
+    isSecure,
+    'Sequencer URL',
+    options.allowInsecureTransport === true || options.insecure === true,
+  );
 
   if (securityProfile !== SECURITY_PROFILE_LEGACY && !hasNativeHybridPqcSupport()) {
     throw new Error(
@@ -333,12 +340,12 @@ export function updateSyncConfig(updates, cwd = process.cwd()) {
   };
 
   const securityProfile = resolveSecurityProfile(
-    updated.sync?.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+    updated.sync?.securityProfile ?? DEFAULT_CONFIG.sync.securityProfile,
   );
 
   // Prevent profile downgrades (pqc-strict→hybrid→legacy) unless force flag is set
   const currentProfile = resolveSecurityProfile(
-    current.sync?.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+    current.sync?.securityProfile ?? DEFAULT_CONFIG.sync.securityProfile,
   );
   const PROFILE_STRENGTH = { legacy: 0, hybrid: 1, 'pqc-strict': 2 };
   if (
@@ -366,6 +373,7 @@ export function updateSyncConfig(updates, cwd = process.cwd()) {
         securityProfile,
         isSecureSequencerProtocol(url.protocol),
         'Sequencer URL',
+        updated.sequencer?.insecure === true,
       );
     } catch (error) {
       throw new Error(`Invalid sync configuration update: ${error.message}`);
@@ -402,7 +410,7 @@ export function getJwtToken(config) {
 export function validateSyncConfig(config) {
   const errors = [];
   let parsedUrl = null;
-  let securityProfile = SECURITY_PROFILE_LEGACY;
+  let securityProfile = SECURITY_PROFILE_HYBRID;
 
   if (!config.sequencer?.url) {
     errors.push('Sequencer URL is required');
@@ -416,7 +424,7 @@ export function validateSyncConfig(config) {
 
   try {
     securityProfile = resolveSecurityProfile(
-      config.sync?.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+      config.sync?.securityProfile ?? DEFAULT_CONFIG.sync.securityProfile,
     );
   } catch (error) {
     errors.push(error.message);
@@ -428,6 +436,7 @@ export function validateSyncConfig(config) {
         securityProfile,
         isSecureSequencerProtocol(parsedUrl.protocol),
         'Sequencer URL',
+        config.sequencer?.insecure === true,
       );
     } catch (error) {
       errors.push(error.message);
@@ -471,7 +480,7 @@ export class SyncConfig {
       ...DEFAULT_CONFIG.sync,
       ...(config.sync || {}),
       securityProfile: resolveSecurityProfile(
-        config.sync?.securityProfile || DEFAULT_CONFIG.sync.securityProfile,
+        config.sync?.securityProfile ?? DEFAULT_CONFIG.sync.securityProfile,
       ),
       retryPolicy: {
         ...DEFAULT_CONFIG.sync.retryPolicy,

@@ -4803,7 +4803,7 @@ impl AsyncX402 {
         self.db.x402_payment_intents().get_async(id).await
     }
 
-    /// Sign a payment intent with an Ed25519 signature.
+    /// Sign a payment intent with its configured signature scheme.
     pub async fn sign_intent(
         &self,
         id: Uuid,
@@ -5146,7 +5146,7 @@ impl AsyncX402 {
         }
     }
 
-    /// Verify an intent's Ed25519 signature against its canonical signing hash.
+    /// Verify an intent's configured signature against its canonical signing hash.
     pub async fn has_valid_signature(&self, id: Uuid) -> Result<bool> {
         if let Some(intent) = self.get_intent(id).await? {
             if !intent.is_signed() {

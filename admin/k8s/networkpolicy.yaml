@@ -1,0 +1,32 @@
+# NetworkPolicy for StateSet Admin Dashboard
+# Restricts ingress to nginx ingress controller on port 3000
+# Allows all egress (API calls to external services)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: stateset-admin-netpol
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset-admin
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/part-of: stateset-icommerce
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: stateset-admin
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    - {} # Allow all egress

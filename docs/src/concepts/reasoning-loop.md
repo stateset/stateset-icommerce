@@ -16,8 +16,8 @@ Understanding how an LLM interacts with iCommerce is critical to understanding t
          ▼                               ▲
 ┌────────────────┐              ┌────────────────┐
 │  2. Select     │              │  5. Execute    │
-│  MCP Tool      │              │  State Change  │
-│  (from 520+)   │              │  (if --apply)  │
+│  MCP Tool       │             │  State Change  │
+│  (from registry)│             │  (if --apply)  │
 └───────┬────────┘              └───────┬────────┘
         │                               ▲
         ▼                               │

@@ -58,10 +58,11 @@ const PROTO_PATH = path.join(__dirname, 'proto', 'sequencer_v2.proto');
  * @property {string} tenantId - Tenant UUID
  * @property {string} storeId - Store UUID
  * @property {string} agentId - Agent UUID
- * @property {boolean} [tls=false] - Use TLS (true for production)
+ * @property {boolean} [tls=true] - Use TLS
  * @property {string} [certPath] - Custom CA certificate path
  * @property {string} [apiKey] - API key for authentication
  * @property {string} [jwtToken] - JWT token for authentication
+ * @property {boolean} [allowInsecureTransport=false] - Allow insecure legacy transport explicitly
  * @property {Object} [retryPolicy] - Retry configuration
  * @property {number} [retryPolicy.maxRetries=5]
  * @property {number} [retryPolicy.baseDelayMs=1000]
@@ -70,8 +71,8 @@ const PROTO_PATH = path.join(__dirname, 'proto', 'sequencer_v2.proto');
  */
 
 const DEFAULT_CONFIG = {
-  tls: false, // Local development default
-  securityProfile: 'legacy',
+  tls: true,
+  securityProfile: 'hybrid',
   retryPolicy: {
     maxRetries: 5,
     baseDelayMs: 1000,
@@ -418,6 +419,7 @@ export class GrpcSequencerClient extends EventEmitter {
       this.config.securityProfile,
       this.config.tls === true,
       `gRPC sequencer transport ${this.config.url}`,
+      this.config.allowInsecureTransport === true || this.config.insecure === true,
     );
   }
 

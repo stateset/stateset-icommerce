@@ -1,6 +1,6 @@
 # Embedded Agent Toolkit
 
-The embedded agent toolkit enables programmatic integration of iCommerce with any AI framework — OpenAI, Vercel AI SDK, LangChain, or custom agent runtimes. Instead of going through the CLI, your application embeds the full 520+ tool surface directly.
+The embedded agent toolkit enables programmatic integration of iCommerce with any AI framework — OpenAI, Vercel AI SDK, LangChain, or custom agent runtimes. Instead of going through the CLI, your application embeds the full registry-generated tool surface directly.
 
 ## Quick Start
 
@@ -108,7 +108,7 @@ const server = createStatesetMcpServer({
     allowApply: false,  // read-only by default
 });
 
-// The server exposes 520+ tools via the MCP protocol
+// The server exposes the full registry-generated tool surface via MCP
 await server.start();
 ```
 

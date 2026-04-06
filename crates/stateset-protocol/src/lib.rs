@@ -62,8 +62,9 @@ pub mod merkle;
 
 // Re-export primary types at crate root for convenience.
 pub use batch::{
-    BatchPublicKeyBundle, BatchSignature, BatchSignatureBundle, MerkleLeafHashMode, MerkleProof,
-    SignatureAlgorithm, SyncBatch,
+    BATCH_PROTOCOL_VERSION_CURRENT, BATCH_PROTOCOL_VERSION_LEGACY, BatchPublicKeyBundle,
+    BatchSignature, BatchSignatureBundle, MerkleLeafHashMode, MerkleProof, SignatureAlgorithm,
+    SyncBatch,
 };
 pub use canonical::{ProtocolVersion, SchemaVersion};
 pub use envelope::{EventEnvelope, EventEnvelopeBuilder, PayloadCodec};

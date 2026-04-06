@@ -140,5 +140,6 @@
 # Appendix
 
 - [Examples](examples.md)
+- [MCP Tool Inventory](appendix/mcp-tool-inventory.md)
 - [Troubleshooting](appendix/troubleshooting.md)
 - [Versioning](versioning.md)

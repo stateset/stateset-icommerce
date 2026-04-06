@@ -1,0 +1,109 @@
+# StateSet Admin Dashboard Kubernetes Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stateset-admin
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset-admin
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/part-of: stateset-icommerce
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stateset-admin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: stateset-admin
+        app.kubernetes.io/component: dashboard
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: admin
+          image: stateset/admin-dashboard:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: NEXT_PUBLIC_STATESET_API_URL
+              value: "https://api.sandbox.stateset.app"
+            - name: STATESET_API_URL
+              value: "https://api.sandbox.stateset.app"
+            - name: STATESET_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: stateset-admin-secrets
+                  key: api-token
+                  optional: true
+            - name: UPSTASH_REDIS_REST_URL
+              valueFrom:
+                secretKeyRef:
+                  name: stateset-admin-secrets
+                  key: redis-url
+                  optional: true
+            - name: UPSTASH_REDIS_REST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: stateset-admin-secrets
+                  key: redis-token
+                  optional: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/.next/cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: stateset-admin
+                topologyKey: kubernetes.io/hostname

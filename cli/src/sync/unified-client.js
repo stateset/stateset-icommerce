@@ -171,6 +171,7 @@ export class UnifiedSequencerClient extends EventEmitter {
       storeId: this.config.storeId,
       agentId: this.config.agentId,
       tls: url.protocol === 'grpcs:',
+      allowInsecureTransport: this.config.sequencer?.insecure === true,
       securityProfile: this.config.securityProfile ?? this.config.sync?.securityProfile,
       apiKey: creds.apiKey,
       jwtToken: creds.jwt,

@@ -102,6 +102,7 @@ required_version_snippets=(
   "README.md|<PackageReference Include=\"StateSet.Embedded\" Version=\"${workspace_version}\" />"
   "README.md|go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v${workspace_version}"
   "docs/src/index.md|Current release: **${workspace_version}**"
+  "docs/src/trust-foundation.md|- Current workspace release: \`${workspace_version}\`"
   "docs/src/getting-started.md|npm install @stateset/embedded@${workspace_version}"
   "docs/src/getting-started.md|pip install stateset-embedded==${workspace_version}"
   "docs/src/getting-started.md|npm install @stateset/cli@${workspace_version} @stateset/embedded@${workspace_version}"
@@ -110,6 +111,7 @@ required_version_snippets=(
   "docs/src/api/kotlin.md|implementation(\"com.stateset:stateset-embedded:${workspace_version}\")"
   "docs/src/api/swift.md|from: \"${workspace_version}\""
   "docs/src/advanced/deployment.md|image: stateset/icommerce:${workspace_version}"
+  "TRUST_FOUNDATION.md|The current workspace release line is \`${workspace_version}\`."
   "bindings/java/README.md|<version>${workspace_version}</version>"
   "bindings/swift/README.md|from: \"${workspace_version}\""
   "examples/node/package.json|\"version\": \"${workspace_version}\""
@@ -120,7 +122,7 @@ required_version_snippets=(
 for entry in "${required_version_snippets[@]}"; do
   file="${entry%%|*}"
   snippet="${entry#*|}"
-  if ! grep -Fq "$snippet" "$file"; then
+  if ! grep -Fq -- "$snippet" "$file"; then
     echo "::error file=${file}::Missing version-synced snippet: $snippet"
     fail=1
   fi
@@ -141,7 +143,7 @@ cli_snippet_files=(
 for index in "${!required_cli_snippets[@]}"; do
   snippet="${required_cli_snippets[$index]}"
   file="${cli_snippet_files[$index]}"
-  if ! grep -Fq "$snippet" "$file"; then
+  if ! grep -Fq -- "$snippet" "$file"; then
     echo "::error file=${file}::Missing version-synced snippet: $snippet"
     fail=1
   fi

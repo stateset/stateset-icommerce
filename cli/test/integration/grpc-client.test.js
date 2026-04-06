@@ -141,6 +141,7 @@ const TEST_CONFIG = {
   storeId: '00000000-0000-0000-0000-000000000002',
   agentId: '00000000-0000-0000-0000-000000000003',
   apiKey: 'test-api-key',
+  tls: true,
 };
 
 describe('GrpcSequencerClient', () => {

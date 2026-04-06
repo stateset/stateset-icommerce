@@ -258,8 +258,8 @@ function assertStrictKeyRegistration(keyRegistration) {
   throw new Error('pqc-strict profile requires explicit signing or encryption key registration');
 }
 
-export function resolveSecurityProfile(profile = SECURITY_PROFILE_LEGACY) {
-  const normalized = String(profile ?? SECURITY_PROFILE_LEGACY).trim().toLowerCase();
+export function resolveSecurityProfile(profile = SECURITY_PROFILE_HYBRID) {
+  const normalized = String(profile ?? SECURITY_PROFILE_HYBRID).trim().toLowerCase();
   if (!SECURITY_PROFILES.has(normalized)) {
     throw new Error(
       `Unsupported sync security profile: ${profile}. Expected legacy, hybrid, or pqc-strict`,
@@ -272,10 +272,28 @@ export function isSecureSequencerProtocol(protocol) {
   return protocol === 'https:' || protocol === 'grpcs:';
 }
 
-export function assertSecureTransportForProfile(profile, isSecure, transportLabel = 'sequencer transport') {
-  if (resolveSecurityProfile(profile) !== SECURITY_PROFILE_LEGACY && !isSecure) {
-    throw new Error(`${transportLabel} must use TLS for ${profile} sync profile`);
+export function assertSecureTransportForProfile(
+  profile,
+  isSecure,
+  transportLabel = 'sequencer transport',
+  allowInsecureTransport = false,
+) {
+  const resolvedProfile = resolveSecurityProfile(profile);
+  if (isSecure) {
+    return;
   }
+
+  if (resolvedProfile === SECURITY_PROFILE_LEGACY && allowInsecureTransport === true) {
+    return;
+  }
+
+  if (resolvedProfile === SECURITY_PROFILE_LEGACY) {
+    throw new Error(
+      `${transportLabel} must use TLS unless insecure legacy transport is explicitly allowed`,
+    );
+  }
+
+  throw new Error(`${transportLabel} must use TLS for ${resolvedProfile} sync profile`);
 }
 
 export function assertEventMatchesSecurityProfile(event, profile) {
@@ -355,7 +373,7 @@ export function assertReceiptMatchesSecurityProfile(receipt, profile) {
 
 /**
  * Return the profile label string for metrics recording.
- * @param {string} [profile='legacy'] - The security profile.
+ * @param {string} [profile='hybrid'] - The security profile.
  * @returns {'legacy' | 'hybrid' | 'pqc-strict'}
  */
 export function profileMetricLabel(profile) {

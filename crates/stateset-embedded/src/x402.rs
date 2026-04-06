@@ -7,7 +7,7 @@
 //! # Overview
 //!
 //! The x402 protocol enables instant, low-cost stablecoin payments for AI agents:
-//! - Ed25519 signature-based payment intents
+//! - Hybrid Ed25519 + ML-DSA-65 payment intents by default
 //! - Merkle proof verification for settlement confirmation
 //! - Multi-network support (Set Chain, Base, Ethereum, Arbitrum)
 //! - Multi-asset support (USDC, ssUSD, USDT, DAI)
@@ -30,14 +30,15 @@
 //!     ..Default::default()
 //! })?;
 //!
-//! // Sign the intent (agent signs with their Ed25519 key)
+//! // Sign the intent with its configured scheme. New intents default to hybrid
+//! // Ed25519 + ML-DSA-65 signatures.
 //! let signed = commerce.x402().sign_intent(intent.id, SignX402PaymentIntent {
 //!     intent_id: intent.id,
 //!     signature_scheme: None,
-//!     signature: "base64_signature".into(),
-//!     public_key: "base64_public_key".into(),
-//!     signature_bundle: None,
-//!     public_key_bundle: None,
+//!     signature: "0x<ed25519_signature_component>".into(),
+//!     public_key: "0x<ed25519_public_key_component>".into(),
+//!     signature_bundle: Some(x402_signature_bundle),
+//!     public_key_bundle: Some(x402_public_key_bundle),
 //! })?;
 //!
 //! // After on-chain settlement, mark as settled
@@ -112,10 +113,12 @@ impl X402 {
         self.db.x402_payment_intents().get(id)
     }
 
-    /// Sign a payment intent with an Ed25519 signature
+    /// Sign a payment intent with its configured signature scheme
     ///
     /// The payer agent signs the intent's signing hash with their private key.
-    /// This transitions the intent from `Created` to `Signed` status.
+    /// New intents default to hybrid Ed25519 + ML-DSA-65, and the signing request
+    /// must match the intent's configured scheme. This transitions the intent
+    /// from `Created` to `Signed` status.
     ///
     /// # Example
     ///
@@ -123,10 +126,10 @@ impl X402 {
     /// let signed = commerce.x402().sign_intent(intent.id, SignX402PaymentIntent {
     ///     intent_id: intent.id,
     ///     signature_scheme: None,
-    ///     signature: base64::encode(&signature_bytes),
-    ///     public_key: base64::encode(&public_key_bytes),
-    ///     signature_bundle: None,
-    ///     public_key_bundle: None,
+    ///     signature: "0x<ed25519_signature_component>".into(),
+    ///     public_key: "0x<ed25519_public_key_component>".into(),
+    ///     signature_bundle: Some(x402_signature_bundle),
+    ///     public_key_bundle: Some(x402_public_key_bundle),
     /// })?;
     /// ```
     pub fn sign_intent(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
@@ -614,7 +617,7 @@ impl X402 {
         }
     }
 
-    /// Verify an intent's Ed25519 signature against its canonical signing hash.
+    /// Verify an intent's configured signature against its canonical signing hash.
     ///
     /// Returns `false` for missing, malformed, or invalid cryptographic fields.
     pub fn has_valid_signature(&self, id: Uuid) -> Result<bool> {
@@ -632,10 +635,19 @@ impl X402 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stateset_core::{A2ASkill, CurrencyCode, ItemAvailability, QuotedItem};
+    use stateset_core::{
+        A2ASkill, CurrencyCode, ItemAvailability, QuotedItem, X402_DEFAULT_SIGNATURE_SCHEME,
+        X402SignatureScheme,
+    };
+    use stateset_crypto::pqc::generate_hybrid_signing_keypair;
 
     fn setup_commerce() -> crate::Commerce {
         crate::Commerce::in_memory().unwrap()
+    }
+
+    fn sign_locally_with_hybrid(intent: &mut X402PaymentIntent) {
+        let keypair = generate_hybrid_signing_keypair().unwrap();
+        intent.sign_with_hybrid(&keypair).unwrap();
     }
 
     #[test]
@@ -661,6 +673,7 @@ mod tests {
         assert_eq!(intent.asset, X402Asset::Usdc);
         assert_eq!(intent.network, X402Network::SetChain);
         assert_eq!(intent.status, X402IntentStatus::Created);
+        assert_eq!(intent.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
         assert!(intent.signing_hash.is_some());
     }
 
@@ -680,9 +693,11 @@ mod tests {
             .unwrap();
 
         let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
-        locally_signed.sign_with_ed25519(&[3u8; 32]).unwrap();
-        let signature = locally_signed.payer_signature.unwrap();
-        let public_key = locally_signed.payer_public_key.unwrap();
+        sign_locally_with_hybrid(&mut locally_signed);
+        let signature = locally_signed.payer_signature.clone().unwrap();
+        let public_key = locally_signed.payer_public_key.clone().unwrap();
+        let signature_bundle = locally_signed.payer_signature_bundle.clone();
+        let public_key_bundle = locally_signed.payer_public_key_bundle.clone();
 
         let signed = commerce
             .x402()
@@ -693,19 +708,57 @@ mod tests {
                     signature_scheme: None,
                     signature: signature.clone(),
                     public_key: public_key.clone(),
-                    signature_bundle: None,
-                    public_key_bundle: None,
+                    signature_bundle,
+                    public_key_bundle,
                 },
             )
             .unwrap();
 
         assert_eq!(signed.status, X402IntentStatus::Signed);
+        assert_eq!(signed.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
         assert_eq!(signed.payer_signature, Some(signature));
         assert_eq!(signed.payer_public_key, Some(public_key));
+        assert!(signed.payer_signature_bundle.is_some());
+        assert!(signed.payer_public_key_bundle.is_some());
     }
 
     #[test]
-    fn test_has_valid_signature_true_for_ed25519_signature() {
+    fn test_sign_payment_intent_rejects_ed25519_downgrade_for_new_intents() {
+        let commerce = setup_commerce();
+
+        let intent = commerce
+            .x402()
+            .create_intent(CreateX402PaymentIntent {
+                payer_address: "0xHybridSigner".into(),
+                payee_address: "0xPayee456".into(),
+                amount: 50_000_000,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
+        locally_signed.sign_with_ed25519(&[21u8; 32]).unwrap();
+
+        let err = commerce
+            .x402()
+            .sign_intent(
+                intent.id,
+                SignX402PaymentIntent {
+                    intent_id: intent.id,
+                    signature_scheme: Some(X402SignatureScheme::Ed25519),
+                    signature: locally_signed.payer_signature.unwrap(),
+                    public_key: locally_signed.payer_public_key.unwrap(),
+                    signature_bundle: None,
+                    public_key_bundle: None,
+                },
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("ed25519_ml_dsa65"));
+    }
+
+    #[test]
+    fn test_has_valid_signature_true_for_hybrid_signature() {
         let commerce = setup_commerce();
 
         let intent = commerce
@@ -719,7 +772,7 @@ mod tests {
             .unwrap();
 
         let mut to_sign = commerce.x402().get_intent(intent.id).unwrap().unwrap();
-        to_sign.sign_with_ed25519(&[7u8; 32]).unwrap();
+        sign_locally_with_hybrid(&mut to_sign);
 
         let signed = commerce
             .x402()
@@ -728,10 +781,10 @@ mod tests {
                 SignX402PaymentIntent {
                     intent_id: intent.id,
                     signature_scheme: None,
-                    signature: to_sign.payer_signature.unwrap(),
-                    public_key: to_sign.payer_public_key.unwrap(),
-                    signature_bundle: None,
-                    public_key_bundle: None,
+                    signature: to_sign.payer_signature.clone().unwrap(),
+                    public_key: to_sign.payer_public_key.clone().unwrap(),
+                    signature_bundle: to_sign.payer_signature_bundle.clone(),
+                    public_key_bundle: to_sign.payer_public_key_bundle.clone(),
                 },
             )
             .unwrap();
@@ -784,17 +837,17 @@ mod tests {
             .unwrap();
 
         let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
-        locally_signed.sign_with_ed25519(&[15u8; 32]).unwrap();
+        sign_locally_with_hybrid(&mut locally_signed);
 
         let result = commerce.x402().sign_intent(
             intent.id,
             SignX402PaymentIntent {
                 intent_id: Uuid::new_v4(),
                 signature_scheme: None,
-                signature: locally_signed.payer_signature.unwrap(),
-                public_key: locally_signed.payer_public_key.unwrap(),
-                signature_bundle: None,
-                public_key_bundle: None,
+                signature: locally_signed.payer_signature.clone().unwrap(),
+                public_key: locally_signed.payer_public_key.clone().unwrap(),
+                signature_bundle: locally_signed.payer_signature_bundle.clone(),
+                public_key_bundle: locally_signed.payer_public_key_bundle.clone(),
             },
         );
 
@@ -818,7 +871,7 @@ mod tests {
 
         // Sign first
         let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
-        locally_signed.sign_with_ed25519(&[9u8; 32]).unwrap();
+        sign_locally_with_hybrid(&mut locally_signed);
 
         commerce
             .x402()
@@ -827,16 +880,15 @@ mod tests {
                 SignX402PaymentIntent {
                     intent_id: intent.id,
                     signature_scheme: None,
-                    signature: locally_signed.payer_signature.unwrap(),
-                    public_key: locally_signed.payer_public_key.unwrap(),
-                    signature_bundle: None,
-                    public_key_bundle: None,
+                    signature: locally_signed.payer_signature.clone().unwrap(),
+                    public_key: locally_signed.payer_public_key.clone().unwrap(),
+                    signature_bundle: locally_signed.payer_signature_bundle.clone(),
+                    public_key_bundle: locally_signed.payer_public_key_bundle.clone(),
                 },
             )
             .unwrap();
 
-        let sequenced =
-            commerce.x402().mark_sequenced(intent.id, 7, Uuid::new_v4()).unwrap();
+        let sequenced = commerce.x402().mark_sequenced(intent.id, 7, Uuid::new_v4()).unwrap();
         assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
 
         // Then settle
@@ -862,7 +914,7 @@ mod tests {
             .unwrap();
 
         let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
-        locally_signed.sign_with_ed25519(&[9u8; 32]).unwrap();
+        sign_locally_with_hybrid(&mut locally_signed);
 
         commerce
             .x402()
@@ -871,10 +923,10 @@ mod tests {
                 SignX402PaymentIntent {
                     intent_id: intent.id,
                     signature_scheme: None,
-                    signature: locally_signed.payer_signature.unwrap(),
-                    public_key: locally_signed.payer_public_key.unwrap(),
-                    signature_bundle: None,
-                    public_key_bundle: None,
+                    signature: locally_signed.payer_signature.clone().unwrap(),
+                    public_key: locally_signed.payer_public_key.clone().unwrap(),
+                    signature_bundle: locally_signed.payer_signature_bundle.clone(),
+                    public_key_bundle: locally_signed.payer_public_key_bundle.clone(),
                 },
             )
             .unwrap();

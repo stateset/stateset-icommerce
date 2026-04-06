@@ -8,8 +8,7 @@ use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use stateset_core::{
     BatchResult, CommerceError, CreateX402PaymentIntent, Result, SignX402PaymentIntent,
     X402_DEFAULT_VALIDITY_SECONDS, X402Asset, X402IntentStatus, X402Network, X402PaymentIntent,
-    X402PaymentIntentFilter, X402PaymentIntentRepository, X402SignatureScheme,
-    validate_batch_size,
+    X402PaymentIntentFilter, X402PaymentIntentRepository, X402SignatureScheme, validate_batch_size,
 };
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -337,12 +336,12 @@ impl PgX402PaymentIntentRepository {
                     id, version, status, payer_address, payee_address, amount, amount_decimal,
                     asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
                     idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                    invoice_id, merchant_id, signing_hash, metadata, created_at, updated_at
+                    invoice_id, merchant_id, signing_hash, payer_signature_scheme, metadata, created_at, updated_at
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
                     $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20,
-                    $21, $22, $23, $24, $25, $26
+                    $21, $22, $23, $24, $25, $26, $27
                 )
                 "#,
             )
@@ -369,6 +368,7 @@ impl PgX402PaymentIntentRepository {
             .bind(input.invoice_id)
             .bind(input.merchant_id.clone())
             .bind(signing_hash)
+            .bind(signing_intent.signature_scheme().to_string())
             .bind(input.metadata.clone())
             .bind(now)
             .bind(now)
@@ -462,7 +462,14 @@ impl PgX402PaymentIntentRepository {
         let hash_bytes = intent.sequencer_signing_hash();
         let signing_hash =
             format!("0x{}", hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>());
-        let signature_scheme = input.signature_scheme.unwrap_or(X402SignatureScheme::Ed25519);
+        let signature_scheme = input.signature_scheme.unwrap_or_else(|| intent.signature_scheme());
+        if !intent.allows_signing_scheme(signature_scheme) {
+            return Err(CommerceError::ValidationError(format!(
+                "x402 intent requires {} signatures; refusing {} authorization for this intent",
+                intent.signature_scheme(),
+                signature_scheme
+            )));
+        }
         let signature = (!input.signature.trim().is_empty()).then(|| input.signature.clone());
         let public_key = (!input.public_key.trim().is_empty()).then(|| input.public_key.clone());
         let signature_bundle_json = input

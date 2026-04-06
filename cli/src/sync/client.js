@@ -390,6 +390,7 @@ export class SequencerClient {
       this.securityProfile,
       isSecureSequencerProtocol(url.protocol),
       `Sequencer URL ${config.sequencerUrl}`,
+      config.allowInsecureTransport === true || config.sequencer?.insecure === true,
     );
     if (url.protocol === 'grpc:' || url.protocol === 'grpcs:') {
       // Convert gRPC URL to REST

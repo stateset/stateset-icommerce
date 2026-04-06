@@ -24,7 +24,7 @@ pub mod subscriptions;
 pub mod warranties;
 pub mod wishlists;
 
-use axum::Router;
+use axum::{Router, extract::DefaultBodyLimit};
 use std::time::Duration;
 use tower_http::compression::CompressionLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -33,6 +33,8 @@ use crate::state::AppState;
 
 /// Default request timeout for all API endpoints (30 seconds).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default maximum accepted request body size for extractor-based endpoints (1 MiB).
+pub const DEFAULT_REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 
 /// Build the full API router with all route groups mounted.
 ///
@@ -40,9 +42,16 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// includes gzip response compression and a 30-second request timeout.
 #[allow(deprecated)]
 pub fn api_router() -> Router<AppState> {
+    api_router_with_body_limit(DEFAULT_REQUEST_BODY_LIMIT_BYTES)
+}
+
+/// Build the full API router with a custom extractor body-size limit.
+#[allow(deprecated)]
+pub fn api_router_with_body_limit(max_body_bytes: usize) -> Router<AppState> {
     Router::new()
         .merge(health::router())
         .nest("/api/v1", v1_router())
+        .layer(DefaultBodyLimit::max(max_body_bytes))
         .layer(CompressionLayer::new())
         .layer(TimeoutLayer::new(REQUEST_TIMEOUT))
 }
@@ -82,6 +91,11 @@ mod tests {
     #[test]
     fn api_router_builds() {
         let _router: Router<AppState> = api_router();
+    }
+
+    #[test]
+    fn api_router_with_body_limit_builds() {
+        let _router: Router<AppState> = api_router_with_body_limit(1024);
     }
 
     #[test]

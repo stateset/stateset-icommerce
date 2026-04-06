@@ -6,9 +6,11 @@ use rust_decimal_macros::dec;
 use stateset_core::{
     A2APurchaseFilter, A2ASkill, CreateA2APurchase, CreateA2AQuote, CreateAgentCard,
     CreateX402PaymentIntent, CurrencyCode, ItemAvailability, PurchaseStatus, QuoteStatus,
-    QuotedItem, SignX402PaymentIntent, SkillQuoteFilter, TrustLevel, X402Asset,
-    X402CreditDirection, X402CreditTransactionFilter, X402IntentStatus, X402Network,
+    QuotedItem, SignX402PaymentIntent, SkillQuoteFilter, TrustLevel, X402_DEFAULT_SIGNATURE_SCHEME,
+    X402Asset, X402CreditDirection, X402CreditTransactionFilter, X402IntentStatus, X402Network,
 };
+#[cfg(feature = "postgres")]
+use stateset_crypto::pqc::generate_hybrid_signing_keypair;
 #[cfg(feature = "postgres")]
 use stateset_embedded::AsyncCommerce;
 #[cfg(feature = "postgres")]
@@ -58,6 +60,7 @@ async fn postgres_async_x402_payment_intent_smoke() {
     assert_eq!(intent.status, X402IntentStatus::Created);
     assert_eq!(intent.payer_address, payer);
     assert_eq!(intent.payee_address, payee);
+    assert_eq!(intent.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
 
     let nonce = x402.get_next_nonce(&intent.payer_address).await.expect("get next nonce");
     assert_eq!(nonce, 0);
@@ -67,7 +70,8 @@ async fn postgres_async_x402_payment_intent_smoke() {
 
     let mut to_sign =
         x402.get_intent(intent.id).await.expect("get intent").expect("intent should exist");
-    to_sign.sign_with_ed25519(&[9u8; 32]).expect("locally sign intent");
+    let keypair = generate_hybrid_signing_keypair().expect("generate hybrid signing keypair");
+    to_sign.sign_with_hybrid(&keypair).expect("locally sign intent");
 
     let signed = x402
         .sign_intent(
@@ -75,16 +79,17 @@ async fn postgres_async_x402_payment_intent_smoke() {
             SignX402PaymentIntent {
                 intent_id: intent.id,
                 signature_scheme: None,
-                signature: to_sign.payer_signature.expect("signature"),
-                public_key: to_sign.payer_public_key.expect("public key"),
-                signature_bundle: None,
-                public_key_bundle: None,
+                signature: to_sign.payer_signature.clone().expect("signature"),
+                public_key: to_sign.payer_public_key.clone().expect("public key"),
+                signature_bundle: to_sign.payer_signature_bundle.clone(),
+                public_key_bundle: to_sign.payer_public_key_bundle.clone(),
             },
         )
         .await
         .expect("sign intent");
 
     assert_eq!(signed.status, X402IntentStatus::Signed);
+    assert_eq!(signed.payer_signature_scheme, Some(X402_DEFAULT_SIGNATURE_SCHEME));
     assert!(x402.is_ready_for_settlement(intent.id).await.expect("check settlement readiness"));
     assert!(
         x402.has_valid_signature(intent.id).await.expect("check intent signature"),

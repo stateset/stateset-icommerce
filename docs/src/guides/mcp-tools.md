@@ -1,6 +1,6 @@
 # MCP Tools
 
-StateSet iCommerce exposes 520+ tools via the Model Context Protocol (MCP), making it the largest known domain-specific MCP server. Tools are organized into 48 modules covering all commerce, A2A, and platform operations.
+StateSet iCommerce exposes a registry-generated tool surface via the Model Context Protocol (MCP). The exact live count, module breakdown, and tool list are generated from code in the [MCP Tool Inventory](../appendix/mcp-tool-inventory.md) rather than maintained by hand in prose.
 
 ## How MCP Works
 
@@ -16,35 +16,14 @@ Each tool is defined with:
 - A handler function that executes the operation
 - A permission level (read, write, admin)
 
-## Tool Modules
+## Tool Coverage
 
-| Module | Tools | Domain |
-|--------|-------|--------|
-| `orders.js` | 6 | Order CRUD and fulfillment |
-| `products.js` | 4 | Product catalog |
-| `customers.js` | 3 | Customer management |
-| `inventory.js` | 6 | Stock tracking and reservations |
-| `carts.js` | 14 | Cart operations and checkout |
-| `payments.js` | 17 | Payment processing and reconciliation |
-| `returns.js` | 5 | RMA processing |
-| `subscriptions.js` | 15 | Recurring billing |
-| `promotions.js` | 10 | Discounts and coupons |
-| `tax.js` | 19 | Multi-jurisdiction tax |
-| `shipments.js` | 11 | Shipping and tracking |
-| `manufacturing.js` | 11 | BOM, work orders, quality |
-| `analytics.js` | 10 | Revenue, forecasting, cohorts |
-| `a2a.js` | 58 | A2A payments, quotes, escrow |
-| `a2a-automation.js` | 30 | Autonomous execution |
-| `a2a-intelligence.js` | 17 | Agent discovery and trust |
-| `a2a-platform.js` | 16 | Platform write-back |
-| `a2a-observability.js` | 14 | A2A metrics and health |
-| `x402.js` | 13 | Payment intents and budget |
-| `vector.js` | 16 | Semantic search and RAG |
-| `sync.js` | 18 | Event sync and VES |
-| `import.js` | 10 | Data import |
-| `custom-objects.js` | 12 | Schema extensions |
-| `policies.js` | 5 | Policy evaluation |
-| `agent-runtime.js` | 29 | Agent lifecycle |
+The registry spans commerce, A2A, compliance, connectors, sync, checkout, search, and platform operations. Use the generated inventory when you need an exact answer to any of these questions:
+
+- How many tools are currently shipped
+- Which modules are loaded into the CLI registry
+- Which tools are `read`, `write`, `delete`, or `admin`
+- Whether a specific tool name is actually present in the live registry
 
 ## Using Tools
 

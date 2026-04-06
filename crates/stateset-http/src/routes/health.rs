@@ -16,9 +16,9 @@ use axum::{
     routing::get,
 };
 
-use crate::dto::{HealthResponse, ReadyResponse, TenantCacheResponse};
+use crate::dto::{HealthResponse, ReadyResponse};
 use crate::error::HttpError;
-use crate::state::{AppState, MetricsHeaderLimits, TenantCacheMetrics};
+use crate::state::{AppState, MetricsHeaderLimits};
 
 /// Build the health-check router.
 pub fn router() -> Router<AppState> {
@@ -40,7 +40,8 @@ pub fn router() -> Router<AppState> {
 )]
 #[tracing::instrument(skip(state))]
 pub(crate) async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok", tenant_cache: tenant_cache_response(&state) })
+    let _ = state;
+    Json(HealthResponse { status: "ok", tenant_cache: None })
 }
 
 /// `GET /health/ready` — readiness probe that checks DB connectivity.
@@ -57,8 +58,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> Json<HealthResponse
 pub(crate) async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
     // Try a lightweight operation to verify DB is reachable.
     let database_connected = state.commerce().orders().count(Default::default()).is_ok();
-    let tenant_cache = tenant_cache_response(&state);
-    let (status, body) = readiness_response(database_connected, tenant_cache);
+    let (status, body) = readiness_response(database_connected);
     (status, Json(body))
 }
 
@@ -199,31 +199,14 @@ pub(crate) async fn metrics(
     ))
 }
 
-const fn readiness_response(
-    database_connected: bool,
-    tenant_cache: TenantCacheResponse,
-) -> (StatusCode, ReadyResponse) {
+const fn readiness_response(database_connected: bool) -> (StatusCode, ReadyResponse) {
     if database_connected {
-        (StatusCode::OK, ReadyResponse { status: "ok", database: "connected", tenant_cache })
+        (StatusCode::OK, ReadyResponse { status: "ok", database: "connected", tenant_cache: None })
     } else {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            ReadyResponse { status: "not_ready", database: "disconnected", tenant_cache },
+            ReadyResponse { status: "not_ready", database: "disconnected", tenant_cache: None },
         )
-    }
-}
-
-fn tenant_cache_response(state: &AppState) -> TenantCacheResponse {
-    let metrics: TenantCacheMetrics = state.tenant_cache_metrics();
-    TenantCacheResponse {
-        enabled: metrics.enabled,
-        max_cached_dbs: metrics.max_cached_dbs,
-        cached_dbs: metrics.cached_dbs,
-        in_use_cached_dbs: metrics.in_use_cached_dbs,
-        hits: metrics.hits,
-        misses: metrics.misses,
-        evictions: metrics.evictions,
-        rejections: metrics.rejections,
     }
 }
 
@@ -1223,7 +1206,7 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["status"], "ok");
-        assert_eq!(json["tenant_cache"]["enabled"], false);
+        assert!(json.get("tenant_cache").is_none());
     }
 
     #[tokio::test]
@@ -1238,7 +1221,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["status"], "ok");
         assert_eq!(json["database"], "connected");
-        assert_eq!(json["tenant_cache"]["cached_dbs"], 0);
+        assert!(json.get("tenant_cache").is_none());
     }
 
     #[tokio::test]
@@ -2206,23 +2189,11 @@ mod tests {
 
     #[test]
     fn readiness_response_reports_not_ready_when_disconnected() {
-        let (status, body) = readiness_response(
-            false,
-            TenantCacheResponse {
-                enabled: false,
-                max_cached_dbs: 256,
-                cached_dbs: 0,
-                in_use_cached_dbs: 0,
-                hits: 0,
-                misses: 0,
-                evictions: 0,
-                rejections: 0,
-            },
-        );
+        let (status, body) = readiness_response(false);
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body.status, "not_ready");
         assert_eq!(body.database, "disconnected");
-        assert_eq!(body.tenant_cache.misses, 0);
+        assert!(body.tenant_cache.is_none());
     }
 
     #[test]

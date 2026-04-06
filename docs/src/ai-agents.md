@@ -15,7 +15,7 @@ npm install @stateset/cli@0.9.6 @stateset/embedded@0.9.6
 
 ## Embedded Toolkit
 
-The embedded toolkit gives your agent direct access to 520+ commerce tools:
+The embedded toolkit gives your agent direct access to the full registry-generated commerce tool surface:
 
 ```javascript
 import { Commerce } from '@stateset/embedded';
@@ -186,7 +186,7 @@ For Claude Desktop, Cursor, Windsurf, or other MCP-native clients:
 npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
-This registers the iCommerce MCP server with your client. All 520+ tools appear automatically in the tool palette.
+This registers the iCommerce MCP server with your client. The full registry-generated tool inventory appears automatically in the tool palette.
 
 ### MCP Configuration
 

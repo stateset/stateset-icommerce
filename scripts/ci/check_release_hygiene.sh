@@ -126,6 +126,17 @@ if [[ "$workspace_version" != "$latest_changelog_version" ]]; then
   exit 1
 fi
 
+legacy_tool_count_file="$(mktemp)"
+if grep -RIn '520\+' README.md docs/src --exclude='mcp-tool-inventory.md' >"$legacy_tool_count_file" 2>/dev/null; then
+  echo "::error::Current docs still contain legacy hard-coded MCP tool counts. Replace them with generated inventory references." >&2
+  cat "$legacy_tool_count_file" >&2
+  rm -f "$legacy_tool_count_file"
+  exit 1
+fi
+rm -f "$legacy_tool_count_file"
+
+node ./scripts/ci/generate_mcp_inventory.mjs --check >/dev/null
+
 normalized_release_version="$workspace_version"
 if [[ -n "$raw_release_version" ]]; then
   normalized_release_version="$(normalize_release_version "$raw_release_version")"

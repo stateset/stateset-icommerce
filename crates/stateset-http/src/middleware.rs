@@ -15,6 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use http_body_util::BodyExt;
+use stateset_authz::{AccessDecision, Action, AuthzEngine, Resource};
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -26,21 +27,70 @@ use crate::error::HttpError;
 /// Header name for request IDs.
 pub(crate) static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 pub(crate) static X_TENANT_ID: HeaderName = HeaderName::from_static("x-tenant-id");
+pub(crate) static X_ACTOR_ID: HeaderName = HeaderName::from_static("x-actor-id");
 const CORS_ORIGINS_ENV: &str = "STATESET_HTTP_ALLOWED_ORIGINS";
 const DEFAULT_CORS_ORIGINS: [&str; 2] = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
 #[derive(Clone, Debug)]
-struct BearerAuthConfig {
+pub(crate) struct BearerAuthBinding {
     token: Arc<str>,
     bound_tenant_id: Option<Arc<str>>,
+    bound_actor_id: Option<Arc<str>>,
 }
 
-impl BearerAuthConfig {
-    fn new(token: String, bound_tenant_id: Option<String>) -> Self {
+impl BearerAuthBinding {
+    pub(crate) fn new(
+        token: String,
+        bound_tenant_id: Option<String>,
+        bound_actor_id: Option<String>,
+    ) -> Self {
         Self {
             token: Arc::<str>::from(token),
             bound_tenant_id: bound_tenant_id.map(Arc::<str>::from),
+            bound_actor_id: bound_actor_id.map(Arc::<str>::from),
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BearerAuthConfig {
+    bindings: Arc<[BearerAuthBinding]>,
+}
+
+impl BearerAuthConfig {
+    fn new(bindings: Vec<BearerAuthBinding>) -> Self {
+        Self { bindings: Arc::<[BearerAuthBinding]>::from(bindings) }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct MisconfiguredApiAuthConfig {
+    message: Arc<str>,
+}
+
+impl MisconfiguredApiAuthConfig {
+    fn new(message: String) -> Self {
+        Self { message: Arc::<str>::from(message) }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct AuthenticatedActorIdentity;
+
+#[derive(Clone, Debug)]
+pub(crate) struct AuthzConfig {
+    engine: Arc<Mutex<AuthzEngine>>,
+    trust_actor_headers: bool,
+}
+
+impl AuthzConfig {
+    pub(crate) fn new(engine: AuthzEngine) -> Self {
+        Self { engine: Arc::new(Mutex::new(engine)), trust_actor_headers: false }
+    }
+
+    pub(crate) fn with_trusted_actor_headers(mut self) -> Self {
+        self.trust_actor_headers = true;
+        self
     }
 }
 
@@ -73,12 +123,128 @@ fn is_valid_tenant_id(value: &str) -> bool {
     trimmed.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
 }
 
+fn requires_bearer_auth(path: &str) -> bool {
+    path.starts_with("/api/v1") || path == "/health/deep"
+}
+
+fn requires_tenant_header(path: &str) -> bool {
+    path.starts_with("/api/v1")
+}
+
+fn authz_target(request: &Request<Body>) -> Option<(Resource, Action)> {
+    let path = request.uri().path();
+    let stripped = path.strip_prefix("/api/v1/")?;
+    let segments = stripped.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
+    if segments.is_empty() {
+        return None;
+    }
+
+    let resource_type = match segments.as_slice() {
+        ["openapi.json"] => "openapi".to_string(),
+        [first, ..] => (*first).to_string(),
+        [] => return None,
+    };
+    let resource = if is_list_like_route(&segments) || is_execute_route(&segments) {
+        Resource::new(resource_type)
+    } else if segments.len() >= 2 {
+        Resource::with_id(resource_type, segments[1])
+    } else {
+        Resource::new(resource_type)
+    };
+
+    let terminal_segment = segments.last().copied();
+    let action = match *request.method() {
+        Method::GET => {
+            if is_list_like_route(&segments) {
+                Action::List
+            } else {
+                Action::Read
+            }
+        }
+        Method::POST => {
+            if let Some(segment) = terminal_segment.filter(|_| is_execute_route(&segments)) {
+                action_for_route_segment(segment)
+            } else {
+                Action::Create
+            }
+        }
+        Method::PATCH | Method::PUT => {
+            if let Some(segment) = terminal_segment.filter(|_| is_execute_route(&segments)) {
+                action_for_route_segment(segment)
+            } else {
+                Action::Update
+            }
+        }
+        Method::DELETE => Action::Delete,
+        _ => return None,
+    };
+
+    Some((resource, action))
+}
+
+fn is_list_like_route(segments: &[&str]) -> bool {
+    matches!(
+        segments,
+        [_] | ["loyalty", "programs"]
+            | ["currencies", "rates"]
+            | ["tax", "rates"]
+            | ["tax", "jurisdictions"]
+            | ["events", "stream"]
+    )
+}
+
+fn is_execute_route(segments: &[&str]) -> bool {
+    segments.last().is_some_and(|segment| is_action_segment(segment))
+}
+
+fn action_for_route_segment(segment: &str) -> Action {
+    if is_delete_like_action_segment(segment) { Action::Delete } else { Action::Execute }
+}
+
+fn is_action_segment(segment: &str) -> bool {
+    matches!(
+        segment,
+        "cancel"
+            | "ship"
+            | "disable"
+            | "complete"
+            | "refund"
+            | "calculate"
+            | "deliver"
+            | "enroll"
+            | "send"
+            | "pause"
+            | "resume"
+            | "activate"
+            | "deactivate"
+            | "adjust"
+            | "convert"
+            | "approve"
+            | "start"
+    )
+}
+
+fn is_delete_like_action_segment(segment: &str) -> bool {
+    matches!(segment, "cancel" | "disable" | "refund" | "deactivate")
+}
+
+pub(crate) fn is_valid_actor_id(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.len() > 128 {
+        return false;
+    }
+    trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':' | '@' | '+'))
+}
+
 async fn require_bearer_auth(
     State(auth): State<BearerAuthConfig>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
-    if !request.uri().path().starts_with("/api/v1") {
+    let path = request.uri().path();
+    if !requires_bearer_auth(path) {
         return next.run(request).await;
     }
 
@@ -88,12 +254,59 @@ async fn require_bearer_auth(
         .and_then(|value| value.to_str().ok())
         .and_then(bearer_token_from_header);
 
-    match provided {
-        Some(provided) if constant_time_eq(provided, auth.token.as_ref()) => {}
+    let binding = match provided {
+        Some(provided) => auth
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, binding)| constant_time_eq(provided, binding.token.as_ref()))
+            .map(|(index, _)| index)
+            .last()
+            .and_then(|index| auth.bindings.get(index)),
         _ => {
             return HttpError::Unauthorized("missing or invalid bearer token".to_string())
                 .into_response();
         }
+    };
+    let Some(binding) = binding else {
+        return HttpError::Unauthorized("missing or invalid bearer token".to_string())
+            .into_response();
+    };
+
+    if !requires_tenant_header(path) {
+        return next.run(request).await;
+    }
+
+    if let Some(bound_actor_id) = binding.bound_actor_id.as_deref() {
+        if !is_valid_actor_id(bound_actor_id) {
+            return HttpError::InternalError("configured actor binding is invalid".to_string())
+                .into_response();
+        }
+
+        if let Some(provided_actor_id) = request
+            .headers()
+            .get(&X_ACTOR_ID)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if !constant_time_eq(provided_actor_id, bound_actor_id) {
+                return HttpError::Forbidden(
+                    "actor is not authorized for supplied bearer token".to_string(),
+                )
+                .into_response();
+            }
+        }
+
+        let actor_header_value = match HeaderValue::from_str(bound_actor_id) {
+            Ok(value) => value,
+            Err(_) => {
+                return HttpError::InternalError("configured actor binding is invalid".to_string())
+                    .into_response();
+            }
+        };
+        request.headers_mut().insert(X_ACTOR_ID.clone(), actor_header_value);
+        request.extensions_mut().insert(AuthenticatedActorIdentity);
     }
 
     let tenant_id = request
@@ -105,7 +318,7 @@ async fn require_bearer_auth(
 
     match tenant_id {
         Some(value) if is_valid_tenant_id(value) => {
-            if let Some(bound_tenant_id) = auth.bound_tenant_id.as_deref() {
+            if let Some(bound_tenant_id) = binding.bound_tenant_id.as_deref() {
                 if !constant_time_eq(value, bound_tenant_id) {
                     return HttpError::Forbidden(
                         "tenant is not authorized for supplied bearer token".to_string(),
@@ -117,6 +330,62 @@ async fn require_bearer_auth(
         }
         Some(_) => HttpError::BadRequest("invalid x-tenant-id header".to_string()).into_response(),
         None => HttpError::BadRequest("missing x-tenant-id header".to_string()).into_response(),
+    }
+}
+
+async fn reject_misconfigured_api_auth(
+    State(config): State<MisconfiguredApiAuthConfig>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if requires_bearer_auth(request.uri().path()) {
+        return HttpError::InternalError(config.message.to_string()).into_response();
+    }
+    next.run(request).await
+}
+
+async fn require_authorization(
+    State(config): State<AuthzConfig>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let Some((resource, action)) = authz_target(&request) else {
+        return next.run(request).await;
+    };
+
+    let actor_identity_established =
+        request.extensions().get::<AuthenticatedActorIdentity>().is_some();
+    if !config.trust_actor_headers && !actor_identity_established {
+        return HttpError::Unauthorized(
+            "actor identity was not established by authentication".to_string(),
+        )
+        .into_response();
+    }
+
+    let actor_id = match request
+        .headers()
+        .get(&X_ACTOR_ID)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && is_valid_actor_id(value))
+    {
+        Some(actor_id) => actor_id,
+        None => {
+            return HttpError::Unauthorized("missing or invalid x-actor-id header".to_string())
+                .into_response();
+        }
+    };
+
+    let decision = {
+        let mut engine = config.engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        engine.authorize(actor_id, &resource, &action)
+    };
+
+    match decision {
+        AccessDecision::Allowed => next.run(request).await,
+        AccessDecision::Denied { reason } => HttpError::Forbidden(reason).into_response(),
+        AccessDecision::RequiresApproval { reason } => HttpError::Forbidden(reason).into_response(),
+        _ => HttpError::Forbidden("authorization denied".to_string()).into_response(),
     }
 }
 
@@ -151,7 +420,7 @@ pub(crate) fn cors_layer() -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([AUTHORIZATION, CONTENT_TYPE, X_TENANT_ID.clone()])
+        .allow_headers([AUTHORIZATION, CONTENT_TYPE, X_TENANT_ID.clone(), X_ACTOR_ID.clone()])
 }
 
 // ============================================================================
@@ -362,14 +631,17 @@ async fn http_cache(request: Request<Body>, next: Next) -> Response {
 /// 1. **Tracing** (outermost after our layers — logs every request)
 /// 2. **HTTP caching** — `ETag` generation + `Cache-Control` headers for GET responses
 /// 3. **Rate limiting** — global token-bucket limiter (HTTP 429 on exhaustion)
-/// 4. **Bearer auth** — constant-time token comparison + optional tenant binding
-/// 5. **CORS** — explicit origin allowlist from `STATESET_HTTP_ALLOWED_ORIGINS`
-/// 6. **Request ID** — `X-Request-ID` propagation for distributed tracing
+/// 4. **Config guard** — fail closed for invalid tenant-routing auth configuration
+/// 5. **Bearer auth** — constant-time token comparison + optional tenant binding
+/// 6. **CORS** — explicit origin allowlist from `STATESET_HTTP_ALLOWED_ORIGINS`
+/// 7. **Request ID** — `X-Request-ID` propagation for distributed tracing
 pub(crate) fn apply_middleware(
     router: Router,
     with_cors: bool,
     with_request_id: bool,
-    auth_config: Option<(String, Option<String>)>,
+    auth_config: Option<Vec<BearerAuthBinding>>,
+    authz_config: Option<AuthzConfig>,
+    misconfigured_auth_message: Option<String>,
     rate_limit_config: Option<RateLimitConfig>,
 ) -> Router {
     let mut router = router.layer(TraceLayer::new_for_http());
@@ -382,10 +654,19 @@ pub(crate) fn apply_middleware(
         router = router.layer(from_fn_with_state(bucket, rate_limit));
     }
 
-    if let Some((token, bound_tenant_id)) = auth_config {
+    if let Some(config) = authz_config {
+        router = router.layer(from_fn_with_state(config, require_authorization));
+    }
+
+    if let Some(bindings) = auth_config.filter(|bindings| !bindings.is_empty()) {
+        router =
+            router.layer(from_fn_with_state(BearerAuthConfig::new(bindings), require_bearer_auth));
+    }
+
+    if let Some(message) = misconfigured_auth_message {
         router = router.layer(from_fn_with_state(
-            BearerAuthConfig::new(token, bound_tenant_id),
-            require_bearer_auth,
+            MisconfiguredApiAuthConfig::new(message),
+            reject_misconfigured_api_auth,
         ));
     }
 
@@ -407,10 +688,23 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Method, Request, StatusCode};
     use axum::response::sse::{Event, KeepAlive, Sse};
-    use axum::routing::get;
+    use axum::routing::{get, patch, post};
+    use stateset_authz::{AuthzEngineBuilder, PermissionLevel, Role, RoleBuilder};
     use std::{convert::Infallible, time::Duration};
     use tokio_stream::{StreamExt as _, wrappers::IntervalStream};
     use tower::ServiceExt;
+
+    fn auth_bindings(token: &str) -> Vec<BearerAuthBinding> {
+        vec![BearerAuthBinding::new(token.to_string(), None, None)]
+    }
+
+    fn tenant_bound_auth_bindings(token: &str, tenant_id: &str) -> Vec<BearerAuthBinding> {
+        vec![BearerAuthBinding::new(token.to_string(), Some(tenant_id.to_string()), None)]
+    }
+
+    fn actor_bound_auth_bindings(token: &str, actor_id: &str) -> Vec<BearerAuthBinding> {
+        vec![BearerAuthBinding::new(token.to_string(), None, Some(actor_id.to_string()))]
+    }
 
     #[test]
     fn x_request_id_header_name() {
@@ -430,25 +724,26 @@ mod tests {
     #[test]
     fn apply_middleware_no_extras() {
         let router = Router::new();
-        let _router = apply_middleware(router, false, false, None, None);
+        let _router = apply_middleware(router, false, false, None, None, None, None);
     }
 
     #[test]
     fn apply_middleware_all() {
         let router = Router::new();
-        let _router = apply_middleware(router, true, true, Some(("token".to_string(), None)), None);
+        let _router =
+            apply_middleware(router, true, true, Some(auth_bindings("token")), None, None, None);
     }
 
     #[test]
     fn apply_middleware_cors_only() {
         let router = Router::new();
-        let _router = apply_middleware(router, true, false, None, None);
+        let _router = apply_middleware(router, true, false, None, None, None, None);
     }
 
     #[test]
     fn apply_middleware_request_id_only() {
         let router = Router::new();
-        let _router = apply_middleware(router, false, true, None, None);
+        let _router = apply_middleware(router, false, true, None, None, None, None);
     }
 
     #[test]
@@ -472,7 +767,8 @@ mod tests {
     #[tokio::test]
     async fn auth_blocks_unauthorized_api_requests() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
-        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)), None);
+        let app =
+            apply_middleware(router, false, false, Some(auth_bindings("secret")), None, None, None);
 
         let response =
             app.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
@@ -482,7 +778,8 @@ mod tests {
     #[tokio::test]
     async fn auth_allows_authorized_api_requests() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
-        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)), None);
+        let app =
+            apply_middleware(router, false, false, Some(auth_bindings("secret")), None, None, None);
 
         let response = app
             .oneshot(
@@ -500,7 +797,8 @@ mod tests {
     #[tokio::test]
     async fn auth_blocks_missing_tenant_header() {
         let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
-        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)), None);
+        let app =
+            apply_middleware(router, false, false, Some(auth_bindings("secret")), None, None, None);
 
         let response = app
             .oneshot(
@@ -521,7 +819,9 @@ mod tests {
             router,
             false,
             false,
-            Some(("secret".to_string(), Some("tenant-a".to_string()))),
+            Some(tenant_bound_auth_bindings("secret", "tenant-a")),
+            None,
+            None,
             None,
         );
 
@@ -541,7 +841,8 @@ mod tests {
     #[tokio::test]
     async fn auth_skips_non_api_routes() {
         let router = Router::new().route("/health", get(|| async { "ok" }));
-        let app = apply_middleware(router, false, false, Some(("secret".to_string(), None)), None);
+        let app =
+            apply_middleware(router, false, false, Some(auth_bindings("secret")), None, None, None);
 
         let response =
             app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
@@ -549,9 +850,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_blocks_unauthorized_deep_health_requests() {
+        let router = Router::new().route("/health/deep", get(|| async { "ok" }));
+        let app =
+            apply_middleware(router, false, false, Some(auth_bindings("secret")), None, None, None);
+
+        let response =
+            app.oneshot(Request::get("/health/deep").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn auth_allows_deep_health_without_tenant_header() {
+        let router = Router::new().route("/health/deep", get(|| async { "ok" }));
+        let app =
+            apply_middleware(router, false, false, Some(auth_bindings("secret")), None, None, None);
+
+        let response = app
+            .oneshot(
+                Request::get("/health/deep")
+                    .header("authorization", "Bearer secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn misconfigured_tenant_routing_blocks_protected_routes() {
+        let router = Router::new()
+            .route("/api/v1/orders", get(|| async { "ok" }))
+            .route("/health/deep", get(|| async { "ok" }))
+            .route("/health", get(|| async { "ok" }));
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            Some(auth_bindings("secret")),
+            None,
+            Some("tenant routing requires a bound bearer token".to_string()),
+            None,
+        );
+
+        let api_response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", "Bearer secret")
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(api_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let deep_response = app
+            .clone()
+            .oneshot(
+                Request::get("/health/deep")
+                    .header("authorization", "Bearer secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deep_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let health_response =
+            app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(health_response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn cors_allows_localhost_origin_by_default() {
         let router = Router::new().route("/health", get(|| async { "ok" }));
-        let app = apply_middleware(router, true, false, None, None);
+        let app = apply_middleware(router, true, false, None, None, None, None);
 
         let response = app
             .oneshot(
@@ -579,7 +955,7 @@ mod tests {
     #[tokio::test]
     async fn cors_rejects_unconfigured_origin_by_default() {
         let router = Router::new().route("/health", get(|| async { "ok" }));
-        let app = apply_middleware(router, true, false, None, None);
+        let app = apply_middleware(router, true, false, None, None, None, None);
 
         let response = app
             .oneshot(
@@ -634,7 +1010,7 @@ mod tests {
     async fn rate_limit_allows_requests_within_limit() {
         let router = Router::new().route("/health", get(|| async { "ok" }));
         let config = Some(RateLimitConfig { requests_per_second: 100, burst_size: 10 });
-        let app = apply_middleware(router, false, false, None, config);
+        let app = apply_middleware(router, false, false, None, None, None, config);
 
         let response =
             app.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
@@ -667,7 +1043,187 @@ mod tests {
     fn apply_middleware_with_rate_limit() {
         let router = Router::new();
         let config = Some(RateLimitConfig { requests_per_second: 50, burst_size: 100 });
-        let _router = apply_middleware(router, false, false, None, config);
+        let _router = apply_middleware(router, false, false, None, None, None, config);
+    }
+
+    #[test]
+    fn authz_target_maps_list_and_destructive_routes() {
+        let list_request = Request::get("/api/v1/orders").body(Body::empty()).unwrap();
+        let cancel_request =
+            Request::patch("/api/v1/orders/ord_1/cancel").body(Body::empty()).unwrap();
+
+        let list_target = authz_target(&list_request).expect("list target should map");
+        assert_eq!(list_target, (Resource::new("orders"), Action::List));
+
+        let cancel_target = authz_target(&cancel_request).expect("cancel target should map");
+        assert_eq!(cancel_target, (Resource::new("orders"), Action::Delete));
+    }
+
+    #[tokio::test]
+    async fn authz_requires_actor_header() {
+        let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            None,
+            Some(AuthzConfig::new(engine)),
+            None,
+            None,
+        );
+
+        let response =
+            app.oneshot(Request::get("/api/v1/orders").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn authz_allows_viewer_reads() {
+        let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            None,
+            Some(AuthzConfig::new(engine).with_trusted_actor_headers()),
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("x-actor-id", "viewer-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn bound_actor_token_populates_authz_actor_header() {
+        let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::viewer())
+            .assign_role("viewer-1", "viewer")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            Some(actor_bound_auth_bindings("secret", "viewer-1")),
+            Some(AuthzConfig::new(engine)),
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", "Bearer secret")
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn bound_actor_token_rejects_conflicting_actor_header() {
+        let router = Router::new().route("/api/v1/orders", get(|| async { "ok" }));
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            Some(actor_bound_auth_bindings("secret", "viewer-1")),
+            None,
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/orders")
+                    .header("authorization", "Bearer secret")
+                    .header("x-tenant-id", "tenant-1")
+                    .header("x-actor-id", "admin-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn authz_denies_destructive_order_action_for_write_only_role() {
+        let router = Router::new().route("/api/v1/orders/{id}/cancel", patch(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(RoleBuilder::new("writer").default_level(PermissionLevel::Write).build())
+            .assign_role("writer-1", "writer")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            None,
+            Some(AuthzConfig::new(engine).with_trusted_actor_headers()),
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::patch("/api/v1/orders/ord_1/cancel")
+                    .header("x-actor-id", "writer-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn auth_runs_before_authz_when_both_are_enabled() {
+        let router = Router::new().route("/api/v1/orders", post(|| async { "ok" }));
+        let engine = AuthzEngineBuilder::new()
+            .add_role(Role::admin())
+            .assign_role("admin-1", "admin")
+            .build();
+        let app = apply_middleware(
+            router,
+            false,
+            false,
+            Some(auth_bindings("secret")),
+            Some(AuthzConfig::new(engine)),
+            None,
+            None,
+        );
+
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/orders")
+                    .header("x-actor-id", "admin-1")
+                    .header("x-tenant-id", "tenant-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     // ========================================================================

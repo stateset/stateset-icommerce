@@ -93,8 +93,8 @@ iCommerce provides all of these as first-class primitives, not bolted-on integra
 │           StateSet iCommerce                 │
 │                                              │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐   │
-│  │  Policy   │ │  520+MCP │ │  A2A +   │   │
-│  │  Engine   │ │  Tools   │ │  x402    │   │
+│  │  Policy   │ │ MCP Tool │ │  A2A +   │   │
+│  │  Engine   │ │ Surface  │ │  x402    │   │
 │  └────┬─────┘ └────┬─────┘ └────┬─────┘   │
 │       └─────────────┼─────────────┘         │
 │              ┌──────┴──────┐                │

@@ -1,0 +1,16 @@
+# PodDisruptionBudget for StateSet Admin Dashboard
+# Ensures at least 1 pod is always available during voluntary disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: stateset-admin-pdb
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset-admin
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/part-of: stateset-icommerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stateset-admin

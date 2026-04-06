@@ -888,7 +888,8 @@ pub struct TenantCacheResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct HealthResponse {
     pub status: &'static str,
-    pub tenant_cache: TenantCacheResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_cache: Option<TenantCacheResponse>,
 }
 
 /// Response body for `GET /health/ready`.
@@ -896,7 +897,8 @@ pub struct HealthResponse {
 pub struct ReadyResponse {
     pub status: &'static str,
     pub database: &'static str,
-    pub tenant_cache: TenantCacheResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_cache: Option<TenantCacheResponse>,
 }
 
 // ============================================================================
@@ -1233,7 +1235,7 @@ mod tests {
     fn health_response_serialization() {
         let resp = HealthResponse {
             status: "ok",
-            tenant_cache: TenantCacheResponse {
+            tenant_cache: Some(TenantCacheResponse {
                 enabled: true,
                 max_cached_dbs: 256,
                 cached_dbs: 3,
@@ -1242,7 +1244,7 @@ mod tests {
                 misses: 4,
                 evictions: 2,
                 rejections: 1,
-            },
+            }),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["status"], "ok");
@@ -1254,7 +1256,7 @@ mod tests {
         let resp = ReadyResponse {
             status: "ok",
             database: "connected",
-            tenant_cache: TenantCacheResponse {
+            tenant_cache: Some(TenantCacheResponse {
                 enabled: false,
                 max_cached_dbs: 256,
                 cached_dbs: 0,
@@ -1263,7 +1265,7 @@ mod tests {
                 misses: 0,
                 evictions: 0,
                 rejections: 0,
-            },
+            }),
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["database"], "connected");
