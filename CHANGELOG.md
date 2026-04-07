@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-04-06
+
+### Added
+- Added the new authenticated admin dashboard app with analytics, operations, gateway, billing, integrations, and session-management surfaces, plus the supporting API routes and test coverage.
+- Published generated MCP tool inventory artifacts for compatibility tracking in both JSON and mdBook appendix form.
+
+### Changed
+- Bumped workspace, bindings, admin app, CLI, examples, templates, docs, and release metadata from `0.9.6` to `0.9.7`.
+- Updated the sync and x402 client paths so the latest CLI, gateway, and embedded binding flows stay aligned across real runtime usage and regression coverage.
+
+### Fixed
+- Tightened sync configuration security coverage and x402 payment-intent persistence coverage around the refreshed client behavior.
+
 ## [0.9.6] - 2026-04-04
 
 ### Added

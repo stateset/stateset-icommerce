@@ -14,10 +14,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==0.9.6     # Python
-npm install @stateset/embedded@0.9.6     # Node.js
-npm install -g @stateset/cli@0.9.6       # CLI
-gem install stateset_embedded -v 0.9.6   # Ruby
+pip install stateset-embedded==0.9.7     # Python
+npm install @stateset/embedded@0.9.7     # Node.js
+npm install -g @stateset/cli@0.9.7       # CLI
+gem install stateset_embedded -v 0.9.7   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -110,7 +110,7 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/cli@0.9.6 @stateset/embedded@0.9.6
+npm install @stateset/cli@0.9.7 @stateset/embedded@0.9.7
 ```
 
 ```javascript
@@ -165,23 +165,21 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.9.6
+## What's New in v0.9.7
 
-**Agentic x402 Payments Release** - `0.9.6` hardens the agent-facing x402 and A2A payment surface so the shipped tooling works coherently with the real embedded Node binding and enforces cleaner payment-intent lifecycle rules.
+**Admin and Client Refresh Release** - `0.9.7` adds the new admin dashboard surface and aligns the shipped sync and x402 clients with the latest embedded, gateway, and payment-intent flows.
 
-### Permission and Audit Safety
-- MCP permission enforcement now fails closed for unknown tools instead of silently defaulting to read access
-- Tool-module permission metadata is aligned with the runtime permission map
-- Audit-critical paths no longer quietly drop to ephemeral process memory when SQLite bindings are unavailable
+### Admin Operations Surface
+- Added a standalone admin app with authenticated analytics, operations, gateway, billing, integrations, and session views
+- Added the matching admin API routes, middleware, shared auth helpers, and test coverage needed to run the dashboard as a first-class workspace surface
 
-### Durable Fallback Persistence
-- Credentials, treasury records, channel identity/session state, agent sessions, conversation memory, and ERC-8004 identity storage now persist to durable JSON fallback stores when `better-sqlite3` is unavailable
-- Fallback modes emit explicit warnings so degraded runtime posture is visible during operations
+### Sync and x402 Alignment
+- Refreshed sync and x402 client behavior so the CLI, MCP-facing gateway paths, and embedded runtime stay consistent under the current agent-payment flows
+- Expanded regression coverage around sync-config security and x402 payment-intent handling
 
-### Runtime Hygiene
-- Session cleanup now enforces configured retention caps correctly
-- Channel-session fallback writes preserve the correct field ordering during upsert
-- Regression coverage expanded across permissions, MCP, treasury, audit, memory, channel, and identity paths
+### Release Metadata and Docs
+- Published generated MCP tool inventory artifacts for compatibility tracking
+- Synced workspace versions, install snippets, deployment references, and current-release docs to `0.9.7`
 
 ---
 
@@ -1288,7 +1286,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.9.6"
+stateset-embedded = "0.9.7"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1338,14 +1336,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.9.6</version>
+    <version>0.9.7</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.9.6'
+implementation 'com.stateset:embedded:0.9.7'
 ```
 
 ### Kotlin (Gradle)
@@ -1353,7 +1351,7 @@ implementation 'com.stateset:embedded:0.9.6'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.9.6")
+    implementation("com.stateset:embedded-kotlin:0.9.7")
 }
 ```
 
@@ -1362,32 +1360,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.6")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.7")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.9.6'
+pod 'StateSet', '~> 0.9.7'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.9.6
+dotnet add package StateSet.Embedded --version 0.9.7
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.9.6" />
+<PackageReference Include="StateSet.Embedded" Version="0.9.7" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.6
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.7
 ```
 
 ### CLI
