@@ -4,7 +4,14 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { ToolDiscoveryEngine, TOOL_CATEGORIES } from '../../src/mcp-tool-discovery.js';
+import {
+  EXECUTION_ORDER_RULES,
+  INTENT_TOOL_MAP,
+  ORCHESTRATION_PLANS,
+  ToolDiscoveryEngine,
+  TOOL_CATEGORIES,
+} from '../../src/mcp-tool-discovery.js';
+import { getStaticMcpToolDefinitions } from '../../src/mcp-server.js';
 
 /** Helper: register a standard test tool */
 function registerTestTool(engine, name, overrides = {}) {
@@ -91,6 +98,24 @@ describe('ToolDiscoveryEngine.discoverToolsByIntent', () => {
   it('returns empty array for unknown intent', () => {
     const tools = engine.discoverToolsByIntent('teleport_customer');
     assert.deepEqual(tools, []);
+  });
+
+  it('filters unavailable tools once a live registry is loaded', () => {
+    engine.registerTool('get_customer', {
+      category: 'Customers',
+      description: 'Get a customer',
+      purpose: 'Look up a customer',
+      whenToUse: 'When a customer needs to be retrieved',
+    });
+    engine.registerTool('create_order', {
+      category: 'Orders',
+      description: 'Create an order',
+      purpose: 'Create a new order',
+      whenToUse: 'When a checked-out cart should become an order',
+    });
+
+    const tools = engine.discoverToolsByIntent('place_order');
+    assert.deepEqual(tools, ['get_customer', 'create_order']);
   });
 
   it('returns semantic search tools', () => {
@@ -206,6 +231,8 @@ describe('ToolDiscoveryEngine.getOrchestrationPlan', () => {
     const plan = engine.getOrchestrationPlan('inventory_replenishment');
     assert.ok(plan.length > 0);
     assert.ok(plan.includes('get_stock'));
+    assert.ok(plan.includes('approve_purchase_order'));
+    assert.ok(plan.includes('send_purchase_order'));
     assert.ok(plan.includes('adjust_inventory'));
   });
 
@@ -224,6 +251,20 @@ describe('ToolDiscoveryEngine.getOrchestrationPlan', () => {
   it('returns empty array for unknown operation type', () => {
     const plan = engine.getOrchestrationPlan('time_travel');
     assert.deepEqual(plan, []);
+  });
+
+  it('filters unavailable plan steps once a live registry is loaded', () => {
+    for (const toolName of ['create_return', 'approve_return', 'create_refund']) {
+      engine.registerTool(toolName, {
+        category: 'Returns',
+        description: `${toolName} description`,
+        purpose: `${toolName} purpose`,
+        whenToUse: `${toolName} whenToUse`,
+      });
+    }
+
+    const plan = engine.getOrchestrationPlan('return_process');
+    assert.deepEqual(plan, ['create_return', 'approve_return', 'create_refund']);
   });
 });
 
@@ -289,9 +330,80 @@ describe('ToolDiscoveryEngine.getExecutionOrder', () => {
     assert.ok(order.mustPrecede.includes('x402_get_intent'));
   });
 
+  it('purchase order flow sequences approval before send', () => {
+    const order = engine.getExecutionOrder('approve_purchase_order');
+    assert.deepEqual(order.mustFollow, ['create_purchase_order']);
+    assert.deepEqual(order.mustPrecede, ['send_purchase_order']);
+  });
+
   it('returns empty object for unknown tool', () => {
     const order = engine.getExecutionOrder('unknown_tool');
     assert.deepEqual(order, {});
+  });
+
+  it('filters unavailable related tools once a live registry is loaded', () => {
+    for (const toolName of ['create_purchase_order', 'approve_purchase_order']) {
+      engine.registerTool(toolName, {
+        category: 'Purchasing',
+        description: `${toolName} description`,
+        purpose: `${toolName} purpose`,
+        whenToUse: `${toolName} whenToUse`,
+      });
+    }
+
+    const order = engine.getExecutionOrder('approve_purchase_order');
+    assert.deepEqual(order.mustFollow, ['create_purchase_order']);
+    assert.deepEqual(order.mustPrecede, []);
+  });
+});
+
+// ===========================================================================
+// Static mapping parity with live MCP catalog
+// ===========================================================================
+
+describe('ToolDiscoveryEngine static mapping parity', () => {
+  const liveToolNames = new Set(getStaticMcpToolDefinitions().map((tool) => tool.name));
+
+  it('intent mappings only reference live MCP tools', () => {
+    for (const [intent, toolNames] of Object.entries(INTENT_TOOL_MAP)) {
+      for (const toolName of toolNames) {
+        assert.ok(
+          liveToolNames.has(toolName),
+          `Intent "${intent}" references unknown MCP tool "${toolName}"`,
+        );
+      }
+    }
+  });
+
+  it('orchestration plans only reference live MCP tools', () => {
+    for (const [planName, toolNames] of Object.entries(ORCHESTRATION_PLANS)) {
+      for (const toolName of toolNames) {
+        assert.ok(
+          liveToolNames.has(toolName),
+          `Plan "${planName}" references unknown MCP tool "${toolName}"`,
+        );
+      }
+    }
+  });
+
+  it('execution-order rules only reference live MCP tools', () => {
+    for (const [toolName, rules] of Object.entries(EXECUTION_ORDER_RULES)) {
+      assert.ok(liveToolNames.has(toolName), `Execution rule key "${toolName}" is not a live tool`);
+
+      for (const relatedTool of rules.mustFollow || []) {
+        assert.ok(
+          liveToolNames.has(relatedTool),
+          `Execution rule "${toolName}" mustFollow unknown tool "${relatedTool}"`,
+        );
+      }
+
+      for (const relatedTool of rules.mustPrecede || []) {
+        assert.ok(
+          liveToolNames.has(relatedTool),
+          `Execution rule "${toolName}" mustPrecede unknown tool "${relatedTool}"`,
+        );
+      }
+    }
   });
 });
 

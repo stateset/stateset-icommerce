@@ -54,6 +54,7 @@ async fn postgres_x402_payment_intent_smoke() {
             merchant_id: Some("merchant-test".to_string()),
             idempotency_key: Some(idempotency.clone()),
             metadata: Some("{\"source\":\"test\"}".to_string()),
+            signature_scheme: None,
         })
         .await
         .expect("create intent");

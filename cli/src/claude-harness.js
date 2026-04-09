@@ -190,6 +190,7 @@ async function* __runQueryWithCleanArgv(generatorFactory) {
  * @param {Function} options.onContextWarning - Callback when context approaches limit
  * @param {Function} options.onFallback - Callback when falling back to alternative model
  * @param {boolean} options.enableX402 - Enable x402 MCP server tools (default: false)
+ * @param {Object} options.autonomousEngine - Optional autonomous engine used by delegate_to_agent
  * @param {string} options.apiKey - Override Claude API key for this run
  * @param {Function} options.getApiKey - Resolve API key dynamically for this run
  * @param {AbortController} options.abortController - Abort controller for cancelling the run
@@ -240,6 +241,7 @@ export async function runAgentLoop({
   onContextWarning = null,
   onFallback = null,
   enableX402 = false,
+  autonomousEngine = null,
   apiKey = null,
   getApiKey = null,
   abortController = null,
@@ -659,6 +661,7 @@ export async function runAgentLoop({
     commerce,
     dbPath,
     allowApply,
+    autonomousEngine,
     telemetry: telem,
     permissionGate: gate,
     hookRunner: hooks,
@@ -1800,6 +1803,7 @@ export async function* runAgentStream({
   contextGuardOptions = null,
   provider,
   thinkLevel,
+  autonomousEngine = null,
   apiKey = null,
   getApiKey = null,
   abortController = null,
@@ -2032,6 +2036,7 @@ export async function* runAgentStream({
     commerce,
     dbPath,
     allowApply,
+    autonomousEngine,
     permissionGate: gate,
     hookRunner: hooks,
     policyEngine,
@@ -2326,6 +2331,7 @@ export async function* runAgentStream({
  * Messages are queued and delivered in order once the model finishes a turn.
  *
  * @param {Object} options
+ * @param {Object|null} [options.autonomousEngine=null] Optional autonomous engine forwarded to runtime tools such as delegate_to_agent.
  * @returns {{ stream: () => AsyncGenerator, send: (text: string) => void, followUp: (text: string) => void, steer: (text: string) => void, close: () => void, abort: (reason?: any) => void, getSessionId: () => string|null, getLastPromptReport: () => object|null, getLastTurnResult: () => object|null }}
  */
 export function createAgentStreamSession(options = {}) {
@@ -2350,6 +2356,7 @@ export function createAgentStreamSession(options = {}) {
     contextGuardOptions: _contextGuardOptions = null,
     provider,
     thinkLevel,
+    autonomousEngine = null,
     maxBudgetUsd = null,
     enableX402 = false,
     enableMemory = null,
@@ -2521,6 +2528,7 @@ export function createAgentStreamSession(options = {}) {
     commerce,
     dbPath,
     allowApply,
+    autonomousEngine,
     permissionGate: gate,
     hookRunner: hooks,
     policyEngine,
@@ -3383,7 +3391,13 @@ export function createAgentStreamSession(options = {}) {
 }
 
 /**
- * Create an agent session for multi-turn conversations
+ * Create an agent session for multi-turn conversations.
+ *
+ * Extra options are forwarded to runAgentLoop(), including autonomousEngine for
+ * runtime delegation support.
+ *
+ * @param {Object} options
+ * @param {Object|null} [options.autonomousEngine=null] Optional autonomous engine forwarded to delegate_to_agent and related runtime features.
  */
 export function createAgentSession({
   dbPath = './store.db',

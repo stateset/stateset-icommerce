@@ -236,12 +236,12 @@ function countPastDueCycles(sinceIso, interval) {
  * @returns {Object} Agent runtime instance
  */
 export function createAgentRuntime(params) {
-  let {
+  const {
     name,
     walletAddress,
     signingKey,
     agentId = randomUUID(),
-    commerce,
+    commerce: initialCommerce,
     budget: budgetConfig = {},
     strategy: initialStrategy,
     pollIntervalMs = 5000,
@@ -253,6 +253,7 @@ export function createAgentRuntime(params) {
     supportedAssets,
     settlement: initialSettlement = null,
   } = params;
+  let commerce = initialCommerce;
 
   if (!walletAddress) throw new Error('walletAddress is required');
   if (!commerce) throw new Error('commerce is required');

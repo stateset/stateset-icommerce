@@ -66,7 +66,7 @@ fn sqlite_x402_allows_ed25519_signing_for_legacy_rows() {
     let legacy_intent = repo.get(intent.id).expect("get legacy row").expect("legacy row exists");
     assert_eq!(legacy_intent.payer_signature_scheme, None);
 
-    let mut locally_signed = legacy_intent.clone();
+    let mut locally_signed = legacy_intent;
     locally_signed.sign_with_ed25519(&[19u8; 32]).expect("locally sign legacy row");
 
     let signed = repo
@@ -85,4 +85,24 @@ fn sqlite_x402_allows_ed25519_signing_for_legacy_rows() {
 
     assert_eq!(signed.status, X402IntentStatus::Signed);
     assert_eq!(signed.payer_signature_scheme, Some(X402SignatureScheme::Ed25519));
+}
+
+#[test]
+fn sqlite_x402_create_respects_configured_signature_scheme() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+
+    let intent = db
+        .x402_payment_intents()
+        .create(CreateX402PaymentIntent {
+            payer_address: "0xpayer-sqlite-strict".to_string(),
+            payee_address: "0xpayee-sqlite-strict".to_string(),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            signature_scheme: Some(X402SignatureScheme::MlDsa65),
+            ..Default::default()
+        })
+        .expect("create strict sqlite x402 intent");
+
+    assert_eq!(intent.payer_signature_scheme, Some(X402SignatureScheme::MlDsa65));
 }

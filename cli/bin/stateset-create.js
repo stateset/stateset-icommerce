@@ -12,7 +12,7 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { createScaffoldMcpServer, SCAFFOLD_TOOL_NAMES } from '../src/scaffold-server.js';
+import { createScaffoldMcpServer, SCAFFOLD_MCP_TOOL_NAMES } from '../src/scaffold-server.js';
 import { AgentTelemetry, noOpTelemetry } from '../src/telemetry.js';
 import { RichOutput, ICONS } from '../src/output.js';
 import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
@@ -142,7 +142,7 @@ async function main() {
     const toolResults = [];
 
     // Run the agent
-    const mcpTools = SCAFFOLD_TOOL_NAMES.map((t) => `mcp__stateset-scaffold__${t}`);
+    const mcpTools = SCAFFOLD_MCP_TOOL_NAMES;
     for await (const message of query({
       prompt: request,
       options: {

@@ -16,6 +16,12 @@ describe('agent-toolkit', () => {
         list: async () => [],
         count: async () => 0,
         get: async () => null,
+        create: async (params) => ({
+          id: 'cust_test_1',
+          status: 'active',
+          createdAt: '2026-04-08T00:00:00.000Z',
+          ...params,
+        }),
       },
       orders: {
         list: async () => [],
@@ -109,6 +115,18 @@ describe('agent-toolkit', () => {
     return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   }
 
+  function createMockAutonomousEngine(overrides = {}) {
+    return {
+      executeAgentRequest: async (agentName, taskDescription, context) => ({
+        agentName,
+        taskDescription,
+        context,
+        status: 'completed',
+      }),
+      ...overrides,
+    };
+  }
+
   function createMockRemoteDiscovery() {
     return {
       serviceInfo: {
@@ -162,6 +180,7 @@ describe('agent-toolkit', () => {
 
     const genericTools = toolkit.getTools();
     const openAiTools = toolkit.getTools({ format: 'openai' });
+    const anthropicTools = toolkit.getTools({ format: 'anthropic' });
 
     assert.ok(genericTools.length >= 100);
     assert.equal(genericTools[0].inputSchema.type, 'object');
@@ -170,6 +189,11 @@ describe('agent-toolkit', () => {
     assert.ok(openAiTools.length >= 100);
     assert.equal(openAiTools[0].type, 'function');
     assert.equal(openAiTools[0].function.parameters.type, 'object');
+
+    assert.ok(anthropicTools.length >= 100);
+    assert.equal(typeof anthropicTools[0].name, 'string');
+    assert.equal(anthropicTools[0].input_schema.type, 'object');
+    assert.equal(anthropicTools[0].stateset.permission, genericTools[0].permission);
   });
 
   it('executes a direct tool call without MCP transport', async () => {
@@ -181,6 +205,77 @@ describe('agent-toolkit', () => {
     assert.equal(result.status, 'success');
     assert.equal(result.tool, 'list_customers');
     assert.equal(result.result.count, 0);
+  });
+
+  it('delegates through the embedded toolkit when an autonomous engine is provided', async () => {
+    let delegated = null;
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: true,
+      autonomousEngine: createMockAutonomousEngine({
+        executeAgentRequest: async (agentName, taskDescription, context) => {
+          delegated = { agentName, taskDescription, context };
+          return {
+            status: 'completed',
+            summary: `Delegated ${taskDescription} to ${agentName}`,
+          };
+        },
+      }),
+    });
+
+    const result = await toolkit.executeTool('delegate_to_agent', {
+      agent_name: 'orders',
+      task_description: 'Review pending orders over $500',
+      context: { limit: 10 },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.status, 'success');
+    assert.equal(result.result.delegatedTo, 'orders');
+    assert.equal(result.policy.domain, 'agentic');
+    assert.equal(result.runtime.policyDomain, 'agentic');
+    assert.deepEqual(delegated, {
+      agentName: 'orders',
+      taskDescription: 'Review pending orders over $500',
+      context: { limit: 10 },
+    });
+  });
+
+  it('keeps delegation in preview mode until apply is enabled', async () => {
+    let delegated = false;
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: false,
+      autonomousEngine: createMockAutonomousEngine({
+        executeAgentRequest: async () => {
+          delegated = true;
+          return { status: 'completed' };
+        },
+      }),
+    });
+
+    const result = await toolkit.executeTool('delegate_to_agent', {
+      agent_name: 'orders',
+      task_description: 'Review pending orders over $500',
+      context: { limit: 10 },
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.status, 'preview');
+    assert.equal(result.preview, true);
+    assert.equal(result.tool, 'delegate_to_agent');
+    assert.equal(result.policy.domain, 'agentic');
+    assert.equal(result.runtime.policyDomain, 'agentic');
+    assert.match(result.error, /Preview mode: would execute 'delegate_to_agent'/);
+    assert.deepEqual(result.wouldDo, {
+      tool: 'delegate_to_agent',
+      params: {
+        agent_name: 'orders',
+        task_description: 'Review pending orders over $500',
+        context: { limit: 10 },
+      },
+    });
+    assert.equal(delegated, false);
   });
 
   it('adapts prototype getter-based commerce APIs for tool execution', async () => {
@@ -312,6 +407,102 @@ describe('agent-toolkit', () => {
     assert.equal(results[1].result.tool, 'list_orders');
   });
 
+  it('returns individual tool descriptors through helper accessors', () => {
+    const toolkit = createEmbeddedAgentToolkit({ commerce: mockCommerce });
+
+    const openAiTool = toolkit.getTool('mcp__stateset-commerce__list_customers', {
+      format: 'openai',
+    });
+    const rawTool = toolkit.getRawTool('mcp__stateset-commerce__list_customers');
+
+    assert.equal(openAiTool.type, 'function');
+    assert.equal(openAiTool.function.name, 'list_customers');
+    assert.equal(rawTool.name, 'list_customers');
+    assert.equal(rawTool.permission, 'read');
+  });
+
+  it('normalizes prefixed tool names for runtime contracts and plan helpers', async () => {
+    const toolkit = createEmbeddedAgentToolkit({
+      commerce: mockCommerce,
+      allowApply: true,
+    });
+
+    const contract = await toolkit.getRuntimeContract({
+      tool: 'mcp__stateset-commerce__create_customer',
+    });
+    const simulation = await toolkit.simulatePlan({
+      steps: [
+        {
+          tool: 'mcp__stateset-commerce__create_customer',
+          params: {
+            email: 'plan@example.com',
+            firstName: 'Plan',
+            lastName: 'User',
+          },
+        },
+      ],
+    });
+    const execution = await toolkit.executePlan({
+      dryRun: true,
+      steps: [
+        {
+          tool: 'mcp__stateset-commerce__create_customer',
+          params: {
+            email: 'plan@example.com',
+            firstName: 'Plan',
+            lastName: 'User',
+          },
+        },
+      ],
+    });
+
+    assert.equal(contract.totalTools, 1);
+    assert.deepEqual(contract.tools.map((tool) => tool.name), ['create_customer']);
+    assert.equal(simulation.outcomes[0].tool, 'create_customer');
+    assert.equal(simulation.outcomes[0].status, 'success');
+    assert.equal(execution.steps[0].tool, 'create_customer');
+    assert.equal(execution.steps[0].status, 'dry_run_success');
+    assert.equal(execution.finalStatus, 'dry_run');
+  });
+
+  it('normalizes prefixed tool names for replay helpers', async () => {
+    const tempDir = await mkdtemp(join(os.tmpdir(), 'stateset-agent-toolkit-replay-'));
+    const dbPath = join(tempDir, 'store.db');
+
+    try {
+      const toolkit = createEmbeddedAgentToolkit({
+        commerce: mockCommerce,
+        dbPath,
+        allowApply: true,
+      });
+
+      const execution = await toolkit.executeTool('create_customer', {
+        email: 'replay@example.com',
+        firstName: 'Replay',
+        lastName: 'User',
+      });
+      const replay = await toolkit.replayMutation({
+        tool: 'mcp__stateset-commerce__create_customer',
+        requestId: execution.requestId,
+        dryRun: true,
+      });
+      const replayLog = await toolkit.getReplayLog({
+        tool: 'mcp__stateset-commerce__create_customer',
+        requestId: execution.requestId,
+      });
+
+      assert.equal(execution.status, 'success');
+      assert.equal(replay.success, true);
+      assert.equal(replay.sourceEvent.tool, 'create_customer');
+      assert.equal(replay.replay.status, 'dry_run_success');
+      assert.equal(replayLog.count, 1);
+      assert.equal(replayLog.filters.tool, 'create_customer');
+      assert.equal(replayLog.events[0].tool, 'create_customer');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('discovers payable tools through the embedded toolkit', async () => {
     await withTempPricing(async ({ pricingPath, dbPath }) => {
       const toolkit = createEmbeddedAgentToolkit({
@@ -328,6 +519,35 @@ describe('agent-toolkit', () => {
 
       assert.equal(discovery.protocol, 'mpp');
       assert.equal(Array.isArray(discovery.tools), true);
+      assert.equal(discovery.tools[0].name, 'list_customers');
+      assert.equal(discovery.tools[0].paymentInfo.amount.asset, 'BTC');
+    });
+  });
+
+  it('supports payable catalog and payment discovery helpers for prefixed tool names', async () => {
+    await withTempPricing(async ({ pricingPath, dbPath }) => {
+      const toolkit = createEmbeddedAgentToolkit({
+        commerce: mockCommerce,
+        treasury: {
+          enabled: true,
+          agentId: 'buyer-agent',
+          dbPath,
+          pricingPath,
+        },
+      });
+
+      const catalog = await toolkit.getPayableToolCatalog({
+        tool: 'mcp__stateset-commerce__list_customers',
+      });
+      const discovery = await toolkit.getPaymentDiscovery({
+        tool: 'mcp__stateset-commerce__list_customers',
+        pricedOnly: true,
+      });
+
+      assert.equal(catalog.count, 1);
+      assert.equal(catalog.tools[0].toolName, 'list_customers');
+      assert.equal(catalog.tools[0].paymentInfo.amount.asset, 'BTC');
+      assert.equal(discovery.tools.length, 1);
       assert.equal(discovery.tools[0].name, 'list_customers');
       assert.equal(discovery.tools[0].paymentInfo.amount.asset, 'BTC');
     });
@@ -406,6 +626,33 @@ describe('agent-toolkit', () => {
       assert.equal(result.success, true);
       assert.equal(result.status, 'success');
       assert.equal(Array.isArray(result.result.customers), true);
+      assert.equal(result.result._meta.payment.receipt.tool, 'list_customers');
+      assert.equal(result.result._meta.payment.receipt.payer, 'buyer-agent');
+    });
+  });
+
+  it('executes paid-tool helpers with the same payment flow as executeToolWithPayment', async () => {
+    await withTempPricing(async ({ pricingPath, dbPath }) => {
+      await seedTreasuryBalance({ dbPath, pricingPath });
+      const toolkit = createEmbeddedAgentToolkit({
+        commerce: mockCommerce,
+        treasury: {
+          enabled: true,
+          agentId: 'buyer-agent',
+          dbPath,
+          pricingPath,
+        },
+      });
+
+      const result = await toolkit.executePaidTool('list_customers', {}, {
+        payment: {
+          acceptedMethods: ['bitcoin'],
+          maxAmountSmallest: '10000',
+        },
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.status, 'success');
       assert.equal(result.result._meta.payment.receipt.tool, 'list_customers');
       assert.equal(result.result._meta.payment.receipt.payer, 'buyer-agent');
     });

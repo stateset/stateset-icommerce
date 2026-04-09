@@ -6,6 +6,7 @@ import {
   AGENT_TOOL_CATEGORIES,
   createToolRegistry,
 } from '../../src/tools/index.js';
+import { getStaticMcpToolDefinitions } from '../../src/mcp-server.js';
 
 // ============================================================================
 // ToolRegistry — constructor
@@ -78,6 +79,18 @@ describe('ToolRegistry', () => {
     it('loads categories for known agent', async () => {
       await registry.loadForAgent('analytics');
       assert.ok(registry.loadedCategories.has('analytics'));
+    });
+
+    it('loads categories for the agents agent', async () => {
+      await registry.loadForAgent('agents');
+      assert.ok(registry.loadedCategories.has('agent-runtime'));
+      assert.ok(registry.loadedCategories.has('agent-cards'));
+      assert.ok(registry.loadedCategories.has('a2a'));
+    });
+
+    it('treats storefront as a valid no-op scope in the commerce registry', async () => {
+      await registry.loadForAgent('storefront');
+      assert.equal(registry.size, 0);
     });
 
     it('does nothing for unknown agent', async () => {
@@ -247,8 +260,8 @@ describe('AGENT_TOOL_CATEGORIES', () => {
     }
   });
 
-  it('has at least 18 agent mappings', () => {
-    assert.ok(Object.keys(AGENT_TOOL_CATEGORIES).length >= 18);
+  it('includes the current live agents plus compatibility scopes', () => {
+    assert.ok(Object.keys(AGENT_TOOL_CATEGORIES).length >= 20);
   });
 
   it('customer-service agent has broad tool access', () => {
@@ -265,6 +278,17 @@ describe('AGENT_TOOL_CATEGORIES', () => {
 
   it('analytics agent includes analytics', () => {
     assert.ok(AGENT_TOOL_CATEGORIES.analytics.includes('analytics'));
+  });
+
+  it('agents mapping includes multi-agent runtime categories', () => {
+    assert.ok(AGENT_TOOL_CATEGORIES.agents.includes('agent-runtime'));
+    assert.ok(AGENT_TOOL_CATEGORIES.agents.includes('agent-cards'));
+    assert.ok(AGENT_TOOL_CATEGORIES.agents.includes('a2a'));
+  });
+
+  it('storefront mapping exists even though scaffold tools are served elsewhere', () => {
+    assert.ok('storefront' in AGENT_TOOL_CATEGORIES);
+    assert.deepStrictEqual(AGENT_TOOL_CATEGORIES.storefront, []);
   });
 });
 
@@ -283,5 +307,18 @@ describe('createToolRegistry', () => {
     const a = createToolRegistry();
     const b = createToolRegistry();
     assert.notEqual(a, b);
+  });
+});
+
+describe('ToolRegistry parity with live commerce MCP export', () => {
+  it('loadAll matches the static commerce MCP tool set', async () => {
+    const registry = createToolRegistry();
+    await registry.loadAll();
+
+    const registryNames = new Set(registry.getAll().map((tool) => tool.name));
+    const staticNames = new Set(getStaticMcpToolDefinitions().map((tool) => tool.name));
+
+    assert.equal(registryNames.size, staticNames.size);
+    assert.deepStrictEqual([...registryNames].sort(), [...staticNames].sort());
   });
 });

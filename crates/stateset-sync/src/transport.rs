@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::commitment::CommitmentManifest;
 use crate::error::SyncError;
 use crate::event::SyncEvent;
 
@@ -136,13 +137,16 @@ pub struct RemoteHead {
     /// Optional latest commitment id associated with the remote head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_commitment_id: Option<String>,
+    /// Optional signed commitment manifest associated with the remote head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commitment_manifest: Option<CommitmentManifest>,
 }
 
 impl RemoteHead {
     /// Create a minimal remote-head snapshot.
     #[must_use]
     pub const fn new(remote_head: u64) -> Self {
-        Self { remote_head, state_root: None, last_commitment_id: None }
+        Self { remote_head, state_root: None, last_commitment_id: None, commitment_manifest: None }
     }
 
     /// Attach an optional state-root value.
@@ -156,6 +160,19 @@ impl RemoteHead {
     #[must_use]
     pub fn with_last_commitment_id(mut self, commitment_id: impl Into<String>) -> Self {
         self.last_commitment_id = Some(commitment_id.into());
+        self
+    }
+
+    /// Attach an optional signed commitment manifest.
+    #[must_use]
+    pub fn with_commitment_manifest(mut self, manifest: CommitmentManifest) -> Self {
+        if self.state_root.is_none() {
+            self.state_root = Some(manifest.state_root.clone());
+        }
+        if self.last_commitment_id.is_none() {
+            self.last_commitment_id = Some(manifest.commitment_id.clone());
+        }
+        self.commitment_manifest = Some(manifest);
         self
     }
 }
@@ -370,13 +387,22 @@ mod tests {
 
     #[test]
     fn remote_head_serde_roundtrip() {
-        let head =
-            RemoteHead::new(42).with_state_root("root-abc").with_last_commitment_id("BATCH-7");
+        let head = RemoteHead::new(42)
+            .with_state_root("root-abc")
+            .with_last_commitment_id("BATCH-7")
+            .with_commitment_manifest(
+                CommitmentManifest::new("BATCH-7", "root-abc", 42, "sequencer-a")
+                    .with_signature("11".repeat(32), "22".repeat(64)),
+            );
         let json = serde_json::to_string(&head).unwrap();
         let de: RemoteHead = serde_json::from_str(&json).unwrap();
         assert_eq!(de.remote_head, 42);
         assert_eq!(de.state_root.as_deref(), Some("root-abc"));
         assert_eq!(de.last_commitment_id.as_deref(), Some("BATCH-7"));
+        assert_eq!(
+            de.commitment_manifest.as_ref().map(|manifest| manifest.signer_id.as_str()),
+            Some("sequencer-a")
+        );
     }
 
     #[test]

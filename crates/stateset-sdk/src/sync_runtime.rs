@@ -7,8 +7,11 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::sync::{
-    DeadLetter, PullResult, PushConfirmation, PushResult, RemoteHead, SequencerHttpTransport,
-    SyncConfig, SyncEngine, SyncError, SyncEvent, SyncStatus,
+    AttestationError, CommandAttestation, CommandConvergence, CommandInclusionProof,
+    CommitmentManifest, DeadLetter, KernelExecutionError, KernelReceipt, KernelTransaction,
+    ManifestVerificationError, PullResult, PushConfirmation, PushResult, RemoteHead,
+    SequencerHttpTransport, SyncConfig, SyncEngine, SyncError, SyncEvent, SyncStatus,
+    VerifiedCommitmentManifest,
 };
 use uuid::Uuid;
 
@@ -118,8 +121,11 @@ impl SyncRuntimeConfig {
     /// `STATESET_SYNC_API_KEY`, `STATESET_SYNC_BEARER_TOKEN`,
     /// `STATESET_SYNC_AGENT_KEY_ID`, `STATESET_SYNC_BUFFER_CAPACITY`,
     /// `STATESET_SYNC_BATCH_SIZE`, `STATESET_SYNC_OUTBOX_CAPACITY`,
-    /// `STATESET_SYNC_OUTBOX_PATH`, `STATESET_SYNC_STATE_PATH`, and
-    /// `STATESET_SYNC_CONFIRMATION_CAPACITY`.
+    /// `STATESET_SYNC_OUTBOX_PATH`, `STATESET_SYNC_STATE_PATH`,
+    /// `STATESET_SYNC_CONFIRMATION_CAPACITY`,
+    /// `STATESET_SYNC_REQUIRE_COMMITMENT_MANIFEST`,
+    /// `STATESET_SYNC_TRUSTED_COMMITMENT_SIGNERS`, and
+    /// `STATESET_SYNC_TRUSTED_COMMITMENT_PUBLIC_KEYS`.
     ///
     /// # Errors
     ///
@@ -155,6 +161,18 @@ impl SyncRuntimeConfig {
 pub struct SyncRuntimeSnapshot {
     /// Current aggregate sync status.
     pub status: SyncStatus,
+    /// Verified commitment manifests retained by the runtime.
+    #[serde(default)]
+    pub verified_commitment_manifests: Vec<VerifiedCommitmentManifest>,
+    /// Verified command settlement attestations retained by the runtime.
+    #[serde(default)]
+    pub command_attestations: Vec<CommandAttestation>,
+    /// Command-level counterparty convergence derived from retained kernel receipts.
+    #[serde(default)]
+    pub command_convergences: Vec<CommandConvergence>,
+    /// Unified kernel receipts spanning pending, confirmed, and rejected local events.
+    #[serde(default)]
+    pub kernel_receipts: Vec<KernelReceipt>,
     /// Retained push confirmations.
     #[serde(default)]
     pub confirmations: Vec<PushConfirmation>,
@@ -294,10 +312,87 @@ impl SyncRuntime {
         self.engine.record(event)
     }
 
+    /// Execute a local transaction-kernel request and record the resulting event.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same policy, budget, and outbox errors as
+    /// [`SyncEngine::record_kernel_transaction`].
+    pub fn record_kernel_transaction(
+        &mut self,
+        transaction: KernelTransaction,
+    ) -> Result<KernelReceipt, KernelExecutionError> {
+        self.engine.record_kernel_transaction(transaction)
+    }
+
     /// Return the current sync status snapshot.
     #[must_use]
     pub fn status(&self) -> SyncStatus {
         self.engine.status()
+    }
+
+    /// Return command-level counterparty convergence snapshots for retained commands.
+    #[must_use]
+    pub fn command_convergences(&self) -> Vec<CommandConvergence> {
+        self.engine.command_convergences()
+    }
+
+    /// Return the command-level counterparty convergence snapshot for a command id, if known.
+    #[must_use]
+    pub fn command_convergence(&self, command_id: &str) -> Option<CommandConvergence> {
+        self.engine.command_convergence(command_id)
+    }
+
+    /// Return all verified commitment manifests retained by the runtime.
+    #[must_use]
+    pub fn verified_commitment_manifests(&self) -> &[VerifiedCommitmentManifest] {
+        self.engine.verified_commitment_manifests()
+    }
+
+    /// Return the verified commitment manifest for a specific commitment id, if known.
+    #[must_use]
+    pub fn verified_commitment_manifest(
+        &self,
+        commitment_id: &str,
+    ) -> Option<&VerifiedCommitmentManifest> {
+        self.engine.verified_commitment_manifest(commitment_id)
+    }
+
+    /// Verify and retain a signed commitment manifest against the current remote state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same manifest verification errors as
+    /// [`SyncEngine::verify_commitment_manifest`].
+    pub fn verify_commitment_manifest(
+        &mut self,
+        manifest: CommitmentManifest,
+    ) -> Result<VerifiedCommitmentManifest, ManifestVerificationError> {
+        self.engine.verify_commitment_manifest(manifest)
+    }
+
+    /// Return all verified command settlement attestations retained by the runtime.
+    #[must_use]
+    pub fn command_attestations(&self) -> &[CommandAttestation] {
+        self.engine.command_attestations()
+    }
+
+    /// Return the verified command settlement attestation for a command id, if known.
+    #[must_use]
+    pub fn command_attestation(&self, command_id: &str) -> Option<&CommandAttestation> {
+        self.engine.command_attestation(command_id)
+    }
+
+    /// Verify and retain a command inclusion proof against current kernel receipts and remote state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same attestation errors as [`SyncEngine::attest_command`].
+    pub fn attest_command(
+        &mut self,
+        proof: CommandInclusionProof,
+    ) -> Result<CommandAttestation, AttestationError> {
+        self.engine.attest_command(proof)
     }
 
     /// Return the number of retained push confirmations available for inspection.
@@ -310,6 +405,50 @@ impl SyncRuntime {
     #[must_use]
     pub fn confirmations(&self) -> &[PushConfirmation] {
         self.engine.confirmations()
+    }
+
+    /// Return unified kernel receipts spanning pending, confirmed, and rejected local events.
+    #[must_use]
+    pub fn kernel_receipts(&self) -> Vec<KernelReceipt> {
+        self.engine.kernel_receipts()
+    }
+
+    /// Return the unified kernel receipt for a local event id, if known.
+    #[must_use]
+    pub fn kernel_receipt_for_event(&self, event_id: Uuid) -> Option<KernelReceipt> {
+        self.engine.kernel_receipt_for_event(event_id)
+    }
+
+    /// Return all unified kernel receipts associated with a command id.
+    #[must_use]
+    pub fn kernel_receipts_for_command(&self, command_id: &str) -> Vec<KernelReceipt> {
+        self.engine.kernel_receipts_for_command(command_id)
+    }
+
+    /// Return all unified kernel receipts for an entity identity.
+    #[must_use]
+    pub fn kernel_receipts_for_entity(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> Vec<KernelReceipt> {
+        self.engine.kernel_receipts_for_entity(entity_type, entity_id)
+    }
+
+    /// Return the latest unified kernel receipt associated with a command id.
+    #[must_use]
+    pub fn latest_kernel_receipt_for_command(&self, command_id: &str) -> Option<KernelReceipt> {
+        self.engine.latest_kernel_receipt_for_command(command_id)
+    }
+
+    /// Return the latest unified kernel receipt for an entity identity.
+    #[must_use]
+    pub fn latest_kernel_receipt_for_entity(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> Option<KernelReceipt> {
+        self.engine.latest_kernel_receipt_for_entity(entity_type, entity_id)
     }
 
     /// Return the retained confirmation for a local event id, if known.
@@ -472,6 +611,10 @@ impl SyncRuntime {
     pub fn snapshot(&self) -> SyncRuntimeSnapshot {
         SyncRuntimeSnapshot {
             status: self.status(),
+            verified_commitment_manifests: self.verified_commitment_manifests().to_vec(),
+            command_attestations: self.command_attestations().to_vec(),
+            command_convergences: self.command_convergences(),
+            kernel_receipts: self.kernel_receipts(),
             confirmations: self.confirmations().to_vec(),
             dead_letters: self.dead_letters().to_vec(),
             buffered_events: self.engine.buffered_events(),
@@ -573,6 +716,23 @@ fn load_runtime_config_from_env_map(
     {
         engine = engine.with_confirmation_capacity(confirmation_capacity);
     }
+    if let Some(require_manifest) =
+        optional_env_parsed::<bool>(vars, prefix, "REQUIRE_COMMITMENT_MANIFEST")?
+    {
+        engine = engine.with_require_commitment_manifest(require_manifest);
+    }
+    if let Some(trusted_signers) = optional_env_csv(vars, prefix, "TRUSTED_COMMITMENT_SIGNERS")? {
+        for signer in trusted_signers {
+            engine = engine.with_trusted_commitment_signer(signer);
+        }
+    }
+    if let Some(trusted_public_keys) =
+        optional_env_csv(vars, prefix, "TRUSTED_COMMITMENT_PUBLIC_KEYS")?
+    {
+        for public_key in trusted_public_keys {
+            engine = engine.with_trusted_commitment_signer_public_key(public_key);
+        }
+    }
 
     let api_key_var = env_var_name(prefix, "API_KEY");
     let bearer_token_var = env_var_name(prefix, "BEARER_TOKEN");
@@ -655,6 +815,23 @@ where
     })
 }
 
+fn optional_env_csv(
+    vars: &HashMap<String, String>,
+    prefix: &str,
+    suffix: &str,
+) -> Result<Option<Vec<String>>, SyncError> {
+    let Some(value) = optional_env_string(vars, prefix, suffix)? else {
+        return Ok(None);
+    };
+    let entries = value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    Ok(Some(entries))
+}
+
 #[cfg(test)]
 mod tests {
     use std::env::temp_dir;
@@ -666,7 +843,11 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::json;
 
-    use crate::sync::{PushAcknowledgement, PushRejection, Transport};
+    use crate::sync::{
+        BudgetAuthorization, BudgetCheckpoint, CommandInclusionProof,
+        CounterpartyConvergenceStatus, KernelReceiptStatus, KernelTransaction, PolicyCheckpoint,
+        PolicyDecision, PushAcknowledgement, PushRejection, Transport,
+    };
 
     use super::*;
 
@@ -678,6 +859,10 @@ mod tests {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         temp_dir()
             .join(format!("stateset-sync-runtime-config-{name}-{}-{nanos}.json", process::id()))
+    }
+
+    fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
+        bytes.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
     fn make_runtime_transport() -> SequencerHttpTransport {
@@ -912,6 +1097,9 @@ mod tests {
             (format!("{prefix}OUTBOX_PATH"), "/tmp/env-outbox.json".to_owned()),
             (format!("{prefix}STATE_PATH"), "/tmp/env-state.json".to_owned()),
             (format!("{prefix}CONFIRMATION_CAPACITY"), "88".to_owned()),
+            (format!("{prefix}REQUIRE_COMMITMENT_MANIFEST"), "true".to_owned()),
+            (format!("{prefix}TRUSTED_COMMITMENT_SIGNERS"), "sequencer-a,sequencer-b".to_owned()),
+            (format!("{prefix}TRUSTED_COMMITMENT_PUBLIC_KEYS"), "aa,bb".to_owned()),
         ]);
 
         let config = load_runtime_config_from_env_map(prefix, &vars).unwrap();
@@ -926,6 +1114,15 @@ mod tests {
         assert_eq!(config.engine.outbox_path.as_deref(), Some("/tmp/env-outbox.json"));
         assert_eq!(config.engine.state_path.as_deref(), Some("/tmp/env-state.json"));
         assert_eq!(config.engine.confirmation_capacity, 88);
+        assert!(config.engine.commitment_trust.require_manifest);
+        assert_eq!(
+            config.engine.commitment_trust.trusted_signer_ids,
+            vec!["sequencer-a".to_string(), "sequencer-b".to_string()]
+        );
+        assert_eq!(
+            config.engine.commitment_trust.trusted_signer_public_keys,
+            vec!["aa".to_string(), "bb".to_string()]
+        );
         assert_eq!(config.agent_key_id, 27);
         assert!(
             matches!(config.auth, Some(SyncRuntimeAuth::ApiKey(ref key)) if key == "ss_env_key")
@@ -965,13 +1162,43 @@ mod tests {
         assert_eq!(runtime.status().pending, 1);
     }
 
+    #[test]
+    fn runtime_record_kernel_transaction_returns_pending_receipt() {
+        let mut runtime =
+            SyncRuntime::new("https://sequencer.stateset.com", make_config()).unwrap();
+
+        let receipt = runtime
+            .record_kernel_transaction(
+                KernelTransaction::new(SyncEvent::new(
+                    "order.created",
+                    "order",
+                    "ORD-9",
+                    json!({"total": 45}),
+                ))
+                .with_policy_checkpoint(PolicyCheckpoint::new("orders", PolicyDecision::Allowed))
+                .with_budget_authorization(BudgetAuthorization::new("budget-9", 4500, 5000, "USD")),
+            )
+            .unwrap();
+
+        assert_eq!(receipt.status, KernelReceiptStatus::LocalPending);
+        assert_eq!(receipt.local_sequence, Some(1));
+        assert_eq!(runtime.pending_count(), 1);
+    }
+
     #[tokio::test]
     async fn runtime_exposes_confirmation_queries_and_drain() {
         let mut engine = SyncEngine::new(make_config()).unwrap();
         let first = SyncEvent::new("order.created", "order", "ORD-1", json!({"total": 99}))
-            .with_command_id("cmd-1");
+            .with_command_id("cmd-1")
+            .with_policy_checkpoint(
+                PolicyCheckpoint::new("orders", PolicyDecision::Allowed)
+                    .with_reason("within threshold"),
+            );
         let second = SyncEvent::new("order.updated", "order", "ORD-1", json!({"total": 109}))
-            .with_command_id("cmd-1");
+            .with_command_id("cmd-1")
+            .with_budget_checkpoint(
+                BudgetCheckpoint::new("budget-1", 10900, "USD").with_remaining_amount_minor(900),
+            );
         let first_id = first.id;
         let second_id = second.id;
 
@@ -982,6 +1209,23 @@ mod tests {
 
         let mut runtime = SyncRuntime::from_parts(engine, make_runtime_transport());
 
+        assert_eq!(runtime.command_convergences().len(), 1);
+        assert_eq!(
+            runtime.command_convergence("cmd-1").unwrap().status,
+            CounterpartyConvergenceStatus::ConfirmedRemote
+        );
+        assert_eq!(runtime.kernel_receipts().len(), 2);
+        assert_eq!(
+            runtime.kernel_receipt_for_event(first_id).unwrap().status,
+            KernelReceiptStatus::ConfirmedRemote
+        );
+        assert_eq!(runtime.kernel_receipts_for_command("cmd-1").len(), 2);
+        assert_eq!(runtime.kernel_receipts_for_entity("order", "ORD-1").len(), 2);
+        assert_eq!(runtime.latest_kernel_receipt_for_command("cmd-1").unwrap().event_id, second_id);
+        assert_eq!(
+            runtime.latest_kernel_receipt_for_entity("order", "ORD-1").unwrap().event_id,
+            second_id
+        );
         assert_eq!(runtime.confirmation_count(), 2);
         assert_eq!(runtime.confirmations().len(), 2);
         assert_eq!(runtime.pending_count(), 0);
@@ -1007,7 +1251,8 @@ mod tests {
         let mut engine = SyncEngine::new(make_config()).unwrap();
         let event =
             SyncEvent::new("payment.failed", "payment", "PAY-1", json!({"status": "failed"}))
-                .with_command_id("cmd-reject");
+                .with_command_id("cmd-reject")
+                .with_policy_checkpoint(PolicyCheckpoint::new("payments", PolicyDecision::Denied));
         let event_id = event.id;
 
         engine.record(event).unwrap();
@@ -1016,6 +1261,15 @@ mod tests {
 
         let mut runtime = SyncRuntime::from_parts(engine, make_runtime_transport());
 
+        assert_eq!(
+            runtime.command_convergence("cmd-reject").unwrap().status,
+            CounterpartyConvergenceStatus::RejectedRemote
+        );
+        assert_eq!(runtime.kernel_receipts().len(), 1);
+        assert_eq!(
+            runtime.kernel_receipt_for_event(event_id).unwrap().status,
+            KernelReceiptStatus::RejectedRemote
+        );
         assert_eq!(runtime.dead_letter_count(), 1);
         assert_eq!(runtime.dead_letters().len(), 1);
         assert_eq!(runtime.dead_letter_for_event(event_id).unwrap().event.id, event_id);
@@ -1046,6 +1300,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_attests_command_against_remote_commitment() {
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+
+        #[derive(Debug)]
+        struct HeadTransport {
+            remote_head: RemoteHead,
+        }
+
+        #[async_trait]
+        impl Transport for HeadTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult::accepted_only(events.len(), self.remote_head.remote_head))
+            }
+
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                Ok(PullResult {
+                    events: Vec::new(),
+                    remote_head: self.remote_head.remote_head,
+                    has_more: false,
+                })
+            }
+
+            async fn fetch_head(&self) -> Result<RemoteHead, SyncError> {
+                Ok(self.remote_head.clone())
+            }
+
+            async fn pull_events_page(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<crate::sync::PullPage, SyncError> {
+                Ok(crate::sync::PullPage {
+                    result: PullResult {
+                        events: Vec::new(),
+                        remote_head: self.remote_head.remote_head,
+                        has_more: false,
+                    },
+                    next_cursor: None,
+                    observed_cursor: Some(self.remote_head.remote_head),
+                })
+            }
+        }
+
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let event = SyncEvent::new("order.created", "order", "ORD-4", json!({"total": 44}))
+            .with_command_id("cmd-attest-runtime");
+        engine.record(event.clone()).unwrap();
+        let push = engine.push(&AckTransport).await.unwrap();
+        assert_eq!(push.accepted, 1);
+
+        let receipts = engine.kernel_receipts_for_command("cmd-attest-runtime");
+        let leaf_hash =
+            crate::sync::compute_command_settlement_leaf("cmd-attest-runtime", &receipts).unwrap();
+        let root = hex_encode(leaf_hash);
+        let head_transport = HeadTransport {
+            remote_head: RemoteHead::new(1)
+                .with_state_root(root.clone())
+                .with_last_commitment_id("BATCH-1"),
+        };
+        engine.refresh_remote_head(&head_transport).await.unwrap();
+        engine.pull(&head_transport).await.unwrap();
+
+        let mut runtime = SyncRuntime::from_parts(engine, make_runtime_transport());
+        let verified_manifest = runtime
+            .verify_commitment_manifest(
+                crate::sync::sign_commitment_manifest(
+                    crate::sync::CommitmentManifest::new(
+                        "BATCH-1",
+                        root.clone(),
+                        1,
+                        "sequencer-runtime",
+                    ),
+                    &private_key,
+                    &public_key,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let attestation = runtime
+            .attest_command(
+                CommandInclusionProof::new("cmd-attest-runtime", root, 0, 1)
+                    .with_commitment_id("BATCH-1"),
+            )
+            .unwrap();
+
+        assert_eq!(verified_manifest.signer_id, "sequencer-runtime");
+        assert_eq!(attestation.max_remote_sequence, 1);
+        assert!(attestation.settled);
+        assert_eq!(attestation.manifest_signer_id.as_deref(), Some("sequencer-runtime"));
+        assert!(attestation.manifest_verified_at.is_some());
+        assert_eq!(runtime.verified_commitment_manifests().len(), 1);
+        assert_eq!(runtime.command_attestations().len(), 1);
+        assert_eq!(
+            runtime
+                .command_attestation("cmd-attest-runtime")
+                .and_then(|stored| stored.commitment_id.as_deref()),
+            Some("BATCH-1")
+        );
+        assert_eq!(
+            runtime
+                .verified_commitment_manifest("BATCH-1")
+                .map(|manifest| manifest.signer_id.as_str()),
+            Some("sequencer-runtime")
+        );
+        assert_eq!(runtime.snapshot().verified_commitment_manifests.len(), 1);
+    }
+
+    #[tokio::test]
     async fn runtime_exposes_buffer_drain_helpers() {
         let mut engine = SyncEngine::new(make_config()).unwrap();
 
@@ -1069,13 +1435,18 @@ mod tests {
         engine
             .record(
                 SyncEvent::new("order.created", "order", "ORD-2", json!({"total": 150}))
-                    .with_command_id("cmd-snapshot-confirmed"),
+                    .with_command_id("cmd-snapshot-confirmed")
+                    .with_policy_checkpoint(PolicyCheckpoint::new(
+                        "orders",
+                        PolicyDecision::Allowed,
+                    )),
             )
             .unwrap();
         engine
             .record(
                 SyncEvent::new("order.failed", "order", "ORD-3", json!({"reason": "invalid"}))
-                    .with_command_id("cmd-snapshot-rejected"),
+                    .with_command_id("cmd-snapshot-rejected")
+                    .with_budget_checkpoint(BudgetCheckpoint::new("budget-2", 150, "USD")),
             )
             .unwrap();
 
@@ -1093,6 +1464,12 @@ mod tests {
         assert_eq!(snapshot.status.retained_confirmations, 1);
         assert_eq!(snapshot.status.dead_letters, 1);
         assert_eq!(snapshot.status.buffered_events, 1);
+        assert_eq!(snapshot.verified_commitment_manifests.len(), 0);
+        assert_eq!(snapshot.command_attestations.len(), 0);
+        assert_eq!(snapshot.command_convergences.len(), 2);
+        assert_eq!(snapshot.kernel_receipts.len(), 2);
+        assert_eq!(snapshot.kernel_receipts[0].status, KernelReceiptStatus::ConfirmedRemote);
+        assert_eq!(snapshot.kernel_receipts[1].status, KernelReceiptStatus::RejectedRemote);
         assert_eq!(snapshot.confirmations.len(), 1);
         assert_eq!(snapshot.confirmations[0].entity_id, "ORD-2");
         assert_eq!(snapshot.dead_letters.len(), 1);
@@ -1103,6 +1480,10 @@ mod tests {
         let json = runtime.snapshot_json_pretty().unwrap();
         let decoded: SyncRuntimeSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.status.dead_letters, 1);
+        assert_eq!(decoded.verified_commitment_manifests.len(), 0);
+        assert_eq!(decoded.command_attestations.len(), 0);
+        assert_eq!(decoded.command_convergences.len(), 2);
+        assert_eq!(decoded.kernel_receipts.len(), 2);
         assert_eq!(decoded.confirmations.len(), 1);
         assert_eq!(decoded.dead_letters.len(), 1);
         assert_eq!(decoded.buffered_events.len(), 1);

@@ -10,6 +10,10 @@ import { orderTools } from './orders.js';
 import { customObjectTools } from './custom-objects.js';
 import { vectorTools } from './vector.js';
 
+function namedLoader(modulePath, exportName) {
+  return () => import(modulePath).then((mod) => mod[exportName]);
+}
+
 /**
  * Tool categories for lazy loading
  */
@@ -47,7 +51,27 @@ const TOOL_MODULES = {
   checkout: () => import('./checkout.js').then((m) => m.default),
   compliance: () => import('./compliance.js').then((m) => m.default),
   catalog: () => import('./catalog.js').then((m) => m.default),
+  'agent-runtime': namedLoader('./agent-runtime.js', 'agentRuntimeTools'),
+  import: namedLoader('./import.js', 'importTools'),
+  policies: namedLoader('./policies.js', 'policyTools'),
+  'gift-cards': namedLoader('./gift-cards.js', 'giftCardTools'),
+  'store-credits': namedLoader('./store-credits.js', 'storeCreditTools'),
+  segments: namedLoader('./segments.js', 'segmentTools'),
+  'shipping-zones': namedLoader('./shipping-zones.js', 'shippingZoneTools'),
+  reviews: namedLoader('./reviews.js', 'reviewTools'),
+  wishlists: namedLoader('./wishlists.js', 'wishlistTools'),
+  loyalty: namedLoader('./loyalty.js', 'loyaltyTools'),
+  fraud: namedLoader('./fraud.js', 'fraudTools'),
+  audit: namedLoader('./audit.js', 'auditTools'),
+  'a2a-automation': namedLoader('./a2a-automation.js', 'a2aAutomationTools'),
+  'a2a-observability': namedLoader('./a2a-observability.js', 'a2aObservabilityTools'),
+  'a2a-platform': namedLoader('./a2a-platform.js', 'a2aPlatformTools'),
+  'a2a-intelligence': namedLoader('./a2a-intelligence.js', 'a2aIntelligenceTools'),
+  'agentic-runtime': () =>
+    import('../mcp-server.js').then((m) => m.getStaticAgenticRuntimeTools()),
 };
+
+const ALL_TOOL_CATEGORIES = Object.freeze(Object.keys(TOOL_MODULES));
 
 /**
  * ToolRegistry - Manages tool loading and access
@@ -193,31 +217,7 @@ export class ToolRegistry {
  * Agent to tool category mappings
  */
 export const AGENT_TOOL_CATEGORIES = {
-  'customer-service': [
-    'customers',
-    'orders',
-    'custom-objects',
-    'products',
-    'inventory',
-    'returns',
-    'carts',
-    'analytics',
-    'currency',
-    'tax',
-    'promotions',
-    'subscriptions',
-    'manufacturing',
-    'payments',
-    'shipments',
-    'suppliers',
-    'invoices',
-    'warranties',
-    'connectors',
-    'vector',
-    'a2a',
-    'agent-cards',
-    'x402',
-  ],
+  'customer-service': [...ALL_TOOL_CATEGORIES],
   checkout: [
     'carts',
     'products',
@@ -244,6 +244,8 @@ export const AGENT_TOOL_CATEGORIES = {
   tax: ['tax', 'currency'],
   sync: ['sync', 'proofs'],
   stablecoin: ['stablecoin'],
+  agents: ['agent-runtime', 'agent-cards', 'a2a'],
+  storefront: [],
   x402: ['x402', 'agent-cards', 'a2a'],
   'agent-cards': ['agent-cards', 'a2a'],
   a2a: ['a2a', 'agent-cards', 'x402'],

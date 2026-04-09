@@ -1,0 +1,917 @@
+{
+  "source": {
+    "cargoMetadata": "cargo metadata --no-deps --format-version 1",
+    "cliPackage": "cli/package.json",
+    "adminPackage": "admin/package.json"
+  },
+  "workspace": {
+    "version": "0.9.8",
+    "memberCount": 29,
+    "defaultMemberCount": 19,
+    "rustCrateCount": 21,
+    "bindingCrateCount": 8,
+    "members": [
+      {
+        "name": "stateset-dotnet",
+        "manifestPath": "bindings/dotnet/Cargo.toml",
+        "packageKind": "binding"
+      },
+      {
+        "name": "stateset-go",
+        "manifestPath": "bindings/go/Cargo.toml",
+        "packageKind": "binding"
+      },
+      {
+        "name": "stateset-java",
+        "manifestPath": "bindings/java/Cargo.toml",
+        "packageKind": "binding"
+      },
+      {
+        "name": "stateset-kotlin",
+        "manifestPath": "bindings/kotlin/Cargo.toml",
+        "packageKind": "binding"
+      },
+      {
+        "name": "stateset-embedded-node",
+        "manifestPath": "bindings/node/Cargo.toml",
+        "packageKind": "binding"
+      },
+      {
+        "name": "stateset-embedded-python",
+        "manifestPath": "bindings/python/Cargo.toml",
+        "packageKind": "binding"
+      },
+      {
+        "name": "stateset-swift",
+        "manifestPath": "bindings/swift/Cargo.toml",
+        "packageKind": "binding"
+      },
+      {
+        "name": "stateset-embedded-wasm",
+        "manifestPath": "bindings/wasm/Cargo.toml",
+        "packageKind": "binding"
+      },
+      {
+        "name": "stateset-a2a",
+        "manifestPath": "crates/stateset-a2a/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-authz",
+        "manifestPath": "crates/stateset-authz/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-benches",
+        "manifestPath": "crates/stateset-benches/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-core",
+        "manifestPath": "crates/stateset-core/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-crypto",
+        "manifestPath": "crates/stateset-crypto/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-db",
+        "manifestPath": "crates/stateset-db/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-embedded",
+        "manifestPath": "crates/stateset-embedded/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-ffi",
+        "manifestPath": "crates/stateset-ffi/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-http",
+        "manifestPath": "crates/stateset-http/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-integration-tests",
+        "manifestPath": "crates/stateset-integration-tests/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-jobs",
+        "manifestPath": "crates/stateset-jobs/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-macros",
+        "manifestPath": "crates/stateset-macros/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-migrations",
+        "manifestPath": "crates/stateset-migrations/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-observability",
+        "manifestPath": "crates/stateset-observability/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-policy",
+        "manifestPath": "crates/stateset-policy/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-pricing",
+        "manifestPath": "crates/stateset-pricing/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-primitives",
+        "manifestPath": "crates/stateset-primitives/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-protocol",
+        "manifestPath": "crates/stateset-protocol/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-sdk",
+        "manifestPath": "crates/stateset-sdk/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-sync",
+        "manifestPath": "crates/stateset-sync/Cargo.toml",
+        "packageKind": "crate"
+      },
+      {
+        "name": "stateset-test-utils",
+        "manifestPath": "crates/stateset-test-utils/Cargo.toml",
+        "packageKind": "crate"
+      }
+    ]
+  },
+  "productGraph": {
+    "forward": {
+      "stateset-a2a": [],
+      "stateset-authz": [],
+      "stateset-core": [
+        "stateset-crypto",
+        "stateset-primitives"
+      ],
+      "stateset-crypto": [],
+      "stateset-db": [
+        "stateset-core"
+      ],
+      "stateset-dotnet": [
+        "stateset-core",
+        "stateset-embedded"
+      ],
+      "stateset-embedded": [
+        "stateset-core",
+        "stateset-db",
+        "stateset-observability",
+        "stateset-pricing"
+      ],
+      "stateset-embedded-node": [
+        "stateset-core",
+        "stateset-crypto",
+        "stateset-db",
+        "stateset-embedded"
+      ],
+      "stateset-embedded-python": [
+        "stateset-core",
+        "stateset-db",
+        "stateset-embedded",
+        "stateset-primitives",
+        "stateset-sdk"
+      ],
+      "stateset-embedded-wasm": [
+        "stateset-core",
+        "stateset-pricing"
+      ],
+      "stateset-ffi": [
+        "stateset-core",
+        "stateset-embedded",
+        "stateset-primitives",
+        "stateset-sdk"
+      ],
+      "stateset-go": [
+        "stateset-core",
+        "stateset-embedded"
+      ],
+      "stateset-http": [
+        "stateset-a2a",
+        "stateset-authz",
+        "stateset-core",
+        "stateset-embedded",
+        "stateset-primitives"
+      ],
+      "stateset-java": [
+        "stateset-core",
+        "stateset-embedded",
+        "stateset-primitives"
+      ],
+      "stateset-jobs": [],
+      "stateset-kotlin": [
+        "stateset-core",
+        "stateset-embedded"
+      ],
+      "stateset-macros": [],
+      "stateset-migrations": [],
+      "stateset-observability": [],
+      "stateset-policy": [],
+      "stateset-pricing": [],
+      "stateset-primitives": [],
+      "stateset-protocol": [
+        "stateset-crypto",
+        "stateset-primitives"
+      ],
+      "stateset-sdk": [
+        "stateset-core",
+        "stateset-crypto",
+        "stateset-db",
+        "stateset-embedded",
+        "stateset-macros",
+        "stateset-observability",
+        "stateset-policy",
+        "stateset-primitives",
+        "stateset-sync"
+      ],
+      "stateset-swift": [
+        "stateset-core",
+        "stateset-embedded"
+      ],
+      "stateset-sync": [
+        "stateset-crypto"
+      ]
+    },
+    "layers": [
+      [
+        "stateset-a2a",
+        "stateset-authz",
+        "stateset-crypto",
+        "stateset-jobs",
+        "stateset-macros",
+        "stateset-migrations",
+        "stateset-observability",
+        "stateset-policy",
+        "stateset-pricing",
+        "stateset-primitives"
+      ],
+      [
+        "stateset-core",
+        "stateset-protocol",
+        "stateset-sync"
+      ],
+      [
+        "stateset-db",
+        "stateset-embedded-wasm"
+      ],
+      [
+        "stateset-embedded"
+      ],
+      [
+        "stateset-dotnet",
+        "stateset-embedded-node",
+        "stateset-go",
+        "stateset-http",
+        "stateset-java",
+        "stateset-kotlin",
+        "stateset-sdk",
+        "stateset-swift"
+      ],
+      [
+        "stateset-embedded-python",
+        "stateset-ffi"
+      ]
+    ],
+    "topFanIn": [
+      {
+        "name": "stateset-core",
+        "dependentCount": 13,
+        "dependents": [
+          "stateset-db",
+          "stateset-dotnet",
+          "stateset-embedded",
+          "stateset-embedded-node",
+          "stateset-embedded-python",
+          "stateset-embedded-wasm",
+          "stateset-ffi",
+          "stateset-go",
+          "stateset-http",
+          "stateset-java",
+          "stateset-kotlin",
+          "stateset-sdk",
+          "stateset-swift"
+        ]
+      },
+      {
+        "name": "stateset-embedded",
+        "dependentCount": 10,
+        "dependents": [
+          "stateset-dotnet",
+          "stateset-embedded-node",
+          "stateset-embedded-python",
+          "stateset-ffi",
+          "stateset-go",
+          "stateset-http",
+          "stateset-java",
+          "stateset-kotlin",
+          "stateset-sdk",
+          "stateset-swift"
+        ]
+      },
+      {
+        "name": "stateset-primitives",
+        "dependentCount": 7,
+        "dependents": [
+          "stateset-core",
+          "stateset-embedded-python",
+          "stateset-ffi",
+          "stateset-http",
+          "stateset-java",
+          "stateset-protocol",
+          "stateset-sdk"
+        ]
+      },
+      {
+        "name": "stateset-crypto",
+        "dependentCount": 5,
+        "dependents": [
+          "stateset-core",
+          "stateset-embedded-node",
+          "stateset-protocol",
+          "stateset-sdk",
+          "stateset-sync"
+        ]
+      },
+      {
+        "name": "stateset-db",
+        "dependentCount": 4,
+        "dependents": [
+          "stateset-embedded",
+          "stateset-embedded-node",
+          "stateset-embedded-python",
+          "stateset-sdk"
+        ]
+      },
+      {
+        "name": "stateset-observability",
+        "dependentCount": 2,
+        "dependents": [
+          "stateset-embedded",
+          "stateset-sdk"
+        ]
+      },
+      {
+        "name": "stateset-pricing",
+        "dependentCount": 2,
+        "dependents": [
+          "stateset-embedded",
+          "stateset-embedded-wasm"
+        ]
+      },
+      {
+        "name": "stateset-sdk",
+        "dependentCount": 2,
+        "dependents": [
+          "stateset-embedded-python",
+          "stateset-ffi"
+        ]
+      },
+      {
+        "name": "stateset-a2a",
+        "dependentCount": 1,
+        "dependents": [
+          "stateset-http"
+        ]
+      },
+      {
+        "name": "stateset-authz",
+        "dependentCount": 1,
+        "dependents": [
+          "stateset-http"
+        ]
+      },
+      {
+        "name": "stateset-macros",
+        "dependentCount": 1,
+        "dependents": [
+          "stateset-sdk"
+        ]
+      },
+      {
+        "name": "stateset-policy",
+        "dependentCount": 1,
+        "dependents": [
+          "stateset-sdk"
+        ]
+      },
+      {
+        "name": "stateset-sync",
+        "dependentCount": 1,
+        "dependents": [
+          "stateset-sdk"
+        ]
+      }
+    ]
+  },
+  "bindingTopology": [
+    {
+      "bindingDir": "bindings/dotnet",
+      "cargoPackage": "stateset-dotnet",
+      "publishedPackage": "",
+      "internalDeps": [
+        "stateset-core",
+        "stateset-embedded"
+      ]
+    },
+    {
+      "bindingDir": "bindings/go",
+      "cargoPackage": "stateset-go",
+      "publishedPackage": "",
+      "internalDeps": [
+        "stateset-core",
+        "stateset-embedded"
+      ]
+    },
+    {
+      "bindingDir": "bindings/java",
+      "cargoPackage": "stateset-java",
+      "publishedPackage": "",
+      "internalDeps": [
+        "stateset-core",
+        "stateset-embedded",
+        "stateset-primitives"
+      ]
+    },
+    {
+      "bindingDir": "bindings/kotlin",
+      "cargoPackage": "stateset-kotlin",
+      "publishedPackage": "",
+      "internalDeps": [
+        "stateset-core",
+        "stateset-embedded"
+      ]
+    },
+    {
+      "bindingDir": "bindings/node",
+      "cargoPackage": "stateset-embedded-node",
+      "publishedPackage": "@stateset/embedded",
+      "internalDeps": [
+        "stateset-core",
+        "stateset-crypto",
+        "stateset-db",
+        "stateset-embedded"
+      ]
+    },
+    {
+      "bindingDir": "bindings/python",
+      "cargoPackage": "stateset-embedded-python",
+      "publishedPackage": "",
+      "internalDeps": [
+        "stateset-core",
+        "stateset-db",
+        "stateset-embedded",
+        "stateset-primitives",
+        "stateset-sdk"
+      ]
+    },
+    {
+      "bindingDir": "bindings/swift",
+      "cargoPackage": "stateset-swift",
+      "publishedPackage": "",
+      "internalDeps": [
+        "stateset-core",
+        "stateset-embedded"
+      ]
+    },
+    {
+      "bindingDir": "bindings/wasm",
+      "cargoPackage": "stateset-embedded-wasm",
+      "publishedPackage": "@stateset/embedded-wasm",
+      "internalDeps": [
+        "stateset-core",
+        "stateset-pricing"
+      ]
+    }
+  ],
+  "excludedBindings": [
+    {
+      "directory": "bindings/php",
+      "name": "stateset-embedded-php",
+      "description": "PHP bindings for StateSet Embedded Commerce"
+    },
+    {
+      "directory": "bindings/ruby",
+      "name": "stateset-embedded-ruby",
+      "description": "Ruby bindings for StateSet Embedded Commerce"
+    }
+  ],
+  "cli": {
+    "binaryCount": 49,
+    "dependencyCount": 12,
+    "optionalDependencyCount": 13,
+    "topLevelSourceCounts": [
+      {
+        "name": "tools",
+        "count": 53
+      },
+      {
+        "name": "a2a",
+        "count": 44
+      },
+      {
+        "name": "channels",
+        "count": 29
+      },
+      {
+        "name": "adapters",
+        "count": 20
+      },
+      {
+        "name": "sync",
+        "count": 18
+      },
+      {
+        "name": "utils",
+        "count": 14
+      },
+      {
+        "name": "chains",
+        "count": 9
+      },
+      {
+        "name": "x402",
+        "count": 9
+      },
+      {
+        "name": "commands",
+        "count": 6
+      },
+      {
+        "name": "knowledge",
+        "count": 6
+      },
+      {
+        "name": "memory",
+        "count": 6
+      },
+      {
+        "name": "skills",
+        "count": 5
+      },
+      {
+        "name": "treasury",
+        "count": 5
+      },
+      {
+        "name": "providers",
+        "count": 4
+      },
+      {
+        "name": "autonomous",
+        "count": 3
+      },
+      {
+        "name": "heartbeat",
+        "count": 3
+      },
+      {
+        "name": "mpp",
+        "count": 3
+      },
+      {
+        "name": "plugins",
+        "count": 3
+      },
+      {
+        "name": "policies",
+        "count": 3
+      },
+      {
+        "name": "voice",
+        "count": 3
+      },
+      {
+        "name": "workflows",
+        "count": 3
+      },
+      {
+        "name": "approvals",
+        "count": 2
+      },
+      {
+        "name": "webhooks",
+        "count": 2
+      },
+      {
+        "name": "whatsapp",
+        "count": 2
+      },
+      {
+        "name": "agent-catalog.js",
+        "count": 1
+      },
+      {
+        "name": "agent-debugger.js",
+        "count": 1
+      },
+      {
+        "name": "agent-definitions.js",
+        "count": 1
+      },
+      {
+        "name": "agent-router.js",
+        "count": 1
+      },
+      {
+        "name": "agent-session-store.js",
+        "count": 1
+      },
+      {
+        "name": "agent-toolkit.js",
+        "count": 1
+      },
+      {
+        "name": "audit-store.js",
+        "count": 1
+      },
+      {
+        "name": "browser",
+        "count": 1
+      },
+      {
+        "name": "catalog",
+        "count": 1
+      },
+      {
+        "name": "checkout",
+        "count": 1
+      },
+      {
+        "name": "claude-harness.js",
+        "count": 1
+      },
+      {
+        "name": "cli-schema.js",
+        "count": 1
+      },
+      {
+        "name": "command-queue.js",
+        "count": 1
+      },
+      {
+        "name": "commerce.js",
+        "count": 1
+      },
+      {
+        "name": "compliance",
+        "count": 1
+      },
+      {
+        "name": "config",
+        "count": 1
+      },
+      {
+        "name": "config.js",
+        "count": 1
+      },
+      {
+        "name": "connectors",
+        "count": 1
+      },
+      {
+        "name": "context-guard.js",
+        "count": 1
+      },
+      {
+        "name": "context.js",
+        "count": 1
+      },
+      {
+        "name": "conversation-history.js",
+        "count": 1
+      },
+      {
+        "name": "credentials.js",
+        "count": 1
+      },
+      {
+        "name": "database.js",
+        "count": 1
+      },
+      {
+        "name": "discord",
+        "count": 1
+      },
+      {
+        "name": "doctor-checks.js",
+        "count": 1
+      },
+      {
+        "name": "dry-run.js",
+        "count": 1
+      },
+      {
+        "name": "env.js",
+        "count": 1
+      },
+      {
+        "name": "erc8004",
+        "count": 1
+      },
+      {
+        "name": "errors.js",
+        "count": 1
+      },
+      {
+        "name": "google-chat",
+        "count": 1
+      },
+      {
+        "name": "graceful-shutdown.js",
+        "count": 1
+      },
+      {
+        "name": "harness-hooks.js",
+        "count": 1
+      },
+      {
+        "name": "harness-utils.js",
+        "count": 1
+      },
+      {
+        "name": "imessage",
+        "count": 1
+      },
+      {
+        "name": "index.js",
+        "count": 1
+      },
+      {
+        "name": "load-env.js",
+        "count": 1
+      },
+      {
+        "name": "logger.js",
+        "count": 1
+      },
+      {
+        "name": "main-cli-options.js",
+        "count": 1
+      },
+      {
+        "name": "matrix",
+        "count": 1
+      },
+      {
+        "name": "mcp-conversation-context.js",
+        "count": 1
+      },
+      {
+        "name": "mcp-event-streamer.js",
+        "count": 1
+      },
+      {
+        "name": "mcp-schema-validator.js",
+        "count": 1
+      },
+      {
+        "name": "mcp-server.js",
+        "count": 1
+      },
+      {
+        "name": "mcp-tool-composer.js",
+        "count": 1
+      },
+      {
+        "name": "mcp-tool-discovery.js",
+        "count": 1
+      },
+      {
+        "name": "model-fallback.js",
+        "count": 1
+      },
+      {
+        "name": "offline.js",
+        "count": 1
+      },
+      {
+        "name": "output.js",
+        "count": 1
+      },
+      {
+        "name": "permissions.js",
+        "count": 1
+      },
+      {
+        "name": "privacy.js",
+        "count": 1
+      },
+      {
+        "name": "progress.js",
+        "count": 1
+      },
+      {
+        "name": "prompts.js",
+        "count": 1
+      },
+      {
+        "name": "retry-helpers.js",
+        "count": 1
+      },
+      {
+        "name": "scaffold-server.js",
+        "count": 1
+      },
+      {
+        "name": "scaffold-templates.js",
+        "count": 1
+      },
+      {
+        "name": "seeds",
+        "count": 1
+      },
+      {
+        "name": "session-persistence.js",
+        "count": 1
+      },
+      {
+        "name": "session.js",
+        "count": 1
+      },
+      {
+        "name": "settings.js",
+        "count": 1
+      },
+      {
+        "name": "signal",
+        "count": 1
+      },
+      {
+        "name": "slack",
+        "count": 1
+      },
+      {
+        "name": "standalone.js",
+        "count": 1
+      },
+      {
+        "name": "suggestions.js",
+        "count": 1
+      },
+      {
+        "name": "teams",
+        "count": 1
+      },
+      {
+        "name": "telegram",
+        "count": 1
+      },
+      {
+        "name": "telemetry.js",
+        "count": 1
+      },
+      {
+        "name": "theme.js",
+        "count": 1
+      },
+      {
+        "name": "tiers.js",
+        "count": 1
+      },
+      {
+        "name": "tool-schema.js",
+        "count": 1
+      },
+      {
+        "name": "tutorial.js",
+        "count": 1
+      },
+      {
+        "name": "ui.js",
+        "count": 1
+      },
+      {
+        "name": "x402-mcp-server.js",
+        "count": 1
+      }
+    ],
+    "toolModuleCount": 53,
+    "a2aModuleCount": 44
+  },
+  "admin": {
+    "dependencyCount": 25,
+    "devDependencyCount": 17,
+    "embeddedBindingSource": "file:../bindings/node"
+  }
+}

@@ -90,4 +90,43 @@ describe('GET /api/gateway/[...path]', () => {
     expect(body.data).toEqual({ status: 'ok' });
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
+
+  it('forwards query parameters to the gateway', async () => {
+    mockFetch.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === 'https://api.sandbox.stateset.app/api/auth/me') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ user: { id: 'user-1' } }),
+        };
+      }
+
+      if (input === 'http://127.0.0.1:8080/commands?limit=10') {
+        expect(init?.headers).toMatchObject({
+          Authorization: 'Bearer gateway-secret',
+        });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ commands: [] }),
+        };
+      }
+
+      throw new Error(`Unexpected fetch: ${input}`);
+    });
+
+    const { GET } = await import('@/app/api/gateway/[...path]/route');
+
+    const request = createSessionCookieRequest({
+      url: 'http://localhost:3000/api/gateway/commands?limit=10',
+    });
+
+    const response = await GET(request, {
+      params: Promise.resolve({ path: ['commands'] } as any),
+    });
+    const body = await expectSuccess<{ commands: unknown[] }>(response);
+
+    expect(body.data).toEqual({ commands: [] });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });

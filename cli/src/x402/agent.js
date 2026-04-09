@@ -382,7 +382,7 @@ export async function x402Fetch(url, options, config) {
 
     const paymentPayload = await createExactEvmPaymentPayload({
       requirement: requirements,
-      paymentRequired: parsed?.raw,
+      paymentRequired: /** @type {any} */ (parsed?.raw),
       signingKey,
       payerAddress,
       resourceUrl: url,

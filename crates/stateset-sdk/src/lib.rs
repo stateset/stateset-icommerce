@@ -10,14 +10,17 @@
 
 //! # StateSet SDK
 //!
-//! Unified facade for the StateSet iCommerce platform. This crate re-exports
-//! all StateSet crates through a single dependency with feature-gated includes.
+//! Rust-facing facade for the StateSet iCommerce platform.
+//!
+//! This crate provides a curated set of feature-gated re-exports for Rust
+//! consumers who want a single dependency for the core commerce engine and
+//! optional sync, crypto, policy, and macro surfaces.
 //!
 //! ## Quick Start
 //!
 //! ```toml
 //! [dependencies]
-//! stateset-sdk = "0.9.7"
+//! stateset-sdk = "0.9.8"
 //! ```
 //!
 //! ```rust,ignore
@@ -46,9 +49,10 @@
 //! With `sync` enabled, [`SyncRuntime`] and [`SyncRuntimeConfig`] bundle the
 //! sync engine, sequencer HTTP transport, and runtime auth/options into a
 //! single Rust-facing helper surface for config loading, sync operations,
-//! JSON-ready runtime snapshots, and local confirmation/dead-letter
-//! inspection. [`SyncRuntimeConfig`] can also load from JSON or environment
-//! variables via `from_file`, `from_json_str`, and `from_env`.
+//! JSON-ready runtime snapshots, kernel receipt queries, and local
+//! confirmation/dead-letter inspection. [`SyncRuntimeConfig`] can also load
+//! from JSON or environment variables via `from_file`, `from_json_str`, and
+//! `from_env`.
 
 // ── Core (always available) ──────────────────────────────────────────
 
@@ -178,8 +182,15 @@ pub mod prelude {
 
     #[cfg(feature = "sync")]
     pub use stateset_sync::{
-        DeadLetter, PullResult, PushConfirmation, PushResult, RemoteHead, SequenceAuthority,
-        SequencerHttpTransport, SyncConfig, SyncEngine, SyncError, SyncEvent, SyncStatus,
+        AttestationError, BudgetAuthorization, BudgetCheckpoint, CommandAttestation,
+        CommandConvergence, CommandInclusionProof, CommitmentManifest, CommitmentTrustPolicy,
+        CounterpartyCommitment, CounterpartyConvergenceStatus, DeadLetter, KernelExecutionError,
+        KernelMetadata, KernelReceipt, KernelReceiptStatus, KernelTransaction,
+        ManifestVerificationError, PolicyCheckpoint, PolicyDecision, PullResult, PushConfirmation,
+        PushResult, RemoteHead, SequenceAuthority, SequencerHttpTransport, SyncConfig, SyncEngine,
+        SyncError, SyncEvent, SyncStatus, VerifiedCommitmentManifest,
+        compute_commitment_manifest_hash, sign_commitment_manifest, verify_commitment_manifest,
+        verify_commitment_manifest_against_state,
     };
 }
 

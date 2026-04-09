@@ -58,10 +58,11 @@ async function proxyToGateway(
     headers['Authorization'] = `Bearer ${GATEWAY_API_KEY}`;
   }
 
-  const url = `${GATEWAY_URL}${path}`;
+  const url = new URL(path, GATEWAY_URL);
+  url.search = request.nextUrl.search;
 
   try {
-    const response = await fetch(url, {
+    const response = await fetch(url.toString(), {
       method: request.method,
       headers,
       signal: AbortSignal.timeout(10_000),

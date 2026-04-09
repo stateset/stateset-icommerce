@@ -14,6 +14,7 @@ import { requireCsrf } from './csrf';
 
 /** Default max request body size: 1MB */
 const DEFAULT_MAX_BODY_SIZE = 1_048_576;
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 interface ErrorHandlerOptions {
   /** When true, sends errors as SSE events instead of JSON (for streaming endpoints) */
@@ -28,6 +29,48 @@ type RouteHandler = (
   request: NextRequest,
   context?: { params: Promise<Record<string, string>> }
 ) => Promise<NextResponse | Response>;
+
+async function requestBodyExceedsLimit(
+  request: NextRequest,
+  maxSize: number
+): Promise<boolean> {
+  if (SAFE_METHODS.has(request.method.toUpperCase()) || !request.body) {
+    return false;
+  }
+
+  const clone = request.clone();
+  if (!clone.body) {
+    return false;
+  }
+
+  const reader = clone.body.getReader();
+  let total = 0;
+  let exceeded = false;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return false;
+      }
+
+      total += value.byteLength;
+      if (total > maxSize) {
+        exceeded = true;
+        return true;
+      }
+    }
+  } finally {
+    if (exceeded) {
+      try {
+        void reader.cancel();
+      } catch {
+        // Best-effort cleanup for the cloned request stream.
+      }
+    }
+    reader.releaseLock();
+  }
+}
 
 /**
  * Wrap an API route handler with error handling, request context, and logging.
@@ -68,6 +111,9 @@ export function withErrorHandler(
         const contentLength = request.headers.get('content-length');
         const maxSize = options.maxBodySize ?? DEFAULT_MAX_BODY_SIZE;
         if (contentLength && parseInt(contentLength, 10) > maxSize) {
+          return sendError(413, `Request body exceeds maximum size of ${maxSize} bytes`, 'PAYLOAD_TOO_LARGE');
+        }
+        if (await requestBodyExceedsLimit(request, maxSize)) {
           return sendError(413, `Request body exceeds maximum size of ${maxSize} bytes`, 'PAYLOAD_TOO_LARGE');
         }
 

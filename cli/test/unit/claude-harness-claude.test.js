@@ -7,6 +7,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import {
   __resetClaudeQueryImplForTest,
   __setClaudeQueryImplForTest,
+  createAgentSession,
   createAgentStreamSession,
   runAgentLoop,
   runAgentStream,
@@ -199,6 +200,63 @@ describe('Claude harness paths', () => {
     cleanupDb(dbPath);
   });
 
+  it('passes autonomousEngine into the Claude MCP server for runAgentLoop', async () => {
+    const dbPath = newDbPath();
+    const delegated = [];
+
+    __setClaudeQueryImplForTest(({ options }) =>
+      (async function* () {
+        const delegateResult = await options.mcpServers['stateset-commerce'].executeTool(
+          'delegate_to_agent',
+          {
+            agent_name: 'orders',
+            task_description: 'List pending orders',
+            context: { customerId: 'cust_001' },
+          },
+          { includeHooks: false },
+        );
+
+        assert.equal(delegateResult.success, true);
+        assert.equal(delegateResult.status, 'success');
+        assert.equal(delegateResult.result.success, true);
+        assert.equal(delegateResult.result.delegatedTo, 'orders');
+
+        yield {
+          sessionId: 'sess-claude-delegate',
+          type: 'result',
+          result: 'Delegation complete',
+        };
+      })(),
+    );
+
+    const result = await runAgentLoop({
+      request: 'Delegate to orders',
+      provider: 'claude',
+      model: 'claude-test',
+      dbPath,
+      allowApply: true,
+      enableSync: false,
+      enableMemory: false,
+      autonomousEngine: {
+        async executeAgentRequest(agentName, taskDescription, context) {
+          delegated.push({ agentName, taskDescription, context });
+          return { status: 'completed', agentName, taskDescription, context };
+        },
+      },
+    });
+
+    assert.equal(result.response, 'Delegation complete');
+    assert.deepEqual(delegated, [
+      {
+        agentName: 'orders',
+        taskDescription: 'List pending orders',
+        context: { customerId: 'cust_001' },
+      },
+    ]);
+
+    cleanupDb(dbPath);
+  });
+
   it('raises a watchdog timeout on the Claude SDK path and persists the failure', async () => {
     const dbPath = newDbPath();
     const sessionStore = createSessionStore();
@@ -312,6 +370,126 @@ describe('Claude harness paths', () => {
     assert.equal(sessionStore.upserts[0].payload.lastResponse, 'Streaming response complete');
     assert.equal(sessionStore.upserts[0].payload.lastError, null);
     assert.ok(sessionStore.upserts[0].payload.promptReport);
+
+    cleanupDb(dbPath);
+  });
+
+  it('passes autonomousEngine into the Claude MCP server for runAgentStream', async () => {
+    const dbPath = newDbPath();
+    const received = [];
+    const delegated = [];
+
+    __setClaudeQueryImplForTest(({ options }) =>
+      (async function* () {
+        const delegateResult = await options.mcpServers['stateset-commerce'].executeTool(
+          'delegate_to_agent',
+          {
+            agent_name: 'payments',
+            task_description: 'Review payment intents',
+            context: { orderId: 'ord_123' },
+          },
+          { includeHooks: false },
+        );
+
+        assert.equal(delegateResult.success, true);
+        assert.equal(delegateResult.result.success, true);
+        assert.equal(delegateResult.result.delegatedTo, 'payments');
+
+        yield {
+          sessionId: 'sess-stream-delegate',
+          type: 'result',
+          result: 'Streaming delegation complete',
+        };
+      })(),
+    );
+
+    for await (const message of runAgentStream({
+      request: 'Delegate streaming work',
+      provider: 'claude',
+      model: 'claude-test',
+      dbPath,
+      allowApply: true,
+      enableSync: false,
+      autonomousEngine: {
+        async executeAgentRequest(agentName, taskDescription, context) {
+          delegated.push({ agentName, taskDescription, context });
+          return { status: 'completed', agentName, taskDescription, context };
+        },
+      },
+    })) {
+      received.push(message);
+    }
+
+    assert.ok(
+      received.some(
+        (message) => message.type === 'result' && message.result === 'Streaming delegation complete',
+      ),
+    );
+    assert.deepEqual(delegated, [
+      {
+        agentName: 'payments',
+        taskDescription: 'Review payment intents',
+        context: { orderId: 'ord_123' },
+      },
+    ]);
+
+    cleanupDb(dbPath);
+  });
+
+  it('passes autonomousEngine through createAgentSession queries', async () => {
+    const dbPath = newDbPath();
+    const delegated = [];
+
+    __setClaudeQueryImplForTest(({ options }) =>
+      (async function* () {
+        const delegateResult = await options.mcpServers['stateset-commerce'].executeTool(
+          'delegate_to_agent',
+          {
+            agent_name: 'inventory',
+            task_description: 'Check low-stock SKUs',
+            context: { threshold: 5 },
+          },
+          { includeHooks: false },
+        );
+
+        assert.equal(delegateResult.success, true);
+        assert.equal(delegateResult.result.success, true);
+        assert.equal(delegateResult.result.delegatedTo, 'inventory');
+
+        yield {
+          sessionId: 'sess-query-delegate',
+          type: 'result',
+          result: 'Query delegation complete',
+        };
+      })(),
+    );
+
+    const session = createAgentSession({
+      dbPath,
+      provider: 'claude',
+      model: 'claude-test',
+      allowApply: true,
+      enableSync: false,
+      enableMemory: false,
+      autonomousEngine: {
+        async executeAgentRequest(agentName, taskDescription, context) {
+          delegated.push({ agentName, taskDescription, context });
+          return { status: 'completed', agentName, taskDescription, context };
+        },
+      },
+    });
+
+    const result = await session.query('Delegate inventory review');
+
+    assert.equal(result.response, 'Query delegation complete');
+    assert.equal(session.getSessionId(), 'sess-query-delegate');
+    assert.deepEqual(delegated, [
+      {
+        agentName: 'inventory',
+        taskDescription: 'Check low-stock SKUs',
+        context: { threshold: 5 },
+      },
+    ]);
 
     cleanupDb(dbPath);
   });
@@ -579,6 +757,79 @@ it('keeps interactive sessions idle-safe between turns and persists turn account
   assert.ok(sessionStore.runs[1].payload.promptReport);
   assert.equal(sessionStore.runs[1].payload.promptReport.historySource, 'live_session');
   assert.equal(sessionStore.runs[1].payload.promptReport.historyInjected, true);
+
+  cleanupDb(dbPath);
+});
+
+it('passes autonomousEngine into interactive session MCP servers', async () => {
+  const dbPath = newDbPath();
+  const received = [];
+  const delegated = [];
+
+  __setClaudeQueryImplForTest(({ prompt, options }) =>
+    (async function* () {
+      const input = prompt[Symbol.asyncIterator]();
+      const firstTurn = await input.next();
+      assert.equal(firstTurn.done, false);
+      assert.equal(firstTurn.value.message.content[0].text, 'Delegate from interactive session');
+
+      const delegateResult = await options.mcpServers['stateset-commerce'].executeTool(
+        'delegate_to_agent',
+        {
+          agent_name: 'inventory',
+          task_description: 'Check stock for SKU-42',
+          context: { sku: 'SKU-42' },
+        },
+        { includeHooks: false },
+      );
+
+      assert.equal(delegateResult.success, true);
+      assert.equal(delegateResult.result.success, true);
+      assert.equal(delegateResult.result.delegatedTo, 'inventory');
+
+      yield {
+        sessionId: 'sess-interactive-delegate',
+        type: 'result',
+        result: 'Interactive delegation complete',
+      };
+    })(),
+  );
+
+  const session = createAgentStreamSession({
+    provider: 'claude',
+    model: 'claude-test',
+    dbPath,
+    allowApply: true,
+    enableSync: false,
+    autonomousEngine: {
+      async executeAgentRequest(agentName, taskDescription, context) {
+        delegated.push({ agentName, taskDescription, context });
+        return { status: 'completed', agentName, taskDescription, context };
+      },
+    },
+  });
+
+  const consume = (async () => {
+    for await (const message of session.stream()) {
+      received.push(message);
+    }
+  })();
+
+  session.send('Delegate from interactive session');
+  await consume;
+
+  assert.ok(
+    received.some(
+      (message) => message.type === 'result' && message.result === 'Interactive delegation complete',
+    ),
+  );
+  assert.deepEqual(delegated, [
+    {
+      agentName: 'inventory',
+      taskDescription: 'Check stock for SKU-42',
+      context: { sku: 'SKU-42' },
+    },
+  ]);
 
   cleanupDb(dbPath);
 });

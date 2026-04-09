@@ -69,7 +69,9 @@ function persistFallbackDatabaseState(state) {
   fs.renameSync(tmpPath, state.storagePath);
   try {
     fs.chmodSync(state.storagePath, 0o600);
-  } catch {}
+  } catch {
+    // Best-effort permission hardening; some filesystems do not support chmod.
+  }
 }
 
 function getFallbackDatabaseState(dbPath) {

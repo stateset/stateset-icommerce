@@ -9,6 +9,7 @@
  * - Preview mode (allowWrite=false) vs write mode
  * - Source-reading security pattern verification
  * - SCAFFOLD_TOOL_NAMES export
+ * - SCAFFOLD_MCP_TOOL_NAMES export
  * - File/directory operations (write_file, read_file, list_files)
  * - Seed database tool
  */
@@ -26,12 +27,14 @@ import os from 'node:os';
 let mod;
 let createScaffoldMcpServer;
 let SCAFFOLD_TOOL_NAMES;
+let SCAFFOLD_MCP_TOOL_NAMES;
 let moduleLoaded = false;
 
 try {
   mod = await import('../../src/scaffold-server.js');
   createScaffoldMcpServer = mod.createScaffoldMcpServer;
   SCAFFOLD_TOOL_NAMES = mod.SCAFFOLD_TOOL_NAMES;
+  SCAFFOLD_MCP_TOOL_NAMES = mod.SCAFFOLD_MCP_TOOL_NAMES;
   moduleLoaded = true;
 } catch {
   // @anthropic-ai/claude-agent-sdk may not be available
@@ -393,6 +396,26 @@ describe('SCAFFOLD_TOOL_NAMES', () => {
       SCAFFOLD_TOOL_NAMES.forEach((name) => {
         assert.equal(typeof name, 'string');
       });
+    });
+  }
+});
+
+describe('SCAFFOLD_MCP_TOOL_NAMES', () => {
+  it('source exports SCAFFOLD_MCP_TOOL_NAMES array', () => {
+    assert.ok(
+      source.includes('export const SCAFFOLD_MCP_TOOL_NAMES'),
+      'Must export SCAFFOLD_MCP_TOOL_NAMES',
+    );
+  });
+
+  if (moduleLoaded) {
+    it('runtime SCAFFOLD_MCP_TOOL_NAMES matches scaffold tool names with MCP prefix', () => {
+      assert.ok(Array.isArray(SCAFFOLD_MCP_TOOL_NAMES));
+      assert.equal(SCAFFOLD_MCP_TOOL_NAMES.length, SCAFFOLD_TOOL_NAMES.length);
+      assert.deepStrictEqual(
+        SCAFFOLD_MCP_TOOL_NAMES,
+        SCAFFOLD_TOOL_NAMES.map((name) => `mcp__stateset-scaffold__${name}`),
+      );
     });
   }
 });

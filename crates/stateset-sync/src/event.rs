@@ -5,6 +5,122 @@ use sha2::{Digest, Sha256};
 use stateset_crypto::hash::compute_payload_plain_hash;
 use uuid::Uuid;
 
+/// Policy outcome captured at local transaction time.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyDecision {
+    /// The local policy layer allowed the operation to proceed.
+    Allowed,
+    /// The local policy layer denied the operation.
+    Denied,
+    /// The local policy layer requires explicit approval before proceeding.
+    RequiresApproval,
+}
+
+/// Durable policy checkpoint attached to a local sync event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PolicyCheckpoint {
+    /// Policy domain used during evaluation.
+    pub domain: String,
+    /// Outcome of the evaluation.
+    pub decision: PolicyDecision,
+    /// Optional operator-facing explanation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl PolicyCheckpoint {
+    /// Create a new policy checkpoint.
+    #[must_use]
+    pub fn new(domain: impl Into<String>, decision: PolicyDecision) -> Self {
+        Self { domain: domain.into(), decision, reason: None }
+    }
+
+    /// Attach a human-readable reason to the checkpoint.
+    #[must_use]
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
+    }
+}
+
+/// Budget reservation metadata captured at local transaction time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BudgetCheckpoint {
+    /// Local or remote budget identifier.
+    pub budget_id: String,
+    /// Amount reserved or consumed, expressed in minor units.
+    pub reserved_amount_minor: u64,
+    /// ISO-style currency code for the reservation.
+    pub currency: String,
+    /// Remaining budget after the reservation, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_amount_minor: Option<u64>,
+}
+
+impl BudgetCheckpoint {
+    /// Create a new budget checkpoint.
+    #[must_use]
+    pub fn new(
+        budget_id: impl Into<String>,
+        reserved_amount_minor: u64,
+        currency: impl Into<String>,
+    ) -> Self {
+        Self {
+            budget_id: budget_id.into(),
+            reserved_amount_minor,
+            currency: currency.into(),
+            remaining_amount_minor: None,
+        }
+    }
+
+    /// Attach the remaining minor-unit budget after this reservation.
+    #[must_use]
+    pub const fn with_remaining_amount_minor(mut self, remaining_amount_minor: u64) -> Self {
+        self.remaining_amount_minor = Some(remaining_amount_minor);
+        self
+    }
+}
+
+/// Typed local-kernel metadata that can travel with sync events.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KernelMetadata {
+    /// Optional policy checkpoint captured before the mutation was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PolicyCheckpoint>,
+    /// Optional budget checkpoint captured before or during execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<BudgetCheckpoint>,
+}
+
+impl KernelMetadata {
+    /// Create an empty kernel metadata envelope.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Attach a policy checkpoint.
+    #[must_use]
+    pub fn with_policy(mut self, policy: PolicyCheckpoint) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// Attach a budget checkpoint.
+    #[must_use]
+    pub fn with_budget(mut self, budget: BudgetCheckpoint) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+
+    /// Whether this envelope is empty.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.policy.is_none() && self.budget.is_none()
+    }
+}
+
 /// Identifies which system assigned [`SyncEvent::sequence`].
 ///
 /// Local outbox ordering is only meaningful within one agent's pending queue.
@@ -85,6 +201,9 @@ pub struct SyncEvent {
     /// Optional agent key id used for the recorded signature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_key_id: Option<u32>,
+    /// Optional kernel metadata captured alongside the local transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<KernelMetadata>,
     /// Timestamp when the event was created.
     pub timestamp: DateTime<Utc>,
 }
@@ -115,6 +234,7 @@ impl SyncEvent {
             base_version: None,
             source_agent_id: None,
             agent_key_id: None,
+            kernel: None,
             timestamp: Utc::now(),
         }
     }
@@ -147,6 +267,7 @@ impl SyncEvent {
             base_version: None,
             source_agent_id: None,
             agent_key_id: None,
+            kernel: None,
             timestamp,
         }
     }
@@ -239,6 +360,28 @@ impl SyncEvent {
         self
     }
 
+    /// Attach a policy checkpoint to the event's kernel metadata.
+    #[must_use]
+    pub fn with_policy_checkpoint(mut self, policy: PolicyCheckpoint) -> Self {
+        let kernel = self.kernel.get_or_insert_with(KernelMetadata::new);
+        kernel.policy = Some(policy);
+        self
+    }
+
+    /// Attach a budget checkpoint to the event's kernel metadata.
+    #[must_use]
+    pub fn with_budget_checkpoint(mut self, budget: BudgetCheckpoint) -> Self {
+        let kernel = self.kernel.get_or_insert_with(KernelMetadata::new);
+        kernel.budget = Some(budget);
+        self
+    }
+
+    /// Return the kernel metadata attached to the event, if any.
+    #[must_use]
+    pub const fn kernel_metadata(&self) -> Option<&KernelMetadata> {
+        self.kernel.as_ref()
+    }
+
     /// Return the canonical remote sequence, if this event has one.
     #[must_use]
     pub const fn canonical_sequence(&self) -> Option<u64> {
@@ -319,6 +462,7 @@ mod tests {
         assert!(event.base_version.is_none());
         assert!(event.source_agent_id.is_none());
         assert!(event.agent_key_id.is_none());
+        assert!(event.kernel.is_none());
     }
 
     #[test]
@@ -330,7 +474,15 @@ mod tests {
                 .with_command_id("cmd-1")
                 .with_base_version(7)
                 .with_source_agent_id("agent-7")
-                .with_agent_key_id(11);
+                .with_agent_key_id(11)
+                .with_policy_checkpoint(
+                    PolicyCheckpoint::new("orders", PolicyDecision::Allowed)
+                        .with_reason("within threshold"),
+                )
+                .with_budget_checkpoint(
+                    BudgetCheckpoint::new("budget-1", 2500, "USD")
+                        .with_remaining_amount_minor(7500),
+                );
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: SyncEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, event.id);
@@ -347,6 +499,23 @@ mod tests {
         assert_eq!(deserialized.base_version, Some(7));
         assert_eq!(deserialized.source_agent_id.as_deref(), Some("agent-7"));
         assert_eq!(deserialized.agent_key_id, Some(11));
+        assert_eq!(
+            deserialized.kernel.as_ref().and_then(|kernel| kernel.policy.as_ref()).map(|policy| (
+                policy.domain.as_str(),
+                policy.decision,
+                policy.reason.as_deref()
+            )),
+            Some(("orders", PolicyDecision::Allowed, Some("within threshold")))
+        );
+        assert_eq!(
+            deserialized.kernel.as_ref().and_then(|kernel| kernel.budget.as_ref()).map(|budget| (
+                budget.budget_id.as_str(),
+                budget.reserved_amount_minor,
+                budget.currency.as_str(),
+                budget.remaining_amount_minor
+            )),
+            Some(("budget-1", 2500, "USD", Some(7500)))
+        );
     }
 
     #[test]
@@ -390,6 +559,33 @@ mod tests {
             .with_agent_signature_bundle(json!({"ml_dsa_65_signature": "cafebabe"}));
         assert_eq!(event.agent_signature_scheme, Some(2));
         assert_eq!(event.agent_signature_bundle, Some(json!({"ml_dsa_65_signature": "cafebabe"})));
+    }
+
+    #[test]
+    fn event_with_kernel_checkpoints() {
+        let event = SyncEvent::new("order.created", "order", "ORD-1", json!({}))
+            .with_policy_checkpoint(
+                PolicyCheckpoint::new("orders", PolicyDecision::RequiresApproval)
+                    .with_reason("high value"),
+            )
+            .with_budget_checkpoint(
+                BudgetCheckpoint::new("budget-agent-1", 50, "USD").with_remaining_amount_minor(950),
+            );
+
+        let kernel = event.kernel_metadata().expect("kernel metadata");
+        assert_eq!(
+            kernel.policy,
+            Some(
+                PolicyCheckpoint::new("orders", PolicyDecision::RequiresApproval)
+                    .with_reason("high value")
+            )
+        );
+        assert_eq!(
+            kernel.budget,
+            Some(
+                BudgetCheckpoint::new("budget-agent-1", 50, "USD").with_remaining_amount_minor(950)
+            )
+        );
     }
 
     #[test]

@@ -21,6 +21,10 @@ pub enum SyncError {
     #[error("transport error: {0}")]
     Transport(String),
 
+    /// A remote authority or signer failed local trust policy checks.
+    #[error("trust error: {0}")]
+    Trust(String),
+
     /// A conflict was detected between local and remote events.
     #[error("conflict on entity {entity_type}/{entity_id}: {description}")]
     Conflict {
@@ -90,6 +94,12 @@ mod tests {
     fn error_display_transport() {
         let err = SyncError::Transport("connection refused".into());
         assert_eq!(err.to_string(), "transport error: connection refused");
+    }
+
+    #[test]
+    fn error_display_trust() {
+        let err = SyncError::Trust("untrusted sequencer".into());
+        assert_eq!(err.to_string(), "trust error: untrusted sequencer");
     }
 
     #[test]

@@ -45,6 +45,17 @@ async function withTempTreasuryFixture(callback) {
   }
 }
 
+async function withTempDbFixture(callback) {
+  const tempDir = await mkdtemp(join(os.tmpdir(), 'stateset-mcp-server-'));
+  const dbPath = join(tempDir, 'store.db');
+
+  try {
+    return await callback({ tempDir, dbPath });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function seedTreasuryBalance({ dbPath, pricingPath, agentId = 'buyer-agent', amount = 1 }) {
   const ctx = await loadTreasuryContext({ dbPath, pricingPath });
   await recordDeposit(
@@ -159,6 +170,18 @@ describe('mcp-server', () => {
       assert.ok(server.instance);
     });
 
+    it('should create a working server from dbPath without an explicit commerce instance', async () => {
+      await withTempDbFixture(async ({ dbPath }) => {
+        const server = createStatesetMcpServer({ dbPath, allowApply: false });
+        const result = await server.executeTool('list_customers');
+
+        assert.equal(result.success, true);
+        assert.equal(result.status, 'success');
+        assert.equal(result.result.count, 0);
+        assert.deepEqual(result.result.customers, []);
+      });
+    });
+
     it('should accept allowApply parameter', () => {
       const server1 = createStatesetMcpServer({
         commerce: mockCommerce,
@@ -269,6 +292,26 @@ describe('mcp-server', () => {
       assert.ok(server);
       assert.strictEqual(server.name, 'stateset-commerce');
       assert.ok(server.instance);
+    });
+
+    it('should preserve declared policy domains for agentic runtime tools', async () => {
+      const server = createStatesetMcpServer({
+        commerce: mockCommerce,
+        allowApply: true,
+        autonomousEngine: {
+          executeAgentRequest: async () => ({ status: 'completed' }),
+        },
+      });
+
+      const result = await server.executeTool('delegate_to_agent', {
+        agent_name: 'orders',
+        task_description: 'Review pending orders over $500',
+        context: { limit: 10 },
+      });
+
+      assert.equal(result.status, 'success');
+      assert.equal(result.policy.domain, 'agentic');
+      assert.equal(result.runtime.policyDomain, 'agentic');
     });
 
     it('should expose the active MCP event stream on server object', () => {
@@ -836,6 +879,29 @@ describe('mcp-server', () => {
       // SDK internal properties
       assert.ok('_registeredTools' in server.instance);
       assert.ok('_toolHandlersInitialized' in server.instance);
+    });
+
+    it('should expose connect and close helpers on the returned server wrapper', async () => {
+      const server = createStatesetMcpServer({ commerce: mockCommerce });
+      const calls = [];
+      server.instance.connect = async (...args) => {
+        calls.push({ method: 'connect', args });
+        return { connected: true };
+      };
+      server.instance.server.close = async (...args) => {
+        calls.push({ method: 'close', args });
+        return { closed: true };
+      };
+
+      const connectResult = await server.connect('transport-demo');
+      const closeResult = await server.close('reason-demo');
+
+      assert.deepEqual(connectResult, { connected: true });
+      assert.deepEqual(closeResult, { closed: true });
+      assert.deepEqual(calls, [
+        { method: 'connect', args: ['transport-demo'] },
+        { method: 'close', args: ['reason-demo'] },
+      ]);
     });
   });
 

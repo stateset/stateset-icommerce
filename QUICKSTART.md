@@ -157,7 +157,7 @@ stateset "who are my top customers?"
 stateset serve --port 3000
 ```
 
-Now you have a full REST API at `http://localhost:3000/api/v1/` with 53+ endpoints and OpenAPI docs at `/api/v1/docs`.
+Now you have a full REST API at `http://localhost:3000/api/v1/` with OpenAPI docs at `/api/v1/docs`.
 
 ---
 
@@ -320,12 +320,15 @@ Your App / AI Agent / CLI
 
 ## What's Included
 
-- **53+ REST endpoints** with OpenAPI 3.1 docs
-- **11 language bindings**: Rust, Python, Node.js, Go, Java, Kotlin, Swift, .NET, Ruby, PHP, WASM
+- **Full REST API** with OpenAPI 3.1 docs
+- **Rust plus native bindings** for Node.js, Python, Go, Java, Kotlin, Swift, .NET, Ruby, PHP, and WASM
 - **9 database migrations** with rollback support
-- **17 A2A modules** for autonomous agent commerce
-- **4,000+ tests** across the Rust workspace
+- **A2A commerce modules** for autonomous agent workflows
+- **Repo-wide Rust and JS verification** in the root `npm run check` pipeline
 - **~3x performance** vs naive implementation (fat LTO, native CPU, lock-free atomics)
+- **Generated inventories** for current workspace topology and MCP/tool surfaces:
+  [Workspace Inventory](./docs/src/appendix/workspace-inventory.md) and
+  [MCP Tool Inventory](./docs/src/appendix/mcp-tool-inventory.md)
 
 ## Next Steps
 

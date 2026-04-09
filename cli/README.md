@@ -2,7 +2,7 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 0.9.7
+**Version:** 0.9.8
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
@@ -28,8 +28,8 @@ The StateSet CLI is built on the premise that commerce infrastructure should be 
 
 ### Core
 - **Natural Language Interface** - Ask Claude to perform commerce operations
-- **Multi-Agent System** - 17 specialized agents auto-route to the best handler
-- **90+ MCP Tools** - Full commerce API exposed to Claude
+- **Multi-Agent Routing** - Domain specialists auto-route to the best handler
+- **Generated MCP Tool Registry** - Full commerce API exposed to Claude and other MCP-compatible runtimes
 - **Hybrid Vector Search** - Semantic + BM25 search for products, customers, orders, and inventory (requires `OPENAI_API_KEY`)
 - **Multi-turn Sessions** - Resume conversations for complex workflows
 - **Preview Mode** - See what would happen before making changes
@@ -350,21 +350,27 @@ Tools exposed:
 
 ## Architecture
 
+The current CLI binary count, source-group breakdown, agent registry, and MCP surface are
+tracked in generated inventories:
+- [Agent Inventory](../docs/src/appendix/agent-inventory.md)
+- [Workspace Inventory](../docs/src/appendix/workspace-inventory.md)
+- [MCP Tool Inventory](../docs/src/appendix/mcp-tool-inventory.md)
+
 ```
 stateset-icommerce/
 ├── crates/
-│   ├── stateset-core/       # Pure domain models (254 types, 18 modules)
-│   ├── stateset-db/         # SQLite + PostgreSQL (53 tables)
-│   └── stateset-embedded/   # High-level unified API (671+ methods)
+│   ├── stateset-core/       # Pure domain models and services
+│   ├── stateset-db/         # SQLite + PostgreSQL storage
+│   └── stateset-embedded/   # High-level unified Rust API
 ├── bindings/
 │   ├── node/                # @stateset/embedded (NAPI)
 │   ├── python/              # stateset-embedded (PyO3)
 │   └── wasm/                # WebAssembly for browsers
 └── cli/
-    ├── bin/                 # 26 CLI programs
+    ├── bin/                 # CLI entry points
     ├── src/
     │   ├── claude-harness.js    # Multi-agent SDK integration
-    │   ├── mcp-server.js        # 90+ MCP tools for Claude
+    │   ├── mcp-server.js        # MCP server and tool registry
     │   ├── sync/                # VES Protocol & gRPC streaming
     │   │   ├── grpc-client.js   # Bidirectional gRPC client
     │   │   ├── engine.js        # Sync orchestration
@@ -382,7 +388,7 @@ stateset-icommerce/
     │   ├── session.js           # Session persistence
     │   └── database.js          # Connection pooling
     └── .claude/
-        ├── agents/          # 17 specialized agent definitions
+        ├── agents/          # Agent definitions
         └── skills/          # Domain knowledge documents
 ```
 
@@ -784,27 +790,11 @@ await client.startSyncStream();
 
 ## Agent System
 
-17 specialized agents handle different commerce domains:
-
-| Agent | Tools | Purpose |
-|-------|-------|---------|
-| **checkout** | 14 ACP tools | Shopping cart & payment flows |
-| **orders** | 6 tools | Order lifecycle & fulfillment |
-| **inventory** | 6 tools | Stock management & reservations |
-| **returns** | 5 tools | RMA & refund processing |
-| **analytics** | 10 tools | Business intelligence & forecasting |
-| **promotions** | 10 tools | Campaigns, discounts, coupons |
-| **subscriptions** | 15 tools | Subscription plans & recurring billing |
-| **manufacturing** | 11 tools | BOM & work order management |
-| **payments** | 5 tools | Payment processing & refunds |
-| **shipments** | 5 tools | Shipment tracking & delivery |
-| **suppliers** | 8 tools | Supplier & purchase order management |
-| **invoices** | 7 tools | B2B invoice management |
-| **warranties** | 6 tools | Product warranty & claims |
-| **currency** | 8 tools | Multi-currency & exchange rates |
-| **tax** | 9 tools | Tax calculation & compliance |
-| **storefront** | 12 tools | E-commerce site scaffolding |
-| **customer-service** | All 87+ tools | Full-service fallback agent |
+Specialized agents handle different commerce domains, including customer
+service, checkout, orders, inventory, analytics, sync, stablecoin payments,
+and multi-agent orchestration. The exact current registry, descriptions, and
+tool access are generated from code in the
+[Agent Inventory](../docs/src/appendix/agent-inventory.md).
 
 ### Auto-Routing
 
@@ -814,7 +804,11 @@ The main `stateset` command automatically routes requests to the best agent base
 - Domain keyword matching
 - Ambiguity detection
 
-## MCP Tools (90+ Total)
+## MCP Tools
+
+The exact current tool count, policy-domain breakdown, and permission summary are
+generated from the live MCP server export in `cli/src/mcp-server.js`. See the generated
+[MCP Tool Inventory](../docs/src/appendix/mcp-tool-inventory.md).
 
 | Domain | Count | Examples |
 |--------|-------|----------|
@@ -824,7 +818,7 @@ The main `stateset` command automatically routes requests to the best agent base
 | **Inventory** | 6 | get_stock, create_item, adjust, reserve, confirm, release |
 | **Returns** | 5 | list, get, create, approve, reject |
 | **Carts/Checkout** | 14 | create, add_item, set_address, set_payment, complete_checkout |
-| **Analytics** | 10 | sales_summary, top_products, demand_forecast, revenue_forecast |
+| **Analytics** | 10 | get_sales_summary, top_products, demand_forecast, revenue_forecast |
 | **Currency** | 8 | get_rate, convert, set_rate, format |
 | **Tax** | 9 | calculate_tax, calculate_cart_tax, get_rate, list_jurisdictions |
 | **Promotions** | 10 | list, create, activate, create_coupon, validate_coupon, apply |
@@ -1238,7 +1232,13 @@ The CLI provides structured error handling with helpful suggestions:
 
 ```bash
 # Permission errors
-Error: Permission denied: 'create_customer' requires --apply flag
+Preview mode: would execute 'create_customer' if --apply flag is set
+
+wouldDo:
+  tool: create_customer
+  params:
+    name: Alice
+    email: alice@example.com
 
 Suggestions:
   • Add --apply flag to enable write operations
@@ -1291,18 +1291,34 @@ The CLI modules can be used programmatically:
 ```javascript
 import {
   runAgentLoop,
-  createErrorHandler,
-  createSessionManager,
-  createDatabaseManager,
-  withContext
+  createAgentSession,
+  withContext,
 } from '@stateset/cli';
 
 // Run an agent request
 const result = await runAgentLoop({
   request: 'list all customers',
   dbPath: './store.db',
-  allowApply: false
+  allowApply: false,
 });
+
+// Enable specialist-agent delegation from the harness runtime
+const delegated = await runAgentLoop({
+  request: 'review pending orders over $500',
+  agent: 'agents',
+  dbPath: './store.db',
+  allowApply: true,
+  autonomousEngine,
+});
+
+// Persist a multi-turn session with the same runtime options
+const session = createAgentSession({
+  dbPath: './store.db',
+  allowApply: true,
+  autonomousEngine,
+});
+
+await session.query('delegate this to the orders specialist');
 
 // Use with request context
 await withContext({ agent: 'orders' }, async (ctx) => {

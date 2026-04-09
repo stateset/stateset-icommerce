@@ -17,6 +17,11 @@ import { createMcpEventStreamer } from './mcp-event-streamer.js';
 import { ToolDiscoveryEngine } from './mcp-tool-discovery.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
 import { adaptCommerceApis } from './commerce.js';
+import { getCommerce } from './database.js';
+import {
+  SUPPORTED_AGENT_NAMES,
+  SUPPORTED_AGENT_NAMES_DESCRIPTION,
+} from './agent-catalog.js';
 import {
   MPP_PROTOCOL,
   MPP_JSONRPC_PAYMENT_REQUIRED_CODE,
@@ -186,6 +191,25 @@ function adaptCommerceForTools(commerce) {
   }
 
   return adapted;
+}
+
+function extendCommerceWithApis(commerce, apis = {}) {
+  const base =
+    commerce && (typeof commerce === 'object' || typeof commerce === 'function')
+      ? commerce
+      : Object.prototype;
+  const wrapper = Object.create(base);
+
+  for (const [name, value] of Object.entries(apis)) {
+    Object.defineProperty(wrapper, name, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+      value,
+    });
+  }
+
+  return wrapper;
 }
 
 /**
@@ -614,9 +638,13 @@ const AGENTIC_RUNTIME_TOOLS = [
   {
     name: 'delegate_to_agent',
     description:
-      'Delegate a sub-task to a specialized commerce agent. Available agents: orders, inventory, returns, checkout, analytics, promotions, subscriptions, customer-service.',
+      `Delegate a sub-task to a specialized commerce agent. Available agents: ${SUPPORTED_AGENT_NAMES_DESCRIPTION}.`,
     inputSchema: {
-      agent_name: z.string().min(1).describe('Name of the specialized agent to delegate to'),
+      agent_name: z
+        .enum(SUPPORTED_AGENT_NAMES)
+        .describe(
+          `Name of the specialized agent to delegate to. One of: ${SUPPORTED_AGENT_NAMES_DESCRIPTION}.`,
+        ),
       task_description: z.string().min(1).max(2000).describe('Description of the task to delegate'),
       context: z
         .record(z.string(), z.any())
@@ -1401,6 +1429,110 @@ const TOOL_DOMAIN_BY_TOOL_NAME = (() => {
   return map;
 })();
 
+const STATIC_POLICY_DOMAIN_BY_TOKEN = {
+  customer: 'customers',
+  customers: 'customers',
+  order: 'orders',
+  orders: 'orders',
+  product: 'products',
+  products: 'products',
+  inventory: 'inventory',
+  custom: 'custom_objects',
+  custom_object: 'custom_objects',
+  custom_objects: 'custom_objects',
+  returns: 'returns',
+  return: 'returns',
+  cart: 'carts',
+  carts: 'carts',
+  analytics: 'analytics',
+  currency: 'currency',
+  currencies: 'currency',
+  tax: 'tax',
+  promotion: 'promotions',
+  promotions: 'promotions',
+  subscription: 'subscriptions',
+  subscriptions: 'subscriptions',
+  sync: 'sync',
+  manufacturing: 'manufacturing',
+  payment: 'payments',
+  payments: 'payments',
+  stablecoin: 'stablecoin',
+  treasury: 'treasury',
+  erc8004: 'erc8004',
+  x402: 'x402',
+  agent: 'agent_cards',
+  agent_card: 'agent_cards',
+  agent_cards: 'agent_cards',
+  a2a: 'a2a',
+  shipment: 'shipments',
+  shipments: 'shipments',
+  supplier: 'suppliers',
+  suppliers: 'suppliers',
+  invoice: 'invoices',
+  invoices: 'invoices',
+  warranty: 'warranties',
+  warranties: 'warranties',
+  vector: 'vector',
+  create: 'commerce',
+  get: 'commerce',
+  list: 'commerce',
+  update: 'commerce',
+  delete: 'commerce',
+  set: 'commerce',
+  ship: 'orders',
+  cancel: 'orders',
+  request: 'a2a',
+  provide: 'a2a',
+  accept: 'a2a',
+  decline: 'a2a',
+  pause: 'subscriptions',
+  resume: 'subscriptions',
+  skip: 'subscriptions',
+};
+
+function inferStaticPolicyDomain(toolName) {
+  if (!toolName || typeof toolName !== 'string') return 'commerce';
+
+  if (TOOL_DOMAIN_BY_TOOL_NAME[toolName]) {
+    return TOOL_DOMAIN_BY_TOOL_NAME[toolName];
+  }
+
+  const parts = toolName.split('_').filter(Boolean);
+  if (parts.length === 0) return 'commerce';
+
+  if (parts.length >= 2 && parts[0] === 'a2a') return 'a2a';
+  if (parts.length >= 2 && parts[0] === 'agent' && parts[1] === 'card') return 'agent_cards';
+  if (parts.length >= 2 && parts[0] === 'custom' && parts[1] === 'object') {
+    return 'custom_objects';
+  }
+
+  for (const part of parts) {
+    if (STATIC_POLICY_DOMAIN_BY_TOKEN[part]) {
+      return STATIC_POLICY_DOMAIN_BY_TOKEN[part];
+    }
+  }
+
+  return 'commerce';
+}
+
+export function getStaticMcpToolDefinitions() {
+  return ALL_TOOL_DEFS.map((toolDef) => ({
+    name: toolDef.name,
+    description: toolDef.description,
+    inputSchema: toolDef.inputSchema || {},
+    permission: toolDef.permission || 'unknown',
+    policyDomain: toolDef.policyDomain || inferStaticPolicyDomain(toolDef.name),
+  }));
+}
+
+export function getStaticAgenticRuntimeTools() {
+  return AGENTIC_RUNTIME_TOOLS.map((toolDef) => ({
+    ...toolDef,
+    permission: toolDef.permission || 'unknown',
+    policyDomain: toolDef.policyDomain || inferStaticPolicyDomain(toolDef.name),
+  }));
+}
+
 /**
  * Set of read-only tool names, derived from module permission metadata.
  */
@@ -1432,8 +1564,9 @@ function autoIndexEntity(entityType, entity) {
 /**
  * Create the StateSet Commerce MCP server
  * @param {Object} options
- * @param {import('@stateset/embedded').Commerce} options.commerce - Commerce instance
- * @param {boolean} options.allowApply - Whether to allow destructive operations
+ * @param {import('@stateset/embedded').Commerce} [options.commerce] - Optional Commerce instance. When omitted, a cached instance is created from dbPath.
+ * @param {boolean} options.allowApply - Whether to execute write tools instead of returning preview metadata
+ * @param {Object|null} options.autonomousEngine - Optional autonomous engine used by runtime tools such as delegate_to_agent
  * @param {import('./telemetry.js').AgentTelemetry} options.telemetry - Telemetry instance
  * @param {import('./permissions.js').PermissionGate} options.permissionGate - Permission gate instance
  * @param {import('./channels/plugin-api.js').HookRunner} options.hookRunner - Hook runner instance
@@ -1451,6 +1584,7 @@ function autoIndexEntity(entityType, entity) {
 export function createStatesetMcpServer({
   commerce,
   allowApply = false,
+  autonomousEngine = null,
   telemetry = null,
   permissionGate = null,
   hookRunner = null,
@@ -1462,15 +1596,15 @@ export function createStatesetMcpServer({
   mcpEventStream = null,
   structuredToolResults = false,
 }) {
+  const commerceInstance = commerce || getCommerce(dbPath);
+
   // ---------------------------------------------------------------------------
   // A2A Store initialization
   // ---------------------------------------------------------------------------
   const a2aStore = new A2AStore({ dbPath: dbPath.replace('.db', '-a2a.db') });
 
   // Create a commerce wrapper that includes A2A methods
-  const commerceWithA2A = adaptCommerceApis({
-    ...adaptCommerceForTools(commerce),
-    a2a: () => ({
+  let createA2AService = () => ({
       createPayment: (p) => a2aStore.createPayment(p),
       getPayment: (id) => a2aStore.getPayment(id),
       updatePayment: (id, u) => a2aStore.updatePayment(id, u),
@@ -1575,8 +1709,13 @@ export function createStatesetMcpServer({
       getWorkflowStep: (id) => a2aStore.getWorkflowStep(id),
       updateWorkflowStep: (id, u) => a2aStore.updateWorkflowStep(id, u),
       listWorkflowSteps: (f) => a2aStore.listWorkflowSteps(f),
+    });
+
+  const commerceWithA2A = adaptCommerceApis(
+    extendCommerceWithApis(adaptCommerceForTools(commerceInstance), {
+      a2a: () => createA2AService(),
     }),
-  });
+  );
 
   // ---------------------------------------------------------------------------
   // Intelligence services initialization (automatic wiring)
@@ -1646,7 +1785,7 @@ export function createStatesetMcpServer({
             costAnalytics,
             introspection,
           });
-          commerceWithA2A.a2a = () => integratedA2A;
+          createA2AService = () => integratedA2A;
         }
       },
     )
@@ -1702,87 +1841,12 @@ export function createStatesetMcpServer({
     return result;
   };
 
-  const POLICY_DOMAIN_BY_TOKEN = {
-    customer: 'customers',
-    customers: 'customers',
-    order: 'orders',
-    orders: 'orders',
-    product: 'products',
-    products: 'products',
-    inventory: 'inventory',
-    custom: 'custom_objects',
-    custom_object: 'custom_objects',
-    custom_objects: 'custom_objects',
-    returns: 'returns',
-    return: 'returns',
-    cart: 'carts',
-    carts: 'carts',
-    analytics: 'analytics',
-    currency: 'currency',
-    currencies: 'currency',
-    tax: 'tax',
-    promotion: 'promotions',
-    promotions: 'promotions',
-    subscription: 'subscriptions',
-    subscriptions: 'subscriptions',
-    sync: 'sync',
-    manufacturing: 'manufacturing',
-    payment: 'payments',
-    payments: 'payments',
-    stablecoin: 'stablecoin',
-    treasury: 'treasury',
-    erc8004: 'erc8004',
-    x402: 'x402',
-    agent: 'agent_cards',
-    agent_card: 'agent_cards',
-    agent_cards: 'agent_cards',
-    a2a: 'a2a',
-    shipment: 'shipments',
-    shipments: 'shipments',
-    supplier: 'suppliers',
-    suppliers: 'suppliers',
-    invoice: 'invoices',
-    invoices: 'invoices',
-    warranty: 'warranties',
-    warranties: 'warranties',
-    vector: 'vector',
-    create: 'commerce',
-    get: 'commerce',
-    list: 'commerce',
-    update: 'commerce',
-    delete: 'commerce',
-    set: 'commerce',
-    ship: 'orders',
-    cancel: 'orders',
-    request: 'a2a',
-    provide: 'a2a',
-    accept: 'a2a',
-    decline: 'a2a',
-    pause: 'subscriptions',
-    resume: 'subscriptions',
-    skip: 'subscriptions',
-  };
-
   const inferPolicyDomain = (toolName) => {
-    if (!toolName || typeof toolName !== 'string') return 'commerce';
-
-    if (TOOL_DOMAIN_BY_TOOL_NAME[toolName]) {
-      return TOOL_DOMAIN_BY_TOOL_NAME[toolName];
+    const candidate = TOOL_DEFS_BY_NAME.get(toolName);
+    if (candidate?.policyDomain) {
+      return candidate.policyDomain;
     }
-
-    const parts = toolName.split('_').filter(Boolean);
-    if (parts.length === 0) return 'commerce';
-
-    if (parts.length >= 2 && parts[0] === 'a2a') return 'a2a';
-    if (parts.length >= 2 && parts[0] === 'agent' && parts[1] === 'card') return 'agent_cards';
-    if (parts.length >= 2 && parts[0] === 'custom' && parts[1] === 'object')
-      return 'custom_objects';
-
-    for (const part of parts) {
-      if (POLICY_DOMAIN_BY_TOKEN[part]) return POLICY_DOMAIN_BY_TOKEN[part];
-    }
-
-    return 'commerce';
+    return inferStaticPolicyDomain(toolName);
   };
 
   const normalizeToolName = (toolName) => {
@@ -1921,7 +1985,7 @@ export function createStatesetMcpServer({
 
   const listAgenticReplayEvents = async (options = {}) => {
     const limit = Math.max(1, Math.min(AGENTIC_REPLAY_BUFFER_SIZE, Number(options.limit) || 20));
-    const targetTool = options?.tool || null;
+    const targetTool = options?.tool ? normalizeToolName(options.tool) : null;
     const targetEventId = options?.eventId || null;
     const requestId = options?.requestId || null;
     const sessionId = options?.sessionId || null;
@@ -2497,8 +2561,9 @@ export function createStatesetMcpServer({
   };
 
   const getAgenticRuntimeContract = async ({ tool, includeLegacyDefaults = false } = {}) => {
+    const targetTool = tool ? normalizeToolName(tool) : null;
     const normalizedTools = await Promise.all(
-      ALL_TOOL_DEFS.filter((candidate) => !tool || candidate?.name === tool)
+      ALL_TOOL_DEFS.filter((candidate) => !targetTool || candidate?.name === targetTool)
         .sort((a, b) => a.name.localeCompare(b.name))
         .map(async (candidate) => {
           const meta = getToolRuntimeMeta(candidate?.name);
@@ -3107,8 +3172,15 @@ export function createStatesetMcpServer({
 
       permission = await checkPermission(resolvedToolName, nextArgs);
       if (!permission.allowed) {
+        const blockedStatus =
+          dryRun && permission.preview
+            ? 'dry_run_blocked'
+            : permission.preview
+              ? 'preview'
+              : 'permission_block';
         const payload = {
-          status: permission.preview ? 'preview' : 'permission_block',
+          status: blockedStatus,
+          preview: permission.preview || false,
           elapsedMs: Date.now() - startedAt,
           policy: {
             allowed: policy.allowed,
@@ -3133,13 +3205,10 @@ export function createStatesetMcpServer({
             idempotent: baseMeta.idempotent,
           },
           simulation: dryRun,
-          mutationManifest: buildStepMutationManifest(nextArgs, policy, permission, payload.status),
+          mutationManifest: buildStepMutationManifest(nextArgs, policy, permission, blockedStatus),
           error: permission.reason || 'Permission denied',
           wouldDo: permission.wouldDo || null,
         };
-        if (dryRun && permission.preview) {
-          payload.status = 'dry_run_blocked';
-        }
         return {
           index: stepIndex,
           tool: resolvedToolName,
@@ -5153,6 +5222,7 @@ export function createStatesetMcpServer({
   const toolContext = {
     commerce: commerceWithA2A,
     allowApply,
+    autonomousEngine,
     autoIndexEntity,
     resolveTreasuryAgentId,
     treasuryContextOptions,
@@ -5197,6 +5267,18 @@ export function createStatesetMcpServer({
             description: toolDef.description,
             parameters,
           },
+          stateset: {
+            permission: descriptor.permission,
+            policyDomain: descriptor.policyDomain,
+          },
+        };
+      }
+
+      if (format === 'anthropic') {
+        return {
+          name: baseName,
+          description: toolDef.description,
+          input_schema: parameters,
           stateset: {
             permission: descriptor.permission,
             policyDomain: descriptor.policyDomain,
@@ -5346,6 +5428,8 @@ export function createStatesetMcpServer({
   server.preparePayment = preparePaymentForTool;
   server.executeTool = executeTool;
   server.executeToolWithPayment = executeToolWithPayment;
+  server.connect = (...args) => server.instance.connect(...args);
+  server.close = (...args) => server.instance.server.close(...args);
   server.getRuntimeContract = getAgenticRuntimeContract;
   server.simulatePlan = simulateAgenticPlan;
   server.executePlan = executeAgenticPlan;
@@ -5358,4 +5442,6 @@ export function createStatesetMcpServer({
 /**
  * All MCP tool names in the `mcp__<server>__<tool>` format expected by the harness.
  */
-export const TOOL_NAMES = ALL_TOOL_DEFS.map((t) => `mcp__stateset-commerce__${t.name}`);
+export const TOOL_NAMES = getStaticMcpToolDefinitions().map(
+  (tool) => `mcp__stateset-commerce__${tool.name}`,
+);

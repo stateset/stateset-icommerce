@@ -11011,6 +11011,7 @@ pub struct X402CreateIntentInput {
     pub amount: i64,
     pub asset: Option<String>,
     pub network: Option<String>,
+    pub signature_scheme: Option<String>,
     pub nonce: Option<i64>,
     pub validity_seconds: Option<i64>,
     pub resource_uri: Option<String>,
@@ -11522,6 +11523,11 @@ impl X402 {
                 amount,
                 asset,
                 network,
+                signature_scheme: input
+                    .signature_scheme
+                    .as_deref()
+                    .map(parse_x402_signature_scheme)
+                    .transpose()?,
                 nonce: parse_u64_opt("nonce", input.nonce)?,
                 validity_seconds: parse_u64_opt("validity_seconds", input.validity_seconds)?,
                 resource_uri: input.resource_uri,

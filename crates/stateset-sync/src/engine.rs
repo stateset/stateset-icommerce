@@ -6,11 +6,20 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::attestation::{
+    AttestationError, CommandAttestation, CommandInclusionProof, verify_command_inclusion_proof,
+};
 use crate::buffer::EventBuffer;
+use crate::commitment::{
+    CommitmentManifest, ManifestVerificationError, VerifiedCommitmentManifest,
+    verify_commitment_manifest_against_state,
+};
 use crate::config::SyncConfig;
 use crate::conflict::{ConflictResolver, ConflictStrategy, Resolution};
+use crate::convergence::CommandConvergence;
 use crate::error::SyncError;
-use crate::event::SyncEvent;
+use crate::event::{BudgetCheckpoint, KernelMetadata, PolicyDecision, SyncEvent};
+use crate::kernel::{KernelExecutionError, KernelTransaction};
 use crate::outbox::Outbox;
 use crate::state::{SyncState, SyncStatus};
 use crate::transport::{
@@ -61,6 +70,15 @@ pub struct PushConfirmation {
     pub remote_sequence: u64,
     /// VES payload hash for the confirmed event.
     pub hash: String,
+    /// Optional source agent id recorded for the event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_agent_id: Option<String>,
+    /// Optional kernel metadata captured alongside the local transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<KernelMetadata>,
+    /// Timestamp when the local event was originally recorded.
+    #[serde(default = "current_timestamp")]
+    pub event_timestamp: DateTime<Utc>,
     /// Optional sequencer receipt handle or hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt: Option<String>,
@@ -81,10 +99,154 @@ impl PushConfirmation {
             local_sequence: event.local_sequence(),
             remote_sequence: acknowledgement.remote_sequence,
             hash: event.hash.clone(),
+            source_agent_id: event.source_agent_id.clone(),
+            kernel: event.kernel.clone().filter(|kernel| !kernel.is_empty()),
+            event_timestamp: event.timestamp,
             receipt: acknowledgement.receipt.clone(),
             confirmed_at: Utc::now(),
         }
     }
+}
+
+/// Status of a local-kernel receipt as it converges with the remote sequencer.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KernelReceiptStatus {
+    /// The event exists only in the local outbox and has not reached the sequencer yet.
+    LocalPending,
+    /// The event was accepted by the remote sequencer and assigned a canonical sequence.
+    ConfirmedRemote,
+    /// The remote sequencer rejected the event and the rejection was retained locally.
+    RejectedRemote,
+}
+
+/// Unified receipt view spanning pending, confirmed, and rejected local events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KernelReceipt {
+    /// Local event id associated with this receipt.
+    pub event_id: Uuid,
+    /// Current convergence state for the event.
+    pub status: KernelReceiptStatus,
+    /// Optional upstream command identifier associated with the event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<String>,
+    /// Event type captured in the local transaction kernel.
+    pub event_type: String,
+    /// Entity type captured in the local transaction kernel.
+    pub entity_type: String,
+    /// Entity id captured in the local transaction kernel.
+    pub entity_id: String,
+    /// Provisional local outbox sequence assigned to the event, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_sequence: Option<u64>,
+    /// Canonical remote sequence assigned by the sequencer, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_sequence: Option<u64>,
+    /// Stable event hash.
+    pub hash: String,
+    /// Optional source agent id recorded in the event envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_agent_id: Option<String>,
+    /// Optional kernel metadata captured before the mutation was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<KernelMetadata>,
+    /// Timestamp when the local event was created.
+    pub event_timestamp: DateTime<Utc>,
+    /// Timestamp when the current receipt status was observed locally.
+    pub observed_at: DateTime<Utc>,
+    /// Optional remote receipt handle associated with sequencer confirmation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_receipt: Option<String>,
+    /// Optional remote rejection code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_code: Option<String>,
+    /// Optional remote rejection reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_reason: Option<String>,
+    /// Whether the remote marked the rejection as retryable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
+}
+
+impl KernelReceipt {
+    fn from_pending(event: &SyncEvent) -> Self {
+        Self {
+            event_id: event.id,
+            status: KernelReceiptStatus::LocalPending,
+            command_id: event.command_id.clone(),
+            event_type: event.event_type.clone(),
+            entity_type: event.entity_type.clone(),
+            entity_id: event.entity_id.clone(),
+            local_sequence: event.local_sequence(),
+            remote_sequence: None,
+            hash: event.hash.clone(),
+            source_agent_id: event.source_agent_id.clone(),
+            kernel: event.kernel.clone().filter(|kernel| !kernel.is_empty()),
+            event_timestamp: event.timestamp,
+            observed_at: event.timestamp,
+            remote_receipt: None,
+            rejection_code: None,
+            rejection_reason: None,
+            retryable: None,
+        }
+    }
+
+    fn from_confirmation(confirmation: &PushConfirmation) -> Self {
+        Self {
+            event_id: confirmation.event_id,
+            status: KernelReceiptStatus::ConfirmedRemote,
+            command_id: confirmation.command_id.clone(),
+            event_type: confirmation.event_type.clone(),
+            entity_type: confirmation.entity_type.clone(),
+            entity_id: confirmation.entity_id.clone(),
+            local_sequence: confirmation.local_sequence,
+            remote_sequence: Some(confirmation.remote_sequence),
+            hash: confirmation.hash.clone(),
+            source_agent_id: confirmation.source_agent_id.clone(),
+            kernel: confirmation.kernel.clone().filter(|kernel| !kernel.is_empty()),
+            event_timestamp: confirmation.event_timestamp,
+            observed_at: confirmation.confirmed_at,
+            remote_receipt: confirmation.receipt.clone(),
+            rejection_code: None,
+            rejection_reason: None,
+            retryable: None,
+        }
+    }
+
+    fn from_dead_letter(dead_letter: &DeadLetter) -> Self {
+        Self {
+            event_id: dead_letter.event.id,
+            status: KernelReceiptStatus::RejectedRemote,
+            command_id: dead_letter.event.command_id.clone(),
+            event_type: dead_letter.event.event_type.clone(),
+            entity_type: dead_letter.event.entity_type.clone(),
+            entity_id: dead_letter.event.entity_id.clone(),
+            local_sequence: dead_letter.event.local_sequence(),
+            remote_sequence: None,
+            hash: dead_letter.event.hash.clone(),
+            source_agent_id: dead_letter.event.source_agent_id.clone(),
+            kernel: dead_letter.event.kernel.clone().filter(|kernel| !kernel.is_empty()),
+            event_timestamp: dead_letter.event.timestamp,
+            observed_at: dead_letter.rejected_at,
+            remote_receipt: None,
+            rejection_code: dead_letter.rejection.code.clone(),
+            rejection_reason: dead_letter.rejection.reason.clone(),
+            retryable: dead_letter.rejection.retryable,
+        }
+    }
+
+    pub(crate) fn ordering_key(&self) -> (u64, u64, i64, Uuid) {
+        (
+            self.local_sequence.unwrap_or(0),
+            self.remote_sequence.unwrap_or(0),
+            self.observed_at.timestamp_millis(),
+            self.event_id,
+        )
+    }
+}
+
+fn current_timestamp() -> DateTime<Utc> {
+    Utc::now()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +258,10 @@ struct SyncEngineSnapshot {
     dead_letters: Vec<DeadLetter>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     confirmations: Vec<PushConfirmation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attestations: Vec<CommandAttestation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    manifests: Vec<VerifiedCommitmentManifest>,
 }
 
 /// The sync engine orchestrates synchronization between local state and
@@ -132,6 +298,8 @@ pub struct SyncEngine {
     next_pull_cursor: Option<u64>,
     dead_letters: Vec<DeadLetter>,
     confirmations: Vec<PushConfirmation>,
+    attestations: Vec<CommandAttestation>,
+    manifests: Vec<VerifiedCommitmentManifest>,
     initialized: bool,
 }
 
@@ -192,23 +360,39 @@ impl SyncEngine {
         } else {
             None
         };
-        let (mut state, next_pull_cursor, dead_letters, mut confirmations) =
-            if let Some(snapshot) = snapshot {
-                (
-                    snapshot.state,
-                    snapshot.next_pull_cursor,
-                    snapshot.dead_letters,
-                    snapshot.confirmations,
-                )
-            } else {
-                (SyncState::default(), None, Vec::new(), Vec::new())
-            };
+        let (
+            mut state,
+            next_pull_cursor,
+            dead_letters,
+            mut confirmations,
+            mut attestations,
+            mut manifests,
+        ) = if let Some(snapshot) = snapshot {
+            (
+                snapshot.state,
+                snapshot.next_pull_cursor,
+                snapshot.dead_letters,
+                snapshot.confirmations,
+                snapshot.attestations,
+                snapshot.manifests,
+            )
+        } else {
+            (SyncState::default(), None, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        };
         state.local_head = state.local_head.max(outbox.next_sequence().saturating_sub(1));
         state.pending_count = outbox.count();
         let confirmation_capacity = config.resolved_confirmation_capacity();
         if confirmations.len() > confirmation_capacity {
             let overflow = confirmations.len() - confirmation_capacity;
             confirmations.drain(0..overflow);
+        }
+        if attestations.len() > confirmation_capacity {
+            let overflow = attestations.len() - confirmation_capacity;
+            attestations.drain(0..overflow);
+        }
+        if manifests.len() > confirmation_capacity {
+            let overflow = manifests.len() - confirmation_capacity;
+            manifests.drain(0..overflow);
         }
 
         Ok(Self {
@@ -221,6 +405,8 @@ impl SyncEngine {
             next_pull_cursor,
             dead_letters,
             confirmations,
+            attestations,
+            manifests,
             initialized: true,
         })
     }
@@ -273,6 +459,8 @@ impl SyncEngine {
             next_pull_cursor: self.next_pull_cursor,
             dead_letters: self.dead_letters.clone(),
             confirmations: self.confirmations.clone(),
+            attestations: self.attestations.clone(),
+            manifests: self.manifests.clone(),
         };
         let serialized = serde_json::to_string_pretty(&snapshot)?;
         if let Some(parent) = path.parent() {
@@ -305,8 +493,76 @@ impl SyncEngine {
         Ok(seq)
     }
 
+    /// Execute a local transaction-kernel request and record the resulting event.
+    ///
+    /// This applies policy and budget enforcement before the event reaches the
+    /// local outbox. On success it returns the pending kernel receipt for the
+    /// newly recorded event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelExecutionError`] when local policy or budget checks fail
+    /// or when the underlying outbox record operation fails.
+    pub fn record_kernel_transaction(
+        &mut self,
+        transaction: KernelTransaction,
+    ) -> Result<KernelReceipt, KernelExecutionError> {
+        let KernelTransaction { mut event, policy, budget } = transaction;
+
+        if let Some(policy) = policy {
+            match policy.decision {
+                PolicyDecision::Allowed => {
+                    event = event.with_policy_checkpoint(policy);
+                }
+                PolicyDecision::Denied => {
+                    return Err(KernelExecutionError::PolicyDenied {
+                        domain: policy.domain,
+                        reason: policy.reason,
+                    });
+                }
+                PolicyDecision::RequiresApproval => {
+                    return Err(KernelExecutionError::ApprovalRequired {
+                        domain: policy.domain,
+                        reason: policy.reason,
+                    });
+                }
+            }
+        }
+
+        if let Some(budget) = budget {
+            if budget.requested_amount_minor > budget.available_amount_minor {
+                return Err(KernelExecutionError::BudgetExceeded {
+                    budget_id: budget.budget_id,
+                    requested_amount_minor: budget.requested_amount_minor,
+                    available_amount_minor: budget.available_amount_minor,
+                    currency: budget.currency,
+                });
+            }
+
+            let remaining_amount_minor = budget.remaining_amount_minor();
+            event = event.with_budget_checkpoint(
+                BudgetCheckpoint::new(
+                    budget.budget_id,
+                    budget.requested_amount_minor,
+                    budget.currency,
+                )
+                .with_remaining_amount_minor(remaining_amount_minor),
+            );
+        }
+
+        let event_id = event.id;
+        self.record(event).map_err(KernelExecutionError::from)?;
+        self.kernel_receipt_for_event(event_id).ok_or_else(|| KernelExecutionError::Sync {
+            message: format!("recorded kernel transaction {event_id} missing pending receipt"),
+        })
+    }
+
     fn dead_letter_index(&self, event_id: Uuid) -> Option<usize> {
         self.dead_letters.iter().position(|dead_letter| dead_letter.event.id == event_id)
+    }
+
+    fn pending_events(&self) -> Vec<&SyncEvent> {
+        self.outbox.peek(self.outbox.count())
     }
 
     /// Push pending events from the outbox to the remote via the given transport.
@@ -516,6 +772,75 @@ impl SyncEngine {
         }
     }
 
+    fn trim_attestations_to_capacity(&mut self) {
+        let capacity = self.config.resolved_confirmation_capacity();
+        if self.attestations.len() > capacity {
+            let overflow = self.attestations.len() - capacity;
+            self.attestations.drain(0..overflow);
+        }
+    }
+
+    fn trim_manifests_to_capacity(&mut self) {
+        let capacity = self.config.resolved_confirmation_capacity();
+        if self.manifests.len() > capacity {
+            let overflow = self.manifests.len() - capacity;
+            self.manifests.drain(0..overflow);
+        }
+    }
+
+    fn upsert_verified_commitment_manifest(&mut self, verified: VerifiedCommitmentManifest) {
+        self.manifests.retain(|existing| existing.commitment_id != verified.commitment_id);
+        self.manifests.push(verified);
+        self.trim_manifests_to_capacity();
+    }
+
+    fn enforce_commitment_trust_policy(
+        &self,
+        verified: &VerifiedCommitmentManifest,
+    ) -> Result<(), SyncError> {
+        let trusted_signer_ids = &self.config.commitment_trust.trusted_signer_ids;
+        if !trusted_signer_ids.is_empty()
+            && !trusted_signer_ids.iter().any(|signer_id| signer_id == &verified.signer_id)
+        {
+            return Err(SyncError::Trust(format!(
+                "commitment manifest `{}` signer `{}` is not in the trusted signer allowlist",
+                verified.commitment_id, verified.signer_id
+            )));
+        }
+
+        let trusted_public_keys = &self.config.commitment_trust.trusted_signer_public_keys;
+        if !trusted_public_keys.is_empty()
+            && !trusted_public_keys.iter().any(|public_key| {
+                public_key.trim().trim_start_matches("0x").eq_ignore_ascii_case(
+                    verified.signer_public_key.trim().trim_start_matches("0x"),
+                )
+            })
+        {
+            return Err(SyncError::Trust(format!(
+                "commitment manifest `{}` public key is not in the trusted key allowlist",
+                verified.commitment_id
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn verify_remote_manifest_against_state(
+        &self,
+        manifest: &CommitmentManifest,
+        state: &SyncState,
+    ) -> Result<VerifiedCommitmentManifest, SyncError> {
+        let verified =
+            verify_commitment_manifest_against_state(manifest, state).map_err(|error| {
+                SyncError::Trust(format!(
+                    "remote commitment manifest `{}` failed verification: {error}",
+                    manifest.commitment_id
+                ))
+            })?;
+        self.enforce_commitment_trust_policy(&verified)?;
+        Ok(verified)
+    }
+
     fn validate_push_result(events: &[SyncEvent], result: &PushResult) -> Result<(), SyncError> {
         if result.accepted > events.len() {
             return Err(SyncError::Transport(format!(
@@ -641,6 +966,25 @@ impl SyncEngine {
         if let Some(commitment_id) = self.state.last_commitment_id.clone() {
             head = head.with_last_commitment_id(commitment_id);
         }
+        if let Some(manifest) = self
+            .state
+            .last_commitment_id
+            .as_deref()
+            .and_then(|commitment_id| self.verified_commitment_manifest(commitment_id))
+            .cloned()
+        {
+            head = head.with_commitment_manifest(CommitmentManifest {
+                commitment_id: manifest.commitment_id,
+                previous_commitment_id: manifest.previous_commitment_id,
+                state_root: manifest.state_root,
+                remote_head: manifest.remote_head,
+                signer_id: manifest.signer_id,
+                signature_scheme: manifest.signature_scheme,
+                signer_public_key: Some(manifest.signer_public_key),
+                signature: Some(manifest.signature),
+                issued_at: manifest.issued_at,
+            });
+        }
         head
     }
 
@@ -659,26 +1003,54 @@ impl SyncEngine {
         transport: &dyn Transport,
     ) -> Result<RemoteHead, SyncError> {
         let observed = transport.fetch_head().await?;
+        let previous_state = self.state.clone();
+        let previous_manifests = self.manifests.clone();
+        let mut next_state = self.state.clone();
 
-        match observed.remote_head.cmp(&self.state.remote_head) {
+        match observed.remote_head.cmp(&previous_state.remote_head) {
             std::cmp::Ordering::Greater => {
-                self.state.remote_head = observed.remote_head;
-                self.state.remote_state_root = observed.state_root.clone();
-                self.state.last_commitment_id = observed.last_commitment_id;
+                next_state.remote_head = observed.remote_head;
+                next_state.remote_state_root = observed.state_root.clone();
+                next_state.last_commitment_id = observed.last_commitment_id.clone();
             }
             std::cmp::Ordering::Equal => {
                 if let Some(state_root) = observed.state_root.clone() {
-                    self.state.remote_state_root = Some(state_root);
+                    next_state.remote_state_root = Some(state_root);
                 }
-                if let Some(commitment_id) = observed.last_commitment_id {
-                    self.state.last_commitment_id = Some(commitment_id);
+                if let Some(commitment_id) = observed.last_commitment_id.clone() {
+                    next_state.last_commitment_id = Some(commitment_id);
                 }
             }
             std::cmp::Ordering::Less => {}
         }
 
+        let metadata_updated = observed.remote_head >= previous_state.remote_head
+            && (observed.state_root.is_some()
+                || observed.last_commitment_id.is_some()
+                || observed.commitment_manifest.is_some());
+        if metadata_updated {
+            match observed.commitment_manifest.as_ref() {
+                Some(manifest) => {
+                    let verified =
+                        self.verify_remote_manifest_against_state(manifest, &next_state)?;
+                    self.upsert_verified_commitment_manifest(verified);
+                }
+                None if self.config.commitment_trust.require_manifest => {
+                    return Err(SyncError::Trust(
+                        "remote head included commitment metadata without a signed manifest required by trust policy".into(),
+                    ));
+                }
+                None => {}
+            }
+        }
+
+        self.state = next_state;
         let head = self.remote_head_snapshot();
-        self.persist_runtime_state()?;
+        if let Err(error) = self.persist_runtime_state() {
+            self.state = previous_state;
+            self.manifests = previous_manifests;
+            return Err(error);
+        }
         Ok(head)
     }
 
@@ -715,6 +1087,206 @@ impl SyncEngine {
     #[must_use]
     pub fn confirmations(&self) -> &[PushConfirmation] {
         &self.confirmations
+    }
+
+    /// Return a unified receipt view spanning pending, confirmed, and rejected local events.
+    #[must_use]
+    pub fn kernel_receipts(&self) -> Vec<KernelReceipt> {
+        let mut receipts: Vec<_> =
+            self.pending_events().into_iter().map(KernelReceipt::from_pending).collect();
+        receipts.extend(self.confirmations.iter().map(KernelReceipt::from_confirmation));
+        receipts.extend(self.dead_letters.iter().map(KernelReceipt::from_dead_letter));
+        receipts.sort_by_key(KernelReceipt::ordering_key);
+        receipts
+    }
+
+    /// Return the unified receipt for a local event id, if known.
+    #[must_use]
+    pub fn kernel_receipt_for_event(&self, event_id: Uuid) -> Option<KernelReceipt> {
+        self.kernel_receipts().into_iter().find(|receipt| receipt.event_id == event_id)
+    }
+
+    /// Return all unified receipts associated with a command id.
+    #[must_use]
+    pub fn kernel_receipts_for_command(&self, command_id: &str) -> Vec<KernelReceipt> {
+        self.kernel_receipts()
+            .into_iter()
+            .filter(|receipt| receipt.command_id.as_deref() == Some(command_id))
+            .collect()
+    }
+
+    /// Return all unified receipts for an entity identity.
+    #[must_use]
+    pub fn kernel_receipts_for_entity(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> Vec<KernelReceipt> {
+        self.kernel_receipts()
+            .into_iter()
+            .filter(|receipt| receipt.entity_type == entity_type && receipt.entity_id == entity_id)
+            .collect()
+    }
+
+    /// Return the latest unified receipt associated with a command id.
+    #[must_use]
+    pub fn latest_kernel_receipt_for_command(&self, command_id: &str) -> Option<KernelReceipt> {
+        self.kernel_receipts_for_command(command_id).into_iter().last()
+    }
+
+    /// Return the latest unified receipt for an entity identity.
+    #[must_use]
+    pub fn latest_kernel_receipt_for_entity(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> Option<KernelReceipt> {
+        self.kernel_receipts_for_entity(entity_type, entity_id).into_iter().last()
+    }
+
+    /// Return command-level convergence snapshots for every command currently retained in the kernel.
+    #[must_use]
+    pub fn command_convergences(&self) -> Vec<CommandConvergence> {
+        let mut receipts_by_command: HashMap<String, Vec<KernelReceipt>> = HashMap::new();
+        for receipt in self.kernel_receipts() {
+            let Some(command_id) = receipt.command_id.clone() else {
+                continue;
+            };
+            receipts_by_command.entry(command_id).or_default().push(receipt);
+        }
+        let verified_manifest = self
+            .state
+            .last_commitment_id
+            .as_deref()
+            .and_then(|commitment_id| self.verified_commitment_manifest(commitment_id));
+
+        let mut convergences: Vec<_> = receipts_by_command
+            .into_iter()
+            .map(|(command_id, receipts)| {
+                CommandConvergence::from_receipts(
+                    command_id,
+                    receipts,
+                    &self.state,
+                    verified_manifest,
+                )
+            })
+            .collect();
+        convergences.sort_by(|left, right| left.command_id.cmp(&right.command_id));
+        convergences
+    }
+
+    /// Return the command-level convergence snapshot for a specific command id, if retained.
+    #[must_use]
+    pub fn command_convergence(&self, command_id: &str) -> Option<CommandConvergence> {
+        let receipts = self.kernel_receipts_for_command(command_id);
+        if receipts.is_empty() {
+            None
+        } else {
+            let verified_manifest = self
+                .state
+                .last_commitment_id
+                .as_deref()
+                .and_then(|commitment_id| self.verified_commitment_manifest(commitment_id));
+            Some(CommandConvergence::from_receipts(
+                command_id,
+                receipts,
+                &self.state,
+                verified_manifest,
+            ))
+        }
+    }
+
+    /// Return all verified commitment manifests retained by the engine.
+    #[must_use]
+    pub fn verified_commitment_manifests(&self) -> &[VerifiedCommitmentManifest] {
+        &self.manifests
+    }
+
+    /// Return the verified commitment manifest for a specific commitment id, if retained.
+    #[must_use]
+    pub fn verified_commitment_manifest(
+        &self,
+        commitment_id: &str,
+    ) -> Option<&VerifiedCommitmentManifest> {
+        self.manifests.iter().find(|manifest| manifest.commitment_id == commitment_id)
+    }
+
+    /// Verify and retain a signed commitment manifest against the current remote state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifestVerificationError`] if the manifest signature, state binding,
+    /// or durable persistence fails.
+    pub fn verify_commitment_manifest(
+        &mut self,
+        manifest: CommitmentManifest,
+    ) -> Result<VerifiedCommitmentManifest, ManifestVerificationError> {
+        let verified = verify_commitment_manifest_against_state(&manifest, &self.state)?;
+        if let Err(error) = self.enforce_commitment_trust_policy(&verified) {
+            return Err(ManifestVerificationError::TrustPolicyViolation {
+                commitment_id: manifest.commitment_id,
+                reason: error.to_string(),
+            });
+        }
+
+        let previous = self.manifests.clone();
+        self.upsert_verified_commitment_manifest(verified.clone());
+
+        if let Err(error) = self.persist_runtime_state() {
+            self.manifests = previous;
+            return Err(ManifestVerificationError::PersistenceFailed {
+                commitment_id: manifest.commitment_id,
+                reason: error.to_string(),
+            });
+        }
+
+        Ok(verified)
+    }
+
+    /// Return all verified command attestations retained by the engine.
+    #[must_use]
+    pub fn command_attestations(&self) -> &[CommandAttestation] {
+        &self.attestations
+    }
+
+    /// Return the verified command attestation for a specific command id, if retained.
+    #[must_use]
+    pub fn command_attestation(&self, command_id: &str) -> Option<&CommandAttestation> {
+        self.attestations.iter().find(|attestation| attestation.command_id == command_id)
+    }
+
+    /// Verify and retain a command inclusion proof against current kernel receipts and remote state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AttestationError`] if the proof is inconsistent with retained receipts or the
+    /// currently known remote commitment metadata.
+    pub fn attest_command(
+        &mut self,
+        proof: CommandInclusionProof,
+    ) -> Result<CommandAttestation, AttestationError> {
+        let receipts = self.kernel_receipts_for_command(&proof.command_id);
+        let mut attestation = verify_command_inclusion_proof(&proof, &receipts, &self.state)?;
+        if let Some(commitment_id) = proof.commitment_id.as_deref() {
+            if let Some(manifest) = self.verified_commitment_manifest(commitment_id) {
+                attestation.manifest_signer_id = Some(manifest.signer_id.clone());
+                attestation.manifest_verified_at = Some(manifest.verified_at);
+            }
+        }
+
+        let previous = self.attestations.clone();
+        self.attestations.retain(|existing| existing.command_id != attestation.command_id);
+        self.attestations.push(attestation.clone());
+        self.trim_attestations_to_capacity();
+        if let Err(error) = self.persist_runtime_state() {
+            self.attestations = previous;
+            return Err(AttestationError::InvalidProofShape {
+                command_id: proof.command_id,
+                reason: format!("persist verified attestation failed: {error}"),
+            });
+        }
+
+        Ok(attestation)
     }
 
     /// Return the retained confirmation for a local event id, if known.
@@ -1072,6 +1644,107 @@ mod tests {
         assert_eq!(engine.state().local_head, 3);
     }
 
+    #[test]
+    fn record_kernel_transaction_attaches_policy_budget_and_returns_pending_receipt() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let receipt = engine
+            .record_kernel_transaction(
+                crate::kernel::KernelTransaction::new(SyncEvent::new(
+                    "order.created",
+                    "order",
+                    "ORD-1",
+                    json!({"total": 99}),
+                ))
+                .with_policy_checkpoint(crate::event::PolicyCheckpoint::new(
+                    "orders",
+                    crate::event::PolicyDecision::Allowed,
+                ))
+                .with_budget_authorization(
+                    crate::kernel::BudgetAuthorization::new("budget-1", 9900, 10000, "USD"),
+                ),
+            )
+            .unwrap();
+
+        assert_eq!(receipt.status, KernelReceiptStatus::LocalPending);
+        assert_eq!(receipt.local_sequence, Some(1));
+        assert_eq!(
+            receipt
+                .kernel
+                .as_ref()
+                .and_then(|kernel| kernel.policy.as_ref())
+                .map(|policy| policy.domain.as_str()),
+            Some("orders")
+        );
+        assert_eq!(
+            receipt
+                .kernel
+                .as_ref()
+                .and_then(|kernel| kernel.budget.as_ref())
+                .map(|budget| budget.remaining_amount_minor),
+            Some(Some(100))
+        );
+    }
+
+    #[test]
+    fn record_kernel_transaction_rejects_denied_policy() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let error = engine
+            .record_kernel_transaction(
+                crate::kernel::KernelTransaction::new(SyncEvent::new(
+                    "order.created",
+                    "order",
+                    "ORD-1",
+                    json!({}),
+                ))
+                .with_policy_checkpoint(
+                    crate::event::PolicyCheckpoint::new(
+                        "orders",
+                        crate::event::PolicyDecision::Denied,
+                    )
+                    .with_reason("blocked"),
+                ),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            crate::kernel::KernelExecutionError::PolicyDenied {
+                domain: "orders".into(),
+                reason: Some("blocked".into())
+            }
+        );
+        assert_eq!(engine.pending_count(), 0);
+    }
+
+    #[test]
+    fn record_kernel_transaction_rejects_budget_overrun() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let error = engine
+            .record_kernel_transaction(
+                crate::kernel::KernelTransaction::new(SyncEvent::new(
+                    "order.created",
+                    "order",
+                    "ORD-1",
+                    json!({}),
+                ))
+                .with_budget_authorization(
+                    crate::kernel::BudgetAuthorization::new("budget-1", 150, 100, "USD"),
+                ),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            crate::kernel::KernelExecutionError::BudgetExceeded {
+                budget_id: "budget-1".into(),
+                requested_amount_minor: 150,
+                available_amount_minor: 100,
+                currency: "USD".into()
+            }
+        );
+        assert_eq!(engine.pending_count(), 0);
+    }
+
     #[tokio::test]
     async fn push_with_null_transport() {
         let mut engine = SyncEngine::new(make_config()).unwrap();
@@ -1282,6 +1955,134 @@ mod tests {
         assert_eq!(engine.state().last_commitment_id.as_deref(), Some("BATCH-21"));
     }
 
+    #[tokio::test]
+    async fn refresh_remote_head_imports_verified_commitment_manifest() {
+        let state_root = "30".repeat(32);
+
+        #[derive(Debug)]
+        struct HeadTransport {
+            manifest: CommitmentManifest,
+            state_root: String,
+        }
+
+        #[async_trait::async_trait]
+        impl Transport for HeadTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult::accepted_only(events.len(), 0))
+            }
+
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                Ok(PullResult { events: vec![], remote_head: 0, has_more: false })
+            }
+
+            async fn fetch_head(&self) -> Result<RemoteHead, SyncError> {
+                Ok(RemoteHead::new(30)
+                    .with_commitment_manifest(self.manifest.clone())
+                    .with_state_root(self.state_root.clone())
+                    .with_last_commitment_id("BATCH-30"))
+            }
+        }
+
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let manifest = crate::commitment::sign_commitment_manifest(
+            crate::commitment::CommitmentManifest::new(
+                "BATCH-30",
+                state_root.clone(),
+                30,
+                "sequencer-a",
+            ),
+            &private_key,
+            &public_key,
+        )
+        .unwrap();
+
+        let mut engine = SyncEngine::new(
+            make_config()
+                .with_require_commitment_manifest(true)
+                .with_trusted_commitment_signer("sequencer-a"),
+        )
+        .unwrap();
+        let head =
+            engine.refresh_remote_head(&HeadTransport { manifest, state_root }).await.unwrap();
+
+        assert_eq!(head.remote_head, 30);
+        assert_eq!(
+            head.commitment_manifest.as_ref().map(|manifest| manifest.signer_id.as_str()),
+            Some("sequencer-a")
+        );
+        assert_eq!(engine.state().remote_head, 30);
+        assert_eq!(engine.state().last_commitment_id.as_deref(), Some("BATCH-30"));
+        assert_eq!(
+            engine
+                .verified_commitment_manifest("BATCH-30")
+                .map(|manifest| manifest.signer_id.as_str()),
+            Some("sequencer-a")
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_remote_head_rejects_untrusted_commitment_manifest_signer() {
+        let state_root = "31".repeat(32);
+
+        #[derive(Debug)]
+        struct HeadTransport {
+            manifest: CommitmentManifest,
+            state_root: String,
+        }
+
+        #[async_trait::async_trait]
+        impl Transport for HeadTransport {
+            async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+                Ok(PushResult::accepted_only(events.len(), 0))
+            }
+
+            async fn pull_events(
+                &self,
+                _since: u64,
+                _limit: usize,
+            ) -> Result<PullResult, SyncError> {
+                Ok(PullResult { events: vec![], remote_head: 0, has_more: false })
+            }
+
+            async fn fetch_head(&self) -> Result<RemoteHead, SyncError> {
+                Ok(RemoteHead::new(31)
+                    .with_commitment_manifest(self.manifest.clone())
+                    .with_state_root(self.state_root.clone())
+                    .with_last_commitment_id("BATCH-31"))
+            }
+        }
+
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let manifest = crate::commitment::sign_commitment_manifest(
+            crate::commitment::CommitmentManifest::new(
+                "BATCH-31",
+                state_root.clone(),
+                31,
+                "sequencer-a",
+            ),
+            &private_key,
+            &public_key,
+        )
+        .unwrap();
+
+        let mut engine = SyncEngine::new(
+            make_config()
+                .with_require_commitment_manifest(true)
+                .with_trusted_commitment_signer("sequencer-b"),
+        )
+        .unwrap();
+        let error =
+            engine.refresh_remote_head(&HeadTransport { manifest, state_root }).await.unwrap_err();
+
+        assert!(matches!(error, SyncError::Trust(_)));
+        assert_eq!(engine.state().remote_head, 0);
+        assert!(engine.verified_commitment_manifests().is_empty());
+    }
+
     #[test]
     fn status_reporting() {
         let mut engine = SyncEngine::new(make_config()).unwrap();
@@ -1381,6 +2182,406 @@ mod tests {
         assert!(engine.confirmations_for_entity("order", "missing").is_empty());
         assert!(engine.latest_confirmation_for_command("missing").is_none());
         assert!(engine.latest_confirmation_for_entity("order", "missing").is_none());
+    }
+
+    #[test]
+    fn kernel_receipts_span_pending_confirmed_and_rejected_events() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let pending = SyncEvent::new("order.created", "order", "ORD-1", json!({"total": 99}))
+            .with_command_id("cmd-kernel")
+            .with_policy_checkpoint(
+                crate::event::PolicyCheckpoint::new(
+                    "orders",
+                    crate::event::PolicyDecision::Allowed,
+                )
+                .with_reason("within budget"),
+            )
+            .with_budget_checkpoint(
+                crate::event::BudgetCheckpoint::new("budget-1", 9900, "USD")
+                    .with_remaining_amount_minor(100),
+            );
+        let confirmed =
+            SyncEvent::new("order.confirmed", "order", "ORD-1", json!({"status": "confirmed"}))
+                .with_command_id("cmd-kernel")
+                .with_policy_checkpoint(crate::event::PolicyCheckpoint::new(
+                    "orders",
+                    crate::event::PolicyDecision::Allowed,
+                ));
+        let rejected =
+            SyncEvent::new("order.rejected", "order", "ORD-1", json!({"status": "rejected"}))
+                .with_command_id("cmd-kernel")
+                .with_budget_checkpoint(crate::event::BudgetCheckpoint::new(
+                    "budget-2", 5000, "USD",
+                ));
+
+        let pending_id = pending.id;
+        let confirmed_id = confirmed.id;
+        let rejected_id = rejected.id;
+
+        engine.record(confirmed.clone()).unwrap();
+        engine.record(rejected.clone()).unwrap();
+        engine.record(pending).unwrap();
+
+        let confirmed_ack =
+            crate::transport::PushAcknowledgement::new(confirmed_id, 42).with_receipt("rcpt-42");
+        engine.confirmations.push(PushConfirmation::from_ack(&confirmed, &confirmed_ack));
+        engine.dead_letters.push(DeadLetter::new(
+            rejected,
+            crate::transport::PushRejection::new(rejected_id)
+                .with_code("budget_exceeded")
+                .with_reason("limit exceeded")
+                .with_retryable(false),
+        ));
+        engine.outbox.try_retain(|event| event.id == pending_id).unwrap();
+
+        let receipts = engine.kernel_receipts();
+        assert_eq!(receipts.len(), 3);
+
+        let pending_receipt = engine.kernel_receipt_for_event(pending_id).unwrap();
+        assert_eq!(pending_receipt.status, KernelReceiptStatus::LocalPending);
+        assert_eq!(
+            pending_receipt
+                .kernel
+                .as_ref()
+                .and_then(|kernel| kernel.policy.as_ref())
+                .map(|policy| policy.reason.as_deref()),
+            Some(Some("within budget"))
+        );
+        assert_eq!(
+            pending_receipt
+                .kernel
+                .as_ref()
+                .and_then(|kernel| kernel.budget.as_ref())
+                .map(|budget| budget.remaining_amount_minor),
+            Some(Some(100))
+        );
+
+        let confirmed_receipt = engine.kernel_receipt_for_event(confirmed_id).unwrap();
+        assert_eq!(confirmed_receipt.status, KernelReceiptStatus::ConfirmedRemote);
+        assert_eq!(confirmed_receipt.remote_sequence, Some(42));
+        assert_eq!(confirmed_receipt.remote_receipt.as_deref(), Some("rcpt-42"));
+
+        let rejected_receipt = engine.kernel_receipt_for_event(rejected_id).unwrap();
+        assert_eq!(rejected_receipt.status, KernelReceiptStatus::RejectedRemote);
+        assert_eq!(rejected_receipt.rejection_code.as_deref(), Some("budget_exceeded"));
+        assert_eq!(rejected_receipt.rejection_reason.as_deref(), Some("limit exceeded"));
+        assert_eq!(rejected_receipt.retryable, Some(false));
+
+        let by_command = engine.kernel_receipts_for_command("cmd-kernel");
+        assert_eq!(by_command.len(), 3);
+        assert_eq!(
+            engine.latest_kernel_receipt_for_command("cmd-kernel").unwrap().event_id,
+            pending_id
+        );
+
+        let by_entity = engine.kernel_receipts_for_entity("order", "ORD-1");
+        assert_eq!(by_entity.len(), 3);
+        assert_eq!(
+            engine.latest_kernel_receipt_for_entity("order", "ORD-1").unwrap().event_id,
+            pending_id
+        );
+    }
+
+    #[test]
+    fn command_convergence_tracks_pending_confirmed_committed_settled_and_rejected_states() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+
+        let pending = SyncEvent::new("order.created", "order", "ORD-pending", json!({}))
+            .with_command_id("cmd-pending");
+        let confirmed = SyncEvent::new("order.created", "order", "ORD-confirmed", json!({}))
+            .with_command_id("cmd-confirmed");
+        let committed = SyncEvent::new("order.created", "order", "ORD-committed", json!({}))
+            .with_command_id("cmd-committed");
+        let settled = SyncEvent::new("order.created", "order", "ORD-settled", json!({}))
+            .with_command_id("cmd-settled");
+        let rejected = SyncEvent::new("order.created", "order", "ORD-rejected", json!({}))
+            .with_command_id("cmd-rejected");
+
+        let pending_id = pending.id;
+        let confirmed_id = confirmed.id;
+        let committed_id = committed.id;
+        let settled_id = settled.id;
+        let rejected_id = rejected.id;
+
+        engine.record(pending).unwrap();
+        engine.record(confirmed.clone()).unwrap();
+        engine.record(committed.clone()).unwrap();
+        engine.record(settled.clone()).unwrap();
+        engine.record(rejected.clone()).unwrap();
+
+        engine.confirmations.push(PushConfirmation::from_ack(
+            &confirmed,
+            &crate::transport::PushAcknowledgement::new(confirmed_id, 10)
+                .with_receipt("receipt-confirmed"),
+        ));
+        engine.confirmations.push(PushConfirmation::from_ack(
+            &committed,
+            &crate::transport::PushAcknowledgement::new(committed_id, 11)
+                .with_receipt("receipt-committed"),
+        ));
+        engine.confirmations.push(PushConfirmation::from_ack(
+            &settled,
+            &crate::transport::PushAcknowledgement::new(settled_id, 12)
+                .with_receipt("receipt-settled"),
+        ));
+        engine.dead_letters.push(DeadLetter::new(
+            rejected,
+            crate::transport::PushRejection::new(rejected_id)
+                .with_code("rejected")
+                .with_reason("remote rejected"),
+        ));
+        engine.outbox.try_retain(|event| event.id == pending_id).unwrap();
+
+        let confirmed_convergence = engine.command_convergence("cmd-confirmed").unwrap();
+        assert_eq!(
+            confirmed_convergence.status,
+            crate::convergence::CounterpartyConvergenceStatus::ConfirmedRemote
+        );
+        assert_eq!(confirmed_convergence.remote_receipts, vec!["receipt-confirmed".to_string()]);
+
+        engine.state.remote_head = 12;
+        engine.state.remote_state_root = Some("root-12".into());
+        engine.state.last_commitment_id = Some("BATCH-12".into());
+        engine.state.remote_cursor = 11;
+
+        let pending_convergence = engine.command_convergence("cmd-pending").unwrap();
+        assert_eq!(
+            pending_convergence.status,
+            crate::convergence::CounterpartyConvergenceStatus::LocalPending
+        );
+
+        let committed_convergence = engine.command_convergence("cmd-committed").unwrap();
+        assert_eq!(
+            committed_convergence.status,
+            crate::convergence::CounterpartyConvergenceStatus::Settled
+        );
+        assert_eq!(committed_convergence.max_remote_sequence, Some(11));
+        assert_eq!(
+            committed_convergence
+                .commitment
+                .as_ref()
+                .and_then(|commitment| commitment.commitment_id.as_deref()),
+            Some("BATCH-12")
+        );
+
+        let settled_convergence = engine.command_convergence("cmd-settled").unwrap();
+        assert_eq!(
+            settled_convergence.status,
+            crate::convergence::CounterpartyConvergenceStatus::CommittedRemote
+        );
+        assert_eq!(settled_convergence.max_remote_sequence, Some(12));
+
+        let rejected_convergence = engine.command_convergence("cmd-rejected").unwrap();
+        assert_eq!(
+            rejected_convergence.status,
+            crate::convergence::CounterpartyConvergenceStatus::RejectedRemote
+        );
+        assert_eq!(rejected_convergence.rejection_codes, vec!["rejected".to_string()]);
+
+        let all = engine.command_convergences();
+        assert_eq!(all.len(), 5);
+        assert_eq!(
+            all.first().map(|convergence| convergence.command_id.as_str()),
+            Some("cmd-committed")
+        );
+        assert!(all.iter().any(|convergence| convergence.command_id == "cmd-pending"));
+        assert!(engine.command_convergence("missing").is_none());
+    }
+
+    #[test]
+    fn attest_command_verifies_and_retains_commitment_proof() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let event = SyncEvent::new("order.created", "order", "ORD-1", json!({}))
+            .with_command_id("cmd-attest");
+        let event_id = event.id;
+        engine.record(event.clone()).unwrap();
+        engine.confirmations.push(PushConfirmation::from_ack(
+            &event,
+            &crate::transport::PushAcknowledgement::new(event_id, 7).with_receipt("receipt-7"),
+        ));
+        engine.outbox.try_retain(|pending| pending.id != event_id).unwrap();
+
+        let receipts = engine.kernel_receipts_for_command("cmd-attest");
+        let leaf_hash =
+            crate::attestation::compute_command_settlement_leaf("cmd-attest", &receipts).unwrap();
+        let sibling_hash = [3_u8; 32];
+        let root = stateset_crypto::merkle::compute_merkle_root(&[leaf_hash, sibling_hash]);
+
+        engine.state.remote_head = 7;
+        engine.state.remote_cursor = 7;
+        engine.state.remote_state_root = Some(hex::encode(root));
+        engine.state.last_commitment_id = Some("BATCH-7".into());
+
+        let attestation = engine
+            .attest_command(
+                crate::attestation::CommandInclusionProof::new(
+                    "cmd-attest",
+                    hex::encode(root),
+                    0,
+                    2,
+                )
+                .with_commitment_id("BATCH-7")
+                .with_sibling_hashes(vec![hex::encode(sibling_hash)]),
+            )
+            .unwrap();
+
+        assert_eq!(attestation.command_id, "cmd-attest");
+        assert_eq!(attestation.max_remote_sequence, 7);
+        assert!(attestation.settled);
+        assert_eq!(engine.command_attestations().len(), 1);
+        let expected_leaf_hash = hex::encode(leaf_hash);
+        assert_eq!(
+            engine.command_attestation("cmd-attest").map(|stored| stored.leaf_hash.as_str()),
+            Some(expected_leaf_hash.as_str())
+        );
+    }
+
+    #[test]
+    fn attest_command_persists_across_restart() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("sync-state.json");
+        let config = make_config().with_state_path(state_path.to_string_lossy().into_owned());
+
+        {
+            let mut engine = SyncEngine::new(config.clone()).unwrap();
+            let event = SyncEvent::new("order.created", "order", "ORD-2", json!({}))
+                .with_command_id("cmd-persist-attest");
+            let event_id = event.id;
+            engine.record(event.clone()).unwrap();
+            engine.confirmations.push(PushConfirmation::from_ack(
+                &event,
+                &crate::transport::PushAcknowledgement::new(event_id, 8).with_receipt("receipt-8"),
+            ));
+            engine.outbox.try_retain(|pending| pending.id != event_id).unwrap();
+
+            let receipts = engine.kernel_receipts_for_command("cmd-persist-attest");
+            let leaf_hash = crate::attestation::compute_command_settlement_leaf(
+                "cmd-persist-attest",
+                &receipts,
+            )
+            .unwrap();
+            let sibling_hash = [4_u8; 32];
+            let root = stateset_crypto::merkle::compute_merkle_root(&[leaf_hash, sibling_hash]);
+
+            engine.state.remote_head = 8;
+            engine.state.remote_cursor = 8;
+            engine.state.remote_state_root = Some(hex::encode(root));
+            engine.state.last_commitment_id = Some("BATCH-8".into());
+
+            engine
+                .attest_command(
+                    crate::attestation::CommandInclusionProof::new(
+                        "cmd-persist-attest",
+                        hex::encode(root),
+                        0,
+                        2,
+                    )
+                    .with_commitment_id("BATCH-8")
+                    .with_sibling_hashes(vec![hex::encode(sibling_hash)]),
+                )
+                .unwrap();
+        }
+
+        let restored = SyncEngine::new(config).unwrap();
+        let attestation = restored.command_attestation("cmd-persist-attest").unwrap();
+        assert_eq!(attestation.commitment_id.as_deref(), Some("BATCH-8"));
+        assert_eq!(attestation.max_remote_sequence, 8);
+    }
+
+    #[test]
+    fn verify_commitment_manifest_persists_across_restart() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("sync-state.json");
+        let config = make_config().with_state_path(state_path.to_string_lossy().into_owned());
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+
+        {
+            let mut engine = SyncEngine::new(config.clone()).unwrap();
+            engine.state.remote_head = 10;
+            engine.state.remote_state_root = Some("22".repeat(32));
+            engine.state.last_commitment_id = Some("BATCH-10".into());
+
+            let manifest = crate::commitment::sign_commitment_manifest(
+                crate::commitment::CommitmentManifest::new(
+                    "BATCH-10",
+                    "22".repeat(32),
+                    10,
+                    "sequencer-persist",
+                ),
+                &private_key,
+                &public_key,
+            )
+            .unwrap();
+
+            let verified = engine.verify_commitment_manifest(manifest).unwrap();
+            assert_eq!(verified.commitment_id, "BATCH-10");
+            assert_eq!(verified.signer_id, "sequencer-persist");
+        }
+
+        let restored = SyncEngine::new(config).unwrap();
+        let manifest = restored.verified_commitment_manifest("BATCH-10").unwrap();
+        assert_eq!(manifest.state_root, "22".repeat(32));
+        assert_eq!(manifest.signer_id, "sequencer-persist");
+    }
+
+    #[test]
+    fn attest_command_uses_verified_manifest_signer_metadata() {
+        let mut engine = SyncEngine::new(make_config()).unwrap();
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let event = SyncEvent::new("order.created", "order", "ORD-9", json!({}))
+            .with_command_id("cmd-attest-signed");
+        let event_id = event.id;
+        engine.record(event.clone()).unwrap();
+        engine.confirmations.push(PushConfirmation::from_ack(
+            &event,
+            &crate::transport::PushAcknowledgement::new(event_id, 9).with_receipt("receipt-9"),
+        ));
+        engine.outbox.try_retain(|pending| pending.id != event_id).unwrap();
+
+        let receipts = engine.kernel_receipts_for_command("cmd-attest-signed");
+        let leaf_hash =
+            crate::attestation::compute_command_settlement_leaf("cmd-attest-signed", &receipts)
+                .unwrap();
+        let root = stateset_crypto::merkle::compute_merkle_root(&[leaf_hash]);
+
+        engine.state.remote_head = 9;
+        engine.state.remote_cursor = 9;
+        engine.state.remote_state_root = Some(hex::encode(root));
+        engine.state.last_commitment_id = Some("BATCH-9".into());
+
+        let manifest = crate::commitment::sign_commitment_manifest(
+            crate::commitment::CommitmentManifest::new(
+                "BATCH-9",
+                hex::encode(root),
+                9,
+                "sequencer-a",
+            ),
+            &private_key,
+            &public_key,
+        )
+        .unwrap();
+        engine.verify_commitment_manifest(manifest).unwrap();
+
+        let attestation = engine
+            .attest_command(
+                crate::attestation::CommandInclusionProof::new(
+                    "cmd-attest-signed",
+                    hex::encode(root),
+                    0,
+                    1,
+                )
+                .with_commitment_id("BATCH-9"),
+            )
+            .unwrap();
+
+        assert_eq!(attestation.manifest_signer_id.as_deref(), Some("sequencer-a"));
+        assert!(attestation.manifest_verified_at.is_some());
+        assert_eq!(
+            engine
+                .command_attestation("cmd-attest-signed")
+                .and_then(|stored| stored.manifest_signer_id.as_deref()),
+            Some("sequencer-a")
+        );
     }
 
     #[test]

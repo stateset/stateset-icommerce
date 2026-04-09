@@ -3,7 +3,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createToolRegistry } from '../../cli/src/tools/index.js';
+import { getStaticMcpToolDefinitions } from '../../cli/src/mcp-server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,24 +26,25 @@ function renderMarkdownTable(headers, rows) {
 function renderMarkdownInventory(inventory) {
   const summaryRows = [
     ['Total tools', String(inventory.totalTools)],
-    ['Loaded modules', String(inventory.moduleCount)],
+    ['Policy domains', String(inventory.domainCount)],
     ['Read tools', String(inventory.permissionCounts.read ?? 0)],
     ['Write tools', String(inventory.permissionCounts.write ?? 0)],
     ['Delete tools', String(inventory.permissionCounts.delete ?? 0)],
     ['Admin tools', String(inventory.permissionCounts.admin ?? 0)],
+    ['Unknown permission', String(inventory.permissionCounts.unknown ?? 0)],
   ];
 
-  const moduleRows = inventory.modules.map((entry) => [entry.name, String(entry.count)]);
+  const domainRows = inventory.domains.map((entry) => [entry.name, String(entry.count)]);
   const permissionRows = inventory.permissions.map((entry) => [entry.name, String(entry.count)]);
   const toolRows = inventory.tools.map((tool) => [
     `\`${tool.name}\``,
-    `\`${tool.module}\``,
+    `\`${tool.policyDomain}\``,
     `\`${tool.permission}\``,
   ]);
 
   return `# MCP Tool Inventory
 
-This page is generated from the live CLI registry in \`cli/src/tools/index.js\`.
+This page is generated from the live MCP server export in \`cli/src/mcp-server.js\`.
 Do not edit it by hand. Regenerate it with:
 
 \`\`\`bash
@@ -56,9 +57,9 @@ Machine-readable output lives at \`artifacts/compatibility/mcp-tool-inventory.js
 
 ${renderMarkdownTable(['Metric', 'Value'], summaryRows)}
 
-## Module Counts
+## Policy Domain Counts
 
-${renderMarkdownTable(['Module', 'Tools'], moduleRows)}
+${renderMarkdownTable(['Policy domain', 'Tools'], domainRows)}
 
 ## Permission Counts
 
@@ -66,33 +67,29 @@ ${renderMarkdownTable(['Permission', 'Tools'], permissionRows)}
 
 ## Tool Registry
 
-${renderMarkdownTable(['Tool', 'Module', 'Permission'], toolRows)}
+${renderMarkdownTable(['Tool', 'Policy domain', 'Permission'], toolRows)}
 `;
 }
 
 async function buildInventory() {
-  const registry = createToolRegistry();
-  await registry.loadAll();
-
-  const tools = registry
-    .getAll()
+  const tools = getStaticMcpToolDefinitions()
     .map((tool) => ({
       name: tool.name,
       description: tool.description,
-      module: tool.category,
+      policyDomain: tool.policyDomain ?? 'commerce',
       permission: tool.permission ?? 'unspecified',
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
 
-  const moduleCounts = new Map();
+  const domainCounts = new Map();
   const permissionCounts = new Map();
 
   for (const tool of tools) {
-    moduleCounts.set(tool.module, (moduleCounts.get(tool.module) ?? 0) + 1);
+    domainCounts.set(tool.policyDomain, (domainCounts.get(tool.policyDomain) ?? 0) + 1);
     permissionCounts.set(tool.permission, (permissionCounts.get(tool.permission) ?? 0) + 1);
   }
 
-  const modules = [...moduleCounts.entries()]
+  const domains = [...domainCounts.entries()]
     .sort((left, right) => left[0].localeCompare(right[0]))
     .map(([name, count]) => ({ name, count }));
 
@@ -101,10 +98,10 @@ async function buildInventory() {
     .map(([name, count]) => ({ name, count }));
 
   return {
-    source: 'cli/src/tools/index.js',
+    source: 'cli/src/mcp-server.js',
     totalTools: tools.length,
-    moduleCount: modules.length,
-    modules,
+    domainCount: domains.length,
+    domains,
     permissions,
     permissionCounts: Object.fromEntries(permissions.map((entry) => [entry.name, entry.count])),
     tools,
@@ -149,7 +146,7 @@ async function main() {
     }
 
     console.log(
-      `MCP inventory is up to date (${inventory.totalTools} tools across ${inventory.moduleCount} modules).`,
+      `MCP inventory is up to date (${inventory.totalTools} tools across ${inventory.domainCount} policy domains).`,
     );
     return;
   }
@@ -160,7 +157,7 @@ async function main() {
   await writeFile(markdownOutputPath, markdownContent, 'utf8');
 
   console.log(
-    `Generated MCP inventory (${inventory.totalTools} tools across ${inventory.moduleCount} modules).`,
+    `Generated MCP inventory (${inventory.totalTools} tools across ${inventory.domainCount} policy domains).`,
   );
 }
 

@@ -23,7 +23,7 @@ This workspace is the application-layer repo in a larger documented stack:
 - `stateset-stark`: STARK proving and verification
 - `set`: settlement chain, registry contracts, anchor service
 
-The current workspace release line is `0.9.7`.
+The current workspace release line is `0.9.8`.
 
 ## Trust Levels
 

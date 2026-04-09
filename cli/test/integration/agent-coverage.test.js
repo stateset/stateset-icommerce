@@ -8,7 +8,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { AGENTS } from '../../src/agent-definitions.js';
+import { SUPPORTED_AGENT_NAMES } from '../../src/agent-catalog.js';
 import { TOOL_NAMES } from '../../src/mcp-server.js';
+import { SCAFFOLD_MCP_TOOL_NAMES } from '../../src/scaffold-server.js';
 
 // ============================================================================
 // Helpers
@@ -39,6 +41,14 @@ describe('Agent definitions coverage', () => {
       assert.ok(
         'customer-service' in AGENTS,
         'customer-service agent should be defined',
+      );
+    });
+
+    it('shared supported-agent registry matches AGENTS keys exactly', () => {
+      assert.deepStrictEqual(
+        [...SUPPORTED_AGENT_NAMES].sort(),
+        [...AGENT_KEYS].sort(),
+        'SUPPORTED_AGENT_NAMES should stay in lockstep with AGENTS keys',
       );
     });
   });
@@ -166,13 +176,11 @@ describe('Agent definitions coverage', () => {
     it('storefront agent references scaffold tools (separate server)', () => {
       const storefront = AGENTS.storefront;
       if (!storefront) return; // may not exist
-      // Storefront tools reference mcp__stateset-scaffold__ prefix
-      for (const tool of storefront.tools) {
-        assert.ok(
-          tool.startsWith('mcp__stateset-scaffold__') || tool.startsWith('mcp__stateset-commerce__'),
-          `Storefront tool "${tool}" has unexpected prefix`,
-        );
-      }
+      assert.deepStrictEqual(
+        storefront.tools,
+        SCAFFOLD_MCP_TOOL_NAMES,
+        'storefront agent should exactly match the scaffold MCP tool registry',
+      );
     });
   });
 

@@ -244,6 +244,9 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         )
         .with_validity(validity_seconds)
         .with_nonce(nonce);
+        if let Some(signature_scheme) = input.signature_scheme {
+            signing_intent.payer_signature_scheme = Some(signature_scheme);
+        }
         signing_intent.id = id;
         signing_intent.created_at = now;
         signing_intent.updated_at = now;

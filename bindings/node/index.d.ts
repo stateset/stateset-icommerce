@@ -1727,6 +1727,7 @@ export interface X402CreateIntentInput {
   amount: number
   asset?: string
   network?: string
+  signatureScheme?: string
   nonce?: number
   validitySeconds?: number
   resourceUri?: string

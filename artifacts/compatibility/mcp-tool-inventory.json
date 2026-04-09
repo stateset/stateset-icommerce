@@ -1,15 +1,19 @@
 {
-  "source": "cli/src/tools/index.js",
-  "totalTools": 340,
-  "moduleCount": 32,
-  "modules": [
+  "source": "cli/src/mcp-server.js",
+  "totalTools": 535,
+  "domainCount": 29,
+  "domains": [
     {
       "name": "a2a",
-      "count": 59
+      "count": 138
     },
     {
-      "name": "agent-cards",
-      "count": 5
+      "name": "agent_cards",
+      "count": 46
+    },
+    {
+      "name": "agentic",
+      "count": 15
     },
     {
       "name": "analytics",
@@ -17,23 +21,11 @@
     },
     {
       "name": "carts",
-      "count": 14
+      "count": 15
     },
     {
-      "name": "catalog",
-      "count": 6
-    },
-    {
-      "name": "checkout",
-      "count": 8
-    },
-    {
-      "name": "circuit-breaker",
-      "count": 8
-    },
-    {
-      "name": "compliance",
-      "count": 6
+      "name": "commerce",
+      "count": 86
     },
     {
       "name": "connectors",
@@ -44,12 +36,12 @@
       "count": 8
     },
     {
-      "name": "custom-objects",
+      "name": "custom_objects",
       "count": 12
     },
     {
       "name": "customers",
-      "count": 3
+      "count": 4
     },
     {
       "name": "erc8004",
@@ -69,23 +61,19 @@
     },
     {
       "name": "orders",
-      "count": 6
+      "count": 8
     },
     {
       "name": "payments",
-      "count": 17
+      "count": 19
     },
     {
       "name": "products",
-      "count": 4
+      "count": 6
     },
     {
       "name": "promotions",
       "count": 10
-    },
-    {
-      "name": "proofs",
-      "count": 7
     },
     {
       "name": "returns",
@@ -129,2072 +117,3242 @@
     },
     {
       "name": "x402",
-      "count": 13
+      "count": 14
     }
   ],
   "permissions": [
     {
       "name": "admin",
-      "count": 33
+      "count": 42
     },
     {
       "name": "delete",
-      "count": 11
+      "count": 12
     },
     {
       "name": "read",
-      "count": 164
+      "count": 274
     },
     {
       "name": "write",
-      "count": 132
+      "count": 207
     }
   ],
   "permissionCounts": {
-    "admin": 33,
-    "delete": 11,
-    "read": 164,
-    "write": 132
+    "admin": 42,
+    "delete": 12,
+    "read": 274,
+    "write": 207
   },
   "tools": [
     {
       "name": "a2a_accept_quote",
       "description": "Accept a quote and pay. Automatically sends payment to the seller.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_add_rule",
+      "description": "Add a programmable guardrail rule. Example: \"block transactions > $1000 without escrow\".",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_agent_alerts",
+      "description": "List recent budget and settlement alerts for an agent, with optional category, time window, and payment-rail filters.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_agent_dashboard",
+      "description": "Get a full operational dashboard for an agent: runtime status, budget, recent budget alerts, tick metrics, and rail-aware economics.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_agent_decisions",
+      "description": "Get recent strategy decisions for an agent: what was accepted/rejected and why.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_agent_insights",
+      "description": "Get aggregate insights: total counterparties, avg success rate, top performers, risk alerts.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_agent_lifecycle",
+      "description": "Get agent lifecycle history: start/stop/pause/resume events with timestamps and reasons.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_agent_performance",
+      "description": "Get performance report with optional rail-aware economics context: quote accept rate, response time, settlement success rate, dispute rate, filtered payment metrics, and recent budget alert activity.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_agent_tick_metrics",
+      "description": "Get tick loop metrics: avg duration, ticks/min, quotes evaluated, payments executed, errors.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_batch_pay",
+      "description": "Execute multiple payments in one call. Each payment is independent — one failure doesn't block others.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_batch_request_quotes",
+      "description": "Request quotes from multiple sellers simultaneously.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_billing_metrics",
+      "description": "Get billing executor metrics: total billed, failed, cancelled, etc.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_billing_start",
+      "description": "Start the automated billing executor loop.",
+      "policyDomain": "a2a",
+      "permission": "admin"
+    },
+    {
+      "name": "a2a_billing_stop",
+      "description": "Stop the automated billing executor loop.",
+      "policyDomain": "a2a",
+      "permission": "admin"
+    },
+    {
+      "name": "a2a_billing_tick",
+      "description": "Run one billing cycle: process due subscriptions, execute payments, handle past-due, activate trials.",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_cancel_agent_subscription",
       "description": "Cancel an agent subscription. Can cancel immediately or at the end of the current billing period.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_cancel_scheduled",
+      "description": "Cancel a scheduled action by ID.",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_check_payment_conditions",
       "description": "Check whether all release conditions are met for a conditional payment (escrow).",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_commerce_report",
+      "description": "Generate a commerce report for an agent: per-rail volume, transactions, dispute rate, top counterparties, and margin.",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_configure_webhooks",
       "description": "Configure webhook settings for an agent. Set the endpoint URL, signing secret, and which event types to receive.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
+    },
+    {
+      "name": "a2a_coordination_status",
+      "description": "Get status of a fan-out coordination: responses received, pending, timed out.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_cost_anomalies",
+      "description": "Detect per-rail spending anomalies, with optional asset/network filters to avoid mixed-unit comparisons.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_cost_budget_forecast",
+      "description": "Forecast when a budget in the selected asset units will be exhausted, with optional asset/network filters and per-rail spend breakdowns.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_cost_counterparty_breakdown",
+      "description": "Get per-counterparty spend/earn breakdown for an agent, with optional asset/network filters and per-rail details.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_cost_daily_trend",
+      "description": "Get daily spend and earnings trend for an agent, with optional asset/network filters and per-rail day breakdowns.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_cost_margin_analysis",
+      "description": "Get margin analysis with optional asset/network filters and per-rail counterparty breakdowns.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_cost_operation_breakdown",
+      "description": "Get per-operation cost breakdown for an agent, with optional asset/network filters and per-rail details.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_cost_summary",
+      "description": "Get spend summary for an agent with optional asset/network filters and per-rail breakdowns.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_cost_top_spenders",
+      "description": "Get top-spending agents across the system, with optional asset/network filters.",
+      "policyDomain": "a2a",
+      "permission": "read"
     },
     {
       "name": "a2a_counter_quote",
       "description": "Counter a quote with a different price (for buyers). Initiates or continues price negotiation with the seller.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
+    },
+    {
+      "name": "a2a_counterparty_profile",
+      "description": "Get learned profile of a counterparty: success rate, reliability, risk level, negotiation patterns.",
+      "policyDomain": "a2a",
+      "permission": "read"
     },
     {
       "name": "a2a_create_agent_subscription",
       "description": "Create a recurring payment subscription between two agents. Supports trial periods and configurable billing intervals.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_create_conditional_payment",
       "description": "Create a conditional payment that combines escrow with x402 payment intent. Funds are held in escrow until conditions are met, then automatically settled.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_create_escrow",
       "description": "Create an escrow to hold funds between buyer and seller agents. Supports conditional release, time-based expiry, and dispute escalation.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_create_split_payment",
       "description": "Create a multi-party split payment. Splits a payment across 2+ recipients by percentage or fixed amounts, with optional platform fee.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
+    },
+    {
+      "name": "a2a_data_stats",
+      "description": "Get row counts for all A2A data tables.",
+      "policyDomain": "a2a",
+      "permission": "read"
     },
     {
       "name": "a2a_decline_quote",
       "description": "Decline a quote.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_delegate_task",
+      "description": "Delegate a task to another agent. Specify description, deadline, reward, and priority.",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_discover_agents",
       "description": "Discover AI agents that can provide goods or services. Find sellers, buyers, or agents with specific capabilities.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_dispute_escrow",
       "description": "Dispute an escrow, escalating it to the dispute resolution system.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_dispute_resolver_metrics",
+      "description": "Get dispute resolver metrics: transitions, resolutions, escalations.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_dispute_resolver_start",
+      "description": "Start the automated dispute resolver loop.",
+      "policyDomain": "a2a",
+      "permission": "admin"
+    },
+    {
+      "name": "a2a_dispute_resolver_tick",
+      "description": "Run one dispute resolution cycle: auto-transition deadlines, apply rule-based arbitration.",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_dlq_count",
       "description": "Get the count of entries in the webhook dead letter queue.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_escrow_process_all",
+      "description": "Process all escrows: auto-release time-locked escrows where conditions are met, expire past-deadline escrows.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_evaluate_rules",
+      "description": "Evaluate all active rules against a transaction context. Returns: allowed, matched rules, explanation.",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_execute_split_payment",
       "description": "Execute a pending split payment, sending funds to each recipient. Tracks per-recipient status.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
+    },
+    {
+      "name": "a2a_export_agent_data",
+      "description": "Export all commerce data for an agent: payments, quotes, escrows, disputes, subscriptions.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_export_traces",
+      "description": "Export all buffered spans in OpenTelemetry-compatible OTLP JSON format.",
+      "policyDomain": "a2a",
+      "permission": "read"
     },
     {
       "name": "a2a_file_dispute",
       "description": "File a formal dispute against an escrow. Begins the dispute resolution process with evidence collection and review.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_fulfill_quote",
       "description": "Mark a quote as fulfilled after delivering goods/services (for sellers).",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_fund_escrow",
       "description": "Fund an escrow, moving it to active status so the seller can begin work.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_get_agent_subscription",
       "description": "Get details of an agent-to-agent subscription.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_get_balance",
       "description": "Get an A2A payment summary for this agent, with optional asset/network filters and per-rail breakdowns.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_get_dispute",
       "description": "Get details of a dispute by ID, including evidence count.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_get_escrow",
       "description": "Get details of an escrow by ID.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_get_event_history",
       "description": "Get historical events for an agent with optional filtering.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_inbox",
+      "description": "Get your message inbox. Filter by unread, type, or limit.",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_get_payment",
       "description": "Get a single A2A payment by ID. Optionally refresh native on-chain confirmation state for supported settlement networks including Bitcoin and shielded Zcash.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_get_reputation",
       "description": "Get reputation and trust score for an agent.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_get_service",
       "description": "Get details of a specific agent service.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_get_split_payment",
       "description": "Get details of a split payment including all recipient shares and statuses.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_thread",
+      "description": "Get all messages in a conversation thread.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_get_trace",
+      "description": "Retrieve all spans for a distributed trace ID. Shows the full journey of a transaction across agents.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_handshake",
+      "description": "Initiate capability handshake with another agent. Returns compatibility report: shared networks/assets, feature mismatches, recommended network/asset.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_health_check",
+      "description": "Run a full health check: database, sequencer, subsystems.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_join_results",
+      "description": "Wait for and aggregate fan-out results based on the join strategy.",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_agent_subscriptions",
       "description": "List agent-to-agent subscriptions with optional filters.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_checkpoints",
+      "description": "List all saved agent checkpoints.",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_disputes",
       "description": "List disputes with optional filters.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_escrows",
       "description": "List escrows with optional filters.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_event_subscriptions",
       "description": "List active event subscriptions for an agent.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_failed_notifications",
+      "description": "List failed webhook notifications (dead-letter queue). Shows notifications that exceeded max retry attempts.",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_notification_log",
       "description": "View the webhook notification delivery log with optional filters.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_payment_requests",
       "description": "List payment requests created by or sent to this agent.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_payments",
       "description": "List A2A payments sent or received by this agent. Can optionally refresh pending native-chain settlement state for payments with on-chain transaction hashes.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_quotes",
       "description": "List quotes where this agent is buyer or seller.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_rules",
+      "description": "List all registered rules. Filter by tags or enabled status.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_list_scheduled",
+      "description": "List scheduled actions. Filter by status or action type.",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_services",
       "description": "List available agent services with optional filters and search.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_split_payments",
       "description": "List split payments with optional filters.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "read"
     },
     {
       "name": "a2a_list_webhook_dlq",
       "description": "List quarantined webhook notifications that permanently failed delivery. Use to inspect and replay failed deliveries.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "admin"
+    },
+    {
+      "name": "a2a_load_checkpoint",
+      "description": "Load last saved agent state checkpoint.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_marketplace_auto_award",
+      "description": "Auto-award expired RFQs to the highest-scored response. Expires RFQs with no responses.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_marketplace_maintenance",
+      "description": "Run a full marketplace maintenance tick: auto-award + expiry + cleanup.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_messaging_metrics",
+      "description": "Get messaging metrics: total messages, unread count, avg response time.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_my_capabilities",
+      "description": "Get this agent's capability manifest for protocol handshake.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_notification_retry_all",
+      "description": "Trigger retry of all pending webhook notifications.",
+      "policyDomain": "a2a",
+      "permission": "write"
     },
     {
       "name": "a2a_pause_agent_subscription",
       "description": "Pause an active agent subscription. Billing is suspended until resumed.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_pay",
       "description": "Pay another AI agent directly. Send supported payment assets including USDC, ssUSD, BTC, or shielded ZEC to another agent by identity wallet, native chain address, or agent ID.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_pay_request",
       "description": "Pay an existing payment request from another agent.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_process_subscription_billing",
       "description": "Process all due subscription billing cycles. Bills active subscriptions, handles past-due retries, transitions expired trials, and cancels end-of-period subscriptions.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_provide_quote",
       "description": "Respond to a quote request with pricing (for sellers).",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_purge_dlq",
       "description": "Purge old dead letter queue entries. Removes entries quarantined more than the specified number of days ago.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "admin"
     },
     {
       "name": "a2a_quarantine_failed_webhooks",
       "description": "Move permanently failed webhook notifications to the dead letter queue. Notifications that exhausted all retry attempts are quarantined for inspection.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "admin"
     },
     {
       "name": "a2a_rate_agent",
       "description": "Rate an agent after a transaction. Scores 1-5 with optional dimension ratings (reliability, quality, speed, communication).",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
+    },
+    {
+      "name": "a2a_rate_limit_metrics",
+      "description": "Get MCP rate limiter metrics: active buckets, top agents by request count.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_readiness",
+      "description": "Check if the system is ready to accept traffic.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_recent_spans",
+      "description": "Get the most recent trace spans for debugging.",
+      "policyDomain": "a2a",
+      "permission": "read"
     },
     {
       "name": "a2a_refund_escrow",
       "description": "Refund escrow funds back to the buyer.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_register_service",
       "description": "Register a service that this agent provides. Other agents can discover and purchase your services.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_release_escrow",
       "description": "Release escrow funds to the seller. All release conditions must be met.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_remember_interaction",
+      "description": "Record an interaction with a counterparty so the agent learns their patterns over time.",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_replay_dlq_entry",
       "description": "Replay a dead letter queue entry by moving it back to the notification log for retry. Resets the attempt counter.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "admin"
+    },
+    {
+      "name": "a2a_replay_notification",
+      "description": "Manually retry a specific failed notification.",
+      "policyDomain": "a2a",
+      "permission": "write"
     },
     {
       "name": "a2a_request_payment",
       "description": "Request payment from another agent. Creates a payment request that the other agent can pay.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_request_quote",
       "description": "Request a price quote from another agent for goods or services.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_resolve_dispute",
       "description": "Resolve a dispute with a resolution type (full refund, partial refund, release to seller, split, or escalate).",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_respond_to_feedback",
       "description": "Respond to feedback left on your agent (only the rated agent can respond).",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_respond_to_task",
+      "description": "Respond to a delegated task: accept, reject, or mark complete.",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_resume_agent_subscription",
       "description": "Resume a paused agent subscription. Recalculates billing dates from now.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_revise_quote",
       "description": "Revise a quote after a buyer counter-offer (for sellers). Adjusts pricing in response to negotiation.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_rule_audit_log",
+      "description": "Get recent rule evaluation audit log — see which rules fired and why.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_saga_cancel",
+      "description": "Cancel a running saga and trigger compensation/rollback.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_saga_execute",
+      "description": "Execute a multi-step transaction saga (e.g., purchase, subscription, RFQ). Automatically rolls back on failure.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_saga_list",
+      "description": "List sagas with optional status filter.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_saga_status",
+      "description": "Get the status of a running or completed saga by ID.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_save_checkpoint",
+      "description": "Save agent state checkpoint for recovery after restart.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_scatter",
+      "description": "Broadcast a task to multiple agents in parallel (fan-out). Returns coordination ID for tracking.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_schedule_action",
+      "description": "Schedule a future action: \"pay in 3 days\", \"check escrow every hour\", \"remind me to follow up\".",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_scheduler_metrics",
+      "description": "Get scheduler metrics: total scheduled, executed, failed, pending, recurring.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_send_message",
+      "description": "Send a direct message to another agent. Supports text, task delegation, and status queries.",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_send_notification",
       "description": "Send a webhook notification to another agent. Delivers a signed payload to their configured endpoint.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_settle_conditional_payment",
       "description": "Settle a conditional payment. Checks all conditions, releases escrow funds to the seller, and marks the x402 intent as settled.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_settlement_finality_metrics",
+      "description": "Get settlement metrics: avg confirmation time, finality rate, reorg count.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_settlement_pending",
+      "description": "List all settlements not yet final — awaiting blockchain confirmations.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_settlement_status",
+      "description": "Get settlement finality status: broadcast → unconfirmed → confirming → final. Shows confirmation count vs chain requirement.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_should_transact",
+      "description": "Get AI recommendation on whether to transact with a counterparty, based on learned history.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_sla_enforce",
+      "description": "Enforce SLA penalties for a service: detect breaches and apply credits/suspensions/refunds.",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_sla_enforce_all",
+      "description": "Run a full SLA enforcement cycle across all services.",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_submit_evidence",
       "description": "Submit evidence for an active dispute.",
-      "module": "a2a",
+      "policyDomain": "a2a",
+      "permission": "write"
+    },
+    {
+      "name": "a2a_submit_response",
+      "description": "Submit a response to a fan-out coordination (as a target agent).",
+      "policyDomain": "a2a",
       "permission": "write"
     },
     {
       "name": "a2a_subscribe_events",
       "description": "Subscribe an agent to receive real-time events. Supports wildcard and prefix-based event type filtering.",
-      "module": "a2a",
+      "policyDomain": "a2a",
       "permission": "write"
+    },
+    {
+      "name": "a2a_tick_metrics",
+      "description": "Get tick loop performance metrics: p50/p95/p99 duration, ticks/min, idle streaks, adaptive interval.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_top_counterparties",
+      "description": "Get top counterparties ranked by volume, success rate, or reliability.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_tracing_metrics",
+      "description": "Get tracing metrics: p50/p95/p99 latency, error rate, throughput, span count.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_verify_webhook",
+      "description": "Verify a received webhook signature. Use this to validate incoming StateSet webhooks.",
+      "policyDomain": "a2a",
+      "permission": "read"
+    },
+    {
+      "name": "a2a_webhook_dlq_status",
+      "description": "Get dead-letter queue metrics: pending, failed, delivered counts.",
+      "policyDomain": "a2a",
+      "permission": "read"
     },
     {
       "name": "abandon_cart",
       "description": "Mark a cart as abandoned (for recovery campaigns).",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {
       "name": "activate_bom",
       "description": "Activate a BOM to make it available for work orders.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "write"
     },
     {
       "name": "activate_promotion",
       "description": "Activate a promotion to make it available for use.",
-      "module": "promotions",
+      "policyDomain": "promotions",
       "permission": "write"
     },
     {
       "name": "activate_subscription_plan",
       "description": "Activate a subscription plan (make it available for new subscriptions). Requires --apply flag.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "write"
     },
     {
       "name": "add_bom_component",
       "description": "Add a component/ingredient to a Bill of Materials.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "write"
     },
     {
       "name": "add_cart_item",
       "description": "Add an item to a shopping cart.",
-      "module": "carts",
+      "policyDomain": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "add_to_wishlist",
+      "description": "Add a product to a wishlist.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "adjust_inventory",
       "description": "Adjust inventory quantity for a SKU. Use positive numbers to add stock, negative to remove.",
-      "module": "inventory",
+      "policyDomain": "inventory",
+      "permission": "write"
+    },
+    {
+      "name": "adjust_store_credit",
+      "description": "Adjust a store credit balance (add or subtract).",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "agent_attach_sla",
+      "description": "Attach a Service Level Agreement to a registered service. Defines performance thresholds and penalties.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_award_rfq",
+      "description": "Award an RFQ to the best-scored (or specified) seller. Accepts the winner's quote and declines all others.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_broadcast_rfq",
+      "description": "Broadcast a Request for Quotation (RFQ) to multiple sellers in the marketplace. Sellers matching the filter will receive quote requests.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_check_sla_compliance",
+      "description": "Check if a service is meeting its SLA commitments.",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_collect_rfq_responses",
+      "description": "Collect and score all responses for an RFQ broadcast.",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_create_escrow_deal",
+      "description": "Create an escrow-backed transaction between agents. Funds are held until conditions are met (seller fulfilled, buyer confirmed, time lock, or milestone).",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_create_runtime",
+      "description": "Create an autonomous AI agent runtime with a wallet, negotiation strategy, and budget. The agent can then register services, discover other agents, negotiate quotes, and make payments autonomously.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_create_split_deal",
+      "description": "Create a multi-party payment split. Revenue from a deal is distributed to multiple agents.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_create_workflow",
+      "description": "Create a multi-agent workflow with DAG-based step dependencies. Steps execute in topological order.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_destroy_runtime",
+      "description": "Destroy an agent runtime and clean up resources.",
+      "policyDomain": "agent_cards",
+      "permission": "delete"
+    },
+    {
+      "name": "agent_discover_services",
+      "description": "Search the A2A marketplace for services by category or capability.",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_enable_settlement",
+      "description": "Enable on-chain payment settlement for an agent runtime. The agent will settle payments on the specified blockchain using derived wallets.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_execute_workflow",
+      "description": "Execute a workflow. Steps run in dependency order with parallel fan-out where possible.",
+      "policyDomain": "agent_cards",
       "permission": "write"
     },
     {
       "name": "agent_get_all_breaker_states",
       "description": "Get the circuit breaker states for all known agents.",
-      "module": "circuit-breaker",
+      "policyDomain": "agent_cards",
       "permission": "read"
     },
     {
       "name": "agent_get_breaker_state",
       "description": "Get the circuit breaker state for a specific agent, including trip reason and config.",
-      "module": "circuit-breaker",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_budget",
+      "description": "Get the current budget status of an agent, with optional asset/network scope for multi-rail payment budgets.",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_chain_balance",
+      "description": "Get the on-chain payment-token balance for an agent runtime with settlement enabled.",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_event_history",
+      "description": "Get an agent's event stream history with optional filters for event type, time window, and payment rail.",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_marketplace_metrics",
+      "description": "Get marketplace performance metrics for a registered service (success rate, response time, etc.).",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_reputation",
+      "description": "Get an agent's reputation score, trust tier, and feedback summary.",
+      "policyDomain": "agent_cards",
       "permission": "read"
     },
     {
       "name": "agent_get_spending_summary",
       "description": "Get the spending summary for an agent: today's spend, monthly spend, and remaining limits.",
-      "module": "circuit-breaker",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_status",
+      "description": "Get detailed status of an agent runtime including budget, strategy, registered services, and optional rail-specific settlement context.",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_get_workflow_status",
+      "description": "Get the current status and progress of a workflow.",
+      "policyDomain": "agent_cards",
       "permission": "read"
     },
     {
       "name": "agent_instant_checkout",
       "description": "Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement.",
-      "module": "checkout",
+      "policyDomain": "agent_cards",
       "permission": "write"
     },
     {
       "name": "agent_key_export",
       "description": "Export an agent public key for sequencer registration. Returns public key only — never the private key.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "agent_key_generate",
       "description": "Generate a new Ed25519 signing or X25519 encryption key pair for an agent. Requires --apply flag.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "write"
     },
     {
       "name": "agent_key_info",
       "description": "Get detailed info for a specific agent key. Returns metadata only — no private key.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "agent_key_list",
       "description": "List signing and/or encryption keys for an agent. Returns only public metadata — never exposes private keys.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "agent_key_rotate",
       "description": "Rotate an agent key: generate a new key and revoke the current one. Requires --apply flag.",
-      "module": "sync",
+      "policyDomain": "sync",
+      "permission": "write"
+    },
+    {
+      "name": "agent_list_runtimes",
+      "description": "List all active agent runtimes in this session, with optional asset/network budget scope.",
+      "policyDomain": "agent_cards",
+      "permission": "read"
+    },
+    {
+      "name": "agent_rate_counterparty",
+      "description": "Rate another agent after a transaction. Builds reputation in the marketplace.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_register_service",
+      "description": "Register a service in the A2A marketplace so other agents can discover and purchase it.",
+      "policyDomain": "agent_cards",
       "permission": "write"
     },
     {
       "name": "agent_reset_all_breakers",
       "description": "Reset ALL circuit breakers and deactivate the global kill switch.",
-      "module": "circuit-breaker",
+      "policyDomain": "agent_cards",
       "permission": "admin"
     },
     {
       "name": "agent_reset_breaker",
       "description": "Reset the circuit breaker for a specific agent, allowing transactions again.",
-      "module": "circuit-breaker",
+      "policyDomain": "agent_cards",
       "permission": "admin"
+    },
+    {
+      "name": "agent_set_dynamic_pricing",
+      "description": "Configure dynamic pricing for an agent. Sets volume breaks, reputation tiers, peak hours, and loyalty tiers.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
     },
     {
       "name": "agent_set_spending_limits",
       "description": "Update the spending limits for agent circuit breakers: per-transaction, daily, and monthly caps.",
-      "module": "circuit-breaker",
+      "policyDomain": "agent_cards",
       "permission": "admin"
+    },
+    {
+      "name": "agent_set_strategy",
+      "description": "Change an agent's negotiation strategy. Available: always-accept, budget-gated, negotiator, best-of-n, reputation-aware.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_start_loop",
+      "description": "Start the agent's autonomous polling loop. The agent will continuously process incoming work.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_stop_loop",
+      "description": "Stop the agent's autonomous polling loop.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_subscribe_to_service",
+      "description": "Subscribe an agent to another agent's recurring service (e.g., daily data feed, monthly analytics).",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "agent_tick",
+      "description": "Process one autonomous cycle for an agent. The agent will respond to pending quotes, evaluate received offers, and auto-fulfill accepted deals.",
+      "policyDomain": "agent_cards",
+      "permission": "write"
     },
     {
       "name": "agent_trip_all_breakers",
       "description": "Activate the global kill switch — blocks ALL agent transactions immediately.",
-      "module": "circuit-breaker",
+      "policyDomain": "agent_cards",
       "permission": "admin"
     },
     {
       "name": "agent_trip_breaker",
       "description": "Manually trip the circuit breaker for a specific agent. Blocks all transactions until reset.",
-      "module": "circuit-breaker",
+      "policyDomain": "agent_cards",
       "permission": "admin"
+    },
+    {
+      "name": "agentic_execute_plan",
+      "description": "Execute a tool sequence deterministically with optional dry-run and best-effort rollback.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_get_event_history",
+      "description": "Fetch recent MCP event history for debugging and replay.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_list_event_subscriptions",
+      "description": "List active MCP event subscriptions.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_payment_discovery",
+      "description": "Discover payable MCP tools with Machine Payments Protocol metadata, pricing, and optional OpenAPI output.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_plan",
+      "description": "Evaluate a proposed tool sequence for deterministic simulation: policy, permission, and replayability checks.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_prepare_payment",
+      "description": "Prepare a Machine Payments Protocol challenge and retry template for a priced MCP tool call.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_replay",
+      "description": "Read recent deterministic execution events for auditability and replay tooling.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_replay_mutation",
+      "description": "Replay a previously logged mutating tool call from the deterministic replay log, with dry-run by default.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_runtime_contract",
+      "description": "Return a deterministic runtime contract for AI agents: capabilities, side effects, and replay metadata.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_simulate_mutation",
+      "description": "Run deterministic dry-run simulation for a mutating tool with policy, permission, rollback, and replay metadata.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_subscribe_events",
+      "description": "Subscribe to MCP execution events for a session or global stream.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_tool_catalog",
+      "description": "Return a machine-readable tool catalog with runtime metadata and optional Machine Payments Protocol pricing info.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "agentic_unsubscribe_events",
+      "description": "Unsubscribe from a previously-created MCP event subscription.",
+      "policyDomain": "agentic",
+      "permission": "read"
     },
     {
       "name": "apply_cart_discount",
       "description": "Apply a coupon/discount code to the cart.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {
       "name": "apply_cart_promotions",
       "description": "Calculate and apply all applicable promotions to a cart. Uses coupon codes on the cart and automatic promotions.",
-      "module": "promotions",
+      "policyDomain": "promotions",
+      "permission": "write"
+    },
+    {
+      "name": "apply_store_credit",
+      "description": "Apply store credit to an order.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "approve_purchase_order",
       "description": "Approve a purchase order.",
-      "module": "suppliers",
+      "policyDomain": "suppliers",
       "permission": "write"
     },
     {
       "name": "approve_return",
       "description": "Approve a return request.",
-      "module": "returns",
+      "policyDomain": "returns",
+      "permission": "write"
+    },
+    {
+      "name": "approve_review",
+      "description": "Approve a pending review for public display.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "approve_warranty_claim",
       "description": "Approve a warranty claim.",
-      "module": "warranties",
+      "policyDomain": "warranties",
       "permission": "write"
     },
     {
       "name": "archive_subscription_plan",
       "description": "Archive a subscription plan (no new subscriptions, existing ones continue). Requires --apply flag.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "delete"
+    },
+    {
+      "name": "assess_order_fraud",
+      "description": "Run fraud assessment on an order. Returns a risk score and matched signals.",
+      "policyDomain": "orders",
+      "permission": "read"
     },
     {
       "name": "assess_wasm_connector_safety",
       "description": "Compute connector safety scorecard and risk signals for marketplace governance and installation policy.",
-      "module": "connectors",
+      "policyDomain": "connectors",
+      "permission": "read"
+    },
+    {
+      "name": "audit_export",
+      "description": "Export the full audit log for compliance purposes. Returns all entries with metadata for external archival.",
+      "policyDomain": "commerce",
+      "permission": "admin"
+    },
+    {
+      "name": "audit_query",
+      "description": "Query the audit log with optional filters. Returns recent permission checks and tool executions.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "audit_retention",
+      "description": "Run audit log retention cleanup. Removes entries older than the configured retention period (default: 90 days).",
+      "policyDomain": "commerce",
+      "permission": "admin"
+    },
+    {
+      "name": "audit_summary",
+      "description": "Get a summary of audit activity including total entries, breakdown by result type, and most active tools.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "calculate_cart_tax",
       "description": "Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals.",
-      "module": "tax",
+      "policyDomain": "tax",
+      "permission": "read"
+    },
+    {
+      "name": "calculate_shipping_rate",
+      "description": "Calculate shipping rate for a destination address and cart items.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "calculate_tax",
       "description": "Calculate tax for a transaction based on shipping address and line items. Supports US sales tax, EU VAT, and Canadian GST/HST/PST.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "calculate_tax_quote",
       "description": "Calculate a provider-backed tax quote with deterministic replay-safe output and optional idempotency key.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "calculate_tax_quote_with_failover",
       "description": "Calculate a tax quote with jurisdiction compliance validation and provider failover routing.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "cancel_cart",
       "description": "Cancel a shopping cart.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "delete"
     },
     {
       "name": "cancel_order",
       "description": "Cancel an order. Only pending or confirmed orders can be cancelled.",
-      "module": "orders",
+      "policyDomain": "orders",
       "permission": "delete"
     },
     {
       "name": "cancel_payment_intent",
       "description": "Cancel an uncaptured provider-backed payment intent.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "delete"
     },
     {
       "name": "cancel_subscription",
       "description": "Cancel a subscription. By default cancels at end of period. Requires --apply flag.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "delete"
     },
     {
       "name": "cancel_work_order",
       "description": "Cancel a work order.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "delete"
     },
     {
       "name": "capture_payment_intent",
       "description": "Capture all or part of a provider-backed payment intent.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {
       "name": "certify_wasm_connector",
       "description": "Issue marketplace certification metadata for a connector version using automated safety score + trust policy.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "admin"
+    },
+    {
+      "name": "charge_gift_card",
+      "description": "Charge (deduct) an amount from a gift card balance.",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "check_gift_card_balance",
+      "description": "Check the current balance of a gift card by ID or code.",
+      "policyDomain": "commerce",
+      "permission": "read"
     },
     {
       "name": "checkout_with_crypto",
       "description": "Express checkout with a crypto wallet. Similar to express_checkout but takes a wallet address and network for on-chain payment.",
-      "module": "checkout",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "commit_tax_transaction",
       "description": "Commit a previously calculated tax quote into a provider transaction record.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "write"
     },
     {
       "name": "complete_checkout",
       "description": "Complete the checkout process and convert the cart to an order. This is the final step in the checkout flow.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {
       "name": "complete_payment",
       "description": "Mark a payment as completed.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {
       "name": "complete_work_order",
       "description": "Complete a work order with the quantity produced.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "write"
     },
     {
       "name": "compliance_summary",
       "description": "Generate a compliance dashboard summary with transaction volume, dispute rates, policy violations, and top agents for a given period.",
-      "module": "compliance",
+      "policyDomain": "commerce",
       "permission": "read"
+    },
+    {
+      "name": "configure_stripe_webhooks",
+      "description": "Configure Stripe webhook endpoint in the webhook server. Sets up the Stripe v1 signature verification and registers the webhook source.",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "configure_woocommerce_webhooks",
+      "description": "Configure WooCommerce webhook endpoint in the webhook server. Sets up HMAC-SHA256 signature verification.",
+      "policyDomain": "commerce",
+      "permission": "write"
     },
     {
       "name": "confirm_reservation",
       "description": "Confirm an inventory reservation, deducting the reserved quantity from stock.",
-      "module": "inventory",
+      "policyDomain": "inventory",
       "permission": "write"
     },
     {
       "name": "convert_currency",
       "description": "Convert an amount from one currency to another using current exchange rates.",
-      "module": "currency",
+      "policyDomain": "currency",
       "permission": "read"
+    },
+    {
+      "name": "convert_wishlist_to_cart",
+      "description": "Convert all items in a wishlist to a shopping cart.",
+      "policyDomain": "carts",
+      "permission": "write"
     },
     {
       "name": "create_bom",
       "description": "Create a new Bill of Materials for a product. Defines what components/ingredients are needed.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "write"
     },
     {
       "name": "create_cart",
       "description": "Create a new shopping cart. Can be for a guest or authenticated customer.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {
       "name": "create_coupon",
       "description": "Create a coupon code for a promotion.",
-      "module": "promotions",
+      "policyDomain": "promotions",
       "permission": "write"
     },
     {
       "name": "create_custom_object",
       "description": "Create a custom object record. Provide `values` (object) or `valuesJson` (string). Values are validated against the type schema.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "write"
     },
     {
       "name": "create_custom_object_type",
       "description": "Create a custom object type (schema). Fields define allowed keys and types; record values are validated deterministically.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "write"
     },
     {
       "name": "create_customer",
       "description": "Create a new customer. Requires email, first name, and last name.",
-      "module": "customers",
+      "policyDomain": "customers",
+      "permission": "write"
+    },
+    {
+      "name": "create_fraud_rule",
+      "description": "Create a custom fraud detection rule.",
+      "policyDomain": "commerce",
+      "permission": "admin"
+    },
+    {
+      "name": "create_gift_card",
+      "description": "Create a new gift card with an initial balance.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "create_inventory_item",
       "description": "Create a new inventory item for a SKU.",
-      "module": "inventory",
+      "policyDomain": "inventory",
       "permission": "write"
     },
     {
       "name": "create_invoice",
       "description": "Create an invoice for a customer.",
-      "module": "invoices",
+      "policyDomain": "invoices",
       "permission": "write"
+    },
+    {
+      "name": "create_loyalty_program",
+      "description": "Create a loyalty program with tiers and earning rules.",
+      "policyDomain": "commerce",
+      "permission": "admin"
     },
     {
       "name": "create_order",
       "description": "Create a new order for a customer with line items.",
-      "module": "orders",
+      "policyDomain": "orders",
       "permission": "write"
     },
     {
       "name": "create_payment",
       "description": "Create a payment for an order.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {
       "name": "create_payment_intent",
       "description": "Create a provider-backed payment intent with idempotency support for governed checkout flows.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {
       "name": "create_payment_link",
       "description": "Create a shareable payment link for instant checkout. Returns a short URL that buyers or agents can use.",
-      "module": "checkout",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "create_payment_settlement_batch",
       "description": "Create a settlement batch for captured/refunded payment intents to simulate provider payout reconciliation.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {
       "name": "create_product",
       "description": "Create a new product with optional variants.",
-      "module": "products",
+      "policyDomain": "products",
       "permission": "write"
     },
     {
       "name": "create_promotion",
       "description": "Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts.",
-      "module": "promotions",
+      "policyDomain": "promotions",
       "permission": "write"
     },
     {
       "name": "create_purchase_order",
       "description": "Create a purchase order to a supplier.",
-      "module": "suppliers",
+      "policyDomain": "suppliers",
       "permission": "write"
     },
     {
       "name": "create_refund",
       "description": "Create a refund for a payment.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {
       "name": "create_return",
       "description": "Create a return request for an order.",
-      "module": "returns",
+      "policyDomain": "returns",
+      "permission": "write"
+    },
+    {
+      "name": "create_review",
+      "description": "Create a product review.",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "create_reward",
+      "description": "Create a redeemable reward in a loyalty program.",
+      "policyDomain": "commerce",
+      "permission": "admin"
+    },
+    {
+      "name": "create_segment",
+      "description": "Create a customer segment with filter conditions.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "create_shipment",
       "description": "Create a shipment for an order.",
-      "module": "shipments",
+      "policyDomain": "shipments",
       "permission": "write"
     },
     {
       "name": "create_shipping_label",
       "description": "Create a carrier label from quoted rates or explicit service code.",
-      "module": "shipments",
+      "policyDomain": "shipments",
+      "permission": "write"
+    },
+    {
+      "name": "create_shipping_method",
+      "description": "Create a shipping method within a zone (e.g., Standard, Express, Overnight).",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "create_shipping_zone",
+      "description": "Create a shipping zone with country/region rules.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "create_stablecoin_payment",
       "description": "Create and execute a blockchain payment to a wallet address. Supports stablecoins plus native BTC and shielded ZEC flows.",
-      "module": "stablecoin",
+      "policyDomain": "stablecoin",
+      "permission": "write"
+    },
+    {
+      "name": "create_store_credit",
+      "description": "Issue store credit to a customer.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "create_subscription",
       "description": "Create a new subscription for a customer. Requires --apply flag.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "write"
     },
     {
       "name": "create_subscription_plan",
       "description": "Create a new subscription plan. Requires --apply flag.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "write"
     },
     {
       "name": "create_supplier",
       "description": "Create a new supplier.",
-      "module": "suppliers",
+      "policyDomain": "suppliers",
       "permission": "write"
     },
     {
       "name": "create_tax_exemption",
       "description": "Create a tax exemption certificate for a customer.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "write"
     },
     {
       "name": "create_warranty",
       "description": "Create a warranty for a product.",
-      "module": "warranties",
+      "policyDomain": "warranties",
       "permission": "write"
     },
     {
       "name": "create_warranty_claim",
       "description": "File a warranty claim.",
-      "module": "warranties",
+      "policyDomain": "warranties",
+      "permission": "write"
+    },
+    {
+      "name": "create_wishlist",
+      "description": "Create a new wishlist for a customer.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "create_work_order",
       "description": "Create a manufacturing work order to produce a quantity of product.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "write"
     },
     {
       "name": "deactivate_promotion",
       "description": "Pause/deactivate a promotion.",
-      "module": "promotions",
+      "policyDomain": "promotions",
+      "permission": "write"
+    },
+    {
+      "name": "delegate_to_agent",
+      "description": "Delegate a sub-task to a specialized commerce agent. Available agents: customer-service, checkout, orders, inventory, returns, analytics, promotions, subscriptions, storefront, sync, manufacturing, payments, stablecoin, shipments, suppliers, invoices, warranties, currency, agents, tax.",
+      "policyDomain": "agentic",
       "permission": "write"
     },
     {
       "name": "delete_custom_object",
       "description": "Delete a custom object record by ID.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "delete"
     },
     {
       "name": "delete_custom_object_type",
       "description": "Delete a custom object type (schema). Records of this type must be deleted first.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "delete"
     },
     {
       "name": "delete_gdpr_data",
       "description": "Delete personal data for GDPR right to erasure (Article 17). Optionally retains anonymized transaction records for legal/accounting requirements.",
-      "module": "compliance",
+      "policyDomain": "commerce",
       "permission": "admin"
     },
     {
       "name": "deliver_shipment",
       "description": "Mark a shipment as delivered.",
-      "module": "shipments",
+      "policyDomain": "shipments",
+      "permission": "write"
+    },
+    {
+      "name": "disable_gift_card",
+      "description": "Disable a gift card so it can no longer be used.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "discover_agents",
       "description": "Discover AI agents with specific commerce capabilities. Find sellers, buyers, or agents supporting specific networks/assets.",
-      "module": "agent-cards",
+      "policyDomain": "agent_cards",
       "permission": "read"
+    },
+    {
+      "name": "discover_tools",
+      "description": "Discover relevant MCP tools by intent description. Returns the top matching tools for a given natural language query.",
+      "policyDomain": "agentic",
+      "permission": "read"
+    },
+    {
+      "name": "earn_points",
+      "description": "Award loyalty points to a customer account.",
+      "policyDomain": "commerce",
+      "permission": "write"
     },
     {
       "name": "enable_currencies",
       "description": "Enable currencies for the store.",
-      "module": "currency",
+      "policyDomain": "currency",
       "permission": "admin"
+    },
+    {
+      "name": "enroll_customer",
+      "description": "Enroll a customer in a loyalty program.",
+      "policyDomain": "customers",
+      "permission": "write"
     },
     {
       "name": "erc8004_get_by_wallet",
       "description": "Get an ERC-8004 identity by wallet address.",
-      "module": "erc8004",
+      "policyDomain": "erc8004",
       "permission": "read"
     },
     {
       "name": "erc8004_get_identity",
       "description": "Get an ERC-8004 identity by registry + agent id.",
-      "module": "erc8004",
+      "policyDomain": "erc8004",
       "permission": "read"
     },
     {
       "name": "erc8004_link_wallet",
       "description": "Link a wallet to an existing ERC-8004 identity record.",
-      "module": "erc8004",
+      "policyDomain": "erc8004",
       "permission": "write"
     },
     {
       "name": "erc8004_list_identities",
       "description": "List ERC-8004 identities.",
-      "module": "erc8004",
+      "policyDomain": "erc8004",
       "permission": "read"
     },
     {
       "name": "erc8004_register_identity",
       "description": "Register or update an ERC-8004 agent identity record.",
-      "module": "erc8004",
+      "policyDomain": "erc8004",
       "permission": "admin"
+    },
+    {
+      "name": "evaluate_policy",
+      "description": "Evaluate a policy domain against a context object. Returns allow/deny decision with full explanation of which rules matched and why.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "evaluate_segment_membership",
+      "description": "Check whether a customer belongs to a segment.",
+      "policyDomain": "commerce",
+      "permission": "read"
     },
     {
       "name": "execute_wasm_connector",
       "description": "Execute an installed WASM connector action so agents can orchestrate ecosystem apps through iCommerce.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "write"
+    },
+    {
+      "name": "explain_policy_denial",
+      "description": "Re-evaluate a policy domain with verbose per-condition breakdown. Shows which conditions matched, which did not, and the expected vs actual values for each.",
+      "policyDomain": "commerce",
+      "permission": "read"
     },
     {
       "name": "export_agent_catalog",
       "description": "Export the agent catalog in JSON or OpenAPI format. Useful for sharing the catalog with other systems or generating API documentation.",
-      "module": "catalog",
+      "policyDomain": "agent_cards",
       "permission": "read"
     },
     {
       "name": "export_audit_trail",
       "description": "Export a complete audit trail of agent transactions and events for compliance review. Supports JSON and CSV formats with date range, agent, and event type filters.",
-      "module": "compliance",
+      "policyDomain": "commerce",
       "permission": "admin"
     },
     {
       "name": "export_compliance_package",
       "description": "Generate a compliance package — a complete set of verifiable receipts for all events in a batch, suitable for regulatory export or third-party audit.",
-      "module": "proofs",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "export_data",
+      "description": "Export StateSet data to JSON format. Useful for parity testing after imports.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "export_gdpr_data",
       "description": "Export all personal data for a customer or agent (GDPR Article 20 — data portability). Returns personal data, payments, communications, and disputes.",
-      "module": "compliance",
+      "policyDomain": "commerce",
       "permission": "admin"
     },
     {
       "name": "express_checkout",
       "description": "One-call checkout from a payment link. Converts the link into an order and payment.",
-      "module": "checkout",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "flag_review",
+      "description": "Flag a review for manual moderation.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "format_currency",
       "description": "Format an amount with currency symbol.",
-      "module": "currency",
+      "policyDomain": "currency",
       "permission": "read"
     },
     {
       "name": "generate_1099k",
       "description": "Generate a 1099-K tax report for an agent. Summarizes gross payment amounts, transaction counts, and monthly breakdowns for a given tax year.",
-      "module": "compliance",
+      "policyDomain": "commerce",
       "permission": "admin"
     },
     {
       "name": "generate_inclusion_proof",
       "description": "Generate a Merkle inclusion proof for a specific event within a batch of events.",
-      "module": "proofs",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "generate_receipt_bundle",
       "description": "Generate a full verifiable receipt bundle for an event — includes event data, leaf hash, Merkle inclusion proof, and anchor metadata.",
-      "module": "proofs",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_abandoned_carts",
       "description": "Get all abandoned carts for recovery campaigns.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "read"
     },
     {
       "name": "get_active_promotions",
       "description": "Get all currently active promotions.",
-      "module": "promotions",
+      "policyDomain": "promotions",
       "permission": "read"
     },
     {
       "name": "get_agent_card",
       "description": "Get details of a registered AI agent card.",
-      "module": "agent-cards",
+      "policyDomain": "agent_cards",
       "permission": "read"
     },
     {
       "name": "get_agent_wallet",
       "description": "Get the agent wallet address for a specific blockchain. Returns the wallet address derived from VES keys.",
-      "module": "stablecoin",
+      "policyDomain": "stablecoin",
       "permission": "read"
     },
     {
       "name": "get_billing_cycle",
       "description": "Get details for a specific billing cycle.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "read"
     },
     {
       "name": "get_bom",
       "description": "Get a Bill of Materials by ID, including all components/ingredients.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "read"
     },
     {
       "name": "get_cart",
       "description": "Get a specific cart by ID or cart number. Returns full cart details including items.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "read"
     },
     {
       "name": "get_currency_settings",
       "description": "Get the store currency settings including base currency and enabled currencies.",
-      "module": "currency",
+      "policyDomain": "currency",
       "permission": "read"
     },
     {
       "name": "get_custom_object",
       "description": "Get a custom object record by ID.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "read"
     },
     {
       "name": "get_custom_object_by_handle",
       "description": "Get a custom object record by (typeHandle, objectHandle).",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "read"
     },
     {
       "name": "get_custom_object_type",
       "description": "Get a custom object type (schema) by ID.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "read"
     },
     {
       "name": "get_custom_object_type_by_handle",
       "description": "Get a custom object type (schema) by handle.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "read"
     },
     {
       "name": "get_customer",
       "description": "Get a specific customer by ID or email address.",
-      "module": "customers",
+      "policyDomain": "customers",
       "permission": "read"
     },
     {
       "name": "get_customer_metrics",
       "description": "Get customer metrics including total customers, new customers, returning customers, and average lifetime value.",
-      "module": "analytics",
+      "policyDomain": "analytics",
       "permission": "read"
     },
     {
       "name": "get_customer_tax_exemptions",
       "description": "Get active tax exemptions for a customer.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "get_demand_forecast",
       "description": "Get demand forecast for inventory items based on historical sales. Predicts future demand and days until stockout.",
-      "module": "analytics",
+      "policyDomain": "analytics",
       "permission": "read"
     },
     {
       "name": "get_exchange_rate",
       "description": "Get the exchange rate between two currencies.",
-      "module": "currency",
+      "policyDomain": "currency",
+      "permission": "read"
+    },
+    {
+      "name": "get_fraud_assessment",
+      "description": "Get a fraud assessment by ID.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "get_gift_card",
+      "description": "Get a gift card by ID or code.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_installed_connector",
       "description": "Get details for an installed connector and its action contract.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "read"
     },
     {
       "name": "get_inventory_health",
       "description": "Get inventory health summary showing total SKUs, in-stock, low stock, and out of stock counts.",
-      "module": "analytics",
+      "policyDomain": "analytics",
       "permission": "read"
     },
     {
       "name": "get_low_stock_items",
       "description": "Get items that are low in stock or approaching reorder point.",
-      "module": "analytics",
+      "policyDomain": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_loyalty_account",
+      "description": "Get a customer loyalty account including points balance and tier.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "get_loyalty_program",
+      "description": "Get loyalty program details including tiers and reward catalog.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_order",
       "description": "Get a specific order by ID or order number. Returns full order details including line items.",
-      "module": "orders",
+      "policyDomain": "orders",
       "permission": "read"
     },
     {
       "name": "get_order_status_breakdown",
       "description": "Get breakdown of orders by status.",
-      "module": "analytics",
+      "policyDomain": "analytics",
       "permission": "read"
     },
     {
       "name": "get_overdue_invoices",
       "description": "Get all overdue invoices.",
-      "module": "invoices",
+      "policyDomain": "invoices",
       "permission": "read"
     },
     {
       "name": "get_payment",
       "description": "Get a payment by ID.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "read"
     },
     {
       "name": "get_payment_intent",
       "description": "Get a provider-backed payment intent by ID.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "read"
     },
     {
       "name": "get_payment_link_status",
       "description": "Get the status and metrics (views, conversions) for a payment link.",
-      "module": "checkout",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_product",
       "description": "Get a specific product by ID.",
-      "module": "products",
+      "policyDomain": "products",
       "permission": "read"
     },
     {
       "name": "get_product_spec",
       "description": "Get the full machine-readable spec for a catalog product. Returns capabilities, requirements, pricing, trust level, and a JSON Schema fragment.",
-      "module": "catalog",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_product_variant",
       "description": "Get a product variant by SKU.",
-      "module": "products",
+      "policyDomain": "products",
       "permission": "read"
     },
     {
       "name": "get_promotion",
       "description": "Get a promotion by ID or internal code.",
-      "module": "promotions",
+      "policyDomain": "promotions",
       "permission": "read"
     },
     {
       "name": "get_return",
       "description": "Get a specific return by ID.",
-      "module": "returns",
+      "policyDomain": "returns",
       "permission": "read"
     },
     {
       "name": "get_return_metrics",
       "description": "Get return metrics including return rate and total refunds.",
-      "module": "analytics",
+      "policyDomain": "analytics",
       "permission": "read"
     },
     {
       "name": "get_revenue_forecast",
       "description": "Get revenue forecast based on historical trends.",
-      "module": "analytics",
+      "policyDomain": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_review",
+      "description": "Get a review by ID.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "get_review_summary",
+      "description": "Get aggregated review summary for a product including average rating and rating distribution.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_sales_summary",
       "description": "Get sales summary for a time period. Returns total revenue, order count, average order value, items sold, and unique customers.",
-      "module": "analytics",
+      "policyDomain": "analytics",
+      "permission": "read"
+    },
+    {
+      "name": "get_segment",
+      "description": "Get a segment by ID including its conditions and member count.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_shipping_rates",
       "description": "Get available shipping rates for a cart based on contents and address.",
-      "module": "carts",
+      "policyDomain": "carts",
+      "permission": "read"
+    },
+    {
+      "name": "get_shipping_zone",
+      "description": "Get a shipping zone by ID.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_stock",
       "description": "Get current stock level for a SKU. Shows on-hand, allocated, and available quantities.",
-      "module": "inventory",
+      "policyDomain": "inventory",
+      "permission": "read"
+    },
+    {
+      "name": "get_store_credit",
+      "description": "Get store credit details by ID.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_subscription",
       "description": "Get details for a specific subscription.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "read"
     },
     {
       "name": "get_subscription_events",
       "description": "Get event history (audit log) for a subscription.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "read"
     },
     {
       "name": "get_subscription_plan",
       "description": "Get details for a specific subscription plan.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "read"
     },
     {
       "name": "get_tax_quote",
       "description": "Get a provider-backed tax quote by ID.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "get_tax_rate",
       "description": "Get the effective tax rate for a shipping address and product category.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "get_tax_settings",
       "description": "Get the store tax calculation settings.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "get_tax_transaction",
       "description": "Get a provider-backed tax transaction by ID.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "get_top_customers",
       "description": "Get top customers by total spend.",
-      "module": "analytics",
+      "policyDomain": "analytics",
       "permission": "read"
     },
     {
       "name": "get_top_products",
       "description": "Get top selling products by revenue or units sold.",
-      "module": "analytics",
+      "policyDomain": "analytics",
       "permission": "read"
     },
     {
       "name": "get_us_state_tax_info",
       "description": "Get pre-configured US state sales tax information including rates and rules.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "get_wallet_balance",
       "description": "Check the balance of the agent wallet on a blockchain.",
-      "module": "stablecoin",
+      "policyDomain": "stablecoin",
+      "permission": "read"
+    },
+    {
+      "name": "get_wishlist",
+      "description": "Get a wishlist by ID including all items.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "get_work_order",
       "description": "Get a work order by ID with full details.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "read"
     },
     {
       "name": "handle_fulfillment_exception",
       "description": "Execute governed fulfillment exception workflows for carrier failure, partial shipment, split tender, and returns arbitration.",
-      "module": "shipments",
+      "policyDomain": "shipments",
+      "permission": "write"
+    },
+    {
+      "name": "import_csv",
+      "description": "Import data from a CSV file. Auto-detects Shopify format or uses generic column mapping.",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "import_json",
+      "description": "Import data from a JSON file (Shopify REST API response format or array).",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "import_shopify_data",
+      "description": "Import data from a Shopify store. Supports API, CSV file, and JSON file sources. Imports customers, products, orders, and inventory in dependency order.",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "import_shopify_shadow_data",
+      "description": "Run Shopify interop in shadow mode for products, inventory, orders, fulfillments, and customers. Produces parity-ready summaries without writes unless explicitly enabled.",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "import_status",
+      "description": "Get the status of the most recent import operation.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "import_woocommerce_data",
+      "description": "Import data from a WooCommerce store via REST API. Imports customers, products, orders, and inventory in dependency order.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "ingest_payment_provider_webhook",
       "description": "Ingest a payment provider webhook event and reconcile payment intent state in shadow or production mode.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {
       "name": "ingest_shipping_provider_webhook",
       "description": "Ingest a shipping provider webhook event and reconcile label/tracking state for shadow mode operations.",
-      "module": "shipments",
+      "policyDomain": "shipments",
       "permission": "write"
     },
     {
       "name": "ingest_tax_provider_webhook",
       "description": "Ingest a tax provider webhook event and reconcile quote/transaction state in shadow or production mode.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "write"
     },
     {
       "name": "inspect_batch",
       "description": "Inspect a batch of events — computes Merkle root, event count, and time range.",
-      "module": "proofs",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "install_wasm_connector",
       "description": "Install a connector from marketplace catalog into the local connector runtime.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "write"
     },
     {
       "name": "list_agent_cards",
       "description": "List all registered AI agent cards.",
-      "module": "agent-cards",
+      "policyDomain": "agent_cards",
       "permission": "read"
     },
     {
       "name": "list_billing_cycles",
       "description": "List billing cycles for a subscription.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "read"
     },
     {
       "name": "list_boms",
       "description": "List all Bills of Materials (BOMs). BOMs define the components/ingredients needed to manufacture a product.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "read"
     },
     {
       "name": "list_carts",
       "description": "List all shopping carts. Shows cart status, customer, totals, and item count.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "read"
     },
     {
       "name": "list_connector_marketplace",
       "description": "List available WASM connectors in the local marketplace catalog.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "read"
     },
     {
       "name": "list_coupons",
       "description": "List coupon codes with optional filters.",
-      "module": "promotions",
+      "policyDomain": "promotions",
       "permission": "read"
     },
     {
       "name": "list_custom_object_types",
       "description": "List custom object types (schemas). Custom objects are similar to Shopify metaobjects / Salesforce custom objects.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "read"
     },
     {
       "name": "list_custom_objects",
       "description": "List custom object records (entries).",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "read"
     },
     {
       "name": "list_customers",
       "description": "List all customers in the database. Returns customer details including email, name, and status.",
-      "module": "customers",
+      "policyDomain": "customers",
       "permission": "read"
     },
     {
       "name": "list_exchange_rates",
       "description": "List all available exchange rates, optionally filtered by base currency.",
-      "module": "currency",
+      "policyDomain": "currency",
+      "permission": "read"
+    },
+    {
+      "name": "list_fraud_signals",
+      "description": "List fraud signals for an order or across all recent orders.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "list_gift_cards",
+      "description": "List all gift cards with optional filters.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "list_id_mappings",
+      "description": "List external ID to StateSet ID mappings for a platform. Useful for verifying imported data.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "list_installed_connectors",
       "description": "List installed connectors available to agentic runtime execution.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "read"
     },
     {
       "name": "list_invoices",
       "description": "List all invoices.",
-      "module": "invoices",
+      "policyDomain": "invoices",
       "permission": "read"
     },
     {
       "name": "list_orders",
       "description": "List all orders. Shows order number, status, customer, total amount, and item count.",
-      "module": "orders",
+      "policyDomain": "orders",
       "permission": "read"
     },
     {
       "name": "list_payment_intents",
       "description": "List provider-backed payment intents with optional filtering.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "read"
     },
     {
       "name": "list_payment_links",
       "description": "List payment links with optional filters by status and customer.",
-      "module": "checkout",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "list_payment_providers",
       "description": "List available payment providers and capabilities for agentic payment flows.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "read"
     },
     {
       "name": "list_payment_settlement_batches",
       "description": "List provider payout batches generated from settlement runs.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "read"
     },
     {
       "name": "list_payment_settlements",
       "description": "List settlement records produced by provider payout reconciliation.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "read"
     },
     {
       "name": "list_payments",
       "description": "List all payments in the system.",
-      "module": "payments",
+      "policyDomain": "payments",
+      "permission": "read"
+    },
+    {
+      "name": "list_policies",
+      "description": "List all registered policy sets. Shows policy set IDs, names, domains, and rule counts.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "list_products",
       "description": "List all products in the catalog.",
-      "module": "products",
+      "policyDomain": "products",
       "permission": "read"
     },
     {
       "name": "list_promotions",
       "description": "List all promotions. Shows active, paused, and scheduled promotions with their discount details.",
-      "module": "promotions",
+      "policyDomain": "promotions",
       "permission": "read"
     },
     {
       "name": "list_purchase_orders",
       "description": "List all purchase orders.",
-      "module": "suppliers",
+      "policyDomain": "suppliers",
       "permission": "read"
     },
     {
       "name": "list_returns",
       "description": "List all returns. Shows return status, order, and reason.",
-      "module": "returns",
+      "policyDomain": "returns",
+      "permission": "read"
+    },
+    {
+      "name": "list_reviews",
+      "description": "List reviews with optional filters.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "list_rewards",
+      "description": "List available rewards in a loyalty program.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "list_segments",
+      "description": "List all customer segments.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "list_shipments",
       "description": "List all shipments.",
-      "module": "shipments",
+      "policyDomain": "shipments",
       "permission": "read"
     },
     {
       "name": "list_shipping_labels",
       "description": "List provider-backed shipping labels with optional filtering.",
-      "module": "shipments",
+      "policyDomain": "shipments",
+      "permission": "read"
+    },
+    {
+      "name": "list_shipping_methods",
+      "description": "List shipping methods for a specific zone.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "list_shipping_providers",
       "description": "List shipping providers and capabilities for quoting, labeling, and tracking.",
-      "module": "shipments",
+      "policyDomain": "shipments",
+      "permission": "read"
+    },
+    {
+      "name": "list_shipping_zones",
+      "description": "List all shipping zones.",
+      "policyDomain": "commerce",
+      "permission": "read"
+    },
+    {
+      "name": "list_store_credits",
+      "description": "List store credits with optional filters.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "list_subscription_plans",
       "description": "List all subscription plans. Filter by status (draft, active, archived) or billing interval.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "read"
     },
     {
       "name": "list_subscriptions",
       "description": "List subscriptions. Filter by customer, plan, or status.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "read"
     },
     {
       "name": "list_suppliers",
       "description": "List all suppliers.",
-      "module": "suppliers",
+      "policyDomain": "suppliers",
       "permission": "read"
     },
     {
       "name": "list_supported_chains",
       "description": "List all supported blockchain networks for agent payment execution.",
-      "module": "stablecoin",
+      "policyDomain": "stablecoin",
       "permission": "read"
     },
     {
       "name": "list_tax_jurisdictions",
       "description": "List tax jurisdictions with optional filtering by country or level.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "list_tax_providers",
       "description": "List tax providers and capabilities for quote, commit, and void workflows.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "list_tax_rates",
       "description": "List tax rates for a jurisdiction or all active rates.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "list_tax_transactions",
       "description": "List provider-backed tax transactions with optional filtering.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "list_warranties",
       "description": "List all warranties.",
-      "module": "warranties",
+      "policyDomain": "warranties",
+      "permission": "read"
+    },
+    {
+      "name": "list_wishlists",
+      "description": "List wishlists for a customer.",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "list_work_orders",
       "description": "List all manufacturing work orders. Work orders track production runs.",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "read"
+    },
+    {
+      "name": "load_policy_file",
+      "description": "Load a YAML or JSON policy file into the engine. The file must define a valid policy set with domain, rules, and actions.",
+      "policyDomain": "commerce",
+      "permission": "write"
     },
     {
       "name": "match_agent_to_products",
       "description": "Find catalog products compatible with an agent based on its capabilities and trust level. Returns products sorted by relevance (capability overlap).",
-      "module": "catalog",
+      "policyDomain": "agent_cards",
       "permission": "read"
     },
     {
       "name": "match_product_to_agents",
       "description": "Find agents compatible with a specific product. Filters available agents by the product's required trust level and capabilities.",
-      "module": "catalog",
+      "policyDomain": "products",
       "permission": "read"
     },
     {
       "name": "pause_subscription",
       "description": "Pause a subscription (stops billing, can resume later). Requires --apply flag.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "write"
     },
     {
       "name": "publish_product_catalog",
       "description": "Publish a product to the machine-readable agent catalog. Makes products discoverable by AI agents with capability-based matching, trust levels, and machine-readable specs.",
-      "module": "catalog",
+      "policyDomain": "products",
       "permission": "write"
     },
     {
       "name": "publish_wasm_connector",
       "description": "Publish a WASM connector to the local marketplace catalog (app-store style ecosystem index).",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "admin"
     },
     {
       "name": "query_agent_catalog",
       "description": "Query the agent catalog for products matching filters. Supports capability, trust level, price, fulfillment chain, and category filtering.",
-      "module": "catalog",
+      "policyDomain": "agent_cards",
       "permission": "read"
     },
     {
       "name": "quote_shipping_rates",
       "description": "Quote carrier rates from provider adapters using structured parcel data and destination address.",
-      "module": "shipments",
+      "policyDomain": "shipments",
       "permission": "read"
+    },
+    {
+      "name": "rebuild_dynamic_segment",
+      "description": "Rebuild a dynamic segment by re-evaluating all customers against its conditions.",
+      "policyDomain": "commerce",
+      "permission": "write"
     },
     {
       "name": "reconcile_payment_provider",
       "description": "Reconcile payment intents against settlement records to find pending settlement or over-settlement drift.",
-      "module": "payments",
+      "policyDomain": "payments",
       "permission": "read"
     },
     {
       "name": "record_invoice_payment",
       "description": "Record payment on an invoice.",
-      "module": "invoices",
+      "policyDomain": "invoices",
+      "permission": "write"
+    },
+    {
+      "name": "redeem_points",
+      "description": "Redeem loyalty points for a reward or discount.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "refund_payment_intent",
       "description": "Refund all or part of a captured provider-backed payment intent.",
-      "module": "payments",
+      "policyDomain": "payments",
+      "permission": "write"
+    },
+    {
+      "name": "refund_to_gift_card",
+      "description": "Refund an amount back to a gift card.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "register_agent_card",
       "description": "Register an AI agent card for A2A commerce. Advertises capabilities, supported networks, and payment assets.",
-      "module": "agent-cards",
+      "policyDomain": "agent_cards",
+      "permission": "write"
+    },
+    {
+      "name": "register_policy_template",
+      "description": "Activate one of the built-in policy templates. Available templates: autoApproveReturns, inventoryRestock, orderFraudDetection, promotionEligibility, subscriptionRules.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "reject_return",
       "description": "Reject a return request with a reason.",
-      "module": "returns",
+      "policyDomain": "returns",
+      "permission": "write"
+    },
+    {
+      "name": "reject_review",
+      "description": "Reject a review with a reason.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "release_reservation",
       "description": "Release an inventory reservation, returning the reserved quantity to available stock.",
-      "module": "inventory",
+      "policyDomain": "inventory",
       "permission": "write"
     },
     {
       "name": "remove_cart_item",
       "description": "Remove an item from the cart.",
-      "module": "carts",
+      "policyDomain": "carts",
+      "permission": "write"
+    },
+    {
+      "name": "remove_from_wishlist",
+      "description": "Remove a product from a wishlist.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "reserve_inventory",
       "description": "Reserve inventory for an order. Reserved stock is allocated but not yet deducted.",
-      "module": "inventory",
+      "policyDomain": "inventory",
       "permission": "write"
     },
     {
       "name": "resolve_payment_link",
       "description": "Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status.",
-      "module": "checkout",
+      "policyDomain": "payments",
       "permission": "read"
     },
     {
       "name": "resume_subscription",
       "description": "Resume a paused subscription. Requires --apply flag.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
+      "permission": "write"
+    },
+    {
+      "name": "review_flagged_order",
+      "description": "Review a flagged order and mark it as approved or rejected.",
+      "policyDomain": "orders",
       "permission": "write"
     },
     {
       "name": "revoke_payment_link",
       "description": "Revoke (cancel) an active payment link. Prevents further checkouts from it.",
-      "module": "checkout",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {
       "name": "send_invoice",
       "description": "Send an invoice to the customer.",
-      "module": "invoices",
+      "policyDomain": "invoices",
       "permission": "write"
     },
     {
       "name": "send_purchase_order",
       "description": "Send a PO to the supplier.",
-      "module": "suppliers",
+      "policyDomain": "suppliers",
       "permission": "write"
     },
     {
       "name": "set_base_currency",
       "description": "Set the store's base currency.",
-      "module": "currency",
+      "policyDomain": "currency",
       "permission": "admin"
     },
     {
       "name": "set_cart_payment",
       "description": "Set the payment method for a cart.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {
       "name": "set_cart_shipping_address",
       "description": "Set the shipping address for a cart.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {
       "name": "set_exchange_rate",
       "description": "Set or update an exchange rate between two currencies.",
-      "module": "currency",
+      "policyDomain": "currency",
       "permission": "admin"
     },
     {
       "name": "ship_order",
       "description": "Mark an order as shipped with optional tracking number.",
-      "module": "orders",
+      "policyDomain": "orders",
       "permission": "write"
     },
     {
       "name": "sign_wasm_connector_attestation",
       "description": "Sign a marketplace connector attestation using local signing key material for trustable install/execute verification.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "admin"
     },
     {
       "name": "skip_billing_cycle",
       "description": "Skip the next billing cycle for a subscription. Requires --apply flag.",
-      "module": "subscriptions",
+      "policyDomain": "subscriptions",
       "permission": "write"
     },
     {
       "name": "soc2_evidence",
       "description": "Generate a SOC2 audit evidence package. Gathers structured evidence for requested controls: access_control, change_management, encryption, monitoring, incident_response.",
-      "module": "compliance",
+      "policyDomain": "commerce",
       "permission": "admin"
     },
     {
       "name": "start_work_order",
       "description": "Start a work order (begin production).",
-      "module": "manufacturing",
+      "policyDomain": "manufacturing",
       "permission": "write"
     },
     {
       "name": "sync_conflicts",
       "description": "List unresolved sync conflicts. Conflicts occur when local and remote events modify the same entity concurrently.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "sync_decrypt_event",
       "description": "Decrypt an encrypted sync event from the local outbox or pulled-event store using the local recipient key. Supports legacy X25519 and hybrid X25519 + ML-KEM-768 wraps.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "sync_entity_history",
       "description": "Get the event history for a specific entity from the remote sequencer or the local pulled-event store.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "sync_full",
       "description": "Perform a full sync: push pending events then pull new events. Requires --apply flag for push.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "admin"
     },
     {
       "name": "sync_inspect_commitment",
       "description": "Inspect a VES batch commitment from the sequencer. Shows the Merkle root, sequence range, and event count.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "sync_outbox",
       "description": "List events in the local outbox. Shows pending, synced, failed, and rejected events.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "sync_pull",
       "description": "Pull events from the remote sequencer and store them locally.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "write"
     },
     {
       "name": "sync_pulled_events",
       "description": "List events already pulled from the sequencer and stored locally. Can optionally include plaintext payloads or decrypt encrypted payloads with local keys.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "sync_push",
       "description": "Push pending local events to the remote sequencer. Requires --apply flag for actual push.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "write"
     },
     {
       "name": "sync_rebase",
       "description": "Resolve all sync conflicts using a resolution strategy. Requires --apply flag.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "admin"
     },
     {
       "name": "sync_resolve",
       "description": "Resolve a specific sync conflict using a resolution strategy. Requires --apply flag.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "admin"
     },
     {
       "name": "sync_retry_failed",
       "description": "Reset failed events to pending status so they can be retried. Requires --apply flag.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "admin"
     },
     {
       "name": "sync_status",
       "description": "Get the current sync status between local database and remote sequencer. Shows pending events, sync lag, and connection status.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "sync_verify_inclusion",
       "description": "Verify a Merkle inclusion proof for a VES event. Proves the event is included in a committed batch.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "sync_verify_receipt",
       "description": "Verify the signature on a VES event receipt. Supports legacy Ed25519 receipts and hybrid Ed25519 + ML-DSA-65 bundles.",
-      "module": "sync",
+      "policyDomain": "sync",
       "permission": "read"
     },
     {
       "name": "track_shipping_label",
       "description": "Track a shipping label by label ID or tracking number.",
-      "module": "shipments",
+      "policyDomain": "shipments",
       "permission": "read"
     },
     {
       "name": "treasury_balance",
       "description": "Get treasury balances for an agent.",
-      "module": "treasury",
+      "policyDomain": "treasury",
       "permission": "read"
     },
     {
       "name": "treasury_buy",
       "description": "Purchase tokens using treasury stablecoin balances.",
-      "module": "treasury",
+      "policyDomain": "treasury",
       "permission": "write"
     },
     {
       "name": "treasury_deposit",
       "description": "Record a treasury deposit for an agent (funds received).",
-      "module": "treasury",
+      "policyDomain": "treasury",
       "permission": "write"
     },
     {
       "name": "treasury_ledger",
       "description": "List recent treasury transactions for an agent.",
-      "module": "treasury",
+      "policyDomain": "treasury",
       "permission": "read"
     },
     {
       "name": "treasury_list_tokens",
       "description": "List available tokens from chain config and custom registry.",
-      "module": "treasury",
+      "policyDomain": "treasury",
       "permission": "read"
     },
     {
       "name": "treasury_register_token",
       "description": "Add or update a token in the treasury registry.",
-      "module": "treasury",
+      "policyDomain": "treasury",
       "permission": "admin"
     },
     {
       "name": "uninstall_wasm_connector",
       "description": "Uninstall a connector version from the local connector runtime.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "delete"
     },
     {
       "name": "update_cart_item",
       "description": "Update the quantity of an item in the cart.",
-      "module": "carts",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {
       "name": "update_custom_object",
       "description": "Update a custom object record. Provide `values` (object) or `valuesJson` (string) to update record values.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "write"
     },
     {
       "name": "update_custom_object_type",
       "description": "Update a custom object type (schema). Updating fields replaces the full field definition list.",
-      "module": "custom-objects",
+      "policyDomain": "custom_objects",
       "permission": "write"
+    },
+    {
+      "name": "update_fraud_rule",
+      "description": "Update a fraud detection rule.",
+      "policyDomain": "commerce",
+      "permission": "admin"
     },
     {
       "name": "update_order_status",
       "description": "Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded.",
-      "module": "orders",
+      "policyDomain": "orders",
+      "permission": "write"
+    },
+    {
+      "name": "update_segment",
+      "description": "Update a segment name, description, or conditions.",
+      "policyDomain": "commerce",
+      "permission": "write"
+    },
+    {
+      "name": "update_shipping_zone",
+      "description": "Update a shipping zone name, countries, or regions.",
+      "policyDomain": "commerce",
       "permission": "write"
     },
     {
       "name": "validate_coupon",
       "description": "Check if a coupon code is valid and can be used.",
-      "module": "promotions",
+      "policyDomain": "promotions",
       "permission": "read"
     },
     {
       "name": "validate_tax_jurisdiction_compliance",
       "description": "Validate jurisdiction readiness for tax calculation (country/state/postal requirements and category checks).",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "read"
     },
     {
       "name": "vector_clear",
       "description": "Clear all vector embeddings for a specific entity type.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "admin"
     },
     {
       "name": "vector_clear_all",
       "description": "Clear all vector embeddings across all entity types.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "admin"
     },
     {
       "name": "vector_index_all_customers",
       "description": "Index all customers in the database for vector search.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "admin"
     },
     {
       "name": "vector_index_all_inventory",
       "description": "Index all inventory items in the database for vector search.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "admin"
     },
     {
       "name": "vector_index_all_orders",
       "description": "Index all orders in the database for vector search.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "admin"
     },
     {
       "name": "vector_index_all_products",
       "description": "Index all products in the database for vector search. This may take a while for large catalogs.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "admin"
     },
     {
       "name": "vector_index_customer",
       "description": "Index a single customer for vector search by their ID.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "write"
     },
     {
       "name": "vector_index_inventory",
       "description": "Index a single inventory item for vector search by its ID.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "write"
     },
     {
       "name": "vector_index_order",
       "description": "Index a single order for vector search by its ID.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "write"
     },
     {
       "name": "vector_index_product",
       "description": "Index a single product for vector search by its ID.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "write"
     },
     {
       "name": "vector_reindex_all",
       "description": "Rebuild all vector embeddings from scratch. Clears existing embeddings then re-indexes all products, customers, orders, and inventory items. Use this after bulk data imports or to fix stale embeddings.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "admin"
     },
     {
       "name": "vector_search_customers",
       "description": "Search customers using natural language query with hybrid semantic + BM25 ranking.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "read"
     },
     {
       "name": "vector_search_inventory",
       "description": "Search inventory items using natural language query with hybrid semantic + BM25 ranking.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "read"
     },
     {
       "name": "vector_search_orders",
       "description": "Search orders using natural language query with hybrid semantic + BM25 ranking.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "read"
     },
     {
       "name": "vector_search_products",
       "description": "Search products using natural language query with hybrid semantic + BM25 ranking. Returns products sorted by relevance score.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "read"
     },
     {
       "name": "vector_stats",
       "description": "Get statistics about vector embeddings including counts by entity type.",
-      "module": "vector",
+      "policyDomain": "vector",
       "permission": "read"
     },
     {
       "name": "verify_agent",
       "description": "Verify an AI agent card (admin operation). Upgrades trust level to Verified.",
-      "module": "agent-cards",
+      "policyDomain": "agent_cards",
       "permission": "write"
     },
     {
       "name": "verify_chain_anchor",
       "description": "Verify that an event proof matches an expected on-chain anchor transaction hash and Merkle root. Confirms the event was committed to the chain.",
-      "module": "proofs",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "verify_inclusion_proof",
       "description": "Verify a Merkle inclusion proof — confirms that a leaf hash is included in a Merkle root.",
-      "module": "proofs",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "verify_receipt",
       "description": "Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof.",
-      "module": "proofs",
+      "policyDomain": "commerce",
       "permission": "read"
     },
     {
       "name": "verify_wasm_connector_attestation",
       "description": "Verify connector trust attestation in the marketplace catalog before installation or execution.",
-      "module": "connectors",
+      "policyDomain": "connectors",
       "permission": "read"
     },
     {
       "name": "void_shipping_label",
       "description": "Void a shipping label before final delivery.",
-      "module": "shipments",
+      "policyDomain": "shipments",
       "permission": "delete"
     },
     {
       "name": "void_tax_transaction",
       "description": "Void a committed tax transaction with optional reason.",
-      "module": "tax",
+      "policyDomain": "tax",
       "permission": "delete"
+    },
+    {
+      "name": "x402_circuit_status",
+      "description": "Get x402 sequencer circuit breaker status: state (closed/open/half_open), failures, queue depth.",
+      "policyDomain": "x402",
+      "permission": "read"
     },
     {
       "name": "x402_create_payment_intent",
       "description": "Create an x402 payment intent for AI agent commerce. Returns a signing hash that the payer agent must sign with Ed25519.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "write"
     },
     {
       "name": "x402_credit_balance",
       "description": "Get x402 credit balance for a payer (prepaid meter for streaming usage).",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "read"
     },
     {
       "name": "x402_credit_debit",
       "description": "Debit x402 balance for metered usage. Requires --apply.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "write"
     },
     {
       "name": "x402_credit_deposit",
       "description": "Credit (deposit) x402 balance for metered usage. Requires --apply.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "write"
     },
     {
       "name": "x402_credit_transactions",
       "description": "List x402 credit ledger transactions.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "read"
     },
     {
       "name": "x402_execute_agent_payment",
       "description": "Execute end-to-end agentic payment: create intent, locally sign with payer agent key, settle on-chain, and optionally record incoming settlement for payee agent.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "write"
     },
     {
       "name": "x402_get_intent",
       "description": "Get details of an x402 payment intent.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "read"
     },
     {
       "name": "x402_get_next_nonce",
       "description": "Get the next nonce for a payer address. Used for replay protection.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "read"
     },
     {
       "name": "x402_list_intents",
       "description": "List x402 payment intents with optional filtering.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "read"
     },
     {
       "name": "x402_mark_settled",
       "description": "Mark an x402 payment intent as settled on-chain. Called after blockchain confirmation.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "write"
     },
     {
       "name": "x402_record_incoming_settlement",
       "description": "Record a settled x402 intent as an incoming treasury deposit for a local payee agent.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "write"
     },
     {
       "name": "x402_settle_intent_onchain",
       "description": "Execute a signed x402 intent on-chain using an agent wallet, then mark the intent as settled.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "write"
     },
     {
       "name": "x402_sign_intent",
       "description": "Sign an x402 payment intent with an Ed25519 signature. Supports manual signature/public key or local agent-key signing.",
-      "module": "x402",
+      "policyDomain": "x402",
       "permission": "write"
     }
   ]

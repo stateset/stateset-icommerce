@@ -10,7 +10,7 @@
 
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import fs, { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
+import fs, { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 // ============================================================================
@@ -57,12 +57,6 @@ function loadDatabaseCtor() {
   }
 
   return cachedDatabaseCtor;
-}
-
-function ensureDbFile(dbPath) {
-  if (dbPath === ':memory:') return;
-  mkdirSync(dirname(dbPath), { recursive: true });
-  closeSync(openSync(dbPath, 'a'));
 }
 
 function getFallbackDatabasePath(dbPath) {

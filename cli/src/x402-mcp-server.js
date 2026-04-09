@@ -11,9 +11,9 @@ import { createBudgetState, getDefaultBudgetStateFile } from './x402/budget.js';
 import { loadX402Config, resolveX402ConfigPath, pickConfigValue } from './x402/config.js';
 
 const MAX_RESPONSE_CHARS = 12000;
-const SYNC_KEYS_MODULE = './sync/keys.js';
-const POLICY_ENGINE_MODULE = './policies/engine.js';
-const CHAINS_MODULE = './chains/index.js';
+const SYNC_KEYS_MODULE = ['.', 'sync', 'keys.js'].join('/');
+const POLICY_ENGINE_MODULE = ['.', 'policies', 'engine.js'].join('/');
+const CHAINS_MODULE = ['.', 'chains', 'index.js'].join('/');
 
 /**
  * @typedef {Record<string, unknown>} JsonRecord
@@ -40,8 +40,8 @@ const CHAINS_MODULE = './chains/index.js';
  * }} PolicyEngineLike
  * @typedef {{
  *   sequencerClient: X402SequencerClient | null,
- *   tenantId?: string,
- *   storeId?: string,
+ *   tenantId?: string | null,
+ *   storeId?: string | null,
  *   agentId: string,
  *   agentKeyId: number,
  *   payerAddress: string,
@@ -643,6 +643,8 @@ export function createX402McpServer({
               const config = await ensureConfig();
               const agent = createX402Agent({
                 ...config,
+                tenantId: config.tenantId ?? undefined,
+                storeId: config.storeId ?? undefined,
                 maxAmount: perCallMax ?? config.maxAmount,
                 requireReceipt: perCallReceipt ?? config.requireReceipt,
               });

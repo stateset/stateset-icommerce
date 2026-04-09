@@ -33,7 +33,6 @@ import {
   SECURITY_PROFILE_PQC_STRICT,
   SIGNATURE_SCHEME_ED25519_ML_DSA_65,
   SIGNATURE_SCHEME_ML_DSA_65,
-  KEY_WRAP_SCHEME_ML_KEM_768,
   resolveSecurityProfile,
   profileMetricLabel,
 } from './pqc.js';

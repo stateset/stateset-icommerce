@@ -42,6 +42,17 @@ describe('admin middleware', () => {
     });
   });
 
+  it('allows protected API requests with a bearer token header', () => {
+    const request = new NextRequest('http://localhost:3000/api/sessions', {
+      headers: {
+        Authorization: 'Bearer test-header-token',
+      },
+    });
+    const response = middleware(request);
+
+    expect(response.status).toBe(200);
+  });
+
   it('allows public auth routes without a session cookie', () => {
     const request = new NextRequest('http://localhost:3000/api/auth/login');
     const response = middleware(request);

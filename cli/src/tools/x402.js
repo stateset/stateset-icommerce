@@ -10,9 +10,9 @@ import { z } from 'zod';
 import { computeX402SigningHash, signX402Hash, hashToHex } from '../x402/crypto.js';
 import { resolveCommerceApi } from '../commerce.js';
 
-const CHAINS_MODULE = '../chains/index.js';
-const SYNC_KEYS_MODULE = '../sync/keys.js';
-const TREASURY_MODULE = '../treasury/index.js';
+const CHAINS_MODULE = ['..', 'chains', 'index.js'].join('/');
+const SYNC_KEYS_MODULE = ['..', 'sync', 'keys.js'].join('/');
+const TREASURY_MODULE = ['..', 'treasury', 'index.js'].join('/');
 
 /**
  * @typedef {Record<string, unknown>} JsonRecord
@@ -1168,8 +1168,8 @@ export const x402Tools = [
           intentId,
           buildSignIntentInput({
             intentId,
-            signature,
-            publicKey,
+            signature: /** @type {string} */ (signature),
+            publicKey: /** @type {string} */ (publicKey),
           }),
         ),
       );

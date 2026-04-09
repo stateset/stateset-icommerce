@@ -14,6 +14,20 @@ const fn default_confirmation_capacity() -> usize {
     DEFAULT_CONFIRMATION_CAPACITY
 }
 
+/// Policy controlling which remote commitment manifests are accepted automatically.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommitmentTrustPolicy {
+    /// Whether remote commitment metadata must include a signed manifest.
+    #[serde(default)]
+    pub require_manifest: bool,
+    /// Optional allowlist of signer ids that may publish trusted manifests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_signer_ids: Vec<String>,
+    /// Optional allowlist of signer public keys that may publish trusted manifests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_signer_public_keys: Vec<String>,
+}
+
 /// Configuration for the sync engine.
 ///
 /// Maps to the JS `SyncConfig` (`agent_id`, `tenant_id`, `store_id`) plus
@@ -49,6 +63,9 @@ pub struct SyncConfig {
     /// Maximum number of sequencer push confirmations to retain durably.
     #[serde(default = "default_confirmation_capacity")]
     pub confirmation_capacity: usize,
+    /// Trust policy used when importing signed remote commitment manifests.
+    #[serde(default)]
+    pub commitment_trust: CommitmentTrustPolicy,
 }
 
 impl SyncConfig {
@@ -69,6 +86,7 @@ impl SyncConfig {
             outbox_path: None,
             state_path: None,
             confirmation_capacity: DEFAULT_CONFIRMATION_CAPACITY,
+            commitment_trust: CommitmentTrustPolicy::default(),
         }
     }
 
@@ -111,6 +129,30 @@ impl SyncConfig {
     #[must_use]
     pub const fn with_confirmation_capacity(mut self, capacity: usize) -> Self {
         self.confirmation_capacity = capacity;
+        self
+    }
+
+    /// Require remote heads with commitment metadata to include a signed manifest.
+    #[must_use]
+    pub const fn with_require_commitment_manifest(mut self, require_manifest: bool) -> Self {
+        self.commitment_trust.require_manifest = require_manifest;
+        self
+    }
+
+    /// Allow a specific signer id to publish trusted commitment manifests.
+    #[must_use]
+    pub fn with_trusted_commitment_signer(mut self, signer_id: impl Into<String>) -> Self {
+        self.commitment_trust.trusted_signer_ids.push(signer_id.into());
+        self
+    }
+
+    /// Allow a specific signer public key to publish trusted commitment manifests.
+    #[must_use]
+    pub fn with_trusted_commitment_signer_public_key(
+        mut self,
+        signer_public_key: impl Into<String>,
+    ) -> Self {
+        self.commitment_trust.trusted_signer_public_keys.push(signer_public_key.into());
         self
     }
 
@@ -183,6 +225,26 @@ impl SyncConfig {
                 "state_path must not be empty when provided".into(),
             ));
         }
+        if self
+            .commitment_trust
+            .trusted_signer_ids
+            .iter()
+            .any(|signer_id| signer_id.trim().is_empty())
+        {
+            return Err(crate::SyncError::InvalidConfig(
+                "trusted commitment signer ids must not be empty".into(),
+            ));
+        }
+        if self
+            .commitment_trust
+            .trusted_signer_public_keys
+            .iter()
+            .any(|signer_public_key| signer_public_key.trim().is_empty())
+        {
+            return Err(crate::SyncError::InvalidConfig(
+                "trusted commitment signer public keys must not be empty".into(),
+            ));
+        }
         Ok(())
     }
 }
@@ -203,6 +265,9 @@ mod tests {
         assert_eq!(config.confirmation_capacity, DEFAULT_CONFIRMATION_CAPACITY);
         assert!(config.outbox_path.is_none());
         assert!(config.state_path.is_none());
+        assert!(!config.commitment_trust.require_manifest);
+        assert!(config.commitment_trust.trusted_signer_ids.is_empty());
+        assert!(config.commitment_trust.trusted_signer_public_keys.is_empty());
     }
 
     #[test]
@@ -213,13 +278,19 @@ mod tests {
             .with_outbox_capacity(900)
             .with_outbox_path("/tmp/sync-outbox.json")
             .with_state_path("/tmp/sync-state.json")
-            .with_confirmation_capacity(128);
+            .with_confirmation_capacity(128)
+            .with_require_commitment_manifest(true)
+            .with_trusted_commitment_signer("sequencer-a")
+            .with_trusted_commitment_signer_public_key("aa".repeat(32));
         assert_eq!(config.buffer_capacity, 500);
         assert_eq!(config.batch_size, 50);
         assert_eq!(config.outbox_capacity, 900);
         assert_eq!(config.confirmation_capacity, 128);
         assert_eq!(config.outbox_path.as_deref(), Some("/tmp/sync-outbox.json"));
         assert_eq!(config.state_path.as_deref(), Some("/tmp/sync-state.json"));
+        assert!(config.commitment_trust.require_manifest);
+        assert_eq!(config.commitment_trust.trusted_signer_ids, vec!["sequencer-a"]);
+        assert_eq!(config.commitment_trust.trusted_signer_public_keys, vec!["aa".repeat(32)]);
     }
 
     #[test]
@@ -236,6 +307,7 @@ mod tests {
         assert_eq!(deserialized.confirmation_capacity, config.confirmation_capacity);
         assert_eq!(deserialized.outbox_path, config.outbox_path);
         assert_eq!(deserialized.state_path, config.state_path);
+        assert_eq!(deserialized.commitment_trust, config.commitment_trust);
     }
 
     #[test]
@@ -277,7 +349,26 @@ mod tests {
             .with_outbox_capacity(1000)
             .with_outbox_path("/tmp/outbox.json")
             .with_state_path("/tmp/state.json")
-            .with_confirmation_capacity(64);
+            .with_confirmation_capacity(64)
+            .with_require_commitment_manifest(true)
+            .with_trusted_commitment_signer("sequencer-a")
+            .with_trusted_commitment_signer_public_key("bb".repeat(32));
         assert!(ok.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty_trusted_signer_entries() {
+        assert!(
+            SyncConfig::new("agent", "tenant", "store")
+                .with_trusted_commitment_signer(" ")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            SyncConfig::new("agent", "tenant", "store")
+                .with_trusted_commitment_signer_public_key("")
+                .validate()
+                .is_err()
+        );
     }
 }

@@ -1,74 +1,47 @@
 /**
  * Delegate-to-Agent Tool Test Suite
  *
- * Tests for the delegate_to_agent agentic runtime tool defined in
- * cli/src/mcp-server.js. Verifies tool metadata, permission level,
- * and handler behavior with mocked autonomousEngine.
+ * Exercises the real delegate_to_agent MCP tool exported by mcp-server.js
+ * so metadata, schema, and handler behavior stay aligned with production.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { SUPPORTED_AGENT_NAMES, SUPPORTED_AGENT_NAMES_DESCRIPTION } from '../../src/agent-catalog.js';
+import { createStatesetMcpServer } from '../../src/mcp-server.js';
+import { createToolInputSchema } from '../../src/tool-schema.js';
 
-// The delegate_to_agent tool is an inline AGENTIC_RUNTIME_TOOLS entry inside
-// mcp-server.js. It is not separately exported, so we replicate its handler
-// logic faithfully here for isolated unit testing. This avoids importing
-// the full MCP server (which has heavy side-effects and deps).
-//
-// The handler signature from mcp-server.js:
-//   handler: async ({ params, autonomousEngine }) => { ... }
-
-// ============================================================================
-// Faithful replica of the delegate_to_agent handler from mcp-server.js
-// ============================================================================
-
-const delegateToAgentTool = {
-  name: 'delegate_to_agent',
-  description:
-    'Delegate a sub-task to a specialized commerce agent. Available agents: orders, inventory, returns, checkout, analytics, promotions, subscriptions, customer-service.',
-  permission: 'write',
-  policyDomain: 'agentic',
-  handler: async ({ params, autonomousEngine }) => {
-    if (!autonomousEngine) {
-      return {
-        success: false,
-        error:
-          'Autonomous engine not available. Agent delegation requires the autonomous engine to be initialized.',
-      };
-    }
-    try {
-      const result = await autonomousEngine.executeAgentRequest(
-        params.agent_name,
-        params.task_description,
-        params.context || {},
-      );
-      return {
-        success: true,
-        delegatedTo: params.agent_name,
-        task: params.task_description,
-        result,
-      };
-    } catch (err) {
-      return {
-        success: false,
-        error: `Delegation to '${params.agent_name}' failed: ${err.message}`,
-      };
-    }
-  },
-};
-
-// ============================================================================
-// Helper: find tool by name (matches pattern from segments/store-credits tests)
-// ============================================================================
-
-function findTool(tools, name) {
-  const tool = tools.find((t) => t.name === name);
-  if (!tool) throw new Error(`Tool '${name}' not found`);
-  return tool;
+function makeMockCommerce() {
+  return {
+    customers: {
+      list: async () => [],
+      count: async () => 0,
+      get: async () => null,
+      create: async (data) => ({ id: 'cust-1', ...data }),
+    },
+    orders: {
+      list: async () => [],
+      count: async () => 0,
+      get: async () => null,
+    },
+    products: {
+      list: async () => [],
+      count: async () => 0,
+      get: async () => null,
+    },
+    inventory: {
+      getStock: async () => null,
+    },
+  };
 }
 
-// ============================================================================
-// Mock autonomous engine factory
-// ============================================================================
+function findTool(tools, name) {
+  const tool = tools.find((entry) => entry.name === name);
+  if (!tool) {
+    throw new Error(`Tool '${name}' not found`);
+  }
+  return tool;
+}
 
 function makeMockEngine(overrides = {}) {
   return {
@@ -83,168 +56,165 @@ function makeMockEngine(overrides = {}) {
   };
 }
 
-// ============================================================================
-// Structural checks
-// ============================================================================
+describe('delegate_to_agent', () => {
+  let rawTool;
+  let registeredTool;
+  let inputSchema;
 
-describe('delegate_to_agent — structure', () => {
-  const tools = [delegateToAgentTool];
-  const tool = findTool(tools, 'delegate_to_agent');
-
-  it('tool exists and has correct name', () => {
-    assert.equal(tool.name, 'delegate_to_agent');
+  beforeEach(() => {
+    const server = createStatesetMcpServer({
+      commerce: makeMockCommerce(),
+      allowApply: true,
+      autonomousEngine: makeMockEngine(),
+    });
+    rawTool = findTool(server.getRawToolDefinitions(), 'delegate_to_agent');
+    registeredTool = server.instance._registeredTools.delegate_to_agent;
+    inputSchema = createToolInputSchema(rawTool.inputSchema);
   });
 
-  it('has a handler function', () => {
-    assert.equal(typeof tool.handler, 'function');
-  });
-
-  it('permission is write', () => {
-    assert.equal(tool.permission, 'write');
-  });
-
-  it('policyDomain is agentic', () => {
-    assert.equal(tool.policyDomain, 'agentic');
-  });
-});
-
-// ============================================================================
-// Handler — success path
-// ============================================================================
-
-describe('delegate_to_agent — handler success', () => {
-  it('calls autonomousEngine.executeAgentRequest with correct params', async () => {
-    let calledWith = null;
-    const engine = makeMockEngine({
-      executeAgentRequest: async (agentName, taskDesc, context) => {
-        calledWith = { agentName, taskDesc, context };
-        return { status: 'completed' };
-      },
+  describe('structure', () => {
+    it('exists and has correct metadata', () => {
+      assert.equal(rawTool.name, 'delegate_to_agent');
+      assert.equal(rawTool.permission, 'write');
+      assert.equal(rawTool.policyDomain, 'agentic');
+      assert.equal(typeof registeredTool.handler, 'function');
     });
 
-    await delegateToAgentTool.handler({
-      params: {
+    it('describes the full supported agent set', () => {
+      assert.match(rawTool.description, /Available agents:/);
+      assert.ok(rawTool.description.includes(SUPPORTED_AGENT_NAMES_DESCRIPTION));
+    });
+  });
+
+  describe('input schema', () => {
+    it('accepts every supported agent name', () => {
+      for (const agentName of SUPPORTED_AGENT_NAMES) {
+        const parsed = inputSchema.safeParse({
+          agent_name: agentName,
+          task_description: `Delegate a task to ${agentName}`,
+        });
+        assert.equal(parsed.success, true, `Expected ${agentName} to validate`);
+      }
+    });
+
+    it('rejects unsupported agent names', () => {
+      const parsed = inputSchema.safeParse({
+        agent_name: 'nonexistent-agent',
+        task_description: 'Do something impossible',
+      });
+      assert.equal(parsed.success, false);
+    });
+  });
+
+  describe('handler success', () => {
+    it('calls autonomousEngine.executeAgentRequest with correct params', async () => {
+      let calledWith = null;
+      const engine = makeMockEngine({
+        executeAgentRequest: async (agentName, taskDesc, context) => {
+          calledWith = { agentName, taskDesc, context };
+          return { status: 'completed' };
+        },
+      });
+
+      const server = createStatesetMcpServer({
+        commerce: makeMockCommerce(),
+        allowApply: true,
+        autonomousEngine: engine,
+      });
+      const tool = server.instance._registeredTools.delegate_to_agent;
+      await tool.handler({
         agent_name: 'orders',
         task_description: 'List pending orders',
         context: { customerId: 'cust_001' },
-      },
-      autonomousEngine: engine,
+      });
+
+      assert.deepEqual(calledWith, {
+        agentName: 'orders',
+        taskDesc: 'List pending orders',
+        context: { customerId: 'cust_001' },
+      });
     });
 
-    assert.equal(calledWith.agentName, 'orders');
-    assert.equal(calledWith.taskDesc, 'List pending orders');
-    assert.deepEqual(calledWith.context, { customerId: 'cust_001' });
+    it('returns success with delegation result', async () => {
+      const result = await registeredTool.handler({
+          agent_name: 'inventory',
+          task_description: 'Check stock for SKU-100',
+          context: {},
+      });
+      const payload = JSON.parse(result.content[0].text);
+
+      assert.equal(payload.success, true);
+      assert.equal(payload.delegatedTo, 'inventory');
+      assert.equal(payload.task, 'Check stock for SKU-100');
+      assert.ok(payload.result);
+      assert.equal(payload.result.status, 'completed');
+    });
+
+    it('defaults context to empty object when omitted', async () => {
+      let capturedContext = null;
+      const engine = makeMockEngine({
+        executeAgentRequest: async (_name, _desc, context) => {
+          capturedContext = context;
+          return { status: 'done' };
+        },
+      });
+
+      const server = createStatesetMcpServer({
+        commerce: makeMockCommerce(),
+        allowApply: true,
+        autonomousEngine: engine,
+      });
+      const tool = server.instance._registeredTools.delegate_to_agent;
+      await tool.handler({
+          agent_name: 'returns',
+          task_description: 'Process return RMA-42',
+      });
+
+      assert.deepEqual(capturedContext, {});
+    });
   });
 
-  it('returns success with delegation result', async () => {
-    const engine = makeMockEngine();
-    const result = await delegateToAgentTool.handler({
-      params: {
-        agent_name: 'inventory',
-        task_description: 'Check stock for SKU-100',
-        context: {},
-      },
-      autonomousEngine: engine,
+  describe('handler errors', () => {
+    it('returns error when engine is not available', async () => {
+      const server = createStatesetMcpServer({
+        commerce: makeMockCommerce(),
+        allowApply: true,
+        autonomousEngine: null,
+      });
+      const tool = server.instance._registeredTools.delegate_to_agent;
+      const result = await tool.handler({
+          agent_name: 'orders',
+          task_description: 'Do something',
+      });
+      const payload = JSON.parse(result.content[0].text);
+
+      assert.equal(payload.success, false);
+      assert.match(payload.error, /Autonomous engine not available/);
     });
 
-    assert.equal(result.success, true);
-    assert.equal(result.delegatedTo, 'inventory');
-    assert.equal(result.task, 'Check stock for SKU-100');
-    assert.ok(result.result, 'should include engine result');
-    assert.equal(result.result.status, 'completed');
-  });
+    it('returns error when executeAgentRequest throws', async () => {
+      const engine = makeMockEngine({
+        executeAgentRequest: async () => {
+          throw new Error('Agent not found');
+        },
+      });
 
-  it('defaults context to empty object when omitted', async () => {
-    let capturedContext = null;
-    const engine = makeMockEngine({
-      executeAgentRequest: async (_name, _desc, context) => {
-        capturedContext = context;
-        return { status: 'done' };
-      },
+      const server = createStatesetMcpServer({
+        commerce: makeMockCommerce(),
+        allowApply: true,
+        autonomousEngine: engine,
+      });
+      const tool = server.instance._registeredTools.delegate_to_agent;
+      const result = await tool.handler({
+          agent_name: 'orders',
+          task_description: 'Do something impossible',
+          context: {},
+      });
+      const payload = JSON.parse(result.content[0].text);
+
+      assert.equal(payload.success, false);
+      assert.match(payload.error, /Delegation to 'orders' failed/);
+      assert.match(payload.error, /Agent not found/);
     });
-
-    await delegateToAgentTool.handler({
-      params: {
-        agent_name: 'returns',
-        task_description: 'Process return RMA-42',
-      },
-      autonomousEngine: engine,
-    });
-
-    assert.deepEqual(capturedContext, {});
-  });
-});
-
-// ============================================================================
-// Handler — error paths
-// ============================================================================
-
-describe('delegate_to_agent — handler errors', () => {
-  it('returns error when engine is not available (null)', async () => {
-    const result = await delegateToAgentTool.handler({
-      params: {
-        agent_name: 'orders',
-        task_description: 'Do something',
-      },
-      autonomousEngine: null,
-    });
-
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('Autonomous engine not available'));
-  });
-
-  it('returns error when engine is undefined', async () => {
-    const result = await delegateToAgentTool.handler({
-      params: {
-        agent_name: 'orders',
-        task_description: 'Do something',
-      },
-      autonomousEngine: undefined,
-    });
-
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('Autonomous engine not available'));
-  });
-
-  it('returns error when executeAgentRequest throws', async () => {
-    const engine = makeMockEngine({
-      executeAgentRequest: async () => {
-        throw new Error('Agent not found');
-      },
-    });
-
-    const result = await delegateToAgentTool.handler({
-      params: {
-        agent_name: 'nonexistent-agent',
-        task_description: 'Do something impossible',
-        context: {},
-      },
-      autonomousEngine: engine,
-    });
-
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes("Delegation to 'nonexistent-agent' failed"));
-    assert.ok(result.error.includes('Agent not found'));
-  });
-
-  it('includes agent name in error message on failure', async () => {
-    const engine = makeMockEngine({
-      executeAgentRequest: async () => {
-        throw new Error('timeout');
-      },
-    });
-
-    const result = await delegateToAgentTool.handler({
-      params: {
-        agent_name: 'analytics',
-        task_description: 'Generate report',
-        context: {},
-      },
-      autonomousEngine: engine,
-    });
-
-    assert.equal(result.success, false);
-    assert.ok(result.error.includes('analytics'), 'error should mention agent name');
-    assert.ok(result.error.includes('timeout'), 'error should include original message');
   });
 });

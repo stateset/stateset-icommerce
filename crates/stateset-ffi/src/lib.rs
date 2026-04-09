@@ -13,11 +13,15 @@
 
 //! # stateset-ffi
 //!
-//! A stable, C-ABI-safe FFI surface for the StateSet iCommerce engine.
+//! A C-ABI-safe interop surface for the StateSet iCommerce engine.
 //!
 //! This crate provides `#[repr(C)]` types and `extern "C"` functions that
-//! can be consumed by **any** language with a C FFI: Python (via ctypes /
-//! cffi), Swift, Kotlin/JNI, Go (via cgo), Ruby (via ffi gem), and plain C.
+//! can be consumed by runtimes that need an explicit C-style boundary.
+//!
+//! It is best understood as an optional interop layer over
+//! [`stateset_embedded`], not as the mandatory substrate for every binding in
+//! this repository. Several repo-local bindings link directly to
+//! `stateset-embedded` and `stateset-core` in their own crates.
 //!
 //! ## Design Principles
 //!

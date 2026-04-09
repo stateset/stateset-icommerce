@@ -16,7 +16,6 @@ import {
 } from './crypto.js';
 import {
   KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
-  SIGNATURE_SCHEME_ED25519,
   SIGNATURE_SCHEME_ED25519_ML_DSA_65,
   SIGNATURE_SCHEME_ML_DSA_65,
   assertEventMatchesSecurityProfile,

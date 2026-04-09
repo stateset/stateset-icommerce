@@ -713,4 +713,8 @@ export const SCAFFOLD_TOOL_NAMES = [
   'seed_database',
 ];
 
+export const SCAFFOLD_MCP_TOOL_NAMES = SCAFFOLD_TOOL_NAMES.map(
+  (name) => `mcp__stateset-scaffold__${name}`,
+);
+
 export default createScaffoldMcpServer;

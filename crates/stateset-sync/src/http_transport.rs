@@ -8,9 +8,10 @@ use serde_json::Value;
 use stateset_crypto::{ZERO_HASH, hash::compute_payload_plain_hash};
 use uuid::Uuid;
 
+use crate::commitment::CommitmentManifest;
 use crate::config::SyncConfig;
 use crate::error::SyncError;
-use crate::event::SyncEvent;
+use crate::event::{KernelMetadata, SyncEvent};
 use crate::transport::{
     PullPage, PullResult, PushAcknowledgement, PushRejection, PushResult, RemoteHead, Transport,
     derive_next_cursor,
@@ -263,6 +264,7 @@ impl SequencerHttpTransport {
             agent_signature_bundle: event.agent_signature_bundle.clone(),
             source_agent_id: event.source_agent_id.clone().unwrap_or_else(|| self.agent_id.clone()),
             base_version: event.base_version,
+            kernel: event.kernel.clone().filter(|kernel| !kernel.is_empty()),
             created_at: event.timestamp.to_rfc3339(),
         })
     }
@@ -367,8 +369,15 @@ impl SequencerHttpTransport {
         if let Some(state_root) = response.state_root {
             head = head.with_state_root(state_root);
         }
-        if let Some(commitment_id) = response.latest_commitment.and_then(|c| c.batch_id) {
-            head = head.with_last_commitment_id(commitment_id);
+        if let Some(latest_commitment) = response.latest_commitment {
+            if let Some(commitment_id) = latest_commitment.commitment_id() {
+                head = head.with_last_commitment_id(commitment_id);
+            }
+            if let Some(manifest) =
+                latest_commitment.to_manifest(head.state_root.as_deref(), Some(head.remote_head))?
+            {
+                head = head.with_commitment_manifest(manifest);
+            }
         }
         Ok(head)
     }
@@ -415,6 +424,7 @@ impl SequencerHttpTransport {
         mapped.base_version = event.envelope.base_version;
         mapped.source_agent_id = event.envelope.source_agent_id;
         mapped.agent_key_id = event.envelope.agent_key_id;
+        mapped.kernel = event.envelope.kernel.filter(|kernel| !kernel.is_empty());
         if let Some(payload_hash) =
             event.envelope.payload_plain_hash.or(event.envelope.payload_hash)
         {
@@ -556,6 +566,8 @@ struct VesEventEnvelope {
     source_agent_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kernel: Option<KernelMetadata>,
     created_at: String,
 }
 
@@ -718,6 +730,121 @@ struct HeadResponse {
 struct LatestCommitment {
     #[serde(default, alias = "batch_id")]
     batch_id: Option<String>,
+    #[serde(
+        default,
+        alias = "previous_batch_id",
+        alias = "previous_commitment_id",
+        alias = "previousBatchId"
+    )]
+    previous_batch_id: Option<String>,
+    #[serde(default, alias = "state_root", alias = "root")]
+    state_root: Option<String>,
+    #[serde(
+        default,
+        alias = "head_sequence",
+        alias = "remote_head",
+        alias = "sequence_end",
+        alias = "remoteHead"
+    )]
+    remote_head: Option<u64>,
+    #[serde(default, alias = "signerId", alias = "signer_id")]
+    signer_id: Option<String>,
+    #[serde(default, alias = "signatureScheme", alias = "signature_scheme")]
+    signature_scheme: Option<String>,
+    #[serde(
+        default,
+        alias = "signerPublicKey",
+        alias = "signer_public_key",
+        alias = "public_key",
+        alias = "publicKey"
+    )]
+    signer_public_key: Option<String>,
+    #[serde(default)]
+    signature: Option<String>,
+    #[serde(default, alias = "issuedAt", alias = "issued_at")]
+    issued_at: Option<String>,
+}
+
+impl LatestCommitment {
+    fn commitment_id(&self) -> Option<String> {
+        self.batch_id.clone()
+    }
+
+    fn to_manifest(
+        &self,
+        fallback_state_root: Option<&str>,
+        fallback_remote_head: Option<u64>,
+    ) -> Result<Option<CommitmentManifest>, SyncError> {
+        let Some(commitment_id) = self.commitment_id() else {
+            return Ok(None);
+        };
+
+        let provided_signature_fields = [
+            self.signer_id.as_ref(),
+            self.signer_public_key.as_ref(),
+            self.signature.as_ref(),
+            self.issued_at.as_ref(),
+        ]
+        .into_iter()
+        .filter(|field| field.is_some())
+        .count();
+        if provided_signature_fields == 0 {
+            return Ok(None);
+        }
+
+        let state_root = self.state_root.clone().or_else(|| fallback_state_root.map(str::to_owned)).ok_or_else(|| {
+            SyncError::Transport(format!(
+                "latest commitment `{commitment_id}` is missing state_root required for signed manifest"
+            ))
+        })?;
+        let remote_head = self.remote_head.or(fallback_remote_head).ok_or_else(|| {
+            SyncError::Transport(format!(
+                "latest commitment `{commitment_id}` is missing remote_head required for signed manifest"
+            ))
+        })?;
+        let signer_id = self.signer_id.clone().ok_or_else(|| {
+            SyncError::Transport(format!(
+                "latest commitment `{commitment_id}` is missing signer_id required for signed manifest"
+            ))
+        })?;
+        let signer_public_key = self.signer_public_key.clone().ok_or_else(|| {
+            SyncError::Transport(format!(
+                "latest commitment `{commitment_id}` is missing signer_public_key required for signed manifest"
+            ))
+        })?;
+        let signature = self.signature.clone().ok_or_else(|| {
+            SyncError::Transport(format!(
+                "latest commitment `{commitment_id}` is missing signature required for signed manifest"
+            ))
+        })?;
+        let issued_at_raw = self.issued_at.as_deref().ok_or_else(|| {
+            SyncError::Transport(format!(
+                "latest commitment `{commitment_id}` is missing issued_at required for signed manifest"
+            ))
+        })?;
+        let issued_at = DateTime::parse_from_rfc3339(issued_at_raw)
+            .map(|parsed| parsed.with_timezone(&Utc))
+            .map_err(|error| {
+                SyncError::Transport(format!(
+                    "latest commitment `{commitment_id}` had invalid issued_at `{issued_at_raw}`: {error}"
+                ))
+            })?;
+
+        Ok(Some(CommitmentManifest {
+            commitment_id,
+            previous_commitment_id: self.previous_batch_id.clone(),
+            state_root,
+            remote_head,
+            signer_id,
+            signature_scheme: self
+                .signature_scheme
+                .clone()
+                .unwrap_or_else(|| "ed25519".to_string()),
+            signer_public_key: Some(signer_public_key),
+            signature: Some(signature),
+            issued_at,
+        }))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -767,6 +894,8 @@ struct PulledEnvelope {
     #[serde(default, alias = "baseVersion", alias = "base_version")]
     base_version: Option<u64>,
     #[serde(default)]
+    kernel: Option<KernelMetadata>,
+    #[serde(default)]
     created_at: Option<String>,
     #[serde(default)]
     sequence_number: Option<u64>,
@@ -780,9 +909,11 @@ mod tests {
     use std::thread;
 
     use serde_json::json;
+    use stateset_crypto::sign::generate_keypair;
 
     use super::*;
-    use crate::event::SequenceAuthority;
+    use crate::commitment::{CommitmentManifest, sign_commitment_manifest};
+    use crate::event::{BudgetCheckpoint, PolicyCheckpoint, PolicyDecision, SequenceAuthority};
 
     #[derive(Debug)]
     struct CapturedRequest {
@@ -928,6 +1059,13 @@ mod tests {
             .with_command_id("cmd-1")
             .with_base_version(3)
             .with_source_agent_id("agent-created")
+            .with_policy_checkpoint(
+                PolicyCheckpoint::new("orders", PolicyDecision::Allowed)
+                    .with_reason("within threshold"),
+            )
+            .with_budget_checkpoint(
+                BudgetCheckpoint::new("budget-1", 9900, "USD").with_remaining_amount_minor(100),
+            )
             .with_agent_key_id(99);
         let event_b = signed_event("confirmed");
         let transport = SequencerHttpTransport::new(base_url, "agent-1", "tenant-1", "store-1")
@@ -962,6 +1100,9 @@ mod tests {
             json!({"ml_dsa_65_signature": "mlsig-created"})
         );
         assert_eq!(body["events"][0]["source_agent_id"], json!("agent-created"));
+        assert_eq!(body["events"][0]["kernel"]["policy"]["domain"], json!("orders"));
+        assert_eq!(body["events"][0]["kernel"]["policy"]["decision"], json!("allowed"));
+        assert_eq!(body["events"][0]["kernel"]["budget"]["remaining_amount_minor"], json!(100));
         assert_eq!(body["events"][0]["payload_cipher_hash"], json!("0".repeat(64)));
         assert_eq!(body["events"][1]["agent_signature"], json!("sig-confirmed"));
         assert_eq!(body["events"][1]["agent_key_id"], json!(7));
@@ -1060,6 +1201,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_head_maps_signed_commitment_manifest() {
+        let (private_key, public_key) = generate_keypair();
+        let state_root = "43".repeat(32);
+        let manifest = sign_commitment_manifest(
+            CommitmentManifest::new("BATCH-43", state_root.clone(), 43, "sequencer-a"),
+            &private_key,
+            &public_key,
+        )
+        .unwrap();
+        let (base_url, _requests) = spawn_single_response_server(
+            "200 OK",
+            json!({
+                "head_sequence": 43,
+                "state_root": state_root,
+                "latest_commitment": {
+                    "batch_id": manifest.commitment_id,
+                    "state_root": manifest.state_root,
+                    "remote_head": manifest.remote_head,
+                    "signer_id": manifest.signer_id,
+                    "signature_scheme": manifest.signature_scheme,
+                    "signer_public_key": manifest.signer_public_key,
+                    "signature": manifest.signature,
+                    "issued_at": manifest.issued_at.to_rfc3339(),
+                }
+            }),
+        );
+
+        let transport =
+            SequencerHttpTransport::new(base_url, "agent-1", "tenant-1", "store-1").unwrap();
+        let head = transport.fetch_head().await.unwrap();
+
+        assert_eq!(head.remote_head, 43);
+        assert_eq!(head.last_commitment_id.as_deref(), Some("BATCH-43"));
+        assert_eq!(
+            head.commitment_manifest.as_ref().map(|manifest| manifest.signer_id.as_str()),
+            Some("sequencer-a")
+        );
+    }
+
+    #[tokio::test]
     async fn pull_events_maps_canonical_remote_sequences() {
         let event_id = Uuid::new_v4();
         let (base_url, requests) = spawn_single_response_server(
@@ -1081,6 +1262,19 @@ mod tests {
                             "source_agent_id": "agent-remote",
                             "agent_key_id": 21,
                             "base_version": 5,
+                            "kernel": {
+                                "policy": {
+                                    "domain": "orders",
+                                    "decision": "allowed",
+                                    "reason": "approved upstream"
+                                },
+                                "budget": {
+                                    "budget_id": "budget-remote",
+                                    "reserved_amount_minor": 4200,
+                                    "currency": "USD",
+                                    "remaining_amount_minor": 800
+                                }
+                            },
                             "created_at": "2024-03-01T00:00:00Z",
                             "sequence_number": 7
                         },
@@ -1113,6 +1307,22 @@ mod tests {
         assert_eq!(event.base_version, Some(5));
         assert_eq!(event.source_agent_id.as_deref(), Some("agent-remote"));
         assert_eq!(event.agent_key_id, Some(21));
+        assert_eq!(
+            event
+                .kernel
+                .as_ref()
+                .and_then(|kernel| kernel.policy.as_ref())
+                .map(|policy| (policy.domain.as_str(), policy.reason.as_deref())),
+            Some(("orders", Some("approved upstream")))
+        );
+        assert_eq!(
+            event.kernel.as_ref().and_then(|kernel| kernel.budget.as_ref()).map(|budget| (
+                budget.budget_id.as_str(),
+                budget.reserved_amount_minor,
+                budget.remaining_amount_minor
+            )),
+            Some(("budget-remote", 4200, Some(800)))
+        );
         assert_eq!(event.hash, "abc123");
 
         let captured = requests.recv().unwrap();

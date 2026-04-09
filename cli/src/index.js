@@ -22,6 +22,11 @@ export {
   listAgents,
   AGENTS,
 } from './claude-harness.js';
+export {
+  SUPPORTED_AGENT_NAMES,
+  SUPPORTED_AGENT_NAMES_DESCRIPTION,
+  isSupportedAgentName,
+} from './agent-catalog.js';
 
 // MCP Server
 export { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
@@ -87,7 +92,11 @@ export {
 export { RichOutput, createOutput, ICONS, formatStructuredOutput } from './output.js';
 
 // Scaffolding Server (Storefront Creation)
-export { createScaffoldMcpServer, SCAFFOLD_TOOL_NAMES } from './scaffold-server.js';
+export {
+  createScaffoldMcpServer,
+  SCAFFOLD_TOOL_NAMES,
+  SCAFFOLD_MCP_TOOL_NAMES,
+} from './scaffold-server.js';
 
 // x402 MCP Server
 export { createX402McpServer, X402_MCP_TOOL_NAMES } from './x402-mcp-server.js';

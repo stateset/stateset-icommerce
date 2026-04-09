@@ -6,6 +6,21 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-04-08
+
+### Added
+- Added a CI-safe `cargo_ci.sh` helper so repo-wide Rust lint and feature-matrix checks run without incremental-cache bloat.
+- Added explicit x402 intent signature-scheme configuration support in the Node binding and database coverage for strict `ml_dsa65` intents.
+
+### Changed
+- Bumped workspace, bindings, admin app, CLI, examples, templates, docs, inventories, and release metadata from `0.9.7` to `0.9.8`.
+- Created the `docs/versions/v0.9.8` snapshot from the latest mdBook sources for this release line.
+
+### Fixed
+- Aligned admin authentication and request handling by allowing bearer-token API access through middleware, enforcing request-size limits against actual streamed bodies, and preserving gateway query strings.
+- Cleared the CLI quality-gate blockers in the x402 and sync surfaces so `npm --prefix cli run check` passes cleanly.
+- Fixed the Node x402 strict-signature flow so strict `ml_dsa65` signatures can be used against intents created with the matching stored policy.
+
 ## [0.9.7] - 2026-04-06
 
 ### Added

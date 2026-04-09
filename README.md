@@ -14,10 +14,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 **Install:**
 ```bash
 cargo add stateset-sdk --features full   # Rust (recommended)
-pip install stateset-embedded==0.9.7     # Python
-npm install @stateset/embedded@0.9.7     # Node.js
-npm install -g @stateset/cli@0.9.7       # CLI
-gem install stateset_embedded -v 0.9.7   # Ruby
+pip install stateset-embedded==0.9.8     # Python
+npm install @stateset/embedded@0.9.8     # Node.js
+npm install -g @stateset/cli@0.9.8       # CLI
+gem install stateset_embedded -v 0.9.8   # Ruby
 ```
 
 **Zero to commerce in 5 lines:**
@@ -54,7 +54,7 @@ No database setup. No config files. No migrations to run. It just works.
 ## MCP Server (Claude Desktop / Cursor / Windsurf)
 
 StateSet exposes **hundreds of commerce tools** via the [Model Context Protocol](https://modelcontextprotocol.io). Add it to your AI editor in one step.
-The exact current count and module breakdown are generated from code in the [MCP Tool Inventory](./docs/src/appendix/mcp-tool-inventory.md).
+The exact current count and policy-domain breakdown are generated from code in the [MCP Tool Inventory](./docs/src/appendix/mcp-tool-inventory.md).
 
 **One-command onboarding (including OpenClaw):**
 ```bash
@@ -110,7 +110,7 @@ This gives your AI assistant access to the full commerce stack: orders, inventor
 Use the embedded toolkit when your agent runtime lives inside your application process and wants JSON-schema tools instead of stdio MCP.
 
 ```bash
-npm install @stateset/cli@0.9.7 @stateset/embedded@0.9.7
+npm install @stateset/cli@0.9.8 @stateset/embedded@0.9.8
 ```
 
 ```javascript
@@ -128,6 +128,24 @@ const result = await toolkit.executeTool('list_customers');
 // result.status === 'success'
 // result.result contains the tool payload
 ```
+
+If your runtime should fan out to specialist agents, pass an `autonomousEngine` and enable writes for delegation:
+
+```javascript
+const delegatedToolkit = createEmbeddedAgentToolkit({
+  commerce,
+  allowApply: true,
+  autonomousEngine,
+});
+
+await delegatedToolkit.executeTool('delegate_to_agent', {
+  agent_name: 'orders',
+  task_description: 'Review pending orders over $500',
+  context: { limit: 10 },
+});
+```
+
+`delegate_to_agent` follows the same safety model as other write tools, so it stays in preview mode until `allowApply` is enabled.
 
 For OpenAI Responses API loops, `executeOpenAIToolCall()` returns a ready-to-send `function_call_output` payload:
 
@@ -149,6 +167,15 @@ const vercelTools = toolkit.createVercelAITools({ tool });
 const langChainTools = toolkit.createLangChainTools({ DynamicStructuredTool });
 ```
 
+For priced tools and remote MPP-enabled HTTP services, the same toolkit also exposes
+payment-aware helpers such as `getPayableToolCatalog()`, `prepareToolPayment()`,
+`executePaidTool()`, `discoverRemotePaymentService()`, and
+`createRemoteHttpToolDescriptors()`.
+
+For contract-aware or replay-aware agents, the toolkit also exposes
+`getRuntimeContract()`, `simulatePlan()`, `executePlan()`, `replayMutation()`,
+and `getReplayLog()`.
+
 Use `simulateMutation()` or `executePlan({ dryRun: true, ... })` before enabling writes, then turn on `allowApply` only for agents that should mutate commerce state.
 
 ---
@@ -165,21 +192,21 @@ under the same pinned Node 20.20.0 runtime.
 
 ---
 
-## What's New in v0.9.7
+## What's New in v0.9.8
 
-**Admin and Client Refresh Release** - `0.9.7` adds the new admin dashboard surface and aligns the shipped sync and x402 clients with the latest embedded, gateway, and payment-intent flows.
+**Quality and Release Hardening Update** - `0.9.8` tightens the admin/runtime surfaces, makes the CLI and Node binding release gates green again, and hardens the repo-wide release pipeline.
 
-### Admin Operations Surface
-- Added a standalone admin app with authenticated analytics, operations, gateway, billing, integrations, and session views
-- Added the matching admin API routes, middleware, shared auth helpers, and test coverage needed to run the dashboard as a first-class workspace surface
+### Admin Runtime Hardening
+- Fixed protected admin API access so bearer-token requests are accepted consistently through middleware and route handlers
+- Enforced request-size limits against actual streamed bodies and preserved gateway query strings during proxying
 
-### Sync and x402 Alignment
-- Refreshed sync and x402 client behavior so the CLI, MCP-facing gateway paths, and embedded runtime stay consistent under the current agent-payment flows
-- Expanded regression coverage around sync-config security and x402 payment-intent handling
+### CLI and x402 Stability
+- Cleared the CLI typecheck and lint blockers across the x402 and sync surfaces so the published quality gate passes end to end
+- Added explicit x402 intent signature-scheme configuration in the Node binding so strict `ml_dsa65` signing works against the intended stored policy
 
 ### Release Metadata and Docs
-- Published generated MCP tool inventory artifacts for compatibility tracking
-- Synced workspace versions, install snippets, deployment references, and current-release docs to `0.9.7`
+- Hardened the repo-wide Rust check pipeline against debug-symbol and incremental-cache blowups during release validation
+- Synced workspace versions, install snippets, deployment references, and current-release docs to `0.9.8`
 
 ---
 
@@ -197,9 +224,11 @@ under the same pinned Node 20.20.0 runtime.
 
 | Tier | What’s Covered | CI Coverage |
 |------|----------------|------------|
-| Tier 1 | Core Rust crates, CLI, Node, Python, Ruby, PHP | Full test suite + lint/format + security checks |
-| Tier 2 | Go, .NET, Java, Kotlin, WASM, Swift (macOS) | Build or smoke tests |
-| Tier 3 | Experimental integrations | Manual/roadmap |
+| Tier 1 | Default-workspace Rust crates, Node binding, admin app, CLI | Verified by `npm run check` |
+| Tier 2 | Python plus compiled bindings for Go, .NET, Java, Kotlin, Swift, and WASM | Validate per target toolchain and packaging flow |
+| Tier 3 | Ruby, PHP, and experimental integrations | Explicit/manual validation |
+
+Ruby and PHP are kept in-repo but intentionally excluded from default workspace membership because they require host runtimes or headers that are often unavailable in CI and local dev.
 
 Production note: use `config/stateset.production.properties` as the baseline for secure defaults.
 
@@ -221,140 +250,60 @@ StateSet enables this shift by providing a portable, embeddable commerce engine 
 
 ## Architecture
 
-```
-stateset-icommerce/
-├── crates/                        # 21 Rust crates (4,000+ tests)
-│   ├── stateset-primitives/       # Strongly-typed newtypes (OrderId, Sku, Money)
-│   ├── stateset-core/             # Pure domain models & business logic (no I/O)
-│   ├── stateset-crypto/           # VES v1.0 cryptography (JCS, Ed25519, AES-GCM, Merkle)
-│   ├── stateset-db/               # SQLite + PostgreSQL implementations
-│   ├── stateset-embedded/         # Unified high-level API
-│   ├── stateset-observability/    # Metrics + tracing helpers
-│   ├── stateset-macros/           # Proc macros
-│   ├── stateset-policy/           # Policy DSL engine (YAML rules, conditions, transforms)
-│   ├── stateset-protocol/         # Wire types (EventEnvelope, SyncBatch, Merkle proofs)
-│   ├── stateset-http/             # Axum REST + SSE server (19 endpoints, middleware)
-│   ├── stateset-a2a/              # Agent-to-Agent (escrow, splits, subscriptions, webhooks)
-│   ├── stateset-sync/             # Sync engine (outbox, conflict resolution, transport)
-│   ├── stateset-authz/            # Authorization (RBAC, rate limiting, audit, redaction)
-│   ├── stateset-pricing/          # Deterministic pricing (line items, tax, promotions, FX)
-│   ├── stateset-migrations/       # SQL migrations (checksums, rollback, 4 built-in versions)
-│   ├── stateset-jobs/             # Background jobs (cron, retries, backoff, 5 built-in jobs)
-│   ├── stateset-ffi/              # Stable C ABI (#[repr(C)], extern "C", ABI versioning)
-│   ├── stateset-sdk/              # Facade re-exports + prelude
-│   ├── stateset-test-utils/       # Shared test fixtures & assertion macros
-│   ├── stateset-integration-tests/ # Cross-crate integration tests
-│   └── stateset-benches/          # Criterion benchmarks
-├── bindings/
-│   ├── node/                # JavaScript/TypeScript (NAPI)
-│   ├── python/              # Python (PyO3)
-│   ├── ruby/                # Ruby (Magnus)
-│   ├── php/                 # PHP (ext-php-rs)
-│   ├── java/                # Java (JNI)
-│   ├── kotlin/              # Kotlin/JVM (JNI)
-│   ├── swift/               # Swift/iOS/macOS (C FFI)
-│   ├── dotnet/              # C#/.NET (P/Invoke)
-│   ├── go/                  # Go (cgo)
-│   └── wasm/                # WebAssembly (browser + Node)
-└── cli/
-    ├── bin/                 # CLI programs (41 entry points)
-    ├── src/                 # MCP server + registry-generated tool surface
-    ├── src/a2a/             # Agent-to-Agent commerce (payments, subscriptions, splits, events)
-    ├── src/channels/        # 10-channel messaging gateway
-    │   ├── base.js          # Shared sessions, commands, pipeline
-    │   ├── webchat.js       # HTTP-based web chat gateway
-    │   ├── middleware.js     # Rate limiter, content filter, logger
-    │   ├── rich-messages.js  # Platform-agnostic rich messages
-    │   ├── session-store.js  # SQLite-backed persistent sessions
-    │   ├── notifier.js       # Proactive notification routing
-    │   ├── orchestrator.js   # Config-driven multi-gateway launcher
-    │   ├── identity.js       # Customer identity resolution
-    │   ├── event-bridge.js   # Engine event → channel notifications
-    │   ├── metrics.js        # Per-channel conversation metrics
-    │   ├── handoff.js        # AI-to-human escalation queue
-    │   └── templates.js      # Pre-built rich message templates
-    ├── src/providers/       # Multi-provider AI (Claude, OpenAI, Gemini, Ollama)
-    ├── src/voice/           # Voice mode (STT + TTS)
-    ├── src/memory/          # Persistent conversation memory
-    ├── src/browser/         # Chrome DevTools Protocol automation
-    ├── src/skills/          # Skills loader, registry, marketplace
-    ├── src/chains/          # Blockchain integration (Solana, Base, SET Chain, etc.)
-    ├── src/x402/            # x402 AI agent payment protocol
-    ├── src/imessage/        # iMessage gateway (BlueBubbles)
-    ├── src/matrix/          # Matrix protocol gateway
-    ├── src/teams/           # Microsoft Teams gateway
-    ├── src/sync/            # VES sync engine, keys, groups
-    ├── skills/              # 38 commerce domain skills
-    ├── deploy/              # Systemd services, Tailscale, SSH tunnels
-    └── .claude/             # 18 AI agents
+This repository is best understood as a platform monorepo with a layered Rust kernel and two large outer product surfaces: language bindings and the Node-based operator runtime.
+
+The current workspace manifests form this dependency direction:
+
+```text
+stateset-primitives | stateset-crypto | stateset-pricing | stateset-observability
+stateset-policy | stateset-authz | stateset-a2a | stateset-jobs
+stateset-migrations | stateset-macros
+        ->
+stateset-core | stateset-protocol | stateset-sync
+        ->
+stateset-db
+        ->
+stateset-embedded
+        ->
+stateset-http | stateset-sdk | bindings/*
+        ->
+admin | cli
 ```
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                       AI Agent Layer                            │
-│         (Claude, OpenAI, Gemini, Ollama — with fallback)        │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                   Agentic Commerce Protocol (ACP)
-                              │
-┌─────────────────────────────────────────────────────────────────┐
-│                     StateSet iCommerce                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │   Models    │  │   Storage   │  │  Execution  │             │
-│  │ 254 types   │  │SQLite/Postgres│ │Deterministic│             │
-│  └─────────────┘  └─────────────┘  └─────────────┘             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │  256 MCP    │  │ 18 Agents   │  │  38 Skills  │             │
-│  │   Tools     │  │ Specialized │  │  Knowledge  │             │
-│  └─────────────┘  └─────────────┘  └─────────────┘             │
-│  ┌─────────────────────────────────────────────────┐            │
-│  │         Agent-to-Agent (A2A) Commerce            │            │
-│  │  Payments · Quotes · Subscriptions · Splits      │            │
-│  │  Webhooks · Event Streaming · Escrow · Trust     │            │
-│  └─────────────────────────────────────────────────┘            │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │  Voice Mode │  │  Memory     │  │  Browser    │             │
-│  │  STT + TTS  │  │ Persistent  │  │  CDP Tools  │             │
-│  └─────────────┘  └─────────────┘  └─────────────┘             │
-│  ┌─────────────────────────────────────────────────┐            │
-│  │          10-Channel Messaging Gateway            │            │
-│  │  WhatsApp · Telegram · Discord · Slack · Signal  │            │
-│  │  Google Chat · WebChat · iMessage · Teams · Matrix│           │
-│  │  Sessions · Middleware · Identity · Handoff       │            │
-│  └─────────────────────────────────────────────────┘            │
-│  ┌─────────────────────────────────────────────────┐            │
-│  │           Heartbeat Monitor & Permissions        │            │
-│  │  6 Health Checkers · API Key Auth · Sandboxing   │            │
-│  └─────────────────────────────────────────────────┘            │
-└─────────────────────────────────────────────────────────────────┘
-```
+### What Each Layer Does
 
-### Rust Crate Reference
+| Layer | Primary crates/surfaces | Role |
+|-------|--------------------------|------|
+| Foundation | `stateset-primitives`, `stateset-crypto`, `stateset-pricing`, `stateset-observability`, `stateset-policy`, `stateset-authz`, `stateset-a2a`, `stateset-jobs`, `stateset-migrations`, `stateset-macros` | Narrow building blocks and cross-cutting capabilities |
+| Domain kernel | `stateset-core`, `stateset-protocol`, `stateset-sync` | Pure commerce logic, wire formats, sync/runtime contracts |
+| Storage + product API | `stateset-db`, `stateset-embedded` | Persistence and the main embeddable commerce surface |
+| Edge adapters | `stateset-http`, `stateset-sdk`, `stateset-ffi`, `bindings/*` | Transport, Rust facade, C-style interop, and language-specific packaging |
+| Operator surfaces | `cli/`, `admin/` | MCP, agents, automation, and admin UX |
 
-| Crate | Seam | Description | Tests |
-|-------|------|-------------|-------|
-| `stateset-primitives` | Core | Strongly-typed newtypes (`OrderId`, `Sku`, `Money`, `CurrencyCode`) | 17 |
-| `stateset-core` | Core | Pure domain models and business logic (254 types, no I/O) | 378 |
-| `stateset-crypto` | Core | VES v1.0: JCS canonicalization, Ed25519, AES-256-GCM, Merkle trees | 91 |
-| `stateset-db` | Core | SQLite + PostgreSQL repository implementations | 37 |
-| `stateset-embedded` | Core | Unified high-level API (33 modules) | ~200 |
-| `stateset-observability` | Core | Metrics collectors + tracing helpers | 6 |
-| `stateset-macros` | Core | Proc macros for derive helpers | — |
-| `stateset-protocol` | Protocol | Wire types: `EventEnvelope`, `SyncBatch`, Merkle proofs, schema versioning | 148 |
-| `stateset-policy` | Policy | Policy DSL engine: YAML rules, condition groups, transforms, dry-run | 57 |
-| `stateset-http` | Transport | Axum REST + SSE server: 19 endpoints, auth/CORS/tracing middleware | 92 |
-| `stateset-a2a` | Interchange | Escrow state machine, split payments, subscriptions, HMAC webhooks | 201 |
-| `stateset-sync` | Interchange | Sync engine: outbox, conflict resolution, transport traits | 103 |
-| `stateset-ffi` | Interchange | Stable C ABI: `#[repr(C)]` types, 9 `extern "C"` functions | 125 |
-| `stateset-sdk` | Interchange | Facade crate: re-exports + prelude | 5 |
-| `stateset-authz` | Cross-cutting | RBAC permissions, rate limiting, audit logging, JSON redaction | 162 |
-| `stateset-pricing` | Cross-cutting | Deterministic pricing: line items, order totals, promotions, tax, FX | 161 |
-| `stateset-migrations` | Operations | SQL migrations with SHA-256 checksums, rollback, 4 built-in versions | 87 |
-| `stateset-jobs` | Operations | Background job scheduler: cron, intervals, retries, 5 built-in jobs | 150 |
-| `stateset-test-utils` | Dev | Shared test fixtures and assertion macros | 20 |
-| `stateset-integration-tests` | Dev | Cross-crate integration tests | 41 |
-| `stateset-benches` | Dev | Criterion benchmarks | — |
-| **Total** | | **21 crates** | **4,000+** |
+### Binding Topology
+
+- `bindings/node` is the shared JS-facing native layer and links directly to `stateset-embedded`, `stateset-core`, `stateset-db`, and `stateset-crypto`.
+- The admin app and CLI both consume `@stateset/embedded` directly rather than going through `stateset-sdk`.
+- Python and the compiled language bindings also link directly to `stateset-embedded` and `stateset-core`; they are not all routed through `stateset-ffi`.
+- `stateset-sdk` is the Rust-facing facade for consumers that want one dependency with feature-gated re-exports.
+- `stateset-ffi` is an optional C-ABI oriented interop surface, not the mandatory substrate for every binding in this repository.
+
+### Operational Surfaces
+
+- `cli/` is a large Node 20.20+ runtime with the MCP server, tool registry, sync/x402 logic, agent routing, messaging channels, and scaffolding flows.
+- `admin/` is a Next.js surface that depends on the local Node binding package and loads `@stateset/embedded` at runtime.
+- The root `npm run check` pipeline validates release hygiene, Rust fmt/tests/lints/feature-matrix checks, shell scripts, the Node binding, the admin app, and the CLI.
+
+### Recommended Onboarding Order
+
+1. `stateset-core`
+2. `stateset-db`
+3. `stateset-embedded`
+4. `stateset-sync`, `stateset-policy`, `stateset-authz`, `stateset-pricing`
+5. `stateset-http`
+6. `bindings/node` and then `admin/` or `cli/`
+
+For a manifest-grounded dependency walkthrough, see [Dependency Direction](./docs/src/guides/dependency-direction.md).
 
 ---
 
@@ -1116,34 +1065,17 @@ Order status updates enforce the core state machine (cancel before shipment, ref
 ## MCP Tools
 
 The MCP surface is generated from the live CLI registry instead of maintained as a static table in this README.
-For the exact current tool count, module breakdown, permissions summary, and full tool list, see the generated [MCP Tool Inventory](./docs/src/appendix/mcp-tool-inventory.md).
+For the exact current tool count, policy-domain breakdown, permissions summary, and full tool list, see the generated [MCP Tool Inventory](./docs/src/appendix/mcp-tool-inventory.md).
 
 ---
 
 ## AI Agents
 
-Eighteen specialized agents for different commerce domains:
-
-| Agent | Description | Use Case |
-|-------|-------------|----------|
-| **customer-service** | Full-service agent | All domains, general queries |
-| **checkout** | Shopping cart & ACP specialist | Cart creation, checkout flow |
-| **orders** | Order lifecycle management | Fulfillment, status updates |
-| **inventory** | Stock management specialist | Reservations, adjustments |
-| **returns** | RMA processing specialist | Approvals, refunds |
-| **analytics** | Business intelligence | Metrics, forecasting |
-| **promotions** | Promotions & discounts specialist | Campaigns, coupons, discount rules |
-| **subscriptions** | Subscription management specialist | Plans, billing cycles, recurring payments |
-| **storefront** | E-commerce storefront creator | Scaffold Next.js/Vite/Astro storefronts |
-| **sync** | VES sync specialist | Event sync, conflict resolution |
-| **manufacturing** | BOM & work order specialist | Bills of materials, production tracking |
-| **payments** | Payment processing specialist | Payments, refunds, reconciliation |
-| **shipments** | Fulfillment & tracking specialist | Shipment creation, delivery updates |
-| **suppliers** | Procurement specialist | Supplier management, purchase orders |
-| **invoices** | B2B billing specialist | Invoice generation, accounts receivable |
-| **warranties** | Warranty & claims specialist | Coverage, claims processing |
-| **currency** | Multi-currency specialist | Exchange rates, currency conversion |
-| **tax** | Tax compliance specialist | Tax calculation, exemptions, jurisdictions |
+Specialized agents cover different commerce domains, including customer
+service, checkout, orders, inventory, analytics, sync, stablecoin payments,
+and multi-agent orchestration. The exact current agent count, descriptions, and
+tool access are generated from code in the
+[Agent Inventory](./docs/src/appendix/agent-inventory.md).
 
 ---
 
@@ -1286,7 +1218,7 @@ Eighteen specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.9.7"
+stateset-embedded = "0.9.8"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -1336,14 +1268,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.9.7</version>
+    <version>0.9.8</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.9.7'
+implementation 'com.stateset:embedded:0.9.8'
 ```
 
 ### Kotlin (Gradle)
@@ -1351,7 +1283,7 @@ implementation 'com.stateset:embedded:0.9.7'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.9.7")
+    implementation("com.stateset:embedded-kotlin:0.9.8")
 }
 ```
 
@@ -1360,32 +1292,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.7")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.9.8")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.9.7'
+pod 'StateSet', '~> 0.9.8'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.9.7
+dotnet add package StateSet.Embedded --version 0.9.8
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.9.7" />
+<PackageReference Include="StateSet.Embedded" Version="0.9.8" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.7
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.9.8
 ```
 
 ### CLI
@@ -1403,7 +1335,7 @@ stateset --help
 
 ## Language Bindings
 
-StateSet provides native bindings for 11 languages, all built from the same Rust core:
+StateSet provides a Rust SDK plus native runtime bindings built from the same Rust core:
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
@@ -1554,12 +1486,12 @@ stateset --apply "add 50 units to SKU-001"
 
 ## Development
 
-Rust (4,000+ tests across 21 crates):
+Rust:
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test                       # Run all 4,000+ tests
+cargo test                       # Run the workspace Rust test suite
 cargo bench -p stateset-benches  # Criterion benchmarks
 ```
 
@@ -1570,7 +1502,7 @@ cd bindings/node && npm ci && npm test
 cd bindings/python && python -m pip install maturin pytest && maturin develop --release && pytest -q
 ```
 
-CLI (6,611 tests):
+CLI:
 
 ```bash
 cd cli
@@ -1583,7 +1515,7 @@ npm run typecheck           # JSDoc type checking
 npm run test:coverage       # Coverage report
 ```
 
-Admin (261 tests):
+Admin:
 
 ```bash
 cd admin
@@ -1596,18 +1528,18 @@ npm test                    # Vitest test suite
 
 ```
 stateset-icommerce/
-├── Cargo.toml                      # Workspace manifest (21 crates)
+├── Cargo.toml                      # Workspace manifest
 ├── crates/
 │   ├── stateset-primitives/        # Strongly-typed newtypes (OrderId, Sku, Money, CurrencyCode)
-│   ├── stateset-core/              # Domain models (32 domain modules, 254 types)
+│   ├── stateset-core/              # Domain models, services, repository traits
 │   ├── stateset-crypto/            # VES v1.0 (JCS, Ed25519, AES-256-GCM, Merkle)
 │   ├── stateset-db/                # Database layer (SQLite + PostgreSQL)
-│   ├── stateset-embedded/          # High-level API (33 modules)
+│   ├── stateset-embedded/          # High-level embeddable commerce API
 │   ├── stateset-observability/     # Metrics + tracing helpers
 │   ├── stateset-macros/            # Proc macros
 │   ├── stateset-policy/            # Policy DSL engine (YAML, conditions, transforms)
 │   ├── stateset-protocol/          # Wire types (EventEnvelope, SyncBatch, Merkle)
-│   ├── stateset-http/              # Axum REST + SSE (19 endpoints, middleware)
+│   ├── stateset-http/              # Axum REST + SSE transport layer
 │   ├── stateset-a2a/               # Agent-to-Agent commerce
 │   ├── stateset-sync/              # Sync engine (outbox, conflict, transport)
 │   ├── stateset-authz/             # Authorization (RBAC, rate limiting, audit)
@@ -1631,7 +1563,7 @@ stateset-icommerce/
 │   ├── go/                    # cgo bindings (stateset Go module)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
-│   ├── bin/                   # 41 CLI entry points
+│   ├── bin/                   # CLI entry points
 │   ├── src/mcp-server.js      # MCP orchestrator
 │   ├── src/tools/             # Modular tool modules
 │   ├── src/a2a/               # Agent-to-Agent commerce
@@ -1661,11 +1593,13 @@ stateset-icommerce/
 │   │   ├── rotation-policy.js # Key rotation policies
 │   │   ├── crypto.js          # VES cryptographic operations
 │   │   └── conflict.js        # Conflict resolution
-│   ├── skills/                # 38 commerce domain skills
+│   ├── skills/                # Commerce domain skills
 │   ├── deploy/                # Systemd services, Tailscale, SSH tunnels
-│   └── .claude/               # 18 AI agents
+│   └── .claude/               # AI agent definitions
 └── examples/
 ```
+
+Current manifest-backed counts and topology live in [Workspace Inventory](./docs/src/appendix/workspace-inventory.md).
 
 ---
 

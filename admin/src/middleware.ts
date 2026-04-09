@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdminAuthDisabled } from '@/lib/shared/admin-auth-config';
+import { getRequestSessionToken } from '@/lib/shared/auth-session';
 import { getStateSetApiConnectSources } from '@/lib/stateset-api-url';
 import { apiRateLimiter, authRateLimiter } from '@/lib/shared/rate-limit';
 
@@ -93,10 +94,11 @@ export function middleware(request: NextRequest) {
     return applySecurityHeaders(request, response);
   }
 
-  const sessionToken = hasSessionCookie(request);
+  const sessionCookie = hasSessionCookie(request);
+  const authToken = getRequestSessionToken(request);
   const isApiPath = pathname.startsWith('/api/');
 
-  if (!authDisabled && isApiPath && !isPublicApiPath(pathname) && !sessionToken) {
+  if (!authDisabled && isApiPath && !isPublicApiPath(pathname) && !authToken) {
     return applySecurityHeaders(
       request,
       NextResponse.json(
@@ -112,14 +114,14 @@ export function middleware(request: NextRequest) {
     );
   }
 
-  if (!authDisabled && !isApiPath && pathname !== '/' && !sessionToken) {
+  if (!authDisabled && !isApiPath && pathname !== '/' && !sessionCookie) {
     return applySecurityHeaders(request, NextResponse.redirect(new URL('/', request.url)));
   }
 
-  if (!authDisabled && isApiPath && sessionToken && !isPublicApiPath(pathname)) {
+  if (!authDisabled && isApiPath && authToken && !isPublicApiPath(pathname)) {
     const headers = new Headers(request.headers);
     if (!headers.get('Authorization')) {
-      headers.set('Authorization', `Bearer ${sessionToken}`);
+      headers.set('Authorization', `Bearer ${authToken}`);
     }
     return applySecurityHeaders(
       request,

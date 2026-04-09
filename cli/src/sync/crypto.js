@@ -94,7 +94,7 @@ import crypto from 'crypto';
  *     mlKem768Seed?: Buffer,
  *     ml_kem_768_seed?: Buffer,
  *   },
- *   vesHybridEncryptPayload?: (payloadJson: string, aadParams: Object, recipients: Object[]) => {
+ *   vesHybridEncryptPayload?: (payloadJson: string, aadParams: any, recipients: any[]) => {
  *     payloadEncryptedJson?: string,
  *     payload_encrypted_json?: string,
  *     salt?: Buffer,
@@ -103,7 +103,7 @@ import crypto from 'crypto';
  *     payloadCipherHash?: Buffer,
  *     payload_cipher_hash?: Buffer,
  *   },
- *   ves_hybrid_encrypt_payload?: (payloadJson: string, aadParams: Object, recipients: Object[]) => {
+ *   ves_hybrid_encrypt_payload?: (payloadJson: string, aadParams: any, recipients: any[]) => {
  *     payloadEncryptedJson?: string,
  *     payload_encrypted_json?: string,
  *     salt?: Buffer,
@@ -138,6 +138,26 @@ import crypto from 'crypto';
  *   ) => string,
  *   merkleRoot?: (leaves: Buffer[]) => Buffer | Uint8Array,
  *   merkle_root?: (leaves: Buffer[]) => Buffer | Uint8Array,
+ *   vesStrictGenerateSigningKeypair?: (...args: any[]) => any,
+ *   ves_strict_generate_signing_keypair?: (...args: any[]) => any,
+ *   vesStrictSignEventHash?: (...args: any[]) => any,
+ *   ves_strict_sign_event_hash?: (...args: any[]) => any,
+ *   vesStrictVerifyEventSignature?: (...args: any[]) => any,
+ *   ves_strict_verify_event_signature?: (...args: any[]) => any,
+ *   vesStrictGenerateRecipientKeypair?: (...args: any[]) => any,
+ *   ves_strict_generate_recipient_keypair?: (...args: any[]) => any,
+ *   vesStrictEncryptPayload?: (...args: any[]) => any,
+ *   ves_strict_encrypt_payload?: (...args: any[]) => any,
+ *   vesStrictDecryptPayload?: (...args: any[]) => any,
+ *   ves_strict_decrypt_payload?: (...args: any[]) => any,
+ *   vesHybridGenerateSigningPop?: (...args: any[]) => any,
+ *   ves_hybrid_generate_signing_pop?: (...args: any[]) => any,
+ *   vesHybridVerifySigningPop?: (...args: any[]) => any,
+ *   ves_hybrid_verify_signing_pop?: (...args: any[]) => any,
+ *   vesStrictGenerateSigningPop?: (...args: any[]) => any,
+ *   ves_strict_generate_signing_pop?: (...args: any[]) => any,
+ *   vesStrictVerifySigningPop?: (...args: any[]) => any,
+ *   ves_strict_verify_signing_pop?: (...args: any[]) => any,
  * }} NativeCryptoCompat
  */
 
@@ -153,7 +173,7 @@ function messageFromError(error) {
 }
 
 try {
-  _native = /** @type {NativeCryptoCompat} */ (await import('@stateset/embedded'));
+  _native = /** @type {NativeCryptoCompat} */ (/** @type {unknown} */ (await import('@stateset/embedded')));
 } catch (nativeErr) {
   console.debug(
     'native crypto module not available, using JS fallback:',
@@ -293,6 +313,10 @@ function getNativeStrictVerifySigningPop() {
   );
 }
 
+/**
+ * @param {unknown} value
+ * @returns {Buffer}
+ */
 function toBuffer(value) {
   if (Buffer.isBuffer(value)) {
     return value;
@@ -300,9 +324,19 @@ function toBuffer(value) {
   if (value instanceof Uint8Array) {
     return Buffer.from(value);
   }
-  return Buffer.from(value ?? []);
+  if (typeof value === 'string') {
+    return Buffer.from(value);
+  }
+  if (Array.isArray(value)) {
+    return Buffer.from(value);
+  }
+  return Buffer.alloc(0);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {Buffer}
+ */
 function toBinaryInput(value) {
   if (Buffer.isBuffer(value)) {
     return value;
@@ -313,9 +347,18 @@ function toBinaryInput(value) {
   if (typeof value === 'string') {
     return hexToBuffer(value);
   }
-  return Buffer.from(value ?? []);
+  if (Array.isArray(value)) {
+    return Buffer.from(value);
+  }
+  return Buffer.alloc(0);
 }
 
+/**
+ * @param {any} value
+ * @param {string} camelCase
+ * @param {string} snakeCase
+ * @returns {unknown}
+ */
 function readHybridField(value, camelCase, snakeCase) {
   return value?.[camelCase] ?? value?.[snakeCase] ?? null;
 }
@@ -840,7 +883,7 @@ export function generateHybridRecipientKeypair(kid) {
 
   const result = nativeFn(kid);
   return {
-    kid: result.kid,
+    kid: result.kid ?? kid,
     x25519PublicKey: toBuffer(
       readHybridField(result, 'x25519PublicKey', 'x25519_public_key'),
     ),
@@ -896,21 +939,22 @@ export function encryptPayloadHybrid(payload, aadParams, recipientKeys) {
   const payloadEncrypted = JSON.parse(
     result.payloadEncryptedJson ?? result.payload_encrypted_json ?? '{}',
   );
+  const recipientEntries = Array.isArray(payloadEncrypted.recipients)
+    ? /** @type {any[]} */ (payloadEncrypted.recipients)
+    : [];
   payloadEncrypted.keyWrapParams = {
     scheme: 3,
     kdf: 'HKDF-SHA256',
     aead: 'AES-256-GCM',
   };
-  payloadEncrypted.recipientWraps = Array.isArray(payloadEncrypted.recipients)
-    ? payloadEncrypted.recipients.map((recipient) => ({
+  payloadEncrypted.recipientWraps = recipientEntries.map((recipient) => ({
         recipientKid: recipient.recipient_kid,
         wrapScheme: 3,
         x25519Enc: recipient.x25519_enc_b64u ?? null,
         mlKemCiphertext: recipient.mlkem_ct_b64u ?? null,
         wrapNonce: recipient.wrap_nonce_b64u ?? null,
         wrappedKey: recipient.ct_b64u ?? null,
-      }))
-    : [];
+      }));
 
   return {
     payloadEncrypted,
@@ -1086,20 +1130,21 @@ export function encryptPayloadStrict(payload, aadParams, recipientKeys) {
   const payloadEncrypted = JSON.parse(
     result.payloadEncryptedJson ?? result.payload_encrypted_json ?? '{}',
   );
+  const recipientEntries = Array.isArray(payloadEncrypted.recipients)
+    ? /** @type {any[]} */ (payloadEncrypted.recipients)
+    : [];
   payloadEncrypted.keyWrapParams = {
     scheme: 2, // KEY_WRAP_SCHEME_ML_KEM_768
     kdf: 'HKDF-SHA256',
     aead: 'AES-256-GCM',
   };
-  payloadEncrypted.recipientWraps = Array.isArray(payloadEncrypted.recipients)
-    ? payloadEncrypted.recipients.map((recipient) => ({
+  payloadEncrypted.recipientWraps = recipientEntries.map((recipient) => ({
         recipientKid: recipient.recipient_kid,
         wrapScheme: 2,
         mlKemCiphertext: recipient.mlkem_ct_b64u ?? null,
         wrapNonce: recipient.wrap_nonce_b64u ?? null,
         wrappedKey: recipient.ct_b64u ?? null,
-      }))
-    : [];
+      }));
 
   return {
     payloadEncrypted,

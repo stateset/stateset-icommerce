@@ -1,6 +1,6 @@
 [package]
 name = "stateset-sdk"
-description = "Unified SDK facade for StateSet iCommerce — re-exports all crates with feature-gated includes"
+description = "Rust SDK facade for StateSet iCommerce with feature-gated re-exports"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -47,6 +47,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 rust_decimal = { workspace = true }
 chrono = { workspace = true }
+stateset-crypto = { workspace = true }
 
 [lints]
 workspace = true

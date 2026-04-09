@@ -37,3 +37,11 @@ Create a versioned snapshot under `docs/versions/`:
 ```bash
 ./docs/scripts/snapshot-version.sh v0.7.1
 ```
+
+## Generated inventories
+
+Three manifest-backed appendices are generated into `docs/src/appendix/`:
+
+- `node ./scripts/ci/generate_agent_inventory.mjs`
+- `node ./scripts/ci/generate_mcp_inventory.mjs`
+- `node ./scripts/ci/generate_workspace_inventory.mjs`

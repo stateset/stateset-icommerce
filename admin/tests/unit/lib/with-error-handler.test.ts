@@ -74,6 +74,25 @@ describe('withErrorHandler', () => {
       expect(response.status).toBe(200);
     });
 
+    it('rejects requests whose actual body exceeds the limit without relying on content-length', async () => {
+      const handler = withErrorHandler(
+        async () => {
+          return NextResponse.json({ ok: true });
+        },
+        { maxBodySize: 1024 }
+      );
+
+      const request = createMockRequest({
+        body: 'x'.repeat(2_048),
+      });
+
+      const response = await handler(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(413);
+      expect(data.error.code).toBe('PAYLOAD_TOO_LARGE');
+    });
+
     it('allows requests without content-length header', async () => {
       const handler = withErrorHandler(async () => {
         return NextResponse.json({ ok: true });

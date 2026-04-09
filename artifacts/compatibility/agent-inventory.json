@@ -1,0 +1,305 @@
+{
+  "source": {
+    "agents": "cli/src/agent-definitions.js",
+    "mcpServer": "cli/src/mcp-server.js",
+    "scaffoldServer": "cli/src/scaffold-server.js"
+  },
+  "totalAgents": 20,
+  "totalCommerceTools": 535,
+  "totalScaffoldTools": 13,
+  "fullAccessAgentCount": 1,
+  "scopedAgentCount": 19,
+  "totalScopedToolReferences": 202,
+  "supportedServers": [
+    {
+      "name": "stateset-commerce",
+      "toolCount": 535
+    },
+    {
+      "name": "stateset-scaffold",
+      "toolCount": 13
+    }
+  ],
+  "agents": [
+    {
+      "id": "agents",
+      "name": "Agents Agent",
+      "description": "Multi-agent runtime orchestration, A2A commerce, and agent lifecycle management",
+      "toolCount": 39,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 39
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "analytics",
+      "name": "Analytics Agent",
+      "description": "Business intelligence and forecasting specialist",
+      "toolCount": 10,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 10
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "checkout",
+      "name": "Checkout Agent",
+      "description": "Shopping cart and checkout flow specialist (Agentic Commerce Protocol)",
+      "toolCount": 16,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 16
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "currency",
+      "name": "Currency Agent",
+      "description": "Multi-currency support and exchange rate management specialist",
+      "toolCount": 8,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 8
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "customer-service",
+      "name": "Customer Service",
+      "description": "Full-service agent with access to all commerce tools",
+      "toolCount": 535,
+      "usesAllCommerceTools": true,
+      "serverCounts": {
+        "stateset-commerce": 535
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "inventory",
+      "name": "Inventory Agent",
+      "description": "Stock and inventory management specialist",
+      "toolCount": 6,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 6
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "invoices",
+      "name": "Invoices Agent",
+      "description": "B2B invoice management and accounts receivable specialist",
+      "toolCount": 7,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 7
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "manufacturing",
+      "name": "Manufacturing Agent",
+      "description": "Bill of Materials (BOM) and work order management specialist",
+      "toolCount": 13,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 13
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "orders",
+      "name": "Orders Agent",
+      "description": "Order lifecycle management specialist",
+      "toolCount": 8,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 8
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "payments",
+      "name": "Payments Agent",
+      "description": "Payment processing and refund management specialist",
+      "toolCount": 7,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 7
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "promotions",
+      "name": "Promotions Agent",
+      "description": "Promotions, discounts, and coupon code management specialist",
+      "toolCount": 12,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 12
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "returns",
+      "name": "Returns Agent",
+      "description": "Return request processing specialist",
+      "toolCount": 7,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 7
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "shipments",
+      "name": "Shipments Agent",
+      "description": "Shipment tracking and delivery management specialist",
+      "toolCount": 5,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 5
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "stablecoin",
+      "name": "Stablecoin Agent",
+      "description": "Native stablecoin wallet, balance, and payment specialist",
+      "toolCount": 4,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 4
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "storefront",
+      "name": "Storefront Agent",
+      "description": "Creates e-commerce storefront websites using StateSet iCommerce",
+      "toolCount": 13,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-scaffold": 13
+      },
+      "serverNamespaces": [
+        "stateset-scaffold"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "subscriptions",
+      "name": "Subscriptions Agent",
+      "description": "Subscription plans, recurring billing, and customer subscription lifecycle management",
+      "toolCount": 17,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 17
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "suppliers",
+      "name": "Suppliers Agent",
+      "description": "Supplier management and purchase order specialist",
+      "toolCount": 8,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 8
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "sync",
+      "name": "Sync Agent",
+      "description": "Verifiable Event Sync (VES) management - sync local state with production sequencer",
+      "toolCount": 7,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 7
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "tax",
+      "name": "Tax Agent",
+      "description": "Tax calculation and compliance specialist",
+      "toolCount": 9,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 9
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    },
+    {
+      "id": "warranties",
+      "name": "Warranties Agent",
+      "description": "Product warranty and claims management specialist",
+      "toolCount": 6,
+      "usesAllCommerceTools": false,
+      "serverCounts": {
+        "stateset-commerce": 6
+      },
+      "serverNamespaces": [
+        "stateset-commerce"
+      ],
+      "unknownTools": []
+    }
+  ]
+}

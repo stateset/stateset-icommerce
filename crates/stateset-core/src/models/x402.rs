@@ -1239,6 +1239,8 @@ pub struct CreateX402PaymentIntent {
     pub idempotency_key: Option<String>,
     /// Additional metadata
     pub metadata: Option<String>,
+    /// Preferred signature scheme for this intent. Absent = hybrid default.
+    pub signature_scheme: Option<X402SignatureScheme>,
 }
 
 /// Input for signing an x402 payment intent

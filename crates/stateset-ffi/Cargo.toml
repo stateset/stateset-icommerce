@@ -1,12 +1,13 @@
 [package]
 name = "stateset-ffi"
-description = "C-ABI stable FFI surface for stateset-embedded — powers Python, Swift, Kotlin, Go, and C bindings"
+description = "C-ABI oriented interop surface for stateset-embedded and sync runtime helpers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]

@@ -3,7 +3,6 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { WASI } from 'node:wasi';
 
 export const CONNECTOR_SCHEMA_VERSION = 'wasm-connector/v1';
 export const CONNECTOR_CATALOG_SCHEMA_VERSION = 'wasm-catalog/v1';
@@ -25,6 +24,7 @@ const CONNECTOR_CERTIFICATION_STATUSES = new Set(['candidate', 'certified', 'rev
 const STRICT_VERIFY_TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 const wasmModuleCache = new Map();
+let wasiCtorPromise = null;
 
 function sha256Buffer(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
@@ -789,7 +789,26 @@ function getWasiImportObject(wasi) {
   };
 }
 
-function createWasiInstance(options) {
+async function getWasiCtor() {
+  if (!wasiCtorPromise) {
+    wasiCtorPromise = import('node:wasi')
+      .then((mod) => {
+        if (typeof mod.WASI !== 'function') {
+          throw new Error('The current Node.js runtime does not expose a WASI constructor.');
+        }
+        return mod.WASI;
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`WASI runtime is unavailable in this Node.js build. ${message}`);
+      });
+  }
+
+  return wasiCtorPromise;
+}
+
+async function createWasiInstance(options) {
+  const WASI = await getWasiCtor();
   try {
     return new WASI({ version: 'preview1', ...options });
   } catch {
@@ -836,7 +855,7 @@ async function executeWasiCommandAction({
     stdoutFd = fs.openSync(stdoutPath, 'w+');
     stderrFd = fs.openSync(stderrPath, 'w+');
 
-    const wasi = createWasiInstance({
+    const wasi = await createWasiInstance({
       args: [`connector:${connectorId}`, `action:${action.name}`, ...(action.commandArgs || [])],
       env: {
         STATESET_CONNECTOR_ID: connectorId,

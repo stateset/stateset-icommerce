@@ -51,6 +51,9 @@ function normalizeOpenAIToolCall(toolCall) {
 function normalizeToolFormat(format) {
   if (format === 'openai-responses') return 'openai';
   if (format === 'chat-completions') return 'openai';
+  if (format === 'anthropic-sdk') return 'anthropic';
+  if (format === 'anthropic-messages') return 'anthropic';
+  if (format === 'claude') return 'anthropic';
   return format || 'generic';
 }
 
@@ -106,6 +109,22 @@ function createRemoteHttpDescriptor(route, baseUrl, executeRoute) {
   };
 }
 
+/**
+ * Create the embedded toolkit facade over the live StateSet MCP tool runtime.
+ *
+ * All options are forwarded to `createStatesetMcpServer()`, so the toolkit and
+ * MCP server stay aligned on permissions, policies, treasury, and delegation.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.dbPath='./store.db'] SQLite database path when no commerce instance is supplied.
+ * @param {boolean} [options.allowApply=false] Enable write tools instead of preview-only execution.
+ * @param {Object} [options.commerce] Reuse an existing embedded commerce instance.
+ * @param {Object|null} [options.autonomousEngine=null] Enable runtime tools such as `delegate_to_agent`.
+ * @param {string} [options.policyStorePath] Optional policy store root. When omitted, the MCP server derives `.stateset/` next to `dbPath`.
+ * @param {Object} [options.treasury] Optional treasury configuration for priced tools.
+ * @param {Object} [options.mpp] Optional Machine Payments Protocol defaults.
+ * @returns {Object} Toolkit helpers for tool discovery, execution, and framework adapters.
+ */
 export function createEmbeddedAgentToolkit(options = {}) {
   const dbPath = options.dbPath || './store.db';
   const ownsCommerce = !options.commerce;

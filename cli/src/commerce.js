@@ -3,16 +3,32 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const DEFAULT_COMPATIBLE_API_NAMES = ['a2a', 'x402'];
 
+/** @typedef {new (...args: any[]) => unknown} CommerceConstructor */
+/** @typedef {{ [key: string | symbol]: any }} AnyRecord */
+
+/** @type {CommerceConstructor | null} */
 let commerceCtor = null;
 
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
 function messageFromError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
 function isObjectLike(value) {
   return value !== null && (typeof value === 'object' || typeof value === 'function');
 }
 
+/**
+ * @param {() => any} resolveValue
+ * @returns {(...args: any[]) => any}
+ */
 function createCallableApiAccessor(resolveValue) {
   return new Proxy(
     function accessor() {
@@ -47,6 +63,11 @@ function createCallableApiAccessor(resolveValue) {
   );
 }
 
+/**
+ * @param {AnyRecord} commerce
+ * @param {string[]} [extraApiNames]
+ * @returns {Set<string>}
+ */
 function collectCompatibleApiNames(commerce, extraApiNames = []) {
   const names = new Set(DEFAULT_COMPATIBLE_API_NAMES);
   for (const name of extraApiNames) {
@@ -71,14 +92,18 @@ function collectCompatibleApiNames(commerce, extraApiNames = []) {
   return names;
 }
 
+/**
+ * @returns {CommerceConstructor}
+ */
 export function getCommerceCtor() {
   if (commerceCtor) return commerceCtor;
 
+  /** @type {any} */
   let mod;
   try {
     mod = require('@stateset/embedded');
   } catch (error) {
-    const message = error && typeof error.message === 'string' ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to load @stateset/embedded. ${message}`);
   }
 
@@ -88,9 +113,14 @@ export function getCommerceCtor() {
   }
 
   commerceCtor = resolvedCtor;
-  return commerceCtor;
+  return resolvedCtor;
 }
 
+/**
+ * @param {unknown} commerce
+ * @param {string} name
+ * @returns {boolean}
+ */
 export function hasCommerceApi(commerce, name) {
   try {
     return resolveCommerceApi(commerce, name) !== null;
@@ -99,25 +129,33 @@ export function hasCommerceApi(commerce, name) {
   }
 }
 
+/**
+ * @template T
+ * @param {T} commerce
+ * @param {string[]} [extraApiNames]
+ * @returns {T}
+ */
 export function adaptCommerceApis(commerce, extraApiNames = []) {
   if (!isObjectLike(commerce)) {
     return commerce;
   }
 
-  const compatibleApiNames = collectCompatibleApiNames(commerce, extraApiNames);
+  const target = /** @type {AnyRecord} */ (commerce);
+  const compatibleApiNames = collectCompatibleApiNames(target, extraApiNames);
   const accessorCache = new Map();
 
+  /** @param {string} name */
   const getAccessor = (name) => {
     if (!accessorCache.has(name)) {
       accessorCache.set(
         name,
-        createCallableApiAccessor(() => resolveCommerceApi(commerce, name)),
+        createCallableApiAccessor(() => resolveCommerceApi(target, name)),
       );
     }
     return accessorCache.get(name);
   };
 
-  return new Proxy(commerce, {
+  return /** @type {T} */ (new Proxy(target, {
     get(target, prop, receiver) {
       if (typeof prop === 'string' && compatibleApiNames.has(prop) && hasCommerceApi(target, prop)) {
         return getAccessor(prop);
@@ -152,20 +190,29 @@ export function adaptCommerceApis(commerce, extraApiNames = []) {
       }
       return Reflect.getOwnPropertyDescriptor(target, prop);
     },
-  });
+  }));
 }
 
+/**
+ * @param {...any} args
+ * @returns {unknown}
+ */
 export function createCommerce(...args) {
   const Commerce = getCommerceCtor();
   return adaptCommerceApis(new Commerce(...args));
 }
 
+/**
+ * @param {unknown} commerce
+ * @param {string} name
+ * @returns {any}
+ */
 export function resolveCommerceApi(commerce, name) {
   if (!commerce || (typeof commerce !== 'object' && typeof commerce !== 'function')) {
     throw new Error(`Commerce instance is required to resolve ${name}`);
   }
 
-  const api = commerce[name];
+  const api = /** @type {AnyRecord} */ (commerce)[name];
   if (api === undefined || api === null) {
     throw new Error(`commerce.${name} API is unavailable`);
   }

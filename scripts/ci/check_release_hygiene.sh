@@ -4,6 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+CURRENT_DOC_PATHS=(
+  README.md
+  QUICKSTART.md
+  comparison_doc.md
+  cli/README.md
+  docs/src
+)
+
 usage() {
   cat <<'EOF'
 Usage: check_release_hygiene.sh [--github-output PATH] [VERSION_OR_TAG]
@@ -127,7 +135,7 @@ if [[ "$workspace_version" != "$latest_changelog_version" ]]; then
 fi
 
 legacy_tool_count_file="$(mktemp)"
-if grep -RIn '520\+' README.md docs/src --exclude='mcp-tool-inventory.md' >"$legacy_tool_count_file" 2>/dev/null; then
+if grep -RIn '520\+' "${CURRENT_DOC_PATHS[@]}" --exclude='mcp-tool-inventory.md' >"$legacy_tool_count_file" 2>/dev/null; then
   echo "::error::Current docs still contain legacy hard-coded MCP tool counts. Replace them with generated inventory references." >&2
   cat "$legacy_tool_count_file" >&2
   rm -f "$legacy_tool_count_file"
@@ -136,6 +144,18 @@ fi
 rm -f "$legacy_tool_count_file"
 
 node ./scripts/ci/generate_mcp_inventory.mjs --check >/dev/null
+node ./scripts/ci/generate_agent_inventory.mjs --check >/dev/null
+node ./scripts/ci/generate_workspace_inventory.mjs --check >/dev/null
+node ./scripts/ci/check_doc_tool_refs.mjs >/dev/null
+
+legacy_arch_count_file="$(mktemp)"
+if grep -RInE '4,000\+ tests|3,477 passing tests|15,300\+ tests|261 tests|41 domain APIs|18 AI agents|41 CLI entry points|41 accessor methods|17 specialized agents|18 specialized agents|90\+ MCP tools|87\+ tools|87 MCP tools|8 specialized agents|37 tests|26 CLI programs|254 types|53 tables|671\+ methods|53\+ REST endpoints|11 language bindings|Eighteen specialized agents' "${CURRENT_DOC_PATHS[@]}" --exclude='mcp-tool-inventory.md' --exclude='workspace-inventory.md' >"$legacy_arch_count_file" 2>/dev/null; then
+  echo "::error::Current docs still contain legacy hard-coded architecture or test counts. Replace them with generated workspace inventory references or stable wording." >&2
+  cat "$legacy_arch_count_file" >&2
+  rm -f "$legacy_arch_count_file"
+  exit 1
+fi
+rm -f "$legacy_arch_count_file"
 
 normalized_release_version="$workspace_version"
 if [[ -n "$raw_release_version" ]]; then
